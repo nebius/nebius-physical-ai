@@ -65,6 +65,26 @@ def test_feedback_endpoint_rejects_traversal(
     assert "output_dir" in response.json()["detail"]
 
 
+def test_policy_endpoints_require_configured_bearer_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fastapi_testclient = pytest.importorskip("fastapi.testclient")
+    monkeypatch.delenv("NPA_POLICY_CHECKPOINT", raising=False)
+    monkeypatch.setenv("NPA_POLICY_AUTH_TOKEN", "task-scoped-token")
+
+    from npa.workbench.lerobot.policy_container import create_app
+
+    client = fastapi_testclient.TestClient(create_app())
+    unauthorized = client.post("/infer-typed", json={})
+    assert unauthorized.status_code == 401
+    authorized = client.post(
+        "/infer-typed",
+        json={},
+        headers={"Authorization": "Bearer task-scoped-token"},
+    )
+    assert authorized.status_code == 503
+
+
 @pytest.mark.parametrize("control", ["false", "true", 0, 1, [], {}, None])
 def test_vlm_signal_endpoint_rejects_non_boolean_control_before_update(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, control

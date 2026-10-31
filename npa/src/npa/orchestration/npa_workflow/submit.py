@@ -57,6 +57,7 @@ def merge_config_overrides(
         run_defaults=dict(spec.run_defaults),
         resources=dict(spec.resources),
         initial=spec.initial,
+        on_failure=spec.on_failure,
         states={
             name: replace(
                 state, trigger=resolve_trigger_config(name, state.trigger, merged)

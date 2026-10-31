@@ -239,7 +239,6 @@ def _run_phase(plan, root):
 
 def _phase_environment():
     env = os.environ.copy()
-    env.pop("NPA_OPENPI_ACCEPT_GEMMA_TERMS", None)
     source = str(Path(__file__).resolve().parents[3])
     env["PYTHONPATH"] = os.pathsep.join(filter(None, [source, env.get("PYTHONPATH")]))
     return env

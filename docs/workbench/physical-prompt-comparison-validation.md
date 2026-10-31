@@ -96,7 +96,7 @@ rendering check using the original GPU outputs, not another GPU generation run.
 
 The tested implementation passed the
 [complete hosted candidate CI](https://github.com/nebius/nebius-physical-ai/actions/runs/36965743360),
-including the full Python 3.12 coverage suite, browser tests, Python 3.10/3.14
+including the full Python 3.12 coverage suite, browser tests, Python 3.11/3.14
 compatibility, security regression, lint, documentation drift, and secret and
 confidentiality scans. The merged branch also passed 103 focused tests and the
 270-test precheck before the evidence update.

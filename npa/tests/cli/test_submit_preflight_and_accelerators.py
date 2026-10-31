@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 from pathlib import Path
 import subprocess
@@ -2592,3 +2593,154 @@ def test_submit_without_explicit_registry_defers_to_render_default_without_confi
 
     assert workflow_cli._resolve_submit_registry("", "p") == ""
     assert config_lookups == []
+
+
+class _MissingServiceAccount(Exception):
+    status = 404
+
+
+class _PreflightServiceAccounts:
+    def __init__(self) -> None:
+        self.items: dict[str, dict[str, object]] = {}
+        self.created: list[str] = []
+        self.deleted: list[tuple[str, str]] = []
+
+    def read_namespaced_service_account(self, name: str, _namespace: str):
+        if name not in self.items:
+            raise _MissingServiceAccount(name)
+        return self.items[name]
+
+    def create_namespaced_service_account(self, _namespace: str, body: dict):
+        name = body["metadata"]["name"]
+        item = json.loads(json.dumps(body))
+        item["metadata"]["uid"] = f"uid-{name}"
+        self.items[name] = item
+        self.created.append(name)
+        return item
+
+    def delete_namespaced_service_account(
+        self, name: str, _namespace: str, *, body: dict
+    ) -> None:
+        uid = body["preconditions"]["uid"]
+        assert self.items[name]["metadata"]["uid"] == uid
+        self.deleted.append((name, uid))
+        del self.items[name]
+
+
+def test_workflow_owned_image_preflight_creates_and_uid_cleans_exact_accounts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from npa.workflows.sim2real.runtime_prerequisites import resource_identities
+
+    run_id = "clean-start-run"
+    identities = resource_identities(run_id)
+    core = _PreflightServiceAccounts()
+    monkeypatch.setattr(
+        workflow_cli,
+        "_workflow_owned_preflight_core_api",
+        lambda **_kwargs: core,
+    )
+
+    with workflow_cli._workflow_owned_preflight_service_accounts(
+        spec=SimpleNamespace(config={"runtime_prerequisites_mode": "workflow_owned"}),
+        run_id=run_id,
+        service_account_names={
+            identities["base_service_account"],
+            identities["adapted_service_account"],
+            "skypilot-service-account",
+        },
+        namespace="workload",
+        context="exact-context",
+        kubeconfig="",
+    ):
+        assert set(core.items) == {
+            identities["base_service_account"],
+            identities["adapted_service_account"],
+        }
+
+    assert set(core.created) == {
+        identities["base_service_account"],
+        identities["adapted_service_account"],
+    }
+    assert {name for name, _uid in core.deleted} == set(core.created)
+    assert core.items == {}
+
+
+def test_workflow_owned_image_preflight_retains_exact_existing_account(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from npa.workflows.sim2real.runtime_prerequisites import (
+        MANAGED_BY,
+        resource_identities,
+    )
+
+    run_id = "resume-run"
+    name = resource_identities(run_id)["base_service_account"]
+    run_hash = hashlib.sha256(run_id.encode()).hexdigest()[:16]
+    core = _PreflightServiceAccounts()
+    core.items[name] = {
+        "metadata": {
+            "name": name,
+            "uid": "existing-uid",
+            "labels": {
+                "app.kubernetes.io/managed-by": MANAGED_BY,
+                "npa.nebius.ai/run-hash": run_hash,
+            },
+            "annotations": {"npa.nebius.ai/cleanup-owner": run_id},
+        }
+    }
+    monkeypatch.setattr(
+        workflow_cli,
+        "_workflow_owned_preflight_core_api",
+        lambda **_kwargs: core,
+    )
+
+    with workflow_cli._workflow_owned_preflight_service_accounts(
+        spec=SimpleNamespace(config={"runtime_prerequisites_mode": "workflow_owned"}),
+        run_id=run_id,
+        service_account_names={name},
+        namespace="workload",
+        context="exact-context",
+        kubeconfig="",
+    ):
+        pass
+
+    assert core.created == []
+    assert core.deleted == []
+    assert name in core.items
+
+
+def test_workflow_owned_image_preflight_rejects_foreign_existing_account(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from npa.workflows.sim2real.runtime_prerequisites import resource_identities
+
+    run_id = "foreign-run"
+    name = resource_identities(run_id)["base_service_account"]
+    core = _PreflightServiceAccounts()
+    core.items[name] = {
+        "metadata": {
+            "name": name,
+            "uid": "foreign-uid",
+            "labels": {},
+            "annotations": {},
+        }
+    }
+    monkeypatch.setattr(
+        workflow_cli,
+        "_workflow_owned_preflight_core_api",
+        lambda **_kwargs: core,
+    )
+
+    with pytest.raises(RuntimeError, match="foreign ownership"):
+        with workflow_cli._workflow_owned_preflight_service_accounts(
+            spec=SimpleNamespace(
+                config={"runtime_prerequisites_mode": "workflow_owned"}
+            ),
+            run_id=run_id,
+            service_account_names={name},
+            namespace="workload",
+            context="exact-context",
+            kubeconfig="",
+        ):
+            pass

@@ -1,0 +1,350 @@
+"""Collect successful geometry-aware teacher episodes for any sealed arm profile."""
+
+from __future__ import annotations
+
+import argparse
+from dataclasses import replace
+import hashlib
+import json
+import os
+from pathlib import Path
+import sys
+import time
+import traceback
+from typing import Any
+
+from npa.workflows.lerobot_transfer_data import write_json
+from npa.workflows.sim2real.interchange_contract import (
+    Transform,
+    policy_profile_from_dict,
+    rigid_object_profile_from_dict,
+    robot_sensor_profile_from_dict,
+    surface_placement_task_from_dict,
+)
+from npa.workflows.sim2real.interchange_isaac_runtime import (
+    _load,
+    _local_object_asset,
+    _run_teacher,
+    _sha256,
+)
+from npa.workflows.sim2real.isaac_kit_state import validated_kit_args
+
+
+SCHEMA = "npa.sim2real.policy_interchange.teacher_collection.v1"
+SPLITS = ("train", "validation", "gold")
+
+
+def _scenario_offset(split: str, episode: int) -> tuple[float, float]:
+    """Return a deterministic split-disjoint object-layout offset in metres."""
+
+    if split not in SPLITS or episode < 0:
+        raise ValueError(
+            "teacher scenario requires a known split and nonnegative index"
+        )
+    digest = hashlib.sha256(f"{split}:{episode}".encode()).digest()
+    unit_y = int.from_bytes(digest[:8], "big") / float(2**64 - 1)
+    x_ranges = {
+        "train": (-0.025, -0.005),
+        "validation": (0.0, 0.010),
+        "gold": (0.015, 0.025),
+    }
+    low, high = x_ranges[split]
+    unit_x = int.from_bytes(digest[8:16], "big") / float(2**64 - 1)
+    return low + (high - low) * unit_x, -0.025 + 0.05 * unit_y
+
+
+def _scenario_prop(prop: Any, split: str, episode: int) -> tuple[Any, dict[str, Any]]:
+    offset_x, offset_y = _scenario_offset(split, episode)
+    translation = prop.world_from_root.translation_m
+    world_from_root = Transform(
+        (
+            translation[0] + offset_x,
+            translation[1] + offset_y,
+            translation[2],
+        ),
+        prop.world_from_root.quaternion_xyzw,
+    )
+    scenario = {
+        "split": split,
+        "episode_index": episode,
+        "object_translation_offset_m": [offset_x, offset_y, 0.0],
+        "world_from_root": world_from_root.to_dict(),
+    }
+    scenario["identity"] = hashlib.sha256(
+        json.dumps(scenario, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    return replace(prop, world_from_root=world_from_root), scenario
+
+
+def _asset_binding(
+    preparation: dict[str, Any], manifest: dict[str, Any], path: Path
+) -> None:
+    asset = preparation.get("robot_asset") or {}
+    contract = asset.get("robot_spec") if isinstance(asset, dict) else None
+    if not isinstance(contract, dict):
+        raise RuntimeError("preparation lacks normalized RobotSpec bytes")
+    identity = str((preparation.get("robot") or {}).get("identity") or "")
+    source_tree = str((preparation.get("robot") or {}).get("bundle_sha256") or "")
+    if (
+        manifest.get("embodiment_digest") != identity
+        or manifest.get("source_tree_sha256") != source_tree
+        or manifest.get("usd_sha256") != _sha256(path)
+    ):
+        raise RuntimeError("fetched robot asset manifest does not bind this profile")
+
+
+def _episode_artifacts(directory: Path) -> dict[str, str]:
+    names = (
+        "obs_workspace.npy",
+        "obs_wrist.npy",
+        "state.npy",
+        "actions.npy",
+        "timestamps.npy",
+        "metadata.json",
+        "native_teacher.json",
+    )
+    return {name: _sha256(directory / name) for name in names}
+
+
+def _profiles(args: argparse.Namespace) -> tuple[dict, dict, Any, Any, Any, Any, Path]:
+    """Load and validate the sealed native collection profiles."""
+
+    preparation = _load(args.preparation_path)
+    manifest = _load(args.robot_asset_manifest_path)
+    _asset_binding(preparation, manifest, args.robot_usd_path)
+    robot = robot_sensor_profile_from_dict(preparation.get("robot") or {})
+    prop = rigid_object_profile_from_dict(preparation.get("object") or {})
+    task = surface_placement_task_from_dict(preparation.get("task") or {})
+    policy = policy_profile_from_dict(preparation.get("policy") or {})
+    return (
+        preparation,
+        manifest,
+        robot,
+        prop,
+        task,
+        policy,
+        _local_object_asset(args.input_path, prop),
+    )
+
+
+def _episode_record(
+    split: str,
+    index: int,
+    seed: int,
+    scenario: dict[str, Any],
+    teacher: dict[str, Any],
+    directory: Path,
+) -> dict[str, Any]:
+    """Build one immutable teacher episode receipt."""
+
+    return {
+        "split": split,
+        "episode_index": index,
+        "seed": seed,
+        "scenario": scenario,
+        "frames": len(teacher["controls"]),
+        "ordered_event_steps": teacher["ordered_event_steps"],
+        "task_success": teacher["task_success"],
+        "artifacts": _episode_artifacts(directory),
+    }
+
+
+def _collect_episodes(
+    *,
+    gym: Any,
+    args: argparse.Namespace,
+    asset: dict,
+    robot: Any,
+    prop: Any,
+    task: Any,
+    policy: Any,
+    object_usd_path: Path,
+    counts: dict[str, int],
+) -> list[dict[str, Any]]:
+    """Collect every configured split with deterministic disjoint scenarios."""
+
+    episodes: list[dict[str, Any]] = []
+    for split in SPLITS:
+        for index in range(counts[split]):
+            scenario_prop, scenario = _scenario_prop(prop, split, index)
+            directory = args.output_path / "splits" / split / f"episode_{index:04d}"
+            episode_args = argparse.Namespace(**vars(args))
+            episode_args.seed = args.seed + SPLITS.index(split) * 1_000_000 + index
+            episode_args.output_path = directory
+            teacher = _run_teacher(
+                gym=gym,
+                args=episode_args,
+                robot=robot,
+                robot_spec=asset["robot_spec"],
+                prop=scenario_prop,
+                task=task,
+                object_usd_path=object_usd_path,
+                control_hz=policy.action.control_hz,
+                episode_directory=directory,
+            )
+            episodes.append(
+                _episode_record(
+                    split, index, episode_args.seed, scenario, teacher, directory
+                )
+            )
+    return episodes
+
+
+def _report(
+    manifest: dict,
+    robot: Any,
+    prop: Any,
+    task: Any,
+    policy: Any,
+    counts: dict[str, int],
+    episodes: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Build the complete collection and lineage report."""
+
+    return {
+        "schema": SCHEMA,
+        "status": "passed",
+        "robot_identity": robot.identity,
+        "robot_source_tree_sha256": robot.bundle_sha256,
+        "robot_usd_sha256": manifest["usd_sha256"],
+        "object_identity": prop.identity,
+        "object_source_sha256": prop.source_sha256,
+        "task_identity": task.identity,
+        "policy_backend": policy.backend,
+        "counts": counts,
+        "episodes": episodes,
+        "all_teacher_episodes_successful": all(row["task_success"] for row in episodes),
+        "train_only_normalization_required": True,
+        "privileged_object_state_policy_input": False,
+    }
+
+
+def run(args: argparse.Namespace) -> dict[str, Any]:
+    """Collect the configured split counts and reject any unsuccessful teacher."""
+
+    import gymnasium as gym
+
+    preparation, manifest, robot, prop, task, policy, object_usd_path = _profiles(args)
+    asset = preparation["robot_asset"]
+    args.output_path.mkdir(parents=True, exist_ok=False)
+    counts = {
+        "train": args.train_episodes,
+        "validation": args.validation_episodes,
+        "gold": args.gold_episodes,
+    }
+    episodes = _collect_episodes(
+        gym=gym,
+        args=args,
+        asset=asset,
+        robot=robot,
+        prop=prop,
+        task=task,
+        policy=policy,
+        object_usd_path=object_usd_path,
+        counts=counts,
+    )
+    report = _report(manifest, robot, prop, task, policy, counts, episodes)
+    write_json(args.output_path / "report.json", report)
+    return report
+
+
+def build_parser() -> argparse.ArgumentParser:
+    """Build the isolated native teacher runtime argument parser."""
+
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--input-path", type=Path, required=True)
+    parser.add_argument("--preparation-path", type=Path, required=True)
+    parser.add_argument("--robot-usd-path", type=Path, required=True)
+    parser.add_argument("--robot-asset-manifest-path", type=Path, required=True)
+    parser.add_argument("--output-path", type=Path, required=True)
+    parser.add_argument("--train-episodes", type=int, required=True)
+    parser.add_argument("--validation-episodes", type=int, required=True)
+    parser.add_argument("--gold-episodes", type=int, required=True)
+    parser.add_argument("--seed", type=int, required=True)
+    return parser
+
+
+def _failure_receipt(args: argparse.Namespace, error: BaseException) -> dict[str, Any]:
+    """Persist a sanitized native failure before Isaac cleanup can terminate."""
+
+    receipt = {
+        "schema": "npa.sim2real.policy_interchange.teacher_runtime_failure.v1",
+        "status": "failed",
+        "error_type": type(error).__name__,
+        "error": str(error),
+        "system_exit_code": error.code if isinstance(error, SystemExit) else None,
+        "report_written": (args.output_path / "report.json").is_file(),
+    }
+    args.output_path.mkdir(parents=True, exist_ok=True)
+    write_json(args.output_path / "runtime_failure.json", receipt)
+    print(
+        "NPA_TEACHER_RUNTIME_FAILURE " + json.dumps(receipt, sort_keys=True),
+        file=sys.stderr,
+        flush=True,
+    )
+    traceback.print_exception(error, file=sys.stderr)
+    return receipt
+
+
+def _run_with_app(args: argparse.Namespace, app: Any) -> dict[str, Any]:
+    """Run collection without allowing Isaac cleanup to erase its failure."""
+
+    result: dict[str, Any] | None = None
+    failure: BaseException | None = None
+    started = time.monotonic()
+    try:
+        result = run(args)
+        result["duration_seconds"] = time.monotonic() - started
+        write_json(args.output_path / "report.json", result)
+    except BaseException as error:
+        failure = error
+        _failure_receipt(args, error)
+    try:
+        app.close()
+    except BaseException as close_error:
+        if failure is None:
+            raise
+        print(
+            "NPA_TEACHER_RUNTIME_CLOSE_FAILURE "
+            + json.dumps(
+                {
+                    "error_type": type(close_error).__name__,
+                    "error": str(close_error),
+                },
+                sort_keys=True,
+            ),
+            file=sys.stderr,
+            flush=True,
+        )
+    if failure is not None:
+        if isinstance(failure, SystemExit):
+            raise RuntimeError(
+                "native teacher runtime exited before completing its report "
+                f"(SystemExit code={failure.code!r})"
+            ) from failure
+        raise failure.with_traceback(failure.__traceback__)
+    if result is None:  # pragma: no cover - defensive invariant
+        raise RuntimeError("native teacher runtime returned no result")
+    return result
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Run the native teacher runtime and write its episode receipt."""
+
+    args = build_parser().parse_args(argv)
+    if min(args.train_episodes, args.validation_episodes, args.gold_episodes) < 1:
+        raise ValueError("every teacher split requires at least one episode")
+    if args.seed < 0:
+        raise ValueError("seed must be nonnegative")
+    os.environ["OMNI_TELEMETRY_DISABLE_ANONYMOUS_DATA"] = "1"
+    kit_args = validated_kit_args()
+    from isaaclab.app import AppLauncher
+
+    app = AppLauncher(headless=True, enable_cameras=True, kit_args=kit_args).app
+    result = _run_with_app(args, app)
+    print(json.dumps(result, sort_keys=True), flush=True)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -1560,12 +1560,8 @@ def submit_cmd(
         # the runtime ledger, not only a later materializer's environment.
         if s3_bucket:
             substitutions["bucket"] = s3_bucket
-        elif "bucket" not in substitutions and os.environ.get("NPA_S3_BUCKET"):
-            substitutions["bucket"] = os.environ["NPA_S3_BUCKET"]
         if s3_prefix:
             substitutions["prefix"] = s3_prefix
-        elif "prefix" not in substitutions and os.environ.get("NPA_S3_PREFIX"):
-            substitutions["prefix"] = os.environ["NPA_S3_PREFIX"]
     if preset and not is_npa_spec:
         _fail("--preset is supported only for npa.workflow/v0.0.1 specs")
         return
@@ -1584,11 +1580,27 @@ def submit_cmd(
         from npa.orchestration.npa_workflow.submit import load_spec_for_submit
 
         try:
+            declared_npa_spec = load_spec(yaml_path)
             substitutions = preset_overrides(
-                workflow_name=load_spec(yaml_path).name,
+                workflow_name=declared_npa_spec.name,
                 preset=preset,
                 explicit=substitutions,
             )
+            # An owned daemon can retain storage variables from an earlier run.
+            # They are fallbacks only for specs that do not declare their own
+            # destination; silently treating them as explicit overrides makes a
+            # validated plan and the live submit write to different run roots.
+            for key, env_name in (
+                ("bucket", "NPA_S3_BUCKET"),
+                ("prefix", "NPA_S3_PREFIX"),
+            ):
+                inherited = os.environ.get(env_name)
+                if (
+                    key not in substitutions
+                    and key not in declared_npa_spec.config
+                    and inherited
+                ):
+                    substitutions[key] = inherited
             # This is the authoritative spec for every later preflight.  It is
             # intentionally loaded before credentials, images, ledgers, input
             # staging, provisioning, or accelerator discovery.
@@ -2557,6 +2569,7 @@ def submit_cmd(
             image_digest_pins = _preflight_submit_images(
                 yaml_path,
                 spec=merged_npa_spec,
+                run_id=resolved_run_id,
                 options=image_preflight_options,
                 assume_decision=assume_decision,
                 enabled=preflight_images and not plan_only,
@@ -2666,6 +2679,7 @@ def submit_cmd(
             image_digest_pins = _preflight_submit_images(
                 yaml_path,
                 spec=merged_npa_spec,
+                run_id=resolved_run_id,
                 options=image_preflight_options,
                 assume_decision=assume_decision,
                 enabled=True,
@@ -3011,6 +3025,7 @@ def submit_cmd(
                 refreshed_pins = _preflight_submit_images(
                     yaml_path,
                     spec=merged_npa_spec,
+                    run_id=resolved_run_id,
                     options=replace(npa_render_options, image_digest_pins={}),
                     assume_decision=assume_decision,
                     enabled=preflight_images,
@@ -4972,6 +4987,7 @@ def _preflight_submit_images(
     yaml_path: Path,
     *,
     spec=None,
+    run_id: str = "",
     options: SkypilotRenderOptions,
     assume_decision: str,
     enabled: bool,
@@ -5004,10 +5020,10 @@ def _preflight_submit_images(
 
     try:
         resolved_spec = spec or load_spec(yaml_path)
-        run_id = f"{resolved_spec.name}-preflight"
+        selected_run_id = run_id or f"{resolved_spec.name}-preflight"
         images, pull_requirements = _plan_preflight_image_requirements(
             resolved_spec,
-            run_id=run_id,
+            run_id=selected_run_id,
             options=options,
             assume_decision=assume_decision,
             infra=infra,
@@ -5086,50 +5102,60 @@ def _preflight_submit_images(
         )
         for image, service_account_names in service_account_names_by_image.items()
     }
-    checks = check_image_pulls_with_credentials(
-        images,
-        mint=True,
-        pull_secrets_by_image=pull_secrets_by_image,
-        pull_secret_sets_by_image=pull_secret_sets_by_image,
-        service_account_names_by_image=service_account_names_by_image,
-        pod_placements_by_image=pod_placements_by_image,
-        operator_images=operator_images,
-        kubernetes_images=kubernetes_images,
-        namespace=target_namespace,
-        context=target_context,
-        kubeconfig=target_kubeconfig,
-        target_pull_timeout_seconds=(
-            image_bootstrap_timeout_seconds
-            if image_pull_timeout_seconds is None
-            else image_pull_timeout_seconds
-        ),
-    )
-    blocking = []
-    for check in checks:
-        if check.ok:
-            continue
-        blocking.append(check)
-    if blocking:
-        detail = "\n".join(check.render() for check in blocking)
-        _fail(
-            "image-preflight failed; the run would sit in ImagePullBackOff rather than "
-            f"fail, so it was not submitted:\n{detail}"
-        )
-    contract_checks = _preflight_image_bootstrap_contracts(
-        images=images,
-        pull_checks=checks,
-        context=target_context,
-        namespace=target_namespace,
-        kubeconfig=target_kubeconfig,
-        pull_secrets_by_image=pull_secrets_by_image,
-        service_accounts_by_image=service_accounts_by_image,
-        pod_placements_by_image={
-            image: (placements[0] if placements else {})
-            for image, placements in pod_placements_by_image.items()
+    with _workflow_owned_preflight_service_accounts(
+        spec=resolved_spec,
+        run_id=selected_run_id,
+        service_account_names={
+            name for names in service_account_names_by_image.values() for name in names
         },
-        observation_timeout_seconds=image_bootstrap_timeout_seconds,
-        bind_requested_images=True,
-    )
+        namespace=target_namespace,
+        context=target_context,
+        kubeconfig=target_kubeconfig,
+    ):
+        checks = check_image_pulls_with_credentials(
+            images,
+            mint=True,
+            pull_secrets_by_image=pull_secrets_by_image,
+            pull_secret_sets_by_image=pull_secret_sets_by_image,
+            service_account_names_by_image=service_account_names_by_image,
+            pod_placements_by_image=pod_placements_by_image,
+            operator_images=operator_images,
+            kubernetes_images=kubernetes_images,
+            namespace=target_namespace,
+            context=target_context,
+            kubeconfig=target_kubeconfig,
+            target_pull_timeout_seconds=(
+                image_bootstrap_timeout_seconds
+                if image_pull_timeout_seconds is None
+                else image_pull_timeout_seconds
+            ),
+        )
+        blocking = []
+        for check in checks:
+            if check.ok:
+                continue
+            blocking.append(check)
+        if blocking:
+            detail = "\n".join(check.render() for check in blocking)
+            _fail(
+                "image-preflight failed; the run would sit in ImagePullBackOff rather "
+                f"fail, so it was not submitted:\n{detail}"
+            )
+        contract_checks = _preflight_image_bootstrap_contracts(
+            images=images,
+            pull_checks=checks,
+            context=target_context,
+            namespace=target_namespace,
+            kubeconfig=target_kubeconfig,
+            pull_secrets_by_image=pull_secrets_by_image,
+            service_accounts_by_image=service_accounts_by_image,
+            pod_placements_by_image={
+                image: (placements[0] if placements else {})
+                for image, placements in pod_placements_by_image.items()
+            },
+            observation_timeout_seconds=image_bootstrap_timeout_seconds,
+            bind_requested_images=True,
+        )
     typer.echo(
         f"image-preflight: {len(checks)} image(s) pullable and bootstrap-compatible",
         err=True,
@@ -5139,6 +5165,151 @@ def _preflight_submit_images(
         for item in contract_checks
         if str(item.get("_requested_image") or "").strip()
     }
+
+
+def _workflow_owned_preflight_core_api(*, context: str, kubeconfig: str):
+    """Load the exact Kubernetes client used for ephemeral preflight identities."""
+
+    from kubernetes import client, config
+
+    api_client = config.new_client_from_config(
+        config_file=kubeconfig or None,
+        context=context,
+    )
+    return client.CoreV1Api(api_client)
+
+
+@contextmanager
+def _workflow_owned_preflight_service_accounts(
+    *,
+    spec,
+    run_id: str,
+    service_account_names: Collection[str],
+    namespace: str,
+    context: str,
+    kubeconfig: str,
+):
+    """Temporarily materialize exact future run-owned pull identities.
+
+    Clean-start workflows declare controller ServiceAccounts that are created by
+    their first prerequisite stage. Image pull and bootstrap probes run before
+    that stage, so they need the same names to exist briefly. Only deterministic
+    identities owned by this run are admitted. Existing exact-owned identities
+    are retained (resume); newly created minimal identities are UID-bound and
+    removed after both probes.
+    """
+
+    config = getattr(spec, "config", {}) or {}
+    if str(config.get("runtime_prerequisites_mode") or "") != "workflow_owned":
+        yield
+        return
+    if not namespace or not context:
+        raise RuntimeError(
+            "workflow-owned image preflight requires an exact Kubernetes target"
+        )
+
+    from npa.workflows.sim2real.runtime_prerequisites import (
+        MANAGED_BY,
+        resource_identities,
+    )
+
+    identities = resource_identities(run_id)
+    allowed = {
+        identities["base_service_account"],
+        identities["adapted_service_account"],
+    }
+    selected = sorted(set(service_account_names) & allowed)
+    if not selected:
+        yield
+        return
+
+    run_hash = hashlib.sha256(run_id.encode()).hexdigest()[:16]
+    labels = {
+        "app.kubernetes.io/managed-by": MANAGED_BY,
+        "npa.nebius.ai/run-hash": run_hash,
+    }
+    annotations = {"npa.nebius.ai/cleanup-owner": run_id}
+    core = _workflow_owned_preflight_core_api(
+        context=context,
+        kubeconfig=kubeconfig,
+    )
+    created: dict[str, str] = {}
+
+    def metadata_value(obj, field: str):
+        if isinstance(obj, dict):
+            return (obj.get("metadata") or {}).get(field)
+        metadata = getattr(obj, "metadata", None)
+        return getattr(metadata, field, None) if metadata is not None else None
+
+    try:
+        for name in selected:
+            try:
+                existing = core.read_namespaced_service_account(name, namespace)
+            except Exception as exc:
+                if getattr(exc, "status", None) != 404:
+                    raise
+                body = {
+                    "apiVersion": "v1",
+                    "kind": "ServiceAccount",
+                    "metadata": {
+                        "name": name,
+                        "namespace": namespace,
+                        "labels": labels,
+                        "annotations": annotations,
+                    },
+                    "automountServiceAccountToken": False,
+                }
+                try:
+                    existing = core.create_namespaced_service_account(namespace, body)
+                except Exception as create_exc:
+                    raise RuntimeError(
+                        f"could not create exact preflight ServiceAccount {name!r}"
+                    ) from create_exc
+                uid = str(metadata_value(existing, "uid") or "")
+                if not uid:
+                    raise RuntimeError(
+                        f"created preflight ServiceAccount {name!r} has no UID"
+                    )
+                created[name] = uid
+            actual_labels = dict(metadata_value(existing, "labels") or {})
+            actual_annotations = dict(metadata_value(existing, "annotations") or {})
+            if any(actual_labels.get(key) != value for key, value in labels.items()):
+                raise RuntimeError(
+                    f"workflow-owned ServiceAccount {name!r} has foreign ownership"
+                )
+            if any(
+                actual_annotations.get(key) != value
+                for key, value in annotations.items()
+            ):
+                raise RuntimeError(
+                    f"workflow-owned ServiceAccount {name!r} has foreign cleanup owner"
+                )
+        yield
+    finally:
+        for name, uid in reversed(tuple(created.items())):
+            current = core.read_namespaced_service_account(name, namespace)
+            if str(metadata_value(current, "uid") or "") != uid:
+                raise RuntimeError(
+                    f"preflight ServiceAccount {name!r} changed before cleanup"
+                )
+            core.delete_namespaced_service_account(
+                name,
+                namespace,
+                body={"preconditions": {"uid": uid}},
+            )
+            deadline = time.monotonic() + 30.0
+            while True:
+                try:
+                    core.read_namespaced_service_account(name, namespace)
+                except Exception as exc:
+                    if getattr(exc, "status", None) == 404:
+                        break
+                    raise
+                if time.monotonic() >= deadline:
+                    raise RuntimeError(
+                        f"preflight ServiceAccount {name!r} was not deleted"
+                    )
+                time.sleep(0.2)
 
 
 def _image_pull_execution_paths(
@@ -10270,13 +10441,32 @@ def _check_static_plan_render(
         for document in yaml.safe_load_all(rendered)
         if isinstance(document, dict) and "resources" in document
     )
-    return {
+    result: dict[str, object] = {
         "status": "valid",
         "tasks": task_count,
         "sha256": hashlib.sha256(rendered.encode("utf-8")).hexdigest(),
         "provider_actions": False,
         "registry_secrets_materialized": False,
     }
+    from npa.orchestration.npa_workflow import build_failure_plan
+
+    failure_plan = build_failure_plan(
+        spec, run_id=run_id, assume_decision=plan.assume_decision
+    )
+    if failure_plan is not None:
+        failure_rendered = render_skypilot_yaml(
+            spec,
+            failure_plan,
+            run_id=run_id,
+            options=options,
+        )
+        assert_no_unresolved_placeholders(failure_rendered)
+        result["failure_handler"] = {
+            "state": spec.on_failure,
+            "tasks": len(failure_plan.steps),
+            "sha256": hashlib.sha256(failure_rendered.encode("utf-8")).hexdigest(),
+        }
+    return result
 
 
 def _emit_render_check(render_check: Mapping[str, object]) -> None:
@@ -10285,6 +10475,13 @@ def _emit_render_check(render_check: Mapping[str, object]) -> None:
     typer.echo(
         f"render: valid (tasks={render_check['tasks']} sha256={render_check['sha256']})"
     )
+    failure = render_check.get("failure_handler")
+    if isinstance(failure, Mapping):
+        typer.echo(
+            "failure handler: valid "
+            f"(state={failure['state']} tasks={failure['tasks']} "
+            f"sha256={failure['sha256']})"
+        )
 
 
 @app.command("plan-spec")

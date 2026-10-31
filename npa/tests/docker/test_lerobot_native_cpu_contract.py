@@ -5,6 +5,7 @@ from __future__ import annotations
 import ast
 import importlib.util
 from pathlib import Path
+import subprocess
 from types import CodeType, FunctionType
 
 from packaging.requirements import Requirement
@@ -80,13 +81,10 @@ def test_default_dependencies_identify_secure_integration_and_decoder_abi():
     check = "/opt/lerobot/venv/bin/pip check"
     assert recipe.count(check) == 1
     assert recipe.index(check) > recipe.index("Unsupported LeRobot package version")
-    assert "COPY --chown=ubuntu:ubuntu src/npa /opt/npa/src/npa" not in recipe
+    assert "COPY --chown=ubuntu:ubuntu src/npa /opt/npa/src/npa" in recipe
     expected_copies = (
-        ("src/npa/__init__.py", "/opt/npa/src/npa/__init__.py"),
-        ("src/npa/clients/__init__.py", "/opt/npa/src/npa/clients/__init__.py"),
-        ("src/npa/clients/storage.py", "/opt/npa/src/npa/clients/storage.py"),
-        ("src/npa/server", "/opt/npa/src/npa/server"),
-        ("src/npa/smoke", "/opt/npa/src/npa/smoke"),
+        ("src/npa", "/opt/npa/src/npa"),
+        ("workflows", "/opt/npa/workflows"),
     )
     for source_path, target_path in expected_copies:
         assert f"COPY --chown=ubuntu:ubuntu {source_path} {target_path}" in recipe
@@ -94,17 +92,38 @@ def test_default_dependencies_identify_secure_integration_and_decoder_abi():
         "COPY --chown=ubuntu:ubuntu src/npa/clients /opt/npa/src/npa/clients"
         not in recipe
     )
-    assert "stage's own NPA install" in recipe
-    assert "shipping it here would make the repair's import" in recipe
+    assert "NPA_BAKED_PYTHON=/opt/lerobot/venv/bin/python" in recipe
+    assert '"$NPA_BAKED_PYTHON" -m pip install --no-deps -e /opt/npa' in recipe
+    assert "npa.workflows.sim2real.smolvla_service_lifecycle" in recipe
+    assert "import npa.workflows.sim2real.interchange_stage" in recipe
+    assert "npa.workbench.lerobot.policy_container" in recipe
     assert "prepare-secure-wheel.py" in recipe
     assert "lerobot==0.5.1+npa.secure4" in lock
     assert (
-        'ENTRYPOINT ["/opt/lerobot/venv/bin/python", "-m", "npa.server.app"]' in recipe
+        "COPY --chmod=0755 docker/workbench/common/workflow_runtime_entrypoint.sh"
+        in recipe
     )
+    assert "/usr/local/bin/npa-workflow-entrypoint" in recipe
+    assert "printf workflow-argv-ok" in recipe
+    assert 'ENTRYPOINT ["/usr/local/bin/npa-workflow-entrypoint"]' in recipe
+    assert 'CMD ["/opt/lerobot/venv/bin/python", "-m", "npa.server.app"]' in recipe
     assert 'CMD /opt/lerobot/venv/bin/python -c "' in recipe
     assert recipe.index("ENV PATH=/usr/bin:$PATH") < recipe.index(
         'RUN if [ "${LEROBOT_VERSION}" = "0.5.1" ]; then'
     )
+
+
+def test_workflow_entrypoint_executes_orchestrator_argv_without_server_prefix():
+    entrypoint = ROOT / "npa/docker/workbench/common/workflow_runtime_entrypoint.sh"
+    result = subprocess.run(
+        [str(entrypoint), "/bin/sh", "-c", "printf workflow-argv-ok"],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0
+    assert result.stdout == "workflow-argv-ok"
+    assert result.stderr == ""
 
 
 def test_security_only_metadata_edges_do_not_become_runtime_manifest_pins():

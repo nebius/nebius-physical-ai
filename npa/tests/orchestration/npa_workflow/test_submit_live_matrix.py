@@ -331,6 +331,26 @@ def test_sim2real_live_matrix_exercises_public_seed_preset() -> None:
     assert argv[argv.index("--preset") + 1] == "public-franka-lift"
 
 
+def test_object_eval_live_matrix_preserves_evaluation_only_boundary() -> None:
+    case = next(
+        case
+        for case in SUBMIT_LIVE_MATRIX
+        if case.spec == "sim2real-policy-interchange-object-eval.yaml"
+    )
+    assert case.runtime and case.plan_only
+    assert set(case.secret_envs) == {"AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"}
+
+    path = resolve_npa_workflow_spec(case.spec)
+    assert path is not None
+    spec = load_spec(path)
+    assert spec.initial == "prepare-contract"
+    assert "train" not in spec.states
+    assert spec.states["evaluate-object-cohort"].tool_ref == (
+        "workbench.sim2real.policy_interchange_non_franka_execute"
+    )
+    assert spec.on_failure == "failure-cleanup-runtime-prerequisites"
+
+
 def test_every_shipped_catalog_spec_has_one_live_matrix_case() -> None:
     """A shipped spec without a matrix case is unobserved, not passing."""
 

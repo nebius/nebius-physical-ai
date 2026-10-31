@@ -117,6 +117,25 @@ def test_both_versions_correct_the_reviewed_source_in_the_original_install_layer
     assert "install -o root -g root -m 0644" in text
 
 
+def test_runtime_binds_the_exact_npa_source_revision():
+    """The official build argument must become the baked runtime attestation."""
+
+    instructions = _instructions(DOCKERFILE.read_text())
+    source_arguments = [
+        index
+        for index, (kind, body) in enumerate(instructions)
+        if kind == "ARG" and body == "NPA_SOURCE_SHA"
+    ]
+    attestations = [
+        index
+        for index, (kind, body) in enumerate(instructions)
+        if kind == "ENV" and "NPA_IMAGE_SOURCE_SHA=${NPA_SOURCE_SHA}" in body
+    ]
+    assert len(source_arguments) == 1
+    assert len(attestations) == 1
+    assert source_arguments[0] < attestations[0]
+
+
 def test_root_owned_dependency_audit_precedes_later_source_copies():
     """Catch backend output outside the ubuntu-owned virtualenv before later COPYs."""
 
@@ -142,7 +161,7 @@ def test_root_owned_dependency_audit_precedes_later_source_copies():
         for index, (kind, body) in enumerate(
             instructions[root_user_index + 1 :], root_user_index + 1
         )
-        if kind == "COPY" and "src/npa/server" in body
+        if kind == "COPY" and "src/npa /opt/npa/src/npa" in body
     )
     assert dependency_index < root_user_index < root_user_index + 1 < first_runtime_copy
 
@@ -175,6 +194,12 @@ def test_bootstrap_sshd_is_baked_before_apt_hardening_and_has_no_host_keys():
     system_packages = (RECIPE / "install_immutable_system_packages.sh").read_text()
     assert "openssh-server=1:8.9p1-3ubuntu0.16" in system_packages
     assert "netcat-openbsd=1.218-4ubuntu1" in system_packages
+    assert "fuse=2.9.9-5ubuntu3" in system_packages
+    assert "wget=1.21.2-2ubuntu1.4" in system_packages
+    assert "dpkg-query -W -f='${Version}' fuse" in system_packages
+    assert "dpkg-query -W -f='${Version}' wget" in system_packages
+    assert "test -x /bin/fusermount" in system_packages
+    assert "test -x /usr/bin/wget" in system_packages
     assert "python3=3.10.6-1~22.04.1" in system_packages
     assert "python3=3.10.4-0ubuntu2" not in system_packages
     assert "https://snapshot.ubuntu.com/ubuntu/20260820T000000Z" in system_packages
@@ -206,6 +231,23 @@ def test_bootstrap_sshd_is_baked_before_apt_hardening_and_has_no_host_keys():
     assert "linux-libc-dev" in hardening
 
 
+def test_final_hardened_image_retains_skypilot_core_setup_packages():
+    """Refuse an image that can build but fails SkyPilot's first setup pod."""
+
+    instructions = _instructions(DOCKERFILE.read_text())
+    final_contract = next(
+        body
+        for kind, body in reversed(instructions)
+        if kind == "RUN" and "dpkg-query -W -f='${Version}' fuse" in body
+    )
+    assert "dpkg-query -W -f='${Version}' fuse" in final_contract
+    assert "= 2.9.9-5ubuntu3" in final_contract
+    assert "dpkg-query -W -f='${Version}' wget" in final_contract
+    assert "= 1.21.2-2ubuntu1.4" in final_contract
+    assert "test -x /bin/fusermount" in final_contract
+    assert "test -x /usr/bin/wget" in final_contract
+
+
 def test_shared_python_bootstraps_bind_the_same_exact_debian_artifacts():
     common = (
         ROOT / "npa/docker/workbench/common/install_python312_jammy.sh"
@@ -218,6 +260,8 @@ def test_shared_python_bootstraps_bind_the_same_exact_debian_artifacts():
     assert len(common_pins) == len(lerobot_pins) == 6
     assert set(common_pins) == set(lerobot_pins)
     assert all("_3.12.16-1+jammy1_" in name for name, _ in common_pins)
+    assert 'test "$(python3.12 --version)" = "Python 3.12.16"' in lerobot
+    assert "Python 3.12.15" not in lerobot
     assert "sha256sum --check --strict" in common
     assert "sha256sum --check --status" in lerobot
 
@@ -273,6 +317,13 @@ def test_build_dependency_closure_has_no_moving_repository_or_python_resolution(
         "packaging==25.0 "
         "--hash=sha256:29572ef2b1f17581046b3a2227d5c611fb25ec70ca1ba8554b24b0e69331a484"
     ) in bootstrap_lock
+    assert (
+        "pip==26.2.2 "
+        "--hash=sha256:fd7f4dfa8190e014013b9f08f3e973f4e4c26ffd179a204895533a7254813a70"
+    ) in bootstrap_lock
+    assert "pip==26.2.1" not in bootstrap_lock
+    assert "from pip._vendor import certifi; print(certifi.__version__)" in text
+    assert "= 2026.10.19" in text
     assert ".venv-local/" in (ROOT / "npa/.dockerignore").read_text()
     assert "/npa/.venv-local/" in (ROOT / ".gitignore").read_text()
     for name, local_wheel, wheel_hash in (

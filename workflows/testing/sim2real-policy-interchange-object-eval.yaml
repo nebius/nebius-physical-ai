@@ -1,0 +1,211 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+
+metadata:
+  name: sim2real-policy-interchange-object-eval
+  description: >
+    Evaluation-only zero-shot rigid-object swap for an already-qualified native
+    SmolVLA checkpoint. The workflow keeps the Franka embodiment, controller,
+    calibrated workspace and wrist cameras, surface-placement task and physical
+    success contract fixed while replacing only the rigid object with an
+    offset-origin spool. It does not train, reload, or claim object adaptation.
+
+config:
+  bucket: example-bucket
+  prefix: "sim2real-policy-interchange-object-eval/{{run.id}}"
+  root_uri: "s3://{{config.bucket}}/{{config.prefix}}"
+  component_root_uri: "{{config.root_uri}}"
+  source_sha: "0000000000000000000000000000000000000000"
+  require_baked_npa: "1"
+  baked_npa_import: npa.workflows.sim2real.interchange_isaac_entry
+
+  profile_uri: "s3://example-bucket/private-profiles/franka-offset-spool-smolvla/"
+  execution_profile: ""
+  non_franka_prepared_robot_uri: "s3://example-bucket/private-profiles/franka-offset-spool-smolvla/"
+  adapted_checkpoint_uri: "s3://example-bucket/private-checkpoints/franka-cube-smolvla-10k/"
+  adapted_policy_adapter_uri: "{{config.root_uri}}/stage_01_prepare/policy-adapter.json"
+
+  cpu_image: "registry.example.invalid/lerobot@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+  isaac_image: "registry.example.invalid/isaac-lab@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+  runtime_image: "registry.example.invalid/lerobot@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+  cpu_image_source_sha: "{{config.source_sha}}"
+  isaac_image_source_sha: "{{config.source_sha}}"
+  runtime_image_source_sha: "{{config.source_sha}}"
+  baked_image_source_sha_by_config_key:
+    cpu_image: cpu_image_source_sha
+    isaac_image: isaac_image_source_sha
+    runtime_image: runtime_image_source_sha
+
+  runtime_prerequisites_mode: workflow_owned
+  service_namespace: default
+  service_auth_secret: "npa-smolvla-object-{{run.id}}-auth"
+  base_service_account: "npa-smolvla-object-{{run.id}}-base-ctl"
+  adapted_service_account: "npa-smolvla-object-{{run.id}}-adapted-ctl"
+  isaac_cache_pvc: "npa-smolvla-object-{{run.id}}-isaac-cache"
+  policy_cache_pvc: "npa-smolvla-object-{{run.id}}-policy-cache"
+  isaac_warm_job: "npa-smolvla-object-{{run.id}}-isaac-warm"
+  runtime_storage_class: compute-csi-default-sc
+  runtime_storage_access_mode: ReadWriteOnce
+  isaac_cache_size: 40Gi
+  policy_cache_size: 100Gi
+  isaac_cache_warm_timeout_seconds: "3600"
+  hf_token_secret: ""
+
+  service_gpu_count: "1"
+  service_gpu_node_selector_key: nebius.com/gpu-name
+  service_gpu_node_selector_value: RTXPRO6000
+  service_hardware_topology: single-rtxpro6000
+  service_server_cpus: "16"
+  service_server_memory: 96Gi
+  service_server_ready_timeout_seconds: "1200"
+  isaac_gpu_type: RTXPRO6000
+  isaac_runtime_class: nvidia
+  isaac_cpus: "12"
+  isaac_memory: 128Gi
+  isaac_disk_size: "100"
+  cpu_cpus: "8"
+  cpu_memory: 32Gi
+  cpu_disk_size: "40"
+
+  non_franka_decisions: "192"
+  non_franka_seed: "20321014"
+  non_franka_episodes: "8"
+  interchange_action_selection: uniform_temporal_ensemble
+
+  preparation_uri: "{{config.root_uri}}/stage_01_prepare/preparation.json"
+  policy_adapter_uri: "{{config.root_uri}}/stage_01_prepare/policy-adapter.json"
+  runtime_prerequisites_uri: "{{config.root_uri}}/runtime/prerequisites.json"
+  runtime_prerequisites_cleanup_uri: "{{config.root_uri}}/runtime/cleanup.json"
+  failure_runtime_prerequisites_cleanup_uri: "{{config.root_uri}}/failure_cleanup/runtime.json"
+  adapted_service_start_uri: "{{config.root_uri}}/stage_10_adapted_service/start.json"
+  adapted_service_cleanup_uri: "{{config.root_uri}}/stage_13_adapted_cleanup/cleanup.json"
+  non_franka_execution_uri: "{{config.root_uri}}/stage_11_object_execution/"
+
+resources:
+  cpu:
+    cloud: kubernetes
+    cpus: "{{config.cpu_cpus}}"
+    memory: "{{config.cpu_memory}}"
+    disk_size: "{{config.cpu_disk_size}}"
+    image: "{{config.cpu_image}}"
+  adapted-service-control:
+    cloud: kubernetes
+    cpus: "2"
+    memory: 8Gi
+    disk_size: "20"
+    image: "{{config.cpu_image}}"
+    kubernetes:
+      pod_config:
+        spec:
+          serviceAccountName: "{{config.adapted_service_account}}"
+  isaac:
+    cloud: kubernetes
+    accelerators: "{{config.isaac_gpu_type}}:1"
+    cpus: "{{config.isaac_cpus}}"
+    memory: "{{config.isaac_memory}}"
+    disk_size: "{{config.isaac_disk_size}}"
+    image: "{{config.isaac_image}}"
+    kubernetes:
+      provision_timeout: 2400
+      pod_config:
+        spec:
+          runtimeClassName: "{{config.isaac_runtime_class}}"
+          containers:
+            - name: ray-node
+              env:
+                - {name: NPA_ISAAC_CACHE_DIR, value: /opt/isaac-cache}
+                - {name: NPA_ISAAC_CACHE_READONLY, value: "1"}
+                - {name: NPA_ISAAC_BOOTSTRAP_OFFLINE, value: "1"}
+                - {name: NPA_BAKED_PYTHON, value: /isaac-sim/python.sh}
+                - {name: NPA_ISAAC_STATE_DIR, value: /tmp/npa-isaac-state}
+                - {name: NPA_ISAAC_KIT_ARGS, value: "--portable-root /tmp/npa-isaac-state/kit"}
+                - {name: OMNI_USER_DIR, value: /tmp/npa-isaac-state/omni-user}
+                - {name: OMNI_LOG_DIR, value: /tmp/npa-isaac-state/logs}
+                - {name: XDG_RUNTIME_DIR, value: /tmp/npa-isaac-state/xdg-runtime}
+                - {name: XDG_CACHE_HOME, value: /tmp/npa-isaac-state/xdg-cache}
+                - {name: XDG_CONFIG_HOME, value: /tmp/npa-isaac-state/xdg-config}
+                - {name: XDG_DATA_HOME, value: /tmp/npa-isaac-state/xdg-data}
+                - name: NPA_POLICY_AUTH_TOKEN
+                  valueFrom:
+                    secretKeyRef:
+                      name: "{{config.service_auth_secret}}"
+                      key: auth_token
+              volumeMounts:
+                - {name: npa-isaac-runtime-cache, mountPath: /opt/isaac-cache, readOnly: true}
+                - {name: npa-isaac-job-state, mountPath: /tmp/npa-isaac-state}
+          volumes:
+            - name: npa-isaac-runtime-cache
+              persistentVolumeClaim: {claimName: "{{config.isaac_cache_pvc}}", readOnly: true}
+            - name: npa-isaac-job-state
+              emptyDir: {}
+
+initial: prepare-contract
+onFailure: failure-cleanup-runtime-prerequisites
+
+states:
+  prepare-contract:
+    description: Validate the Franka, calibrated cameras, offset-origin spool, unchanged task and frozen checkpoint interface before GPU work.
+    toolRef: workbench.sim2real.policy_interchange_prepare
+    resources: cpu
+    outputs:
+      - {uri: "{{config.preparation_uri}}", schema: npa.sim2real.policy_interchange.preparation.v1}
+      - {uri: "{{config.policy_adapter_uri}}", schema: npa.sim2real.lerobot_policy_adapter.v1}
+      - {uri: "{{config.component_root_uri}}/components/stage_01.json", schema: npa.sim2real.policy_interchange.component_record.v1}
+    next: provision-runtime-prerequisites
+
+  provision-runtime-prerequisites:
+    description: Create exact run-owned caches, authentication and scoped service RBAC, then warm the qualified Isaac image.
+    needs: [prepare-contract]
+    toolRef: workbench.sim2real.runtime_prerequisites_apply
+    resources: cpu
+    outputs:
+      - {uri: "{{config.runtime_prerequisites_uri}}", schema: npa.sim2real.runtime_prerequisites.v1}
+    next: start-adapted-service
+
+  start-adapted-service:
+    description: Start the pre-existing frozen Franka/cube 10k checkpoint without training or object-specific adaptation.
+    needs: [provision-runtime-prerequisites]
+    toolRef: workbench.lerobot.smolvla_adapted_service_start
+    resources: adapted-service-control
+    outputs:
+      - {uri: "{{config.adapted_service_start_uri}}", schema: npa.sim2real.smolvla_service_start.v1}
+      - {uri: "{{config.component_root_uri}}/components/stage_10.json", schema: npa.sim2real.policy_interchange.component_record.v1}
+    next: evaluate-object-cohort
+
+  evaluate-object-cohort:
+    description: Run eight split-disjoint offset-spool episodes with native teacher validity and the qualified causal uniform temporal ensemble; retain every episode and failure.
+    needs: [start-adapted-service]
+    toolRef: workbench.sim2real.policy_interchange_non_franka_execute
+    resources: isaac
+    outputs:
+      - {uri: "{{config.non_franka_execution_uri}}report.json", schema: npa.sim2real.policy_interchange.non_franka_execution.v1}
+      - {uri: "{{config.component_root_uri}}/components/stage_11.json", schema: npa.sim2real.policy_interchange.component_record.v1}
+    next: cleanup-adapted-service
+
+  cleanup-adapted-service:
+    description: Delete and verify absence of only this run's exact checkpoint service resources.
+    needs: [evaluate-object-cohort]
+    toolRef: workbench.lerobot.smolvla_adapted_service_cleanup
+    resources: adapted-service-control
+    outputs:
+      - {uri: "{{config.adapted_service_cleanup_uri}}", schema: npa.sim2real.smolvla_service_cleanup.v1}
+      - {uri: "{{config.component_root_uri}}/components/stage_13.json", schema: npa.sim2real.policy_interchange.component_record.v1}
+    next: cleanup-runtime-prerequisites
+
+  cleanup-runtime-prerequisites:
+    description: Release only exact run-owned authentication, RBAC and caches after all object evidence is durable.
+    needs: [cleanup-adapted-service]
+    toolRef: workbench.sim2real.runtime_prerequisites_cleanup
+    resources: cpu
+    outputs:
+      - {uri: "{{config.runtime_prerequisites_cleanup_uri}}", schema: npa.sim2real.runtime_prerequisites.v1}
+    terminal: true
+
+  failure-cleanup-runtime-prerequisites:
+    description: Preserve the original failure while deleting only exact-owned services, authentication, RBAC and caches.
+    toolRef: workbench.sim2real.runtime_prerequisites_cleanup
+    resources: cpu
+    params:
+      runtime_prerequisites_cleanup_uri: "{{config.failure_runtime_prerequisites_cleanup_uri}}"
+    outputs:
+      - {uri: "{{config.failure_runtime_prerequisites_cleanup_uri}}", schema: npa.sim2real.runtime_prerequisites.v1}

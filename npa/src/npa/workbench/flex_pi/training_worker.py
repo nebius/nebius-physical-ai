@@ -206,7 +206,6 @@ def _worker_environment(assets, root):
     env = os.environ.copy()
     for key in list(env):
         if key.startswith("ACCELERATE_") or key in {
-            "NPA_OPENPI_ACCEPT_GEMMA_TERMS",
             "RANK",
             "WORLD_SIZE",
             "LOCAL_RANK",

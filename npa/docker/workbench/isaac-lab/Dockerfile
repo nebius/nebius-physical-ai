@@ -81,6 +81,7 @@ COPY --chmod=0755 docker/workbench/common/workflow_runtime_entrypoint.sh \
     /usr/local/bin/npa-workflow-entrypoint
 COPY docker/workbench/isaac-lab/smoke_env.py /opt/npa/docker/workbench/isaac-lab/smoke_env.py
 COPY docker/workbench/isaac-lab/smoke_functional.py /opt/npa/docker/workbench/isaac-lab/smoke_functional.py
+COPY --chmod=0755 docker/workbench/isaac-lab/apt-get /opt/npa/apt-retry-bin/apt-get
 COPY --chown=ubuntu:ubuntu pyproject.toml /opt/npa/pyproject.toml
 COPY --chown=ubuntu:ubuntu src/npa /opt/npa/src/npa
 COPY --chown=ubuntu:ubuntu workflows /opt/npa/workflows
@@ -95,9 +96,19 @@ RUN find /opt/npa/docker/workbench/common -type d -exec chmod 0755 {} + \
 # + the bootstrap, the /isaac-sim/python.sh shim and the SkyPilot k8s prerequisites. The
 # script ends by asserting that the bootstrap REFUSES without EULA acceptance and that no
 # isaacsim/isaaclab distribution is importable - the build proves the absence of the thing
-# it used to prove the presence of.
+# it used to prove the presence of. Keep retries scoped to this immutable snapshot install:
+# transient 5xx responses may be retried, but neither a mutable mirror nor different package
+# bytes may satisfy the layer.
 RUN chmod +x /opt/npa/docker/workbench/common/*.sh \
     && test "$(printf %s "${NPA_SOURCE_SHA}" | wc -c)" -eq 40 \
+    && printf '%s\n' \
+      'Acquire::Retries "10";' \
+      'Acquire::Queue-Mode "access";' \
+      'Acquire::http::Pipeline-Depth "0";' \
+      'Acquire::https::Pipeline-Depth "0";' \
+      'APT::Update::Error-Mode "any";' \
+      > /etc/apt/apt.conf.d/80-npa-ubuntu-snapshot-retries \
+    && export PATH="/opt/npa/apt-retry-bin:${PATH}" \
     && NPA_RUNTIME_USER="${NPA_RUNTIME_USER}" \
        NPA_ISAAC_VENV=/opt/npa/sim/venv \
        NPA_UBUNTU_SNAPSHOT=20261018T000000Z \
@@ -110,6 +121,7 @@ RUN chmod +x /opt/npa/docker/workbench/common/*.sh \
        /opt/npa/docker/workbench/common/install_isaac_runtime_base.sh \
     && apt-get update \
     && apt-get install -y --no-install-recommends ffmpeg \
+    && rm -f /etc/apt/apt.conf.d/80-npa-ubuntu-snapshot-retries \
     && rm -rf /var/lib/apt/lists/* \
     && find /opt/npa/sim/venv -type f \
       -path '*/imageio_ffmpeg/binaries/ffmpeg*' -delete \
@@ -137,6 +149,7 @@ RUN find /opt/npa/src /opt/npa/workflows -type d -exec chmod a+rx {} + \
     && find /opt/npa/src /opt/npa/workflows -type f -exec chmod a+r {} + \
     && chmod a+r /opt/npa/pyproject.toml \
     && /opt/npa/sim/venv/bin/python -m pip install --no-cache-dir --no-deps \
+      "defusedxml==0.7.1" \
       -r /opt/npa/docker/workbench/common/sim2real-control-requirements.txt \
     && /opt/npa/sim/venv/bin/python -m pip check \
     && /opt/npa/sim/venv/bin/python -c \

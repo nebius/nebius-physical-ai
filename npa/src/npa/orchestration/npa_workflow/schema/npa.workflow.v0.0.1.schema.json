@@ -25,6 +25,7 @@
     "run": { "type": "object" },
     "resources": { "type": "object" },
     "initial": { "type": "string" },
+    "onFailure": { "type": "string", "minLength": 1 },
     "states": {
       "type": "object",
       "minProperties": 1,

@@ -2,7 +2,236 @@
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
+
+
+POLICY_INTERCHANGE_SCAFFOLD_TASK = "Isaac-Lift-Cube-Franka-IK-Rel-v0"
+POLICY_INTERCHANGE_SIMULATION_HZ = 60.0
+
+
+def _policy_interchange_contact_prim_paths(
+    robot_profile, rigid_body_prim_paths: dict[str, str]
+) -> tuple[str, str]:
+    """Resolve live contact-sensor paths from the converted USD hierarchy."""
+
+    resolved: list[str] = []
+    for link in robot_profile.gripper.finger_links:
+        relative = rigid_body_prim_paths.get(link)
+        if not isinstance(relative, str) or not relative:
+            raise ValueError(f"resolved RobotSpec USD lacks finger rigid body {link!r}")
+        resolved.append(f"{{ENV_REGEX_NS}}/Robot/{relative}")
+    if len(resolved) != 2:
+        raise ValueError("surface placement requires exactly two finger contact bodies")
+    return resolved[0], resolved[1]
+
+
+def policy_interchange_timing(*, control_hz: float) -> dict[str, float | int]:
+    """Resolve an exact controller cadence against the owned physics rate."""
+
+    frequency = float(control_hz)
+    ratio = POLICY_INTERCHANGE_SIMULATION_HZ / frequency
+    decimation = round(ratio)
+    if (
+        not math.isfinite(frequency)
+        or frequency <= 0.0
+        or decimation <= 0
+        or abs(ratio - decimation) > 1.0e-9
+    ):
+        raise ValueError(
+            "policy control_hz must divide the 60 Hz interchange physics rate exactly"
+        )
+    return {
+        "simulation_hz": POLICY_INTERCHANGE_SIMULATION_HZ,
+        "simulation_dt_s": 1.0 / POLICY_INTERCHANGE_SIMULATION_HZ,
+        "control_hz": frequency,
+        "decimation": decimation,
+        "episode_length_s": 240.0,
+    }
+
+
+def policy_interchange_environment_config(*, seed: int, control_hz: float):
+    """Load only the native scene/IK scaffold used by typed interchange.
+
+    The caller must replace the scaffold robot, home state, actuators, action
+    mapping, support surface, rigid object, goal, reset, and cameras before the
+    environment is created. This avoids importing Franka reach, controller, or
+    task settings through an unrelated training recipe.
+    """
+
+    import isaaclab_tasks  # noqa: F401
+    from isaaclab_tasks.utils import load_cfg_from_registry
+    from npa.workflows.sim2real.isaac_assets_compat import remap_moved_franka_usd
+
+    config = load_cfg_from_registry(
+        POLICY_INTERCHANGE_SCAFFOLD_TASK, "env_cfg_entry_point"
+    )
+    remap_moved_franka_usd(config)
+    timing = policy_interchange_timing(control_hz=control_hz)
+    config.scene.num_envs = 1
+    config.seed = seed
+    config.sim.device = "cuda:0"
+    config.sim.dt = timing["simulation_dt_s"]
+    config.decimation = timing["decimation"]
+    config.episode_length_s = timing["episode_length_s"]
+    config.commands.object_pose.resampling_time_range = (1.0e9, 1.0e9)
+    config.observations.policy.enable_corruption = False
+    return config
+
+
+def configure_policy_interchange_robot(
+    config,
+    robot_profile,
+    robot_spec: dict,
+    robot_usd_path: Path,
+    *,
+    controller_representation: str = "absolute_joint_position",
+) -> dict:
+    """Replace the template articulation with the exact resolved RobotSpec asset.
+
+    The Lift environment is only a scene/controller scaffold here.  Morphology,
+    home state, actuator gains, action order, gripper semantics, and link names
+    all come from the immutable RobotSpec used to produce ``robot_usd_path``.
+    """
+
+    from copy import deepcopy
+    import re
+
+    import isaaclab.sim as sim
+    from isaaclab.actuators import ImplicitActuatorCfg
+    from isaaclab.envs import mdp
+    from npa.workflows.sim2real.isaac_robot_asset import (
+        resolved_rigid_body_prim_paths,
+    )
+
+    names = list(robot_spec.get("joint_names") or ())
+    expected = [*robot_profile.arm_joint_names, *robot_profile.gripper.joint_names]
+    arrays = {
+        "home_qpos": robot_spec.get("home_qpos"),
+        "kp": robot_spec.get("kp"),
+        "kv": robot_spec.get("kv"),
+        "force_lower": robot_spec.get("force_lower"),
+        "force_upper": robot_spec.get("force_upper"),
+    }
+    if names != expected or any(
+        not isinstance(values, list) or len(values) != len(names)
+        for values in arrays.values()
+    ):
+        raise ValueError(
+            "resolved RobotSpec joint order or actuator arrays differ from the policy profile"
+        )
+    if (
+        robot_spec.get("base_link") != robot_profile.base_link
+        or robot_spec.get("ee_link") != robot_profile.ee_link
+        or list(robot_spec.get("finger_links") or ())
+        != list(robot_profile.gripper.finger_links)
+    ):
+        raise ValueError("resolved RobotSpec links differ from the policy profile")
+    if not robot_usd_path.is_file():
+        raise ValueError("resolved RobotSpec USD is missing")
+    rigid_body_paths = resolved_rigid_body_prim_paths(
+        robot_usd_path,
+        (
+            robot_profile.base_link,
+            robot_profile.ee_link,
+            *robot_profile.gripper.finger_links,
+        ),
+    )
+
+    def spawned_prim_path(relative: str) -> str:
+        root = "{ENV_REGEX_NS}/Robot"
+        return f"{root}/{relative}" if relative else root
+
+    old_spawn = config.scene.robot.spawn
+    spawn = sim.UsdFileCfg(usd_path=str(robot_usd_path))
+    for attribute in ("articulation_props", "rigid_props", "activate_contact_sensors"):
+        if hasattr(old_spawn, attribute) and hasattr(spawn, attribute):
+            setattr(spawn, attribute, deepcopy(getattr(old_spawn, attribute)))
+    config.scene.robot.spawn = spawn
+    config.scene.robot.init_state.pos = (0.0, 0.0, 0.0)
+    config.scene.robot.init_state.rot = (0.0, 0.0, 0.0, 1.0)
+    config.scene.robot.init_state.joint_pos = dict(
+        zip(names, arrays["home_qpos"], strict=True)
+    )
+    config.scene.robot.actuators = {}
+    for index, name in enumerate(names):
+        effort = max(
+            abs(float(arrays["force_lower"][index])),
+            abs(float(arrays["force_upper"][index])),
+        )
+        config.scene.robot.actuators[f"robot_spec_joint_{index:02d}"] = (
+            ImplicitActuatorCfg(
+                joint_names_expr=["^" + re.escape(name) + "$"],
+                stiffness=float(arrays["kp"][index]),
+                damping=float(arrays["kv"][index]),
+                effort_limit=effort,
+                effort_limit_sim=effort,
+            )
+        )
+    if controller_representation == "absolute_joint_position":
+        config.actions.arm_action = mdp.JointPositionActionCfg(
+            asset_name="robot",
+            joint_names=list(robot_profile.arm_joint_names),
+            preserve_order=True,
+            scale=1.0,
+            use_default_offset=False,
+        )
+    elif controller_representation == "relative_ee_pose":
+        action = config.actions.arm_action
+        if (
+            not hasattr(action, "body_name")
+            or not hasattr(action, "body_offset")
+            or not hasattr(action, "joint_names")
+        ):
+            raise ValueError(
+                "geometry-aware teacher requires the native relative differential-IK "
+                "action scaffold"
+            )
+        action.joint_names = list(robot_profile.arm_joint_names)
+        action.body_name = robot_profile.ee_link
+        action.body_offset.pos = (0.0, 0.0, 0.0)
+        action.body_offset.rot = (0.0, 0.0, 0.0, 1.0)
+    else:
+        raise ValueError(
+            f"unsupported policy-interchange controller {controller_representation!r}"
+        )
+    config.actions.gripper_action = mdp.BinaryJointPositionActionCfg(
+        asset_name="robot",
+        joint_names=list(robot_profile.gripper.joint_names),
+        open_command_expr=dict(
+            zip(
+                robot_profile.gripper.joint_names,
+                robot_profile.gripper.open_joint_positions,
+                strict=True,
+            )
+        ),
+        close_command_expr=dict(
+            zip(
+                robot_profile.gripper.joint_names,
+                robot_profile.gripper.closed_joint_positions,
+                strict=True,
+            )
+        ),
+    )
+    config.commands.object_pose.body_name = robot_profile.ee_link
+    config.scene.ee_frame.prim_path = spawned_prim_path(
+        rigid_body_paths[robot_profile.base_link]
+    )
+    target = config.scene.ee_frame.target_frames[0]
+    target.prim_path = spawned_prim_path(rigid_body_paths[robot_profile.ee_link])
+    target.offset.pos = (0.0, 0.0, 0.0)
+    target.offset.rot = (0.0, 0.0, 0.0, 1.0)
+    return {
+        "joint_names": names,
+        "home_qpos": list(arrays["home_qpos"]),
+        "kp": list(arrays["kp"]),
+        "kv": list(arrays["kv"]),
+        "force_lower": list(arrays["force_lower"]),
+        "force_upper": list(arrays["force_upper"]),
+        "usd_path": str(robot_usd_path),
+        "rigid_body_prim_paths": rigid_body_paths,
+        "controller_representation": controller_representation,
+    }
 
 
 def environment_config(
@@ -121,6 +350,138 @@ def _camera_config(config) -> None:
         spawn=sim.PinholeCameraCfg(
             focal_length=24.0, horizontal_aperture=20.955, clipping_range=(0.05, 10.0)
         ),
+    )
+
+
+def configure_policy_interchange_cameras(config, robot_profile) -> None:
+    """Install calibrated world-pose cameras from a sealed robot profile.
+
+    Both sensors use world-rooted camera prims. The native policy execution
+    stage republishes the wrist sensor pose from its declared live mount link
+    before every capture, avoiding a stale USD child transform on moving
+    articulations.
+    """
+
+    import re
+
+    import isaaclab.sim as sim
+    from isaaclab.sensors import TiledCameraCfg
+
+    config.scene.num_envs = 1
+    for camera in robot_profile.cameras:
+        if re.fullmatch(r"[a-z][a-z0-9_]*", camera.key) is None:
+            raise ValueError(
+                "policy camera keys must be lowercase identifiers for Isaac routing"
+            )
+        width, height = camera.image_size
+        fx, fy, cx, cy = camera.intrinsics
+        if (
+            abs(fx - fy) > 1.0e-6
+            or abs(cx - (width - 1) / 2.0) > 1.0
+            or abs(cy - (height - 1) / 2.0) > 1.0
+        ):
+            raise ValueError(
+                "Isaac interchange currently requires square pixels and centered intrinsics"
+            )
+        aperture = 20.955
+        focal_length = fx * aperture / width
+        sensor = TiledCameraCfg(
+            prim_path=f"{{ENV_REGEX_NS}}/NpaPolicyCamera_{camera.key}",
+            offset=TiledCameraCfg.OffsetCfg(
+                pos=tuple(camera.mount_from_camera.translation_m),
+                rot=tuple(camera.mount_from_camera.quaternion_xyzw),
+                convention="ros",
+            ),
+            data_types=["rgb"],
+            width=width,
+            height=height,
+            update_period=0.0,
+            update_latest_camera_pose=True,
+            spawn=sim.PinholeCameraCfg(
+                focal_length=focal_length,
+                horizontal_aperture=aperture,
+                clipping_range=(0.03, 10.0),
+            ),
+        )
+        setattr(config.scene, f"npa_policy_camera_{camera.key}", sensor)
+
+
+def configure_policy_interchange_surface_task(
+    config,
+    robot_profile,
+    object_profile,
+    task,
+    *,
+    object_usd_path: Path,
+    robot_rigid_body_prim_paths: dict[str, str],
+) -> None:
+    """Bind a non-Franka Isaac lift template to the released-surface protocol."""
+
+    from copy import deepcopy
+
+    import isaaclab.sim as sim
+    from isaaclab.sensors import ContactSensorCfg
+    from npa.workflows.sim2real.pi05_isaac import (
+        configure_destination_marker,
+        configure_support_surface,
+        configure_surface_goal,
+    )
+
+    configure_support_surface(config)
+    configure_surface_goal(config, task.target_world_xyz_m)
+    configure_destination_marker(config, task.target_world_xyz_m)
+    if not object_usd_path.is_file():
+        raise ValueError("sealed rigid-object USD is missing")
+    old_spawn = config.scene.object.spawn
+    config.scene.object.spawn = sim.UsdFileCfg(
+        usd_path=str(object_usd_path),
+        scale=tuple(object_profile.scale_xyz),
+        rigid_props=deepcopy(old_spawn.rigid_props),
+        mass_props=sim.MassPropertiesCfg(mass=object_profile.mass_kg),
+        physics_material=sim.RigidBodyMaterialCfg(
+            static_friction=object_profile.static_friction,
+            dynamic_friction=object_profile.dynamic_friction,
+            restitution=object_profile.restitution,
+        ),
+    )
+    config.scene.object.init_state.pos = tuple(
+        object_profile.world_from_root.translation_m
+    )
+    config.scene.object.init_state.rot = tuple(
+        object_profile.world_from_root.quaternion_xyzw
+    )
+    reset = getattr(config.events, "reset_object_position", None)
+    params = getattr(reset, "params", None)
+    if not isinstance(params, dict) or "pose_range" not in params:
+        raise ValueError("Isaac task lacks an explicit object reset pose range")
+    params["pose_range"] = {
+        "x": (0.0, 0.0),
+        "y": (0.0, 0.0),
+        "z": (0.0, 0.0),
+        "roll": (0.0, 0.0),
+        "pitch": (0.0, 0.0),
+        "yaw": (0.0, 0.0),
+    }
+    config.scene.robot.spawn.activate_contact_sensors = True
+    config.scene.object.spawn.activate_contact_sensors = True
+    config.scene.table.spawn.activate_contact_sensors = True
+    left_path, right_path = _policy_interchange_contact_prim_paths(
+        robot_profile, robot_rigid_body_prim_paths
+    )
+    config.scene.npa_left_object_contact = ContactSensorCfg(
+        prim_path=left_path,
+        filter_prim_paths_expr=["{ENV_REGEX_NS}/Object"],
+        history_length=3,
+    )
+    config.scene.npa_right_object_contact = ContactSensorCfg(
+        prim_path=right_path,
+        filter_prim_paths_expr=["{ENV_REGEX_NS}/Object"],
+        history_length=3,
+    )
+    config.scene.npa_object_support_contact = ContactSensorCfg(
+        prim_path="{ENV_REGEX_NS}/Object",
+        filter_prim_paths_expr=["{ENV_REGEX_NS}/Table"],
+        history_length=3,
     )
 
 

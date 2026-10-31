@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import hashlib
+import io
 import importlib
 import importlib.metadata
 import json
@@ -16,7 +18,7 @@ import sys
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 from npa.literal_values import require_boolean
 from npa.workbench.training_config import (
@@ -50,6 +52,14 @@ DEFAULT_TRAIN_LOG_FREQ = 10
 DEFAULT_TRAIN_TIMEOUT_SECONDS = 43200
 DEFAULT_EVAL_TIMEOUT_SECONDS = 7200
 REAL_WEIGHT_FILENAMES = ("model.safetensors", "pytorch_model.bin")
+INTERCHANGE_MANIFEST_FILENAME = "npa_policy_interchange.json"
+INTERCHANGE_MANIFEST_SCHEMA = "npa.sim2real.lerobot_policy_adapter.v1"
+INTERCHANGE_PROCESSOR_FILES = (
+    "policy_preprocessor.json",
+    "policy_preprocessor_step_5_normalizer_processor.safetensors",
+    "policy_postprocessor.json",
+    "policy_postprocessor_step_0_unnormalizer_processor.safetensors",
+)
 TRAINING_DATASET_PROVENANCE_FILENAME = "training_dataset_provenance.json"
 # This is the pinned RoboCasa ACT closure, not a generally supported release.
 _ROBOCASA_ACT_TRAINING_VERSION = "0.6.1+npa2"
@@ -350,7 +360,7 @@ class LeRobotEvalResult:
 
 
 class LeRobotPolicyRuntime:
-    """Thin runtime wrapper around a loaded LeRobot policy checkpoint."""
+    """Native SmolVLA runtime behind the model-neutral Sim2Real wire contract."""
 
     def __init__(self, checkpoint_path: Path | str | None = None) -> None:
         raw_checkpoint = checkpoint_path or os.environ.get("NPA_POLICY_CHECKPOINT", "")
@@ -361,18 +371,648 @@ class LeRobotPolicyRuntime:
         resolved = Path(raw_checkpoint).expanduser()
         self.checkpoint_path = resolved
         self.validation = validate_lerobot_checkpoint(self.checkpoint_path)
+        self.manifest = _load_interchange_manifest(self.checkpoint_path)
+        self.device = str(os.environ.get("LEROBOT_POLICY_DEVICE") or "cuda")
+        self.policy, self.preprocessor, self.postprocessor = _load_smolvla_runtime(
+            self.checkpoint_path, self.device
+        )
+        _validate_native_policy_features(self.policy, self.manifest)
 
     def infer(self, observation: dict[str, Any]) -> list[float]:
-        raise PolicyContainerError(
-            "HTTP inference requires LeRobot policy adapter wiring for this checkpoint. "
-            "Use the real training and rollout-eval commands for end-to-end validation."
+        """Infer from one fresh observation without a paired-noise receipt."""
+
+        values, _ = self.infer_with_sampling(observation)
+        return values
+
+    def infer_with_sampling(
+        self, observation: dict[str, Any], *, sampling_seed: int | None = None
+    ) -> tuple[list[float], dict[str, Any]]:
+        """Infer one fresh action and report the exact optional sampler noise."""
+
+        chunk, sampling = self.infer_action_chunk_with_sampling(
+            observation, sampling_seed=sampling_seed
         )
+        return chunk[0], sampling
+
+    def infer_action_chunk_with_sampling(
+        self, observation: dict[str, Any], *, sampling_seed: int | None = None
+    ) -> tuple[list[list[float]], dict[str, Any]]:
+        """Infer and postprocess the complete native action chunk.
+
+        Args:
+            observation: One model-neutral typed observation payload.
+            sampling_seed: Optional explicit native flow-noise seed.
+        Returns:
+            The complete physical-action chunk and bound sampling evidence.
+        Raises:
+            PolicyContainerError: If inference or the declared action shape fails.
+        """
+
+        batch = _smolvla_batch(observation, self.manifest, self.device)
+        try:
+            import torch
+
+            noise = None
+            noise_sha256 = None
+            if sampling_seed is not None:
+                if not 0 <= sampling_seed < 2**63:
+                    raise PolicyContainerError(
+                        "SmolVLA sampling seed must be in [0, 2**63)"
+                    )
+                shape = (
+                    1,
+                    int(self.policy.config.chunk_size),
+                    int(self.policy.config.max_action_dim),
+                )
+                generator = torch.Generator(device="cpu")
+                generator.manual_seed(sampling_seed)
+                cpu_noise = torch.randn(
+                    shape, generator=generator, dtype=torch.float32, device="cpu"
+                )
+                noise_sha256 = hashlib.sha256(
+                    cpu_noise.contiguous().numpy().tobytes()
+                ).hexdigest()
+                noise = cpu_noise.to(self.device)
+            with torch.inference_mode():
+                action_chunk = self.policy.predict_action_chunk(
+                    self.preprocessor(batch), noise=noise
+                )
+                if action_chunk.ndim != 3:
+                    raise PolicyContainerError(
+                        "native SmolVLA prediction is not a batched action chunk"
+                    )
+                action_shape = tuple(action_chunk.shape)
+                flattened = action_chunk.reshape(-1, action_shape[-1])
+                physical = self.postprocessor(flattened).reshape(action_shape)
+            values = physical.detach().cpu().numpy()
+        except PolicyContainerError:
+            raise
+        except Exception as exc:
+            raise PolicyContainerError(
+                f"native SmolVLA inference failed: {exc}"
+            ) from exc
+        expected = list(self.manifest["action"]["names"])
+        horizon = int(self.manifest["action"]["horizon"])
+        if values.shape != (1, horizon, len(expected)) or not all(
+            math.isfinite(float(value)) for value in values.reshape(-1)
+        ):
+            raise PolicyContainerError(
+                "native SmolVLA output does not match the declared finite action chunk"
+            )
+        return [[float(value) for value in row] for row in values[0]], {
+            "fresh_observation_consumed": True,
+            "sampler_noise_sha256": noise_sha256,
+            "sampler_noise_shape": list(noise.shape) if noise is not None else None,
+            "sampling_seed": sampling_seed,
+        }
 
     def rollout(self, observations: list[dict[str, Any]]) -> list[list[float]]:
-        raise PolicyContainerError(
-            "HTTP rollouts require a matching LeRobot environment. "
-            "Use lerobot-eval through the real eval command for measured rollout success."
+        if not observations:
+            raise PolicyContainerError("rollout requires at least one observation")
+        self.reset()
+        return [self.infer(observation) for observation in observations]
+
+    def reset(self) -> None:
+        """Reset native policy and processor queues at a physical episode boundary."""
+
+        for component in (self.policy, self.preprocessor, self.postprocessor):
+            reset = getattr(component, "reset", None)
+            if callable(reset):
+                reset()
+
+    def infer_typed(self, observation: Any, policy_profile: Any) -> Any:
+        """Consume and return the model-neutral typed policy interchange."""
+
+        output, _ = self.infer_typed_with_sampling(observation, policy_profile)
+        return output
+
+    def infer_typed_with_sampling(
+        self,
+        observation: Any,
+        policy_profile: Any,
+        *,
+        sampling_seed: int | None = None,
+    ) -> tuple[Any, dict[str, Any]]:
+        """Consume one typed observation and retain backend sampling evidence."""
+
+        from npa.workflows.sim2real.interchange_contract import PolicyOutput
+
+        if (
+            policy_profile.backend != "lerobot_smolvla"
+            or policy_profile.identity != self.manifest["policy_identity"]
+            or policy_profile.checkpoint_sha256 != self.manifest["checkpoint_sha256"]
+        ):
+            raise PolicyContainerError(
+                "typed SmolVLA profile does not match loaded checkpoint"
+            )
+        values, sampling = self.infer_action_chunk_with_sampling(
+            observation.to_wire_dict(), sampling_seed=sampling_seed
         )
+        return PolicyOutput(
+            observation_input_identity=observation.input_identity,
+            policy_identity=policy_profile.identity,
+            checkpoint_sha256=policy_profile.checkpoint_sha256,
+            action=policy_profile.action,
+            action_chunk=tuple(tuple(row) for row in values),
+            generated_timestamp_s=time.time(),
+        ), sampling
+
+
+def _load_interchange_manifest(checkpoint: Path) -> dict[str, Any]:
+    path = checkpoint / INTERCHANGE_MANIFEST_FILENAME
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError as exc:
+        raise PolicyContainerError(
+            f"checkpoint is missing required {INTERCHANGE_MANIFEST_FILENAME}"
+        ) from exc
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise PolicyContainerError(
+            f"invalid policy interchange manifest: {exc}"
+        ) from exc
+    if (
+        not isinstance(payload, dict)
+        or payload.get("schema") != INTERCHANGE_MANIFEST_SCHEMA
+    ):
+        raise PolicyContainerError("unsupported policy interchange manifest schema")
+    if payload.get("backend") != "lerobot_smolvla":
+        raise PolicyContainerError(
+            "LeRobot HTTP adapter supports SmolVLA checkpoints only"
+        )
+    required_identities = (
+        "policy_identity",
+        "robot_identity",
+        "task_identity",
+        "normalization_identity",
+    )
+    if any(not str(payload.get(key) or "").strip() for key in required_identities):
+        raise PolicyContainerError("policy interchange identities must be non-empty")
+    state_names = payload.get("measured_state_names")
+    state_units = payload.get("measured_state_units")
+    cameras = payload.get("cameras")
+    action = payload.get("action")
+    if not isinstance(state_names, list) or not state_names:
+        raise PolicyContainerError("measured_state_names must be a non-empty list")
+    if len(state_names) != len(set(state_names)) or any(
+        not isinstance(name, str) or not name for name in state_names
+    ):
+        raise PolicyContainerError("measured_state_names must be unique strings")
+    if (
+        not isinstance(state_units, list)
+        or len(state_units) != len(state_names)
+        or any(not isinstance(unit, str) or not unit for unit in state_units)
+    ):
+        raise PolicyContainerError(
+            "one measured_state_units entry is required per state input"
+        )
+    if not isinstance(cameras, list) or not cameras:
+        raise PolicyContainerError("camera adapter declarations are required")
+    camera_keys: set[str] = set()
+    feature_keys: set[str] = set()
+    for camera in cameras:
+        if not isinstance(camera, dict):
+            raise PolicyContainerError("camera adapter declaration must be an object")
+        key = str(camera.get("key") or "")
+        feature = str(camera.get("feature_key") or "")
+        if not key or not feature or key in camera_keys or feature in feature_keys:
+            raise PolicyContainerError("camera keys and feature keys must be unique")
+        if camera.get("layout") not in {"HWC", "CHW"}:
+            raise PolicyContainerError("camera layout must be HWC or CHW")
+        size = camera.get("image_size_wh")
+        if (
+            not isinstance(size, list)
+            or len(size) != 2
+            or any(not isinstance(value, int) or value <= 0 for value in size)
+        ):
+            raise PolicyContainerError("camera image_size_wh must be positive integers")
+        skew = camera.get("maximum_state_skew_s")
+        if not isinstance(skew, (int, float)) or not math.isfinite(skew) or skew < 0:
+            raise PolicyContainerError("camera maximum_state_skew_s must be finite")
+        camera_keys.add(key)
+        feature_keys.add(feature)
+    if not isinstance(action, dict):
+        raise PolicyContainerError("action declaration is required")
+    names, units = action.get("names"), action.get("units")
+    if (
+        not isinstance(names, list)
+        or not names
+        or len(names) != len(set(names))
+        or not isinstance(units, list)
+        or len(units) != len(names)
+    ):
+        raise PolicyContainerError(
+            "action names and units must be ordered and complete"
+        )
+    if action.get("representation") not in {
+        "absolute_joint_position",
+        "delta_joint_position",
+        "ee_pose",
+    }:
+        raise PolicyContainerError("unsupported action representation")
+    if action.get("representation") == "ee_pose" and not payload.get(
+        "cartesian_controller_qualified"
+    ):
+        raise PolicyContainerError(
+            "Cartesian SmolVLA checkpoint lacks a qualified IK/controller path"
+        )
+    weight_path = Path(str(_find_weight_file(checkpoint) or ""))
+    expected = str(payload.get("checkpoint_sha256") or "")
+    if len(expected) != 64 or _sha256_path(weight_path) != expected:
+        raise PolicyContainerError("policy manifest is not bound to checkpoint weights")
+    normalization_identity, normalization_files = _processor_identity(checkpoint)
+    if payload.get("normalization_identity") != normalization_identity:
+        raise PolicyContainerError(
+            "policy manifest is not bound to checkpoint normalization processors"
+        )
+    if payload.get("normalization_files") != normalization_files:
+        raise PolicyContainerError("policy normalization file manifest is stale")
+    return payload
+
+
+def write_smolvla_interchange_manifest(
+    checkpoint: Path | str,
+    *,
+    policy_identity: str,
+    robot_identity: str,
+    task_identity: str,
+    normalization_identity: str = "",
+    measured_state_names: list[str],
+    measured_state_units: list[str],
+    cameras: list[dict[str, Any]],
+    action: dict[str, Any],
+    state_feature_key: str = "observation.state",
+    action_feature_key: str = "action",
+    cartesian_controller_qualified: bool = False,
+) -> Path:
+    """Bind a trained SmolVLA checkpoint to one explicit controller contract."""
+
+    target = Path(checkpoint)
+    weight = _find_weight_file(target)
+    if weight is None:
+        raise PolicyContainerError("cannot bind interchange manifest without weights")
+    actual_normalization, normalization_files = _processor_identity(target)
+    if normalization_identity and normalization_identity != actual_normalization:
+        raise PolicyContainerError(
+            "declared normalization identity differs from checkpoint processors"
+        )
+    payload = {
+        "schema": INTERCHANGE_MANIFEST_SCHEMA,
+        "backend": "lerobot_smolvla",
+        "policy_identity": policy_identity,
+        "robot_identity": robot_identity,
+        "task_identity": task_identity,
+        "normalization_identity": actual_normalization,
+        "normalization_files": normalization_files,
+        "checkpoint_sha256": _sha256_path(weight),
+        "measured_state_names": measured_state_names,
+        "measured_state_units": measured_state_units,
+        "state_feature_key": state_feature_key,
+        "action_feature_key": action_feature_key,
+        "cameras": cameras,
+        "action": action,
+        "cartesian_controller_qualified": cartesian_controller_qualified,
+    }
+    path = target / INTERCHANGE_MANIFEST_FILENAME
+    path.write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    _load_interchange_manifest(target)
+    return path
+
+
+def _processor_identity(checkpoint: Path) -> tuple[str, list[dict[str, Any]]]:
+    """Hash the exact serialized native normalization processor pipelines."""
+
+    records: list[dict[str, Any]] = []
+    for name in INTERCHANGE_PROCESSOR_FILES:
+        path = checkpoint / name
+        if not path.is_file():
+            raise PolicyContainerError(
+                f"checkpoint is missing required normalization processor {name}"
+            )
+        records.append(
+            {"path": name, "bytes": path.stat().st_size, "sha256": _sha256_path(path)}
+        )
+    encoded = json.dumps(records, sort_keys=True, separators=(",", ":")).encode()
+    return hashlib.sha256(encoded).hexdigest(), records
+
+
+def _native_smolvla_preparation_api() -> tuple[Any, ...]:
+    """Load the exact native LeRobot objects used by base preparation."""
+
+    try:
+        from lerobot.configs import FeatureType
+        from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
+        from lerobot.policies.factory import make_pre_post_processors
+        from lerobot.policies.smolvla.configuration_smolvla import SmolVLAConfig
+        from lerobot.policies.smolvla.modeling_smolvla import SmolVLAPolicy
+        from lerobot.utils.constants import (
+            POLICY_POSTPROCESSOR_DEFAULT_NAME,
+            POLICY_PREPROCESSOR_DEFAULT_NAME,
+        )
+        from lerobot.utils.feature_utils import dataset_to_policy_features
+    except Exception as exc:
+        raise PolicyContainerError(
+            f"native LeRobot SmolVLA preparation is unavailable: {exc}"
+        ) from exc
+    return (
+        FeatureType,
+        LeRobotDatasetMetadata,
+        make_pre_post_processors,
+        SmolVLAConfig,
+        SmolVLAPolicy,
+        POLICY_POSTPROCESSOR_DEFAULT_NAME,
+        POLICY_PREPROCESSOR_DEFAULT_NAME,
+        dataset_to_policy_features,
+    )
+
+
+def prepare_smolvla_base_checkpoint(
+    base_checkpoint: Path,
+    *,
+    dataset_root: Path,
+    dataset_repo_id: str,
+    adapter: Mapping[str, Any],
+    output_dir: Path,
+) -> dict[str, Any]:
+    """Bind untouched SmolVLA weights to one dataset/controller contract.
+
+    LeRobot's public base checkpoint declares the state, camera, and action
+    features of its source robot. Loading those bytes directly for a different
+    embodiment is invalid even though SmolVLA's internal projections have fixed
+    padded dimensions. This native preparation follows LeRobot's training
+    factory boundary: derive feature declarations and normalization processors
+    from the training-only dataset, retain the exact base weight file bytes, and
+    prove that the resulting checkpoint loads with the declared policy adapter.
+    """
+
+    source_weight = _find_weight_file(base_checkpoint)
+    if source_weight is None:
+        raise PolicyContainerError("SmolVLA base checkpoint has no native weights")
+    if output_dir.exists():
+        raise PolicyContainerError("prepared base checkpoint output already exists")
+    if not dataset_repo_id.strip() or not dataset_root.is_dir():
+        raise PolicyContainerError("prepared base requires a local LeRobot dataset")
+    (
+        FeatureType,
+        LeRobotDatasetMetadata,
+        make_pre_post_processors,
+        SmolVLAConfig,
+        SmolVLAPolicy,
+        POLICY_POSTPROCESSOR_DEFAULT_NAME,
+        POLICY_PREPROCESSOR_DEFAULT_NAME,
+        dataset_to_policy_features,
+    ) = _native_smolvla_preparation_api()
+
+    metadata = LeRobotDatasetMetadata(repo_id=dataset_repo_id, root=dataset_root)
+    features = dataset_to_policy_features(metadata.features)
+    inputs = {
+        key: value
+        for key, value in features.items()
+        if value.type is not FeatureType.ACTION
+    }
+    outputs = {
+        key: value
+        for key, value in features.items()
+        if value.type is FeatureType.ACTION
+    }
+    expected_action_key = str(adapter.get("action_feature_key") or "action")
+    if not inputs or set(outputs) != {expected_action_key}:
+        raise PolicyContainerError(
+            "dataset policy features lack one declared action output"
+        )
+
+    shutil.copytree(base_checkpoint, output_dir)
+    config = SmolVLAConfig.from_pretrained(str(base_checkpoint))
+    config.input_features = inputs
+    config.output_features = outputs
+    config.pretrained_path = None
+    config.device = "cpu"
+    config.save_pretrained(output_dir)
+    preprocessor, postprocessor = make_pre_post_processors(
+        policy_cfg=config, dataset_stats=metadata.stats
+    )
+    preprocessor.save_pretrained(
+        output_dir, config_filename=f"{POLICY_PREPROCESSOR_DEFAULT_NAME}.json"
+    )
+    postprocessor.save_pretrained(
+        output_dir, config_filename=f"{POLICY_POSTPROCESSOR_DEFAULT_NAME}.json"
+    )
+    manifest_path = write_smolvla_interchange_manifest(
+        output_dir,
+        policy_identity=str(adapter.get("policy_identity") or ""),
+        robot_identity=str(adapter.get("robot_identity") or ""),
+        task_identity=str(adapter.get("task_identity") or ""),
+        measured_state_names=list(adapter.get("measured_state_names") or ()),
+        measured_state_units=list(adapter.get("measured_state_units") or ()),
+        cameras=list(adapter.get("cameras") or ()),
+        action=dict(adapter.get("action") or {}),
+        state_feature_key=str(adapter.get("state_feature_key") or "observation.state"),
+        action_feature_key=str(adapter.get("action_feature_key") or "action"),
+        cartesian_controller_qualified=bool(
+            adapter.get("cartesian_controller_qualified", False)
+        ),
+    )
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    prepared_weight = _find_weight_file(output_dir)
+    source_weight_sha256 = _sha256_path(source_weight)
+    if prepared_weight is None or _sha256_path(prepared_weight) != source_weight_sha256:
+        raise PolicyContainerError(
+            "prepared base changed the exact native weight bytes"
+        )
+    try:
+        policy = SmolVLAPolicy.from_pretrained(str(output_dir)).to("cpu").eval()
+        _validate_native_policy_features(policy, manifest)
+    except PolicyContainerError:
+        raise
+    except Exception as exc:
+        raise PolicyContainerError(
+            f"prepared native SmolVLA base failed exact reload: {exc}"
+        ) from exc
+    return {
+        "schema": "npa.sim2real.smolvla_prepared_base.v1",
+        "dataset_repo_id": dataset_repo_id,
+        "source_weight_sha256": source_weight_sha256,
+        "prepared_weight_sha256": _sha256_path(prepared_weight),
+        "weight_update_l2": 0.0,
+        "normalization_identity": manifest["normalization_identity"],
+        "normalization_files": manifest["normalization_files"],
+        "measured_state_names": manifest["measured_state_names"],
+        "camera_feature_keys": [row["feature_key"] for row in manifest["cameras"]],
+        "action": manifest["action"],
+        "native_reload_passed": True,
+    }
+
+
+def _sha256_path(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def _load_smolvla_runtime(checkpoint: Path, device: str) -> tuple[Any, Any, Any]:
+    try:
+        import torch
+        from lerobot.policies.factory import make_pre_post_processors
+        from lerobot.policies.smolvla.modeling_smolvla import SmolVLAPolicy
+
+        policy = SmolVLAPolicy.from_pretrained(str(checkpoint)).to(device).eval()
+        preprocessor, postprocessor = make_pre_post_processors(
+            policy_cfg=policy.config,
+            pretrained_path=str(checkpoint),
+            preprocessor_overrides={"device_processor": {"device": device}},
+        )
+        if device.startswith("cuda") and not torch.cuda.is_available():
+            raise PolicyContainerError("CUDA policy device requested but unavailable")
+    except PolicyContainerError:
+        raise
+    except Exception as exc:
+        raise PolicyContainerError(
+            f"failed to load native SmolVLA runtime: {exc}"
+        ) from exc
+    return policy, preprocessor, postprocessor
+
+
+def _feature_shape(feature: Any) -> tuple[int, ...]:
+    shape = getattr(feature, "shape", None)
+    if shape is None and isinstance(feature, dict):
+        shape = feature.get("shape")
+    try:
+        return tuple(int(value) for value in shape)
+    except (TypeError, ValueError) as exc:
+        raise PolicyContainerError(
+            "policy feature is missing a concrete shape"
+        ) from exc
+
+
+def _validate_native_policy_features(policy: Any, manifest: dict[str, Any]) -> None:
+    config = getattr(policy, "config", None)
+    inputs = getattr(config, "input_features", None)
+    outputs = getattr(config, "output_features", None)
+    if not isinstance(inputs, Mapping) or not isinstance(outputs, Mapping):
+        raise PolicyContainerError("native SmolVLA config lacks input/output features")
+    state_key = str(manifest.get("state_feature_key") or "observation.state")
+    if state_key not in inputs or _feature_shape(inputs[state_key]) != (
+        len(manifest["measured_state_names"]),
+    ):
+        raise PolicyContainerError("checkpoint state feature does not match embodiment")
+    for camera in manifest["cameras"]:
+        key = camera["feature_key"]
+        width, height = camera["image_size_wh"]
+        expected = (3, height, width)
+        if key not in inputs or _feature_shape(inputs[key]) != expected:
+            raise PolicyContainerError(
+                f"checkpoint camera feature {key!r} does not match calibration"
+            )
+    action_key = str(manifest.get("action_feature_key") or "action")
+    if action_key not in outputs or _feature_shape(outputs[action_key]) != (
+        len(manifest["action"]["names"]),
+    ):
+        raise PolicyContainerError(
+            "checkpoint action feature does not match controller"
+        )
+
+
+def _decode_camera(camera: dict[str, Any], declaration: dict[str, Any]) -> Any:
+    try:
+        import numpy as np
+        import torch
+
+        raw_rgb = camera.get("image_rgb8_base64")
+        if raw_rgb:
+            raw = base64.b64decode(str(raw_rgb), validate=True)
+            width, height = declaration["image_size_wh"]
+            if len(raw) != width * height * 3:
+                raise ValueError("raw RGB byte length does not match calibration")
+            image = np.frombuffer(raw, dtype=np.uint8).reshape(height, width, 3).copy()
+        else:
+            from PIL import Image
+
+            raw = base64.b64decode(str(camera.get("image_base64") or ""), validate=True)
+            image = np.asarray(Image.open(io.BytesIO(raw)).convert("RGB")).copy()
+    except Exception as exc:
+        raise PolicyContainerError(f"invalid encoded camera image: {exc}") from exc
+    width, height = declaration["image_size_wh"]
+    if image.shape != (height, width, 3):
+        raise PolicyContainerError(
+            "camera bytes do not match declared image dimensions"
+        )
+    expected_hash = str(camera.get("image_sha256") or "")
+    if expected_hash and hashlib.sha256(image.tobytes()).hexdigest() != expected_hash:
+        raise PolicyContainerError("camera RGB hash does not match decoded bytes")
+    tensor = torch.from_numpy(image).float() / 255.0
+    # LeRobot processor inputs are CHW tensors. ``layout`` describes the
+    # external bytes and is checked above; decoding a PNG yields HWC in both
+    # cases, so the adapter performs the single explicit conversion here.
+    return tensor.permute(2, 0, 1)
+
+
+def _smolvla_batch(
+    observation: dict[str, Any], manifest: dict[str, Any], device: str
+) -> dict[str, Any]:
+    try:
+        import torch
+    except ImportError as exc:
+        raise PolicyContainerError("torch is required for SmolVLA inference") from exc
+    if observation.get("schema") != "npa.sim2real.policy_observation.v1":
+        raise PolicyContainerError("unsupported policy observation schema")
+    for key in ("policy_identity", "robot_identity", "task_identity"):
+        if observation.get(key) != manifest.get(key):
+            raise PolicyContainerError(f"observation {key} does not match checkpoint")
+    privileged = observation.get("privileged_object_state")
+    if privileged is not None and privileged is not False:
+        raise PolicyContainerError("privileged object state is forbidden")
+    prompt = str(observation.get("prompt") or "").strip()
+    if not prompt:
+        raise PolicyContainerError("policy prompt must be non-empty")
+    names = observation.get("measured_state_names")
+    units = observation.get("measured_state_units")
+    values = observation.get("measured_state")
+    if names != manifest["measured_state_names"] or not isinstance(values, list):
+        raise PolicyContainerError("measured state names/order do not match checkpoint")
+    if units != manifest["measured_state_units"]:
+        raise PolicyContainerError("measured state units do not match checkpoint")
+    if len(values) != len(names) or not all(
+        isinstance(value, (int, float)) and math.isfinite(float(value))
+        for value in values
+    ):
+        raise PolicyContainerError("measured state values must be complete and finite")
+    views = observation.get("views")
+    if not isinstance(views, list):
+        raise PolicyContainerError("camera views must be an ordered list")
+    by_key = {
+        str(view.get("key") or ""): view for view in views if isinstance(view, dict)
+    }
+    expected_keys = [camera["key"] for camera in manifest["cameras"]]
+    if list(by_key) != expected_keys:
+        raise PolicyContainerError("camera view names/order do not match checkpoint")
+    batch: dict[str, Any] = {
+        str(manifest.get("state_feature_key") or "observation.state"): torch.tensor(
+            values, dtype=torch.float32, device=device
+        ).unsqueeze(0),
+        "task": [prompt],
+    }
+    for declaration in manifest["cameras"]:
+        view = by_key[declaration["key"]]
+        if view.get("mask") is not True or view.get("layout") != declaration["layout"]:
+            raise PolicyContainerError(
+                "camera availability/layout does not match checkpoint"
+            )
+        capture = float(view.get("capture_timestamp_s", math.nan))
+        state = float(view.get("state_timestamp_s", math.nan))
+        if (
+            not math.isfinite(capture)
+            or not math.isfinite(state)
+            or capture > state + 1.0e-9
+            or state - capture > declaration["maximum_state_skew_s"] + 1.0e-9
+        ):
+            raise PolicyContainerError("camera observation is future-dated or stale")
+        batch[declaration["feature_key"]] = (
+            _decode_camera(view, declaration).unsqueeze(0).to(device)
+        )
+    return batch
 
 
 def assert_lerobot_importable() -> LeRobotImportResult:
@@ -1244,7 +1884,8 @@ def create_app() -> Any:
     """Create the FastAPI app used inside the policy container."""
 
     try:
-        from fastapi import FastAPI, HTTPException
+        from fastapi import FastAPI, Header, HTTPException
+        from fastapi.responses import JSONResponse
     except ImportError as exc:
         raise PolicyContainerError(
             "fastapi is required to serve the policy container"
@@ -1256,18 +1897,41 @@ def create_app() -> Any:
     if checkpoint:
         policy = LeRobotPolicyRuntime(checkpoint)
 
+    def authorize(authorization: str | None) -> None:
+        token = os.environ.get("NPA_POLICY_AUTH_TOKEN", "").strip()
+        if token and authorization != f"Bearer {token}":
+            raise HTTPException(status_code=401, detail="invalid bearer token")
+
     @app.get("/health")
     async def health() -> dict[str, Any]:
         import_result = assert_lerobot_importable().to_dict()
         payload: dict[str, Any] = {"status": "ok", "lerobot": import_result}
         if policy is not None:
             payload["checkpoint"] = policy.validation.to_dict()
+            payload["interchange"] = {
+                "schema": policy.manifest["schema"],
+                "backend": policy.manifest["backend"],
+                "policy_identity": policy.manifest["policy_identity"],
+                "robot_identity": policy.manifest["robot_identity"],
+                "task_identity": policy.manifest["task_identity"],
+                "checkpoint_sha256": policy.manifest["checkpoint_sha256"],
+                "normalization_identity": policy.manifest["normalization_identity"],
+                "measured_state_names": policy.manifest["measured_state_names"],
+                "cameras": policy.manifest["cameras"],
+                "action": policy.manifest["action"],
+                "manifest_sha256": _sha256_path(
+                    policy.checkpoint_path / INTERCHANGE_MANIFEST_FILENAME
+                ),
+            }
         else:
             payload["checkpoint"] = "not configured"
         return payload
 
     @app.post("/infer")
-    async def infer(payload: dict[str, Any]) -> dict[str, Any]:
+    async def infer(
+        payload: dict[str, Any], authorization: str | None = Header(default=None)
+    ) -> dict[str, Any]:
+        authorize(authorization)
         if policy is None:
             raise HTTPException(
                 status_code=503,
@@ -1279,10 +1943,108 @@ def create_app() -> Any:
                 "policy": str(policy.checkpoint_path),
             }
         except PolicyContainerError as exc:
-            raise HTTPException(status_code=501, detail=str(exc)) from exc
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.post("/infer-typed")
+    async def infer_typed(
+        payload: dict[str, Any],
+        authorization: str | None = Header(default=None),
+        x_npa_sampling_seed: str | None = Header(default=None),
+        x_npa_sampling_sequence: str | None = Header(default=None),
+    ) -> Any:
+        """Validate the neutral wire contract and run the real native policy."""
+
+        authorize(authorization)
+        if policy is None:
+            raise HTTPException(
+                status_code=503,
+                detail="NPA_POLICY_CHECKPOINT is required for inference",
+            )
+        try:
+            from types import SimpleNamespace
+
+            from npa.workflows.sim2real.interchange_backends import (
+                smolvla_policy_profile,
+            )
+            from npa.workflows.sim2real.interchange_contract import (
+                policy_observation_from_wire,
+            )
+
+            observation = policy_observation_from_wire(payload)
+            profile = smolvla_policy_profile(
+                policy.manifest,
+                robot=SimpleNamespace(identity=observation.robot_identity),
+                task=SimpleNamespace(identity=observation.task_identity),
+                hardware_topologies=(
+                    os.environ.get("NPA_POLICY_HARDWARE_TOPOLOGY", "single-gpu"),
+                ),
+            )
+            sampling_seed = None
+            if x_npa_sampling_seed is not None:
+                if x_npa_sampling_sequence is None or not re.fullmatch(
+                    r"[A-Za-z0-9._:-]{1,128}", x_npa_sampling_sequence
+                ):
+                    raise PolicyContainerError(
+                        "paired SmolVLA sampling requires a valid sequence identity"
+                    )
+                try:
+                    sampling_seed = int(x_npa_sampling_seed)
+                except ValueError as exc:
+                    raise PolicyContainerError(
+                        "SmolVLA sampling seed must be an integer"
+                    ) from exc
+            elif x_npa_sampling_sequence is not None:
+                raise PolicyContainerError(
+                    "SmolVLA sampling sequence requires a sampling seed"
+                )
+            output, sampling = policy.infer_typed_with_sampling(
+                observation, profile, sampling_seed=sampling_seed
+            )
+            headers = {
+                "X-NPA-Fresh-Observation-Consumed": "true",
+            }
+            if sampling_seed is not None:
+                headers.update(
+                    {
+                        "X-NPA-Sampler-Noise-SHA256": str(
+                            sampling["sampler_noise_sha256"]
+                        ),
+                        "X-NPA-Sampling-Sequence": str(x_npa_sampling_sequence),
+                        "X-NPA-Sampler-Noise-Shape": ",".join(
+                            str(value) for value in sampling["sampler_noise_shape"]
+                        ),
+                    }
+                )
+            return JSONResponse(content=output.to_dict(), headers=headers)
+        except PolicyContainerError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.post("/reset")
+    async def reset(
+        authorization: str | None = Header(default=None),
+    ) -> dict[str, Any]:
+        """Reset native action queues before a sealed rollout episode."""
+
+        authorize(authorization)
+        if policy is None:
+            raise HTTPException(
+                status_code=503,
+                detail="NPA_POLICY_CHECKPOINT is required for reset",
+            )
+        policy.reset()
+        return {
+            "status": "reset",
+            "policy_identity": policy.manifest["policy_identity"],
+            "checkpoint_sha256": policy.manifest["checkpoint_sha256"],
+        }
 
     @app.post("/rollout")
-    async def rollout(payload: dict[str, Any]) -> dict[str, Any]:
+    async def rollout(
+        payload: dict[str, Any], authorization: str | None = Header(default=None)
+    ) -> dict[str, Any]:
+        authorize(authorization)
         if policy is None:
             raise HTTPException(
                 status_code=503, detail="NPA_POLICY_CHECKPOINT is required for rollout"
@@ -1296,10 +2058,13 @@ def create_app() -> Any:
                 "policy": str(policy.checkpoint_path),
             }
         except PolicyContainerError as exc:
-            raise HTTPException(status_code=501, detail=str(exc)) from exc
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     @app.post("/feedback/train-step")
-    async def feedback_train_step(payload: dict[str, Any]) -> dict[str, Any]:
+    async def feedback_train_step(
+        payload: dict[str, Any], authorization: str | None = Header(default=None)
+    ) -> dict[str, Any]:
+        authorize(authorization)
         is_signal = bool(payload.get("signals")) or str(
             payload.get("schema", "")
         ).startswith("npa.sim2real.rl_signal.")
@@ -1559,12 +2324,19 @@ def _materialize_eval_checkpoint(args: argparse.Namespace) -> Path:
     local path is used as-is; anything else is fetched first.
     """
 
-    given = Path(args.checkpoint_path)
+    return _materialize_policy_source(
+        str(args.checkpoint_path), Path(args.checkpoint_cache_dir)
+    )
+
+
+def _materialize_policy_source(raw: str, cache: Path) -> Path:
+    """Resolve local, private S3, or exact-revision Hugging Face policy bytes."""
+
+    given = Path(raw)
     if given.exists():
         return given
 
-    raw = str(args.checkpoint_path).strip()
-    cache = Path(args.checkpoint_cache_dir)
+    raw = raw.strip()
     cache.mkdir(parents=True, exist_ok=True)
     if raw.startswith("s3://"):
         from npa.clients.storage import StorageClient
@@ -1575,12 +2347,20 @@ def _materialize_eval_checkpoint(args: argparse.Namespace) -> Path:
         return target
 
     repo_id = raw[len("hf://") :] if raw.startswith("hf://") else raw
+    revision = None
+    if "@" in repo_id:
+        repo_id, revision = repo_id.rsplit("@", 1)
+        if not re.fullmatch(r"[0-9a-f]{40}", revision):
+            raise PolicyContainerError(
+                "Hugging Face policy revision must be exactly 40 lowercase hex"
+            )
     if "/" not in repo_id:
         raise PolicyContainerError(
             f"--checkpoint-path {raw!r} is neither a local path, an s3:// prefix, nor a "
             "Hugging Face repo id (owner/name)"
         )
-    target = _download_eval_checkpoint(repo_id, cache)
+    reference = f"{repo_id}@{revision}" if revision is not None else repo_id
+    target = _download_eval_checkpoint(reference, cache)
     print(f"NPA_LEROBOT_POLICY_READY {target}", flush=True)
     return target
 
@@ -1699,6 +2479,30 @@ def build_parser() -> argparse.ArgumentParser:
     # RUN (configs, logs, metrics) needs the whole output tree, which the retired
     # tokenfactory-train-triage template uploaded with a trailing inline-python block.
     train_cmd.add_argument("--artifacts-s3-uri", default="")
+    train_cmd.add_argument(
+        "--selected-checkpoint-s3-uri",
+        default="",
+        help=(
+            "Optional canonical destination for the fully bound selected checkpoint. "
+            "Requires interchange binding and whole-run artifact publication."
+        ),
+    )
+    train_cmd.add_argument("--result-uri", default="")
+    train_cmd.add_argument("--component-root-uri", default="")
+    train_cmd.add_argument("--pretrained-policy-source", default="")
+    train_cmd.add_argument(
+        "--pretrained-policy-cache-dir",
+        type=Path,
+        default=Path.home() / ".cache" / "npa" / "lerobot-pretrained",
+    )
+    train_cmd.add_argument(
+        "--interchange-adapter-relative-path",
+        default="",
+        help=(
+            "Optional dataset-relative JSON adapter spec. When set, training binds "
+            "the real checkpoint weights and serialized processors before upload."
+        ),
+    )
     train_cmd.add_argument("--checkpoint-s3-endpoint-url", default="")
     train_cmd.add_argument("--checkpoint-s3-access-key-id", default="")
     train_cmd.add_argument("--checkpoint-s3-secret-access-key", default="")
@@ -1730,6 +2534,23 @@ def build_parser() -> argparse.ArgumentParser:
         "validate-checkpoint", help="Assert a checkpoint has loadable weights."
     )
     validate_cmd.add_argument("--checkpoint-path", type=Path, required=True)
+    bind_cmd = subparsers.add_parser(
+        "bind-interchange",
+        help="Bind a trained SmolVLA checkpoint to an explicit robot/task adapter.",
+    )
+    bind_cmd.add_argument("--checkpoint-path", type=Path, required=True)
+    bind_cmd.add_argument("--adapter-spec", type=Path, required=True)
+    bind_cmd.add_argument("--output-json", type=Path, required=True)
+    infer_cmd = subparsers.add_parser(
+        "infer-interchange",
+        help="Run one real checkpoint-loaded typed SmolVLA inference.",
+    )
+    infer_cmd.add_argument("--checkpoint-path", type=Path, required=True)
+    infer_cmd.add_argument("--observation-json", type=Path, required=True)
+    infer_cmd.add_argument("--output-json", type=Path, required=True)
+    infer_cmd.add_argument(
+        "--hardware-topology", default="single-gpu", help="Measured runtime topology."
+    )
     feedback_cmd = subparsers.add_parser(
         "feedback-step", help="Run one feedback trainer-hook step."
     )
@@ -1763,6 +2584,27 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 0
     if args.command == "train":
+        if (
+            args.interchange_adapter_relative_path.strip()
+            and args.checkpoint_s3_uri.strip()
+        ):
+            raise PolicyContainerError(
+                "interchange training uploads the complete bound artifact tree; "
+                "checkpoint-only upload is forbidden"
+            )
+        pretrained_source = args.pretrained_policy_source.strip()
+        if pretrained_source:
+            if any(
+                value.split("=", 1)[0] == "policy.pretrained_path"
+                for value in args.override
+            ):
+                raise PolicyContainerError(
+                    "choose --pretrained-policy-source or a pretrained_path override"
+                )
+            local_pretrained = _materialize_policy_source(
+                pretrained_source, args.pretrained_policy_cache_dir
+            )
+            args.override.append(f"policy.pretrained_path={local_pretrained}")
         try:
             training_config = build_training_config(
                 data_path=args.data_path,
@@ -1817,9 +2659,102 @@ def main(argv: list[str] | None = None) -> int:
             **training_provenance,
             "artifact_path": str(provenance_path),
         }
+        relative_adapter = args.interchange_adapter_relative_path.strip()
+        if relative_adapter:
+            payload["schema"] = "npa.workbench.lerobot.training-result.v1"
+            payload["policy_backend"] = "lerobot_smolvla"
+            relative = Path(relative_adapter)
+            if relative.is_absolute() or ".." in relative.parts:
+                raise PolicyContainerError(
+                    "interchange adapter spec must be a safe dataset-relative path"
+                )
+            adapter_path = (dataset_path / relative).resolve()
+            try:
+                adapter_path.relative_to(dataset_path.resolve())
+            except ValueError as exc:
+                raise PolicyContainerError(
+                    "interchange adapter spec escapes the materialized dataset"
+                ) from exc
+            try:
+                adapter = json.loads(adapter_path.read_text(encoding="utf-8"))
+            except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+                raise PolicyContainerError(
+                    f"invalid interchange adapter spec: {exc}"
+                ) from exc
+            if not isinstance(adapter, dict):
+                raise PolicyContainerError("interchange adapter spec must be an object")
+            manifest_path = write_smolvla_interchange_manifest(
+                Path(train_result.checkpoint_path),
+                policy_identity=str(adapter.get("policy_identity") or ""),
+                robot_identity=str(adapter.get("robot_identity") or ""),
+                task_identity=str(adapter.get("task_identity") or ""),
+                normalization_identity=str(adapter.get("normalization_identity") or ""),
+                measured_state_names=list(adapter.get("measured_state_names") or ()),
+                measured_state_units=list(adapter.get("measured_state_units") or ()),
+                cameras=list(adapter.get("cameras") or ()),
+                action=dict(adapter.get("action") or {}),
+                state_feature_key=str(
+                    adapter.get("state_feature_key") or "observation.state"
+                ),
+                action_feature_key=str(adapter.get("action_feature_key") or "action"),
+                cartesian_controller_qualified=bool(
+                    adapter.get("cartesian_controller_qualified", False)
+                ),
+            )
+            payload["policy_interchange_manifest"] = {
+                "artifact_path": str(manifest_path),
+                "manifest": json.loads(manifest_path.read_text(encoding="utf-8")),
+            }
+        selected_uri = args.selected_checkpoint_s3_uri.strip()
+        if selected_uri:
+            if not relative_adapter or not args.artifacts_s3_uri.strip():
+                raise PolicyContainerError(
+                    "selected interchange checkpoint publication requires adapter "
+                    "binding and whole-run artifact publication"
+                )
+            from npa.clients.storage import StorageClient
+
+            payload["selected_checkpoint_uri"] = (
+                StorageClient.from_environment().upload_directory(
+                    str(train_result.checkpoint_path), selected_uri, require_empty=True
+                )
+            )
         if args.artifacts_s3_uri.strip():
             payload["artifacts_uri"] = upload_run_artifacts(
                 train_result.output_dir, args.artifacts_s3_uri
+            )
+        if args.result_uri.strip():
+            from npa.workflows.sim2real.workflow_io import write_json
+
+            write_json(
+                args.result_uri,
+                payload,
+                directory=Path(train_result.output_dir).parent / "npa-result",
+            )
+        if args.component_root_uri.strip():
+            if not args.result_uri.strip() or not selected_uri:
+                raise PolicyContainerError(
+                    "interchange ComponentRecord requires result and selected checkpoint URIs"
+                )
+            from npa.workflows.sim2real.workflow_io import (
+                POLICY_INTERCHANGE_COMPONENT_SCHEMA,
+                publish_component_record,
+            )
+
+            publish_component_record(
+                component_schema=POLICY_INTERCHANGE_COMPONENT_SCHEMA,
+                root_uri=args.component_root_uri,
+                stage=8,
+                name="smolvla_native_training",
+                tier="WORKS",
+                require_gpu=True,
+                evidence=(
+                    "Ran native SmolVLA fine-tuning and published a weight/processor-bound checkpoint."
+                ),
+                artifacts={
+                    "training": args.result_uri,
+                    "checkpoint": selected_uri,
+                },
             )
         print(json.dumps(payload, indent=2, sort_keys=True))
         return 0
@@ -1844,6 +2779,61 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "validate-checkpoint":
         validation_result = validate_lerobot_checkpoint(args.checkpoint_path)
         print(json.dumps(validation_result.to_dict(), indent=2, sort_keys=True))
+        return 0
+    if args.command == "bind-interchange":
+        spec = json.loads(args.adapter_spec.read_text(encoding="utf-8"))
+        path = write_smolvla_interchange_manifest(
+            args.checkpoint_path,
+            policy_identity=str(spec.get("policy_identity") or ""),
+            robot_identity=str(spec.get("robot_identity") or ""),
+            task_identity=str(spec.get("task_identity") or ""),
+            normalization_identity=str(spec.get("normalization_identity") or ""),
+            measured_state_names=list(spec.get("measured_state_names") or ()),
+            measured_state_units=list(spec.get("measured_state_units") or ()),
+            cameras=list(spec.get("cameras") or ()),
+            action=dict(spec.get("action") or {}),
+            state_feature_key=str(spec.get("state_feature_key") or "observation.state"),
+            action_feature_key=str(spec.get("action_feature_key") or "action"),
+            cartesian_controller_qualified=bool(
+                spec.get("cartesian_controller_qualified", False)
+            ),
+        )
+        result = {
+            "status": "bound",
+            "manifest": json.loads(path.read_text(encoding="utf-8")),
+        }
+        args.output_json.parent.mkdir(parents=True, exist_ok=True)
+        args.output_json.write_text(
+            json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+        print(json.dumps(result, indent=2, sort_keys=True))
+        return 0
+    if args.command == "infer-interchange":
+        from types import SimpleNamespace
+
+        from npa.workflows.sim2real.interchange_backends import (
+            smolvla_policy_profile,
+        )
+        from npa.workflows.sim2real.interchange_contract import (
+            policy_observation_from_wire,
+        )
+
+        runtime = LeRobotPolicyRuntime(args.checkpoint_path)
+        observation = policy_observation_from_wire(
+            json.loads(args.observation_json.read_text(encoding="utf-8"))
+        )
+        profile = smolvla_policy_profile(
+            runtime.manifest,
+            robot=SimpleNamespace(identity=observation.robot_identity),
+            task=SimpleNamespace(identity=observation.task_identity),
+            hardware_topologies=(args.hardware_topology,),
+        )
+        output = runtime.infer_typed(observation, profile).to_dict()
+        args.output_json.parent.mkdir(parents=True, exist_ok=True)
+        args.output_json.write_text(
+            json.dumps(output, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+        print(json.dumps(output, indent=2, sort_keys=True))
         return 0
     if args.command == "feedback-step":
         payload = json.loads(args.feedback_json.read_text(encoding="utf-8"))

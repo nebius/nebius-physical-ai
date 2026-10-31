@@ -1,0 +1,56 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "workflow_sha256": "a8bc821638fbaf25db0a9579c5f35f68e248d91bf4ba6e54e06239cf78a9280d",
+  "planning": {
+    "validation": {
+      "status": "verified",
+      "reason": "The standard workflow parser and production renderer accepted the sixteen-stage graph, declared time-aligned SmolVLA action strategy and exact-owned terminal failure cleanup group.",
+      "evidence": [
+        "validate-spec status valid",
+        "plan-spec --check-render status valid with 16 normal-path tasks and render SHA-256 6ee9f30b23b8f3a45718ff2495daa529027636b43f6c7d08deed7471742aa18c",
+        "failure handler render valid with 1 cleanup task and render SHA-256 b5cc0cdef91f2ba728ea5fca6a2d6230331648c9439d26d957a76c66d79c5aba",
+        "runtime failure-handler regression preserves the payload error, attempts both cleanup states, fingerprints the cleanup path and submits nothing on unsafe terminal resume"
+      ]
+    },
+    "task_fidelity": {
+      "status": "verified",
+      "reason": "The resolved graph retains collect, export, base service/evaluation, native train/reload, adapted service/evaluation, normal and failure cleanup, and factual finalization; both gold evaluations receive the same explicit action-selection value.",
+      "evidence": [
+        "npa/tests/orchestration/npa_workflow/test_sim2real_policy_interchange_workflow.py",
+        "593 focused workflow/runtime/provenance tests and 155 catalog/argv/documentation synchronization tests passed on qualified Python 3.12.14"
+      ]
+    }
+  },
+  "prerequisites": {
+    "output_storage": {
+      "status": "unverified",
+      "reason": "The checked-in example bucket is intentionally not a writable destination; a normal configured project bucket must pass read/write preflight before submission.",
+      "evidence": []
+    },
+    "worker_input": {
+      "status": "unverified",
+      "reason": "A supported immutable Franka/cube/SmolVLA profile URI must be staged and consumed from worker-readable storage in a clean-start run.",
+      "evidence": []
+    },
+    "credentials": {
+      "status": "unverified",
+      "reason": "The operator-owned Hugging Face credential, registry pull access and project authentication must be checked in the actual clean-start environment without embedding secrets in the spec.",
+      "evidence": []
+    },
+    "source_image": {
+      "status": "blocked",
+      "reason": "The exact-a952 clean-start runtime repair is in source qualification and has not completed exact-head CI, security, provenance, anonymous-byte or live clean-start qualification.",
+      "evidence": [
+        "candidate source a95285b4f65922a5b3535b63ecdbca5a9375b667 based on exact 6b3dfb4eccbf2b17eee0266d5025c6a88f7a8460",
+        "focused runtime-prerequisite, toolRef/catalog and sixteen-stage production-render validation passed; the complete source population remains prerequisite evidence"
+      ]
+    },
+    "target_runtime": {
+      "status": "blocked",
+      "reason": "No clean-start standard-runtime execution has yet demonstrated strict held-out placement, real interrupted-run adoption, exact live cleanup and standalone final proof under this strategy. Unit tests do not establish those live outcomes.",
+      "evidence": [
+        "historical accepted baseline remains 0/24 placements"
+      ]
+    }
+  }
+}

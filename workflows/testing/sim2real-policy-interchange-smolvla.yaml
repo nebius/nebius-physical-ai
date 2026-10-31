@@ -1,0 +1,408 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+
+metadata:
+  name: sim2real-policy-interchange-smolvla
+  description: >
+    Exercise the reusable Sim2Real policy boundary with a pinned native LeRobot
+    SmolVLA backend on the currently qualified Franka released-surface task. The
+    graph keeps robot/task compatibility, expert data, native training, reload,
+    private serving, same-task gold trials, cleanup and factual proof distinct.
+    It does not claim that the Franka collector qualifies another embodiment.
+
+config:
+  bucket: example-bucket
+  prefix: "sim2real-policy-interchange-smolvla/{{run.id}}"
+  root_uri: "s3://{{config.bucket}}/{{config.prefix}}"
+  component_root_uri: "{{config.root_uri}}"
+  source_sha: ""
+  require_baked_npa: "1"
+  baked_npa_import: npa.workflows.sim2real.interchange_stage
+  profile_uri: "s3://example-bucket/private-profiles/franka-cube-smolvla/"
+  execution_profile: pi05_franka_surface_v1
+  cpu_image: ""
+  isaac_image: ""
+  runtime_image: "registry.example.invalid/lerobot@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+  cpu_image_source_sha: "{{config.source_sha}}"
+  isaac_image_source_sha: "{{config.source_sha}}"
+  runtime_image_source_sha: "{{config.source_sha}}"
+  baked_image_source_sha_by_config_key:
+    cpu_image: cpu_image_source_sha
+    isaac_image: isaac_image_source_sha
+    runtime_image: runtime_image_source_sha
+  runtime_prerequisites_mode: workflow_owned
+  isaac_cache_pvc: "npa-smolvla-{{run.id}}-isaac-cache"
+  policy_cache_pvc: "npa-smolvla-{{run.id}}-policy-cache"
+  isaac_warm_job: "npa-smolvla-{{run.id}}-isaac-warm"
+  runtime_storage_class: compute-csi-default-sc
+  runtime_storage_access_mode: ReadWriteOnce
+  isaac_cache_size: 40Gi
+  policy_cache_size: 100Gi
+  isaac_cache_warm_timeout_seconds: "3600"
+  base_checkpoint_uri: "hf://lerobot/smolvla_base@5e8d12a6e2975b0e5e5fce7c8caf47c371d257b6"
+  prepared_base_checkpoint_uri: "{{config.root_uri}}/stage_04_artifact/prepared-base/"
+  base_service_checkpoint_uri: "{{config.prepared_base_checkpoint_uri}}"
+  hf_token_secret: ""
+
+  training_gpu_type: RTXPRO6000
+  training_gpu_count: "1"
+  training_num_nodes: "1"
+  gpu_cpus: "16"
+  gpu_memory: 96Gi
+  gpu_disk_size: "100"
+  isaac_gpu_type: RTXPRO6000
+  isaac_runtime_class: nvidia
+  # Leave headroom for the standard-runtime controller and node services on
+  # 24-vCPU single-GPU workers. Operators can raise this on larger workers.
+  isaac_cpus: "12"
+  isaac_memory: 128Gi
+  isaac_disk_size: "100"
+  cpu_cpus: "8"
+  cpu_memory: 32Gi
+  cpu_disk_size: "40"
+
+  expert_episodes_per_split: "8"
+  expert_seed: "20261007"
+  object_usd: ""
+  gold_episodes: "8"
+  gold_seed: "20281007"
+  eval_decisions: "192"
+  wrist_ablation_modes: fresh,frozen,pixel_channel_shuffle
+  wrist_ablation_seed: "20271008"
+  smolvla_action_selection: uniform_temporal_ensemble
+  train_steps: "1000"
+  train_batch_size: "8"
+  policy_device: cuda
+  train_env_ids: ""
+  lerobot_dataset_repo_id: npa/franka-surface-placement
+  lerobot_output_dir: /tmp/npa-smolvla-training
+  policy_adapter_relative_path: meta/npa_policy_adapter.json
+
+  service_namespace: default
+  service_auth_secret: "npa-smolvla-{{run.id}}-auth"
+  base_service_account: "npa-smolvla-{{run.id}}-base-ctl"
+  adapted_service_account: "npa-smolvla-{{run.id}}-adapted-ctl"
+  service_gpu_count: "1"
+  service_gpu_node_selector_key: nebius.com/gpu-name
+  service_gpu_node_selector_value: RTXPRO6000
+  service_hardware_topology: single-rtxpro6000
+  service_server_cpus: "16"
+  service_server_memory: 96Gi
+  service_server_ready_timeout_seconds: "1200"
+
+  preparation_uri: "{{config.root_uri}}/stage_01_prepare/preparation.json"
+  policy_adapter_uri: "{{config.root_uri}}/stage_01_prepare/policy-adapter.json"
+  collection_root_uri: "{{config.root_uri}}/stage_02_expert"
+  train_collection_uri: "{{config.collection_root_uri}}/train/"
+  validation_collection_uri: "{{config.collection_root_uri}}/validation/"
+  gold_collection_uri: "{{config.collection_root_uri}}/gold/"
+  dataset_root_uri: "{{config.root_uri}}/stage_03_dataset/"
+  lerobot_uri: "{{config.dataset_root_uri}}lerobot-v3/"
+  dataset_policy_adapter_uri: "{{config.lerobot_uri}}meta/npa_policy_adapter.json"
+  artifact_preflight_uri: "{{config.root_uri}}/stage_04_artifact/preflight.json"
+  base_policy_adapter_uri: ""
+  adapted_policy_adapter_uri: ""
+
+  base_service_start_uri: "{{config.root_uri}}/stage_05_base_service/start.json"
+  base_service_cleanup_uri: "{{config.root_uri}}/stage_07_base_cleanup/cleanup.json"
+  base_gold_uri: "{{config.root_uri}}/stage_06_base_gold/report.json"
+  base_artifact_root_uri: "{{config.root_uri}}/stage_06_base_gold/"
+
+  artifacts_uri: "{{config.root_uri}}/stage_08_train/run/"
+  adapted_checkpoint_uri: "{{config.root_uri}}/stage_08_train/selected-checkpoint/"
+  training_uri: "{{config.root_uri}}/stage_08_train/training.json"
+  reload_uri: "{{config.root_uri}}/stage_09_reload/validation.json"
+
+  adapted_service_start_uri: "{{config.root_uri}}/stage_10_adapted_service/start.json"
+  adapted_service_cleanup_uri: "{{config.root_uri}}/stage_13_adapted_cleanup/cleanup.json"
+  adapted_gold_uri: "{{config.root_uri}}/stage_11_adapted_gold/report.json"
+  adapted_artifact_root_uri: "{{config.root_uri}}/stage_11_adapted_gold/"
+  external_seam_uri: "{{config.root_uri}}/stage_12_external/seam.json"
+  final_report_uri: "{{config.root_uri}}/reports/policy-interchange-smolvla.json"
+  final_mp4_uri: "{{config.root_uri}}/reports/policy-interchange-smolvla.mp4"
+  final_witness_mp4_uri: "{{config.root_uri}}/reports/policy-interchange-smolvla-witness.mp4"
+  final_rrd_uri: "{{config.root_uri}}/reports/policy-interchange-smolvla.rrd"
+  final_policy_inputs_uri: "{{config.root_uri}}/reports/policy-input-rgb.npz"
+  final_html_uri: "{{config.root_uri}}/reports/policy-interchange-smolvla.html"
+  runtime_prerequisites_uri: "{{config.root_uri}}/runtime/prerequisites.json"
+  runtime_prerequisites_cleanup_uri: "{{config.root_uri}}/runtime/cleanup.json"
+  failure_runtime_prerequisites_cleanup_uri: "{{config.root_uri}}/failure_cleanup/runtime.json"
+
+resources:
+  cpu:
+    cloud: kubernetes
+    cpus: "{{config.cpu_cpus}}"
+    memory: "{{config.cpu_memory}}"
+    disk_size: "{{config.cpu_disk_size}}"
+    image: "{{config.cpu_image}}"
+  data:
+    cloud: kubernetes
+    cpus: "{{config.cpu_cpus}}"
+    memory: "{{config.cpu_memory}}"
+    disk_size: "{{config.cpu_disk_size}}"
+    image: "{{config.cpu_image}}"
+  smolvla-artifact:
+    cloud: kubernetes
+    cpus: "4"
+    memory: 16Gi
+    disk_size: "40"
+    image: "{{config.runtime_image}}"
+  smolvla-training:
+    cloud: kubernetes
+    accelerators: "{{config.training_gpu_type}}:{{config.training_gpu_count}}"
+    cpus: "{{config.gpu_cpus}}"
+    memory: "{{config.gpu_memory}}"
+    disk_size: "{{config.gpu_disk_size}}"
+    num_nodes: "{{config.training_num_nodes}}"
+    image: "{{config.runtime_image}}"
+  isaac:
+    cloud: kubernetes
+    accelerators: "{{config.isaac_gpu_type}}:1"
+    cpus: "{{config.isaac_cpus}}"
+    memory: "{{config.isaac_memory}}"
+    disk_size: "{{config.isaac_disk_size}}"
+    image: "{{config.isaac_image}}"
+    kubernetes:
+      provision_timeout: 2400
+      pod_config:
+        spec:
+          runtimeClassName: "{{config.isaac_runtime_class}}"
+          containers:
+            - name: ray-node
+              env:
+                - {name: NPA_ISAAC_CACHE_DIR, value: /opt/isaac-cache}
+                - {name: NPA_ISAAC_CACHE_READONLY, value: "1"}
+                - {name: NPA_ISAAC_BOOTSTRAP_OFFLINE, value: "1"}
+                - {name: NPA_BAKED_PYTHON, value: /isaac-sim/python.sh}
+                - {name: NPA_ISAAC_STATE_DIR, value: /tmp/npa-isaac-state}
+                - {name: NPA_ISAAC_KIT_ARGS, value: "--portable-root /tmp/npa-isaac-state/kit"}
+                - {name: OMNI_USER_DIR, value: /tmp/npa-isaac-state/omni-user}
+                - {name: OMNI_LOG_DIR, value: /tmp/npa-isaac-state/logs}
+                - {name: XDG_RUNTIME_DIR, value: /tmp/npa-isaac-state/xdg-runtime}
+                - {name: XDG_CACHE_HOME, value: /tmp/npa-isaac-state/xdg-cache}
+                - {name: XDG_CONFIG_HOME, value: /tmp/npa-isaac-state/xdg-config}
+                - {name: XDG_DATA_HOME, value: /tmp/npa-isaac-state/xdg-data}
+                - name: NPA_POLICY_AUTH_TOKEN
+                  valueFrom:
+                    secretKeyRef:
+                      name: "{{config.service_auth_secret}}"
+                      key: auth_token
+              volumeMounts:
+                - {name: npa-isaac-runtime-cache, mountPath: /opt/isaac-cache, readOnly: true}
+                - {name: npa-isaac-job-state, mountPath: /tmp/npa-isaac-state}
+          volumes:
+            - name: npa-isaac-runtime-cache
+              persistentVolumeClaim: {claimName: "{{config.isaac_cache_pvc}}", readOnly: true}
+            - name: npa-isaac-job-state
+              emptyDir: {}
+  base-service-control:
+    cloud: kubernetes
+    cpus: "2"
+    memory: 8Gi
+    disk_size: "20"
+    image: "{{config.cpu_image}}"
+    kubernetes:
+      pod_config:
+        spec:
+          serviceAccountName: "{{config.base_service_account}}"
+  adapted-service-control:
+    cloud: kubernetes
+    cpus: "2"
+    memory: 8Gi
+    disk_size: "20"
+    image: "{{config.cpu_image}}"
+    kubernetes:
+      pod_config:
+        spec:
+          serviceAccountName: "{{config.adapted_service_account}}"
+  viewer:
+    cloud: kubernetes
+    cpus: "{{config.cpu_cpus}}"
+    memory: "{{config.cpu_memory}}"
+    disk_size: "{{config.cpu_disk_size}}"
+    image: "{{config.cpu_image}}"
+
+initial: prepare-contract
+onFailure: failure-cleanup-runtime-prerequisites
+
+states:
+  provision-runtime-prerequisites:
+    description: Create or adopt exact run-owned caches, authentication and scoped service RBAC, then warm the immutable Isaac runtime.
+    toolRef: workbench.sim2real.runtime_prerequisites_apply
+    resources: cpu
+    outputs:
+      - {uri: "{{config.runtime_prerequisites_uri}}", schema: npa.sim2real.runtime_prerequisites.v1}
+    needs: [prepare-contract]
+    next: collect-expert
+
+  prepare-contract:
+    description: Validate sealed Franka, cameras, rigid object, task and SmolVLA contracts before GPU submission.
+    toolRef: workbench.sim2real.policy_interchange_prepare
+    resources: cpu
+    outputs:
+      - {uri: "{{config.preparation_uri}}", schema: npa.sim2real.policy_interchange.preparation.v1}
+      - {uri: "{{config.policy_adapter_uri}}", schema: npa.sim2real.lerobot_policy_adapter.v1}
+      - {uri: "{{config.component_root_uri}}/components/stage_01.json", schema: npa.sim2real.policy_interchange.component_record.v1}
+    next: provision-runtime-prerequisites
+
+  collect-expert:
+    description: Collect the currently qualified Franka/cube-family expert with causal exterior and wrist observations.
+    needs: [provision-runtime-prerequisites]
+    toolRef: workbench.sim2real.policy_interchange_franka_collect
+    resources: isaac
+    outputs:
+      - {uri: "{{config.train_collection_uri}}collection.json", schema: npa.sim2real.pi05.expert_collection.v1}
+      - {uri: "{{config.validation_collection_uri}}collection.json", schema: npa.sim2real.pi05.expert_collection.v1}
+      - {uri: "{{config.gold_collection_uri}}collection.json", schema: npa.sim2real.pi05.expert_collection.v1}
+      - {uri: "{{config.component_root_uri}}/components/stage_02.json", schema: npa.sim2real.policy_interchange.component_record.v1}
+    next: export-dataset
+
+  export-dataset:
+    description: Export real LeRobot v3 data, train-only normalization and the dimension-checked native adapter.
+    needs: [collect-expert]
+    toolRef: workbench.sim2real.policy_interchange_export
+    resources: data
+    outputs:
+      - {uri: "{{config.lerobot_uri}}meta/info.json", schema: lerobot.dataset.v3.info}
+      - {uri: "{{config.lerobot_uri}}meta/npa_policy_adapter.json", schema: npa.sim2real.lerobot_policy_adapter.v1}
+      - {uri: "{{config.dataset_root_uri}}dataset-report.json", schema: npa.sim2real.pi05.dense_dataset.v1}
+      - {uri: "{{config.component_root_uri}}/components/stage_03.json", schema: npa.sim2real.policy_interchange.component_record.v1}
+    next: artifact-preflight
+
+  artifact-preflight:
+    description: Download and hash the exact public base weights and native processor payload bytes.
+    needs: [export-dataset]
+    toolRef: workbench.sim2real.smolvla_artifact_preflight
+    resources: smolvla-artifact
+    outputs:
+      - {uri: "{{config.artifact_preflight_uri}}", schema: npa.sim2real.smolvla_artifact_preflight.v1}
+      - {uri: "{{config.component_root_uri}}/components/stage_04.json", schema: npa.sim2real.policy_interchange.component_record.v1}
+    next: start-base-service
+
+  start-base-service:
+    description: Bind the prepared adapter to exact base bytes and start an owned private native SmolVLA service.
+    needs: [artifact-preflight]
+    toolRef: workbench.lerobot.smolvla_base_service_start
+    resources: base-service-control
+    outputs:
+      - {uri: "{{config.base_service_start_uri}}", schema: npa.sim2real.smolvla_service_start.v1}
+      - {uri: "{{config.component_root_uri}}/components/stage_05.json", schema: npa.sim2real.policy_interchange.component_record.v1}
+    next: evaluate-base-gold
+
+  evaluate-base-gold:
+    description: Run the declared native action-chunk execution strategy on the sealed untouched gold cohort.
+    needs: [start-base-service]
+    toolRef: workbench.sim2real.smolvla_base_gold
+    resources: isaac
+    outputs:
+      - {uri: "{{config.base_gold_uri}}", schema: npa.sim2real.policy_interchange.closed_loop_eval.v1}
+      - {uri: "{{config.base_artifact_root_uri}}rollouts.mp4", schema: video/mp4}
+      - {uri: "{{config.base_artifact_root_uri}}rollouts.rrd", schema: application/vnd.rerun.rrd}
+      - {uri: "{{config.component_root_uri}}/components/stage_06.json", schema: npa.sim2real.policy_interchange.component_record.v1}
+    next: cleanup-base-service
+
+  cleanup-base-service:
+    description: Delete and verify absence of exactly the base service resources.
+    needs: [evaluate-base-gold]
+    toolRef: workbench.lerobot.smolvla_base_service_cleanup
+    resources: base-service-control
+    outputs:
+      - {uri: "{{config.base_service_cleanup_uri}}", schema: npa.sim2real.smolvla_service_cleanup.v1}
+      - {uri: "{{config.component_root_uri}}/components/stage_07.json", schema: npa.sim2real.policy_interchange.component_record.v1}
+    next: train-native
+
+  train-native:
+    description: Fine-tune pinned native SmolVLA and publish the whole run plus a canonical bound selected checkpoint.
+    needs: [cleanup-base-service]
+    toolRef: workbench.lerobot.smolvla_interchange_train
+    resources: smolvla-training
+    outputs:
+      - {uri: "{{config.training_uri}}", schema: npa.workbench.lerobot.training-result.v1}
+      - {uri: "{{config.adapted_checkpoint_uri}}npa_policy_interchange.json", schema: npa.sim2real.lerobot_policy_adapter.v1}
+      - {uri: "{{config.component_root_uri}}/components/stage_08.json", schema: npa.sim2real.policy_interchange.component_record.v1}
+    next: reload-validation
+
+  reload-validation:
+    description: Instantiate exact native weights and checkpoint-local pre/postprocessors and bind them to preparation.
+    needs: [train-native]
+    toolRef: workbench.lerobot.smolvla_interchange_reload
+    resources: smolvla-training
+    outputs:
+      - {uri: "{{config.reload_uri}}", schema: npa.sim2real.smolvla_reload_validation.v1}
+      - {uri: "{{config.component_root_uri}}/components/stage_09.json", schema: npa.sim2real.policy_interchange.component_record.v1}
+    next: start-adapted-service
+
+  start-adapted-service:
+    description: Start only the exact native-reloaded selected checkpoint with private ingress and scoped credentials.
+    needs: [reload-validation]
+    toolRef: workbench.lerobot.smolvla_adapted_service_start
+    resources: adapted-service-control
+    outputs:
+      - {uri: "{{config.adapted_service_start_uri}}", schema: npa.sim2real.smolvla_service_start.v1}
+      - {uri: "{{config.component_root_uri}}/components/stage_10.json", schema: npa.sim2real.policy_interchange.component_record.v1}
+    next: evaluate-adapted-gold
+
+  evaluate-adapted-gold:
+    description: Repeat the same declared action-chunk strategy and gold scenarios with fresh, frozen and spatial-and-channel pixel-value-shuffled wrist interventions.
+    needs: [start-adapted-service]
+    toolRef: workbench.sim2real.smolvla_adapted_gold
+    resources: isaac
+    outputs:
+      - {uri: "{{config.adapted_gold_uri}}", schema: npa.sim2real.policy_interchange.closed_loop_eval.v1}
+      - {uri: "{{config.adapted_artifact_root_uri}}rollouts.mp4", schema: video/mp4}
+      - {uri: "{{config.adapted_artifact_root_uri}}rollouts.rrd", schema: application/vnd.rerun.rrd}
+      - {uri: "{{config.component_root_uri}}/components/stage_11.json", schema: npa.sim2real.policy_interchange.component_record.v1}
+    next: physical-robot-seam
+
+  physical-robot-seam:
+    description: Record the unexecuted operator-owned physical robot safety/deployment seam.
+    needs: [evaluate-adapted-gold]
+    toolRef: workbench.sim2real.policy_interchange_external_seam
+    resources: cpu
+    outputs:
+      - {uri: "{{config.external_seam_uri}}", schema: npa.sim2real.policy_interchange.external_seam.v1}
+      - {uri: "{{config.component_root_uri}}/components/stage_12.json", schema: npa.sim2real.policy_interchange.component_record.v1}
+    next: cleanup-adapted-service
+
+  cleanup-adapted-service:
+    description: Delete and verify absence of exactly the adapted service resources.
+    needs: [physical-robot-seam]
+    toolRef: workbench.lerobot.smolvla_adapted_service_cleanup
+    resources: adapted-service-control
+    outputs:
+      - {uri: "{{config.adapted_service_cleanup_uri}}", schema: npa.sim2real.smolvla_service_cleanup.v1}
+      - {uri: "{{config.component_root_uri}}/components/stage_13.json", schema: npa.sim2real.policy_interchange.component_record.v1}
+    next: finalize
+
+  finalize:
+    description: Bind identical-protocol results, selected native checkpoint and factual media without cross-model loss claims.
+    needs: [cleanup-adapted-service]
+    toolRef: workbench.sim2real.policy_interchange_finalize
+    resources: viewer
+    outputs:
+      - {uri: "{{config.final_report_uri}}", schema: npa.sim2real.policy_interchange.final_report.v1}
+      - {uri: "{{config.final_mp4_uri}}", schema: video/mp4}
+      - {uri: "{{config.final_witness_mp4_uri}}", schema: video/mp4}
+      - {uri: "{{config.final_rrd_uri}}", schema: application/vnd.rerun.rrd}
+      - {uri: "{{config.final_policy_inputs_uri}}", schema: application/x-npz}
+      - {uri: "{{config.final_html_uri}}", schema: text/html}
+      - {uri: "{{config.component_root_uri}}/components/stage_14.json", schema: npa.sim2real.policy_interchange.component_record.v1}
+    next: cleanup-runtime-prerequisites
+
+  cleanup-runtime-prerequisites:
+    description: Release only the exact run-owned runtime prerequisites after the report is durable.
+    needs: [finalize]
+    toolRef: workbench.sim2real.runtime_prerequisites_cleanup
+    resources: cpu
+    outputs:
+      - {uri: "{{config.runtime_prerequisites_cleanup_uri}}", schema: npa.sim2real.runtime_prerequisites.v1}
+    terminal: true
+
+  failure-cleanup-runtime-prerequisites:
+    description: Delete exact-owned SmolVLA services first, then release only this run's authentication, RBAC and caches while preserving the original failure.
+    toolRef: workbench.sim2real.runtime_prerequisites_cleanup
+    resources: cpu
+    params:
+      runtime_prerequisites_cleanup_uri: "{{config.failure_runtime_prerequisites_cleanup_uri}}"
+    outputs:
+      - {uri: "{{config.failure_runtime_prerequisites_cleanup_uri}}", schema: npa.sim2real.runtime_prerequisites.v1}

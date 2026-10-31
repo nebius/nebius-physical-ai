@@ -4,8 +4,8 @@ kind: Workflow
 metadata:
   name: openpi-pi05-four-mode
   description: >
-    Consume the immutable OpenPI BYOF image built by byof-openpi.yaml, prove the
-    missing-terms gate before checkpoint access, run direct Polaris inference,
+    Consume the immutable OpenPI BYOF image built by byof-openpi.yaml, prove
+    anonymous public-checkpoint byte access and immutable metadata, run direct Polaris inference,
     validate an upstream WebSocket server through a ClusterIP Service and
     separate client pod, perform real pi0.5 LoRA optimizer work, and evaluate
     the exact reloaded checkpoint on a disjoint held-out split.
@@ -81,8 +81,7 @@ config:
   service_rbac_delete_timeout_seconds: "120"
 
   run_root_uri: "s3://{{config.bucket}}/{{config.prefix}}/"
-  terms_diagnostic_root_uri: "{{config.run_root_uri}}diagnostics/terms-refusals"
-  negative_gate_uri: "{{config.run_root_uri}}reports/negative-terms-gate.json"
+  artifact_preflight_uri: "{{config.run_root_uri}}reports/artifact-preflight.json"
   dataset_uri: "{{config.run_root_uri}}data/mini-franka-two-camera.npz"
   dataset_manifest_uri: "{{config.run_root_uri}}data/manifest.json"
   direct_uri: "{{config.run_root_uri}}reports/direct-inference.json"
@@ -122,6 +121,7 @@ resources:
     memory: "{{config.cpu_memory}}"
     disk_size: "{{config.cpu_disk_size}}"
     num_nodes: "{{config.cpu_num_nodes}}"
+    image: "{{config.runtime_image}}"
   service-control:
     cloud: kubernetes
     cpus: "{{config.service_controller_cpus}}"
@@ -133,19 +133,18 @@ resources:
         spec:
           serviceAccountName: "{{config.service_account}}"
 
-initial: negative_terms_gate
+initial: artifact_preflight
 
 states:
-  negative_terms_gate:
+  artifact_preflight:
     description: >
-      In the live digest-pinned image, remove acceptance from a child process
-      and require exit 64 plus proof that model import/checkpoint fetch never
-      started. The accepted parent proceeds only after that probe passes.
-    toolRef: workbench.openpi.negative_terms_gate
-    resources: gpu
+      In the digest-pinned image, prove anonymous payload-byte access and bind
+      the public Polaris object generations, CRC32C values, sizes, and manifest.
+    toolRef: workbench.openpi.artifact_preflight
+    resources: cpu
     outputs:
-      - uri: "{{config.negative_gate_uri}}"
-        schema: npa.workbench.openpi.live-negative-terms-gate.v1
+      - uri: "{{config.artifact_preflight_uri}}"
+        schema: npa.workbench.openpi.public-artifact-preflight.v1
     next: prepare_data
 
   prepare_data:
@@ -153,7 +152,7 @@ states:
       Generate a deterministic miniature Franka dataset with two uint8 cameras,
       seven arm joints, one gripper dimension, absolute 15x8 targets, and
       machine-verifiable disjoint train/held-out sample IDs and hashes.
-    needs: [negative_terms_gate]
+    needs: [artifact_preflight]
     toolRef: workbench.openpi.prepare_data
     resources: cpu
     outputs:
