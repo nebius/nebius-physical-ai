@@ -59,8 +59,17 @@ def test_experimental_eval_readiness_is_hash_bound_and_honest() -> None:
     readiness = json.loads(READINESS.read_text(encoding="utf-8"))
 
     assert readiness["workflow_sha256"] == hashlib.sha256(SPEC.read_bytes()).hexdigest()
-    assert readiness["prerequisites"]["target_runtime"]["status"] == "unverified"
-    assert "did not meet" in readiness["prerequisites"]["target_runtime"]["reason"]
+    runtime = readiness["prerequisites"]["target_runtime"]
+    assert runtime["status"] == "verified"
+    assert "all seven stages" in runtime["reason"]
+    assert any(
+        "causal-wrist criterion remains unmet" in evidence
+        for evidence in runtime["evidence"]
+    )
+    assert any(
+        "does not claim the sixteen-stage" in evidence
+        for evidence in runtime["evidence"]
+    )
 
 
 def test_experimental_eval_declares_uniform_ensemble_and_three_wrist_modes() -> None:

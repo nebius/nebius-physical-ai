@@ -36,16 +36,21 @@
       "evidence": []
     },
     "source_image": {
-      "status": "unverified",
-      "reason": "The scoped candidate has not yet completed exact-source image qualification. Historical c7 evidence remains bound to its original source, images and execution workflow and is not relabelled as a run of this spec.",
+      "status": "verified",
+      "reason": "The live standard workflow used the independently qualified immutable Isaac and LeRobot image digests with their actual baked source identity, while the workflow consumer remained exact source 9229e268. The images are not relabelled as candidate-built images.",
       "evidence": [
-        "Historical accepted fixed-cube result: fresh 5/8, frozen 0/8, spatial-and-channel pixel-value shuffle 0/8 under uniform temporal ensembling."
+        "Mandatory image security, provenance, SPDX/SBOM and anonymous complete-byte qualification passed before submission.",
+        "The exact source/image compatibility preflight and built-runtime import boundary passed in the live workflow."
       ]
     },
     "target_runtime": {
-      "status": "unverified",
-      "reason": "A live run of this exact evaluation-only spec, including clean service initialization, all 24 trials, factual report generation and exact cleanup, remains required. The historical result did not meet the predeclared positive causal wrist criterion.",
+      "status": "verified",
+      "reason": "The exact-922 standard workflow completed all seven stages: profile preparation, workflow-owned prerequisites, clean checkpoint-service initialization, 24 sealed native trials, exact service cleanup, factual finalization and runtime-prerequisite cleanup.",
       "evidence": [
+        "All seven managed stages completed successfully without retry or duplicate submission.",
+        "The final native result is fresh 5/8, frozen 0/8 and spatial-and-channel pixel-value shuffle 0/8 with 4,608 paired-noise policy/control decisions.",
+        "The standalone offline HTML contains model-consumed workspace and wrist views plus goal and release witnesses and requires no external network.",
+        "The predeclared positive causal-wrist criterion remains unmet and no causal-benefit claim is made.",
         "This workflow does not claim the sixteen-stage collect/export/train clean start, interrupted-training adoption, another object, another embodiment, active recovery or physical-robot deployment."
       ]
     }
