@@ -2270,32 +2270,6 @@ def test_preflight_images_accepts_the_same_config_vars_as_submit(mocker) -> None
     assert set(checked_images) == {digest_image}
 
 
-def test_preflight_images_uses_explicit_run_id_for_owned_names(mocker) -> None:
-    reachability = mocker.patch(
-        "npa.cli.workbench.workflow._image_preflight_steps", return_value=[]
-    )
-    requirements = mocker.patch(
-        "npa.cli.workbench.workflow._plan_preflight_image_requirements",
-        return_value=([], {}),
-    )
-
-    result = runner.invoke(
-        app,
-        [
-            "workbench",
-            "workflow",
-            "preflight-images",
-            str(COSMOS3_SPEC),
-            "--run-id",
-            "sealed-customer-run",
-        ],
-    )
-
-    assert result.exit_code == 0, result.output
-    assert reachability.call_args.kwargs["run_id"] == "sealed-customer-run"
-    assert requirements.call_args.kwargs["run_id"] == "sealed-customer-run"
-
-
 def test_image_pull_execution_paths_preserve_each_rendered_target() -> None:
     requirements = {
         "vm": ImagePullRequirements(requires_operator=True),

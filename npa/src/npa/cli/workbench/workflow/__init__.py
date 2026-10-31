@@ -10796,14 +10796,6 @@ def run_spec_cmd(
 @app.command("preflight-images")
 def preflight_images_cmd(
     yaml_path: Path = typer.Argument(help="npa.workflow spec path."),
-    run_id: str = typer.Option(
-        "",
-        "--run-id",
-        help=(
-            "Run identifier used to resolve workflow-owned names. Defaults to a "
-            "preflight-only identifier."
-        ),
-    ),
     var: list[str] = typer.Option(
         [],
         "--var",
@@ -10927,14 +10919,14 @@ def preflight_images_cmd(
     )
     if resolved_registry:
         typer.echo(f"registry: {resolved_registry}", err=True)
-    resolved_run_id = run_id or f"{spec.name}-preflight"
+    run_id = f"{spec.name}-preflight"
     try:
         steps = _image_preflight_steps(
-            spec, run_id=resolved_run_id, assume_decision=assume_decision
+            spec, run_id=run_id, assume_decision=assume_decision
         )
         images, pull_requirements = _plan_preflight_image_requirements(
             spec,
-            run_id=resolved_run_id,
+            run_id=run_id,
             options=options,
             assume_decision=assume_decision,
             infra=infra,
@@ -10952,7 +10944,7 @@ def preflight_images_cmd(
             for candidate in _workflow_validation_candidate_payload(
                 spec,
                 steps,
-                run_id=resolved_run_id,
+                run_id=run_id,
                 options=options,
                 selection_scope=(
                     WORKFLOW_VALIDATION_CANDIDATE_SELECTION_SCOPE_REACHABLE_BRANCHES
