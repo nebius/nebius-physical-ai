@@ -29,6 +29,9 @@ config:
   runtime_image: ""
   isaac_image_source_sha: "{{config.source_sha}}"
   runtime_image_source_sha: "{{config.source_sha}}"
+  required_immutable_images:
+    - isaac_image
+    - runtime_image
   baked_image_source_sha_by_config_key:
     isaac_image: isaac_image_source_sha
     runtime_image: runtime_image_source_sha

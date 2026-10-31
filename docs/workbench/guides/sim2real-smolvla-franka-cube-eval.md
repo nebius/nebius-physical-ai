@@ -11,17 +11,17 @@ The supported entry point is the standard workflow CLI:
 ```bash
 npa workbench workflow validate-spec workflows/testing/sim2real-smolvla-franka-cube-eval.yaml
 npa workbench workflow plan-spec workflows/testing/sim2real-smolvla-franka-cube-eval.yaml \
-  --run-id <run-id> --check-render \
-  --var bucket=<bucket> \
-  --var source_sha=<consumer-source-sha> \
-  --var isaac_image=<exact-image-digest> \
-  --var isaac_image_source_sha=<baked-source-sha> \
-  --var runtime_image=<exact-image-digest> \
-  --var runtime_image_source_sha=<baked-source-sha> \
-  --var profile_uri=<qualified-profile-uri> \
-  --var gold_collection_uri=<sealed-gold-uri> \
-  --var adapted_checkpoint_uri=<selected-checkpoint-uri> \
-  --var adapted_policy_adapter_uri=<checkpoint-adapter-uri>
+  --run-id '<run-id>' --check-render \
+  --var bucket='<bucket>' \
+  --var source_sha='<consumer-source-sha>' \
+  --var isaac_image='<exact-image-digest>' \
+  --var isaac_image_source_sha='<baked-source-sha>' \
+  --var runtime_image='<exact-image-digest>' \
+  --var runtime_image_source_sha='<baked-source-sha>' \
+  --var profile_uri='<qualified-profile-uri>' \
+  --var gold_collection_uri='<sealed-gold-uri>' \
+  --var adapted_checkpoint_uri='<selected-checkpoint-uri>' \
+  --var adapted_policy_adapter_uri='<checkpoint-adapter-uri>'
 ```
 
 After the same plan and normal health/access preflights pass, submit the same

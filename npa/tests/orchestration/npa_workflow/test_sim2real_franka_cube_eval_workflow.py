@@ -27,12 +27,23 @@ STATES = [
 ]
 
 
+def _spec():
+    return merge_config_overrides(
+        load_spec(SPEC),
+        {
+            "source_sha": "c" * 40,
+            "isaac_image": "ghcr.io/nebius/isaac@sha256:" + "b" * 64,
+            "runtime_image": "ghcr.io/nebius/lerobot@sha256:" + "d" * 64,
+        },
+    )
+
+
 def _value(argv: list[str], flag: str) -> str:
     return argv[argv.index(flag) + 1]
 
 
 def test_experimental_eval_is_static_checkpoint_bound_graph() -> None:
-    spec = load_spec(SPEC)
+    spec = _spec()
     plan = build_plan(spec, run_id="franka-cube-eval")
 
     assert [step.state for step in plan.steps] == STATES
@@ -52,7 +63,7 @@ def test_experimental_eval_readiness_is_hash_bound_and_honest() -> None:
 
 
 def test_experimental_eval_declares_uniform_ensemble_and_three_wrist_modes() -> None:
-    spec = load_spec(SPEC)
+    spec = _spec()
     steps = {step.state: step for step in build_plan(spec, run_id="protocol").steps}
     evaluation = steps["evaluate-adapted-gold"].argv
 
@@ -68,7 +79,7 @@ def test_experimental_eval_declares_uniform_ensemble_and_three_wrist_modes() -> 
 
 
 def test_experimental_eval_owns_service_and_runtime_cleanup() -> None:
-    spec = load_spec(SPEC)
+    spec = _spec()
     steps = {step.state: step for step in build_plan(spec, run_id="owned").steps}
     start = steps["start-adapted-service"].argv
     cleanup = steps["cleanup-adapted-service"].argv
@@ -84,7 +95,7 @@ def test_experimental_eval_owns_service_and_runtime_cleanup() -> None:
 
 
 def test_experimental_eval_finalizer_receives_every_native_artifact() -> None:
-    spec = load_spec(SPEC)
+    spec = _spec()
     steps = {step.state: step for step in build_plan(spec, run_id="proof").steps}
     finalizer = steps["finalize"].argv
 
@@ -101,25 +112,12 @@ def test_experimental_eval_finalizer_receives_every_native_artifact() -> None:
 
 
 def test_experimental_eval_renders_production_skypilot_argv() -> None:
-    spec = merge_config_overrides(
-        load_spec(SPEC),
-        {
-            "source_sha": "c" * 40,
-            "isaac_image": "ghcr.io/nebius/isaac@sha256:" + "b" * 64,
-            "runtime_image": "ghcr.io/nebius/lerobot@sha256:" + "d" * 64,
-        },
-    )
+    spec = _spec()
     rendered = render_skypilot_yaml(
         spec,
         build_plan(spec, run_id="rendered"),
         run_id="rendered",
-        options=SkypilotRenderOptions(
-            accept_eula=True,
-            image_overrides={
-                "workbench.sim2real": "ghcr.io/nebius/sim2real@sha256:" + "a" * 64,
-                "workbench.lerobot": "ghcr.io/nebius/lerobot@sha256:" + "b" * 64,
-            },
-        ),
+        options=SkypilotRenderOptions(accept_eula=True),
     )
 
     assert "experimental-eval-finalize" in rendered
