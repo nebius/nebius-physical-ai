@@ -11,6 +11,7 @@ from npa.orchestration.npa_workflow.skypilot_render import (
 )
 from npa.orchestration.npa_workflow.spec import load_spec
 from npa.orchestration.npa_workflow.submit import merge_config_overrides
+from npa.workflows.sim2real.runtime_prerequisites import resource_identities
 
 
 ROOT = Path(__file__).resolve().parents[4]
@@ -92,6 +93,24 @@ def test_experimental_eval_owns_service_and_runtime_cleanup() -> None:
     assert cleanup[3] == "cleanup"
     assert "cleanup" in cleanup
     assert _value(runtime_cleanup, "--run-id") == "owned"
+
+
+def test_experimental_eval_runtime_names_match_the_runtime_owner() -> None:
+    run_id = "franka-cube-exp"
+    spec = _spec()
+    steps = {step.state: step for step in build_plan(spec, run_id=run_id).steps}
+    prerequisites = steps["provision-runtime-prerequisites"].argv
+    expected = resource_identities(run_id)
+
+    for key, flag in (
+        ("isaac_cache_pvc", "--isaac-cache-pvc"),
+        ("policy_cache_pvc", "--policy-cache-pvc"),
+        ("isaac_warm_job", "--isaac-warm-job"),
+        ("auth_secret", "--auth-secret"),
+        ("base_service_account", "--base-service-account"),
+        ("adapted_service_account", "--adapted-service-account"),
+    ):
+        assert _value(prerequisites, flag) == expected[key]
 
 
 def test_experimental_eval_finalizer_receives_every_native_artifact() -> None:

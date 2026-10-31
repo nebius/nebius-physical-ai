@@ -38,17 +38,17 @@ config:
 
   service_namespace: default
   runtime_prerequisites_mode: workflow_owned
-  isaac_cache_pvc: "npa-smolvla-eval-{{run.id}}-isaac-cache"
-  policy_cache_pvc: "npa-smolvla-eval-{{run.id}}-policy-cache"
-  isaac_warm_job: "npa-smolvla-eval-{{run.id}}-isaac-warm"
+  isaac_cache_pvc: "npa-smolvla-{{run.id}}-isaac-cache"
+  policy_cache_pvc: "npa-smolvla-{{run.id}}-policy-cache"
+  isaac_warm_job: "npa-smolvla-{{run.id}}-isaac-warm"
   runtime_storage_class: csi-mounted-fs-path-sc
   runtime_storage_access_mode: ReadWriteOnce
   isaac_cache_size: 40Gi
   policy_cache_size: 100Gi
   isaac_cache_warm_timeout_seconds: "3600"
-  service_auth_secret: "npa-smolvla-eval-{{run.id}}-auth"
-  base_service_account: "npa-smolvla-eval-{{run.id}}-base-ctl"
-  adapted_service_account: "npa-smolvla-eval-{{run.id}}-adapted-ctl"
+  service_auth_secret: "npa-smolvla-{{run.id}}-auth"
+  base_service_account: "npa-smolvla-{{run.id}}-base-ctl"
+  adapted_service_account: "npa-smolvla-{{run.id}}-adapted-ctl"
   hf_token_secret: ""
 
   service_gpu_count: "1"
