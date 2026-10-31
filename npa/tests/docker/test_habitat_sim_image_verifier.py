@@ -2251,7 +2251,23 @@ def test_report_existing_owner_output_refused_before_effects(
     publisher.assert_not_called()
     assert "report_output_exists" in capsys.readouterr().err
     assert args.json.read_bytes() == b"existing owner evidence\n"
-    assert args.json.stat() == before
+    after = args.json.stat()
+    # Reading the retained evidence may update atime under the host filesystem's
+    # mount policy; atime is not evidence that the verifier mutated the file.
+    mutation_fields = (
+        "st_mode",
+        "st_ino",
+        "st_dev",
+        "st_nlink",
+        "st_uid",
+        "st_gid",
+        "st_size",
+        "st_mtime_ns",
+        "st_ctime_ns",
+    )
+    assert tuple(getattr(after, field) for field in mutation_fields) == tuple(
+        getattr(before, field) for field in mutation_fields
+    )
 
 
 @pytest.mark.parametrize(
