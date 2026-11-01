@@ -20,4 +20,6 @@ filelock>=4.2.1
 setuptools>=84.1.0
 # Exclude the affected OpenTelemetry API release in CI.
 opentelemetry-api>=1.45.1
+# Exclude pyasn1 releases affected by CVE-2026-119194 through CVE-2026-119197.
+pyasn1>=0.6.5
 langgraph-checkpoint-sqlite>=3.1.2
