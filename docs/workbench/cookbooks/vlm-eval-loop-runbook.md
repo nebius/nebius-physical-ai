@@ -371,11 +371,19 @@ before a VLM result can promote a checkpoint. Stub results, score overrides, and
 historical reports without provider evidence produce `loop_back` with an explicit
 reason. The gate checks submitted-frame metadata, request and response hashes,
 and agreement between the retained response and serialized result. These checks
-establish internal consistency, not provider authentication or visual correctness.
-Frame digests are checked for valid SHA-256 format and binding to the request
-manifest; this gate does not fetch image bytes to recompute their hashes. Consumers
-that need payload verification must retain and independently hash the submitted
-normalized images. Schema-v2 sampling counts, indices, timestamps, and coverage
+have an internal-consistency ceiling, not an authenticity guarantee. Every decision
+written by `grade_gate` records
+`evidence_scope: report_internal_consistency_checks_only` and literal `false` for
+`provider_authentication_established`,
+`captured_request_authenticity_established`,
+`visual_correctness_established`, and
+`submitted_frame_byte_equivalence_established`. Missing or invalid reports establish
+no consistency, and the Cosmos report path checks only terminal status, literal
+pass, and score. Frame digests are checked for valid SHA-256 format and binding to
+the request manifest; this gate does not fetch image bytes to recompute their
+hashes. Consumers that need payload verification must retain and independently
+hash the submitted normalized images. Schema-v2 sampling counts, indices,
+timestamps, and coverage
 flags must agree with the frame metadata. A known, uniform source kind, a source
 count, and in-range selected indices are required for `coverage_complete: true`;
 unknown or mixed source kinds normalize to null with incomplete coverage.
