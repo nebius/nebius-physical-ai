@@ -9,6 +9,7 @@ launch trainers or servers on their own.
 from __future__ import annotations
 
 import argparse
+import json
 from typing import Any, Mapping, Sequence
 
 
@@ -90,7 +91,7 @@ def serve(config: Mapping[str, Any]) -> dict[str, Any]:
         "command": "serve",
         "status": "validated",
         "model_id": model_id,
-        "checkpoint": str(config.get("checkpoint", model_id)),
+        "checkpoint": str(config.get("checkpoint") or model_id),
         "host": str(config.get("host", "127.0.0.1")),
         "port": port,
         "device": device,
@@ -112,7 +113,7 @@ def eval(config: Mapping[str, Any]) -> dict[str, Any]:
         "command": "eval",
         "status": "validated",
         "model_id": model_id,
-        "checkpoint": str(config.get("checkpoint", model_id)),
+        "checkpoint": str(config.get("checkpoint") or model_id),
         "dataset_uri": dataset_uri,
         "num_episodes": num_episodes,
         "output_s3_uri": output_s3_uri,
@@ -147,7 +148,11 @@ def build_parser() -> argparse.ArgumentParser:
     for subparser in (sub.choices["serve"], sub.choices["eval"]):
         subparser.add_argument("--checkpoint", default="")
     sub.choices["finetune"].add_argument("--max-steps", type=int, default=5000)
+    sub.choices["finetune"].add_argument("--batch-size", type=int, default=32)
+    sub.choices["finetune"].add_argument("--learning-rate", type=float, default=1e-5)
     sub.choices["finetune"].add_argument("--num-gpus", type=int, default=1)
+    sub.choices["finetune"].add_argument("--run-name", default="molmoact-finetune")
+    sub.choices["serve"].add_argument("--host", default="127.0.0.1")
     sub.choices["serve"].add_argument("--port", type=int, default=8000)
     sub.choices["serve"].add_argument("--device", default="cuda")
     sub.choices["eval"].add_argument("--num-episodes", type=int, default=50)
@@ -158,7 +163,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     config = {k: v for k, v in vars(args).items() if k != "command"}
     manifest = run(args.command, config)
-    print(manifest)
+    print(json.dumps(manifest, indent=2, sort_keys=True))
     return 0
 
 
