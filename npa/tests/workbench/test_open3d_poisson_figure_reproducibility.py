@@ -11,6 +11,7 @@ Reads the record only. No Open3D, so this runs wherever the suite runs.
 
 from __future__ import annotations
 
+import ast
 import json
 from pathlib import Path
 
@@ -39,7 +40,7 @@ def record() -> dict:
 def test_the_finding_is_that_no_condition_reproduces(record) -> None:
     """The negative result, stated for every condition rather than in general."""
     conditions = record["cause"]["conditions"]
-    assert set(conditions) == {"default", "seeded_before_each_call", "single_threaded"}
+    assert set(conditions) == {"default", "seeded_before_each_call", "thread_limited"}
     for name, row in conditions.items():
         assert row["repeats"] >= 4, f"{name} has too few repeats to say anything"
         assert row["surface_area"]["identical"] is False, (
@@ -73,27 +74,58 @@ def test_seeding_is_not_offered_as_a_remedy(record) -> None:
     assert "Does not help" in record["what_the_remedies_do"]["seeding"]
 
 
-def test_the_single_threading_verdict_agrees_with_its_own_numbers(record) -> None:
-    """This test exists because of a mistake, and the mistake is worth keeping visible.
+def test_the_thread_limiting_verdict_agrees_with_its_own_numbers(record) -> None:
+    """This test exists because of two mistakes, and both are worth keeping visible.
 
     A first probe used two repeats and put single-threading two orders of magnitude ahead
     of the default. At four repeats it is within a small factor, and the spreads
-    themselves move between runs. "Two orders of magnitude" was about to go into the
-    record as a finding.
+    themselves move between runs - in one run the limited condition is the worse of the
+    two. "Two orders of magnitude" was about to go into the record as a finding.
 
-    So the verdict is now derived from the measured spreads rather than written next to
-    them, and this checks the derivation still holds: the factor quoted in the prose has
-    to be the factor the two conditions actually show.
+    The second mistake was the experiment itself: it set `OMP_NUM_THREADS=1`, and a
+    reviewer showed this build links no OpenMP runtime and exports no OpenMP symbols, so
+    the variable changed nothing and the measurement under it tested nothing. It now uses
+    Open3D's own `set_max_threads`, whose effect is readable, and the record carries the
+    reading.
+
+    So the verdict is derived from the measured spreads rather than written next to them,
+    and this checks the derivation still holds.
     """
     conditions = record["cause"]["conditions"]
     default = conditions["default"]["surface_area"]["relative_spread"]
-    single = conditions["single_threaded"]["surface_area"]["relative_spread"]
-    verdict = record["what_the_remedies_do"]["single_threading"]
+    single = conditions["thread_limited"]["surface_area"]["relative_spread"]
+    verdict = record["what_the_remedies_do"]["limiting_threads"]
 
     assert "Does not fix it" in verdict
     assert f"{default:.2e}" in verdict, verdict
     assert f"{single:.2e}" in verdict, verdict
     assert f"factor of {default / single:.1f}" in verdict, verdict
+    # The direction has to match the numbers, because a factor below one reads as an
+    # improvement to anyone skimming.
+    assert ("smaller" if single < default else "larger") in verdict, verdict
+
+    engaged = conditions["thread_limited"]
+    assert engaged["the_knob_engaged"] is True, (
+        "the thread limit did not take, so this condition measures nothing -- which is "
+        "exactly the defect that made the previous OMP_NUM_THREADS experiment void"
+    )
+    assert engaged["max_threads_observed_during"] == 1
+    assert engaged["max_threads_before"] != 1
+    assert f"({engaged['max_threads_before']} threads to 1)" in verdict, verdict
+
+
+def test_the_void_experiment_is_recorded_as_void(record) -> None:
+    """A reviewer found the earlier experiment could not have worked; that is evidence.
+
+    The lesson is cheap to state and was expensive to learn: check that the knob turned
+    before believing the result. So the build facts that made `OMP_NUM_THREADS` inert are
+    recorded, not just the replacement.
+    """
+    void = record["cause"]["why_an_earlier_experiment_here_was_void"]
+    assert void["openmp_runtime_linked"] is False
+    assert void["openmp_symbols_present"] is False
+    assert void["so_omp_num_threads_is_not_a_knob_here"] is True
+    assert void["binary"], void
 
 
 def test_the_conclusion_is_not_in_danger_and_the_record_shows_the_arithmetic(
@@ -118,33 +150,122 @@ def test_the_conclusion_is_not_in_danger_and_the_record_shows_the_arithmetic(
     assert unaffected["ratio"] > 1000.0, unaffected
 
 
+#: The figures this record is about. Scoped to known non-reproducible quantities rather
+#: than written as a style rule about floats.
+NON_REPRODUCIBLE_LITERALS = ("0.7848810005123376", "0.3521503113541809")
+
+
+def _scanned_files() -> list[Path]:
+    """Every test module in the repository, plus the harnesses that hold these figures.
+
+    The first version walked `npa/tests` only. A reviewer counted 36 `test_*.py` files
+    outside it, including `npa/src/npa/smoke/`, which is not a stray directory -- those
+    are the golden-eval modules that run inside containers.
+    """
+    seen: dict[Path, None] = {}
+    for path in REPO.rglob("test_*.py"):
+        if any(part in {".venv", "node_modules", ".git"} for part in path.parts):
+            continue
+        seen[path] = None
+    for path in (REPO / "docs" / "evidence" / "open3d" / "harness").glob("*.py"):
+        seen[path] = None
+    return list(seen)
+
+
+def _exact_pins(tree: ast.AST, literals: tuple[str, ...]) -> list[tuple[int, str]]:
+    """Exact comparisons against these figures, including through a named constant.
+
+    An AST pass rather than a line scan, because extracting a literal to a name is the
+    most ordinary refactor there is and it removes a line-based guard without touching
+    its logic. A reviewer demonstrated exactly that::
+
+        EXPECTED = 0.7848810005123376
+        assert value == EXPECTED        # the `==` line no longer holds the literal
+
+    So names bound to one of these figures are resolved first, and comparisons against
+    those names count as pins. `approx(..., abs=0)` is caught too: it is exact equality
+    wearing the word that buys the exemption.
+    """
+    values = {float(literal) for literal in literals}
+    bound: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign) and isinstance(node.value, ast.Constant):
+            if isinstance(node.value.value, float) and node.value.value in values:
+                bound.update(
+                    target.id for target in node.targets if isinstance(target, ast.Name)
+                )
+
+    def names_a_figure(node: ast.expr) -> bool:
+        if isinstance(node, ast.Constant):
+            return isinstance(node.value, float) and node.value in values
+        if isinstance(node, ast.Name):
+            return node.id in bound
+        return False
+
+    found: list[tuple[int, str]] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Compare):
+            exact = any(isinstance(op, (ast.Eq, ast.NotEq)) for op in node.ops)
+            operands = [node.left, *node.comparators]
+            if exact and any(names_a_figure(operand) for operand in operands):
+                found.append((node.lineno, "exact comparison"))
+            # Membership in a literal container is exact equality spelled differently,
+            # which is the form a reviewer reached for once `==` was covered.
+            member = any(isinstance(op, (ast.In, ast.NotIn)) for op in node.ops)
+            containers = [
+                element
+                for operand in node.comparators
+                if isinstance(operand, (ast.Tuple, ast.List, ast.Set))
+                for element in operand.elts
+            ]
+            if member and any(names_a_figure(element) for element in containers):
+                found.append((node.lineno, "membership in a literal container"))
+        if isinstance(node, ast.Call):
+            callee = node.func
+            name = (
+                callee.attr
+                if isinstance(callee, ast.Attribute)
+                else getattr(callee, "id", "")
+            )
+            if name != "approx" or not any(names_a_figure(arg) for arg in node.args):
+                continue
+            for keyword in node.keywords:
+                if (
+                    keyword.arg in {"abs", "rel"}
+                    and isinstance(keyword.value, ast.Constant)
+                    and keyword.value.value == 0
+                ):
+                    found.append((node.lineno, "approx with a zero tolerance"))
+    return found
+
+
 def test_the_published_figures_are_never_pinned_by_exact_equality() -> None:
     """The guard that outlives the finding.
 
-    A figure that does not reproduce must not be asserted with `==` anywhere in the
-    suite. Such a test would pass on the machine that wrote the record and fail on the
-    next one, and because it would look like a tightening rather than a mistake, the
-    likely repair is someone regenerating the record to match -- which buries the finding
-    this PR exists to record.
+    A figure that does not reproduce must not be asserted exactly. Such a test passes on
+    the machine that wrote the record and fails on the next, and because it looks like a
+    tightening rather than a mistake, the likely repair is regenerating the record to
+    match -- which buries the finding this PR exists to record.
 
-    Scoped to the two literals this record is about, so it stays a check on a known
-    non-reproducible quantity rather than a style rule about floats.
+    A reviewer attacked the first version and found six ways through. Three are closed
+    here: the extract-a-constant refactor, `approx(..., abs=0)`, and test modules outside
+    `npa/tests`. The ones still open are stated rather than implied -- a pin in a file
+    matching neither `test_*.py` nor the Open3D harness directory is not scanned, and
+    neither is a figure reached through a container or an attribute.
     """
-    literals = ("0.7848810005123376", "0.3521503113541809")
     offenders: list[str] = []
-    for path in (REPO / "npa" / "tests").rglob("test_*.py"):
+    for path in _scanned_files():
         text = path.read_text()
-        for literal in literals:
-            if literal not in text:
-                continue
-            for number, line in enumerate(text.splitlines(), start=1):
-                if literal in line and "==" in line and "approx" not in line:
-                    offenders.append(
-                        f"{path.relative_to(REPO)}:{number}: {line.strip()}"
-                    )
-    assert not offenders, (
-        "a non-reproducible figure is pinned by exact equality:\n"
-        + "\n".join(offenders)
+        if not any(literal in text for literal in NON_REPRODUCIBLE_LITERALS):
+            continue
+        try:
+            tree = ast.parse(text)
+        except SyntaxError:
+            continue
+        for lineno, kind in _exact_pins(tree, NON_REPRODUCIBLE_LITERALS):
+            offenders.append(f"{path.relative_to(REPO)}:{lineno}: {kind}")
+    assert not offenders, "a non-reproducible figure is pinned exactly:\n" + "\n".join(
+        offenders
     )
 
 

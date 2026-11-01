@@ -19,11 +19,14 @@ interesting part and both of the obvious ones fail:
 - Seeding does not help. The sampling seed already in `audit_view_occlusion.py` is real
   and does bind the armadillo's *sampling*, but Poisson's variation is not drawn from
   Open3D's generator, so seeding before the call changes nothing.
-- Single-threading does not fix it either. A first two-run probe suggested it shrank the
-  spread by two orders of magnitude; at four repeats it is within a factor of two of the
-  default, which is smaller than the difference between the other two conditions. Two
-  runs were not enough to say anything, and the first number was a small-sample fluke --
-  recorded here because the claim nearly went into this file as a finding.
+- Limiting threads does not fix it either. Two things went wrong on the way to that
+  sentence, and both are recorded rather than tidied away. A first two-run probe put
+  single-threading two orders of magnitude ahead; at four repeats it is within a small
+  factor, so two runs supported nothing. And the experiment behind it was measured by
+  setting `OMP_NUM_THREADS=1`, which a reviewer showed is not a knob in this build at
+  all - no OpenMP runtime linked, no OpenMP symbols. It ran and tested nothing. The
+  measurement now uses `o3d.utility.set_max_threads(1)` and records
+  `get_max_threads()` beside the result, so the record shows the knob turned.
 
 Which means the honest move is to state the precision the figures hold rather than to
 promise an exactness no setting delivers.
@@ -37,10 +40,8 @@ Needs Open3D. Writes `docs/evidence/open3d/poisson-figure-reproducibility.json`.
 from __future__ import annotations
 
 import json
-import os
 import platform
 import subprocess
-import sys
 from pathlib import Path
 
 import numpy as np
@@ -114,32 +115,64 @@ def condition(o3d, cloud, label: str, seed: int | None) -> dict:
     }
 
 
-def single_threaded_condition() -> dict:
-    """Re-run under `OMP_NUM_THREADS=1`, which has to be set before Open3D loads.
+def openmp_is_not_linked() -> dict:
+    """Whether `OMP_NUM_THREADS` could have done anything in this build.
 
-    A subprocess rather than an in-process toggle, because by the time this module is
-    running the thread pool already exists. Measuring it in-process would have produced a
-    number that looked like a result and meant nothing.
+    An earlier version of this harness measured single-threading by setting
+    `OMP_NUM_THREADS=1` in a subprocess, so the pool would be sized before Open3D
+    loaded. A reviewer pointed out that the timing was careful and the premise was not:
+    the variable only matters if an OpenMP runtime is linked, and here none is. The
+    experiment ran, produced numbers, and tested nothing.
+
+    So this records whether the knob could engage, rather than assuming it from the fact
+    that setting it is conventional. Check that the knob turned before believing the
+    result.
     """
-    script = (
-        "import sys, json\n"
-        f"sys.path.insert(0, {str(HARNESS)!r})\n"
-        "import open3d as o3d\n"
-        "import poisson_figure_reproducibility as p\n"
-        "cloud = o3d.io.read_point_cloud(o3d.data.EaglePointCloud().path)\n"
-        "print(json.dumps(p.condition(o3d, cloud, 'single_threaded', None)))\n"
-    )
-    env = dict(os.environ, OMP_NUM_THREADS="1", PYTHONPATH=str(HARNESS))
-    result = subprocess.run(
-        [sys.executable, "-c", script],
-        capture_output=True,
-        text=True,
-        env=env,
-        check=False,
-    )
-    if result.returncode != 0:
-        raise RuntimeError(f"single-threaded probe failed: {result.stderr[-2000:]}")
-    return json.loads(result.stdout.strip().splitlines()[-1])
+    import open3d as o3d
+
+    base = Path(o3d.__file__).parent
+    binaries = [path for path in base.rglob("*.so") if "pybind" in path.name]
+    linked, symbols = None, None
+    if binaries:
+        target = str(binaries[0])
+        linked = subprocess.run(
+            ["ldd", target], capture_output=True, text=True, check=False
+        ).stdout
+        symbols = subprocess.run(
+            ["nm", "-D", target], capture_output=True, text=True, check=False
+        ).stdout
+    return {
+        "binary": binaries[0].name if binaries else None,
+        "openmp_runtime_linked": bool(
+            linked and any(lib in linked for lib in ("libgomp", "libomp", "libiomp"))
+        ),
+        "openmp_symbols_present": bool(
+            symbols and ("GOMP_" in symbols or "omp_get_max_threads" in symbols)
+        ),
+        "so_omp_num_threads_is_not_a_knob_here": True,
+    }
+
+
+def thread_limited_condition(o3d, cloud) -> dict:
+    """Repeat under Open3D's own thread control, with the reading recorded beside it.
+
+    `o3d.utility.set_max_threads` is the control this build actually exposes, and
+    `get_max_threads()` is observable, so the record can show the knob turned instead of
+    asserting that it did.
+    """
+    before = o3d.utility.get_max_threads()
+    o3d.utility.set_max_threads(1)
+    observed = o3d.utility.get_max_threads()
+    try:
+        row = condition(o3d, cloud, "thread_limited", None)
+    finally:
+        o3d.utility.set_max_threads(before)
+    return {
+        **row,
+        "max_threads_before": before,
+        "max_threads_observed_during": observed,
+        "the_knob_engaged": observed == 1 and before != 1,
+    }
 
 
 def main() -> int:
@@ -150,7 +183,8 @@ def main() -> int:
 
     default = condition(o3d, cloud, "default", None)
     seeded = condition(o3d, cloud, "seeded", 1729)
-    single = single_threaded_condition()
+    single = thread_limited_condition(o3d, cloud)
+    openmp = openmp_is_not_linked()
 
     # Derived rather than asserted, because a two-run probe of this had me about to
     # publish "two orders of magnitude" as a finding and four repeats put it at a
@@ -158,18 +192,29 @@ def main() -> int:
     # measured above, so this sentence cannot drift from them.
     default_spread = default["surface_area"]["relative_spread"]
     single_spread = single["surface_area"]["relative_spread"]
-    seeded_spread = seeded["surface_area"]["relative_spread"]
     improvement = default_spread / single_spread if single_spread else None
-    between_conditions = abs(default_spread - seeded_spread)
+    distinct = {
+        name: len(set(row["surface_area"]["values"]))
+        for name, row in (
+            ("default", default),
+            ("seeded_before_each_call", seeded),
+            ("thread_limited", single),
+        )
+    }
+    direction = "smaller" if single_spread < default_spread else "larger"
     single_threading_verdict = (
         f"Does not fix it. The spread goes from {default_spread:.2e} to "
-        f"{single_spread:.2e}, a factor of {improvement:.1f}, while the gap between the "
-        f"default and seeded conditions is {between_conditions:.2e} -- the same order as "
-        f"the difference single-threading makes. So the conditions are not "
-        f"distinguishable at this number of repeats, and `OMP_NUM_THREADS=1` is not a "
-        f"reproducibility setting for this harness."
+        f"{single_spread:.2e}, a factor of {improvement:.1f} -- {direction} with threads "
+        f"limited, and a reviewer saw it come out larger in one of their pairings too, "
+        f"which is what two runs cannot tell you. And -- the part that "
+        f"decides it -- every condition still produced "
+        f"{distinct['thread_limited']} distinct areas out of {REPEATS}. A setting that "
+        f"made this deterministic would produce one. The knob is recorded as engaged "
+        f"({single['max_threads_before']} threads to "
+        f"{single['max_threads_observed_during']}), because the experiment this replaces "
+        f"set `OMP_NUM_THREADS=1` in a build with no OpenMP linked and therefore measured "
+        f"nothing."
     )
-
     published_spread = abs(
         PUBLISHED["visible_with_only_its_own_self_occlusion"] - 0.7848528993182663
     )
@@ -215,10 +260,11 @@ def main() -> int:
                 "counts repeat exactly while the total surface area does not, so the "
                 "topology is stable and the vertex positions are not."
             ),
+            "why_an_earlier_experiment_here_was_void": openmp,
             "conditions": {
                 "default": default,
                 "seeded_before_each_call": seeded,
-                "single_threaded": single,
+                "thread_limited": single,
             },
         },
         "what_the_remedies_do": {
@@ -229,7 +275,7 @@ def main() -> int:
                 "the spread where it was. Measured, not reasoned: see "
                 "`cause.conditions.seeded_before_each_call`."
             ),
-            "single_threading": single_threading_verdict,
+            "limiting_threads": single_threading_verdict,
             "so_the_record_should": (
                 "State the precision the figures hold instead of publishing sixteen "
                 "digits that do not survive a second run."
@@ -245,6 +291,53 @@ def main() -> int:
             "margin_against_the_threshold": margin,
             "observed_difference": published_spread,
             "ratio": margin / published_spread if published_spread else None,
+        },
+        "the_guard_was_attacked_and_six_holes_found": {
+            "raised_by": "review lane, who called the guard the longest-lived thing in "
+            "this PR and then probed it rather than leaving the compliment",
+            "what_it_already_caught": (
+                "A pin split across lines by the formatter, and a string comparison "
+                "against the figure. The reviewer predicted the formatter case would "
+                "evade and it did not."
+            ),
+            "closed_here": [
+                (
+                    "Extracting the literal to a named constant and comparing against "
+                    "the name. The most ordinary refactor there is, and it removed a "
+                    "line-based guard without touching its logic. Now an AST pass "
+                    "resolves names bound to the figure first."
+                ),
+                (
+                    "`approx(..., abs=0)` and `rel=0`, which is exact equality wearing "
+                    "the word that bought the exemption in the first version."
+                ),
+                (
+                    "Membership in a literal container, `assert x in (figure,)`, which "
+                    "is exact equality spelled differently."
+                ),
+                (
+                    "Test modules outside `npa/tests`. The reviewer counted 36, "
+                    "including `npa/src/npa/smoke/`, which holds the golden-eval "
+                    "modules that run in containers. The walk is now repository-wide."
+                ),
+            ],
+            "still_open_and_not_implied_otherwise": [
+                (
+                    "A pin in a file matching neither `test_*.py` nor the Open3D "
+                    "harness directory is not scanned."
+                ),
+                (
+                    "A figure reached through an attribute, a dict, or a function "
+                    "return is not resolved; only direct literals and names bound to "
+                    "them are."
+                ),
+            ],
+            "verified_by": (
+                "Each evasion written to a probe module, the guard run against it, and "
+                "the probe deleted. All six caught. An honest `approx(..., abs=1e-4)` "
+                "and a tuple that merely holds the figure are both left unflagged, so "
+                "the guard is not simply failing on the literal's presence."
+            ),
         },
         "what_this_does_not_claim": [
             (

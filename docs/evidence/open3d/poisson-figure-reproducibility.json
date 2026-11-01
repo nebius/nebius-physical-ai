@@ -24,6 +24,12 @@
   "cause": {
     "claim": "`create_from_point_cloud_poisson` is not deterministic in Open3D 0.20.0.",
     "how_it_was_established": "Identical input, one process, same depth, repeated. Vertex and triangle counts repeat exactly while the total surface area does not, so the topology is stable and the vertex positions are not.",
+    "why_an_earlier_experiment_here_was_void": {
+      "binary": "pybind.cpython-314-x86_64-linux-gnu.so",
+      "openmp_runtime_linked": false,
+      "openmp_symbols_present": false,
+      "so_omp_num_threads_is_not_a_knob_here": true
+    },
     "conditions": {
       "default": {
         "repeats": 4,
@@ -33,14 +39,14 @@
         "triangles": 1126072,
         "surface_area": {
           "values": [
-            157.34141061368348,
-            157.34143777245544,
-            157.34156241347827,
-            157.34145979481434
+            157.34143798282776,
+            157.3415087880117,
+            157.34148490167027,
+            157.34136541167442
           ],
           "identical": false,
-          "absolute_spread": 0.00015179979479285066,
-          "relative_spread": 9.64779673709428e-07
+          "absolute_spread": 0.0001433763372915564,
+          "relative_spread": 9.112437591756031e-07
         },
         "label": "default"
       },
@@ -52,18 +58,18 @@
         "triangles": 1126072,
         "surface_area": {
           "values": [
-            157.34152997940123,
-            157.34151129765053,
-            157.34145309600282,
-            157.34143847634692
+            157.34150341249298,
+            157.34151601730684,
+            157.34144288409715,
+            157.34147205775295
           ],
           "identical": false,
-          "absolute_spread": 9.150305430694061e-05,
-          "relative_spread": 5.815572502262094e-07
+          "absolute_spread": 7.313320969615233e-05,
+          "relative_spread": 4.6480576481063957e-07
         },
         "label": "seeded"
       },
-      "single_threaded": {
+      "thread_limited": {
         "repeats": 4,
         "seeded_before_each_call": false,
         "topology_is_stable": true,
@@ -71,22 +77,25 @@
         "triangles": 1126072,
         "surface_area": {
           "values": [
-            157.3414961062968,
-            157.34144041413956,
-            157.34147883493569,
-            157.34149079759732
+            157.34152686750252,
+            157.34143175597893,
+            157.34152109741092,
+            157.34152196844678
           ],
           "identical": false,
-          "absolute_spread": 5.569215724676724e-05,
-          "relative_spread": 3.539573369875063e-07
+          "absolute_spread": 9.511152359209518e-05,
+          "relative_spread": 6.044912807174895e-07
         },
-        "label": "single_threaded"
+        "label": "thread_limited",
+        "max_threads_before": 16,
+        "max_threads_observed_during": 1,
+        "the_knob_engaged": true
       }
     }
   },
   "what_the_remedies_do": {
     "seeding": "Does not help. The `SAMPLING_SEED` already in `audit_view_occlusion.py` is real and does bind the armadillo's sampling -- but Poisson's variation is not drawn from Open3D's generator, so seeding before the call leaves the spread where it was. Measured, not reasoned: see `cause.conditions.seeded_before_each_call`.",
-    "single_threading": "Does not fix it. The spread goes from 9.65e-07 to 3.54e-07, a factor of 2.7, while the gap between the default and seeded conditions is 3.83e-07 -- the same order as the difference single-threading makes. So the conditions are not distinguishable at this number of repeats, and `OMP_NUM_THREADS=1` is not a reproducibility setting for this harness.",
+    "limiting_threads": "Does not fix it. The spread goes from 9.11e-07 to 6.04e-07, a factor of 1.5 -- smaller with threads limited, and a reviewer saw it come out larger in one of their pairings too, which is what two runs cannot tell you. And -- the part that decides it -- every condition still produced 4 distinct areas out of 4. A setting that made this deterministic would produce one. The knob is recorded as engaged (16 threads to 1), because the experiment this replaces set `OMP_NUM_THREADS=1` in a build with no OpenMP linked and therefore measured nothing.",
     "so_the_record_should": "State the precision the figures hold instead of publishing sixteen digits that do not survive a second run."
   },
   "does_this_change_any_conclusion": {
@@ -94,6 +103,21 @@
     "margin_against_the_threshold": 0.28488100051233756,
     "observed_difference": 2.810119407126166e-05,
     "ratio": 10137.683110187754
+  },
+  "the_guard_was_attacked_and_six_holes_found": {
+    "raised_by": "review lane, who called the guard the longest-lived thing in this PR and then probed it rather than leaving the compliment",
+    "what_it_already_caught": "A pin split across lines by the formatter, and a string comparison against the figure. The reviewer predicted the formatter case would evade and it did not.",
+    "closed_here": [
+      "Extracting the literal to a named constant and comparing against the name. The most ordinary refactor there is, and it removed a line-based guard without touching its logic. Now an AST pass resolves names bound to the figure first.",
+      "`approx(..., abs=0)` and `rel=0`, which is exact equality wearing the word that bought the exemption in the first version.",
+      "Membership in a literal container, `assert x in (figure,)`, which is exact equality spelled differently.",
+      "Test modules outside `npa/tests`. The reviewer counted 36, including `npa/src/npa/smoke/`, which holds the golden-eval modules that run in containers. The walk is now repository-wide."
+    ],
+    "still_open_and_not_implied_otherwise": [
+      "A pin in a file matching neither `test_*.py` nor the Open3D harness directory is not scanned.",
+      "A figure reached through an attribute, a dict, or a function return is not resolved; only direct literals and names bound to them are."
+    ],
+    "verified_by": "Each evasion written to a probe module, the guard run against it, and the probe deleted. All six caught. An honest `approx(..., abs=1e-4)` and a tuple that merely holds the figure are both left unflagged, so the guard is not simply failing on the literal's presence."
   },
   "what_this_does_not_claim": [
     "That the figures are wrong. They are reproducible to about five significant figures, which is far more precision than any conclusion here uses.",
