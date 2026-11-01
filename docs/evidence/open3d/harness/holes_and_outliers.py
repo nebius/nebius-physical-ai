@@ -288,26 +288,52 @@ def a_test_i_discarded(
     retained[list(kept)] = True
     outlier_points, retained_points = points[~retained], points[retained]
 
+    tree = o3d.geometry.KDTreeFlann(
+        o3d.geometry.PointCloud(o3d.utility.Vector3dVector(retained_points))
+    )
+
     def nearer_to_self_than_to_another(
-        sample: np.ndarray, others: np.ndarray, skip: int
+        sample: np.ndarray, own_index: np.ndarray | None
     ) -> float:
+        """Both arms compare against the nearest competitor, with the self removed by index.
+
+        The published version excluded the self by rank: the control arm took the second
+        nearest neighbour. Review found that rank-based exclusion only removes the self when
+        the self is actually the nearest, and the tree is queried with the *surface* point,
+        so whenever another retained point lies nearer that surface point, a genuine
+        competitor is discarded and a farther one substituted. Their premise holds in 5.9%
+        of cases here. Its effect on the rate is nil, which is measured rather than assumed,
+        and the code is corrected regardless because a reader cannot know it is harmless
+        without that figure.
+        """
         found = scene.compute_closest_points(o3d.core.Tensor(sample.astype(np.float32)))
         surface = found["points"].numpy()
-        tree = o3d.geometry.KDTreeFlann(
-            o3d.geometry.PointCloud(o3d.utility.Vector3dVector(others))
-        )
-        to_other = np.array(
-            [
-                np.sqrt(tree.search_knn_vector_3d(s.astype(np.float64), skip)[2][-1])
-                for s in surface
-            ]
-        )
         to_self = np.linalg.norm(surface - sample, axis=1)
+        to_other = np.empty(len(sample))
+        for position, point in enumerate(surface):
+            _, indices, squared = tree.search_knn_vector_3d(point.astype(np.float64), 8)
+            mine = own_index[position] if own_index is not None else -1
+            to_other[position] = np.sqrt(
+                min(d for i, d in zip(indices, squared) if i != mine)
+            )
         return float((to_self < to_other).mean())
 
-    for_outliers = nearer_to_self_than_to_another(outlier_points, retained_points, 1)
+    # Outliers are not in the tree, so that arm has no self to exclude. The control arm now
+    # runs on every retained point rather than every seventh: that sampling asymmetry was
+    # also real and turned out to move the rate more than the exclusion rule did.
+    for_outliers = nearer_to_self_than_to_another(outlier_points, None)
     for_retained = nearer_to_self_than_to_another(
-        retained_points[::7], retained_points, 2
+        retained_points, np.arange(len(retained_points))
+    )
+
+    not_nearest = sum(
+        1
+        for position, point in enumerate(
+            scene.compute_closest_points(
+                o3d.core.Tensor(retained_points.astype(np.float32))
+            )["points"].numpy()
+        )
+        if tree.search_knn_vector_3d(point.astype(np.float64), 1)[1][0] != position
     )
     return {
         "the_test": "Call nearby surface attributable to an outlier when that surface is "
@@ -321,6 +347,35 @@ def a_test_i_discarded(
         "method, and because the fitting result above is correlational for exactly this "
         "reason: proving an outlier *caused* its nearby surface needs a re-reconstruction "
         "without it, which this does not do.",
+        "an_asymmetry_review_found_in_this_discarded_test": {
+            "their_finding": "The two arms asked different questions. The outlier arm compared "
+            "against the nearest retained point and the control arm against the second "
+            "nearest, because the control needed to drop its own self-match. Rank-based "
+            "exclusion only removes the self when the self is the nearest, and the tree is "
+            "queried with the surface point, so a nearer retained point substituted a farther "
+            "competitor and biased the control upward -- the direction that props up the "
+            "discard.",
+            "their_premise_measured": f"The originating point is not the nearest retained "
+            f"point to its own surface point in {not_nearest} of {len(retained_points)} cases, "
+            f"{round(100 * not_nearest / len(retained_points), 1)}%. So the substitution they "
+            "describe is real and not rare.",
+            "its_effect_on_the_rate": "Nil. At a fixed sample the rank rule and identity "
+            "exclusion give the same rate to three decimals, because in every one of those "
+            "cases the verdict is already False under both rules: if another point is nearer "
+            "the surface than the origin is, the origin loses either way.",
+            "what_was_actually_asymmetric": "The sample. The published control ran on every "
+            "seventh retained point while the outlier arm ran on all of them, and that is "
+            "worth about 1.3 points where the exclusion rule is worth none. Both arms now run "
+            "on their full sets.",
+            "a_mistake_i_nearly_made_checking_this": "My first corrected run changed the "
+            "exclusion rule and the sample size together and came out higher, which I almost "
+            "reported as the bias running opposite to review's prediction. It does not; the "
+            "two changes had to be separated to see that one of them does nothing. Same "
+            "lesson as the axis-pairing episode: vary one thing.",
+            "does_the_discard_still_hold": "Yes, and now for a measured reason rather than an "
+            "unexamined comparison. The corrected control is 0.941 against the outlier arm's "
+            "0.915.",
+        },
     }
 
 

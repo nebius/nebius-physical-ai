@@ -92,9 +92,17 @@
   "a_test_i_built_and_discarded": {
     "the_test": "Call nearby surface attributable to an outlier when that surface is closer to the outlier than to any retained point.",
     "rate_for_outliers": 0.915,
-    "rate_for_retained_points_as_a_control": 0.933,
+    "rate_for_retained_points_as_a_control": 0.941,
     "verdict": "discarded",
-    "why": "The control rate is as high as the outlier rate, so the test says almost every point owns its nearest surface and separates nothing. It would have read as a strong causal finding. Recorded because a discarded test is evidence about the method, and because the fitting result above is correlational for exactly this reason: proving an outlier *caused* its nearby surface needs a re-reconstruction without it, which this does not do."
+    "why": "The control rate is as high as the outlier rate, so the test says almost every point owns its nearest surface and separates nothing. It would have read as a strong causal finding. Recorded because a discarded test is evidence about the method, and because the fitting result above is correlational for exactly this reason: proving an outlier *caused* its nearby surface needs a re-reconstruction without it, which this does not do.",
+    "an_asymmetry_review_found_in_this_discarded_test": {
+      "their_finding": "The two arms asked different questions. The outlier arm compared against the nearest retained point and the control arm against the second nearest, because the control needed to drop its own self-match. Rank-based exclusion only removes the self when the self is the nearest, and the tree is queried with the surface point, so a nearer retained point substituted a farther competitor and biased the control upward -- the direction that props up the discard.",
+      "their_premise_measured": "The originating point is not the nearest retained point to its own surface point in 363 of 6199 cases, 5.9%. So the substitution they describe is real and not rare.",
+      "its_effect_on_the_rate": "Nil. At a fixed sample the rank rule and identity exclusion give the same rate to three decimals, because in every one of those cases the verdict is already False under both rules: if another point is nearer the surface than the origin is, the origin loses either way.",
+      "what_was_actually_asymmetric": "The sample. The published control ran on every seventh retained point while the outlier arm ran on all of them, and that is worth about 1.3 points where the exclusion rule is worth none. Both arms now run on their full sets.",
+      "a_mistake_i_nearly_made_checking_this": "My first corrected run changed the exclusion rule and the sample size together and came out higher, which I almost reported as the bias running opposite to review's prediction. It does not; the two changes had to be separated to see that one of them does nothing. Same lesson as the axis-pairing episode: vary one thing.",
+      "does_the_discard_still_hold": "Yes, and now for a measured reason rather than an unexamined comparison. The corrected control is 0.941 against the outlier arm's 0.915."
+    }
   },
   "what_this_does_not_claim": "Not that the holes are in the wrong places or that the outliers are noise rather than real thin structure; neither is decidable without ground truth, which no artifact in this chain carries. Not that an outlier caused the surface near it -- see the discarded test. And an interior hole is not automatically a defect: on an open patch some holes are honest absence of observation, which is why the area is reported next to the surface area rather than as a score."
 }

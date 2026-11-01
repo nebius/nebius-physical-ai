@@ -133,6 +133,27 @@ def test_the_discarded_attribution_test_is_recorded_with_both_rates() -> None:
     assert "re-reconstruction" in discarded["why"], discarded
 
 
+def test_both_arms_of_the_discarded_test_ask_the_same_question() -> None:
+    """Review found the arms were not comparable, in the direction that props up the discard.
+
+    The control excluded its own self-match by rank, which only removes the self when the
+    self is the nearest, and the tree is queried with the surface point. Their premise holds
+    in 5.9% of cases here. The effect on the rate is nil, and that is measured rather than
+    assumed, because this test is what protects the conclusion in CI.
+    """
+    asymmetry = _report()["a_test_i_built_and_discarded"][
+        "an_asymmetry_review_found_in_this_discarded_test"
+    ]
+    assert "5.9%" in asymmetry["their_premise_measured"], asymmetry
+    assert asymmetry["its_effect_on_the_rate"].startswith("Nil"), asymmetry
+    # The sampling asymmetry was the real one, and it is recorded as such.
+    assert "every seventh" in asymmetry["what_was_actually_asymmetric"], asymmetry
+    assert "vary one thing" in asymmetry["a_mistake_i_nearly_made_checking_this"], (
+        asymmetry
+    )
+    assert asymmetry["does_the_discard_still_hold"].startswith("Yes"), asymmetry
+
+
 def test_the_report_does_not_overclaim_on_either_figure() -> None:
     """Holes are not called defects and outliers are not called noise.
 
