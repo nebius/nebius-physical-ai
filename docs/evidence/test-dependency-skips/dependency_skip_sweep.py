@@ -19,9 +19,15 @@ So this measures it. Two runs of the same test file:
     is satisfied, so the tests run; any test that *touches* the module fails on
     the first attribute it reads.
 
-A test that skips under `absent` and passes under `poison` provably never touched
-the module it was skipped for. That is the finding. A test that fails under
-`poison` needs it, and its skip is correct.
+A test that skips under `absent` and passes under `poison` did not touch the module it
+was skipped for through any path that raises. That is the finding. A test that fails
+under `poison` needs it, and its skip is correct.
+
+"Through any path that raises" rather than "never touched it", because the poison
+raises `AssertionError`: a test that reads the module inside `except Exception`
+swallows the complaint and passes. That is the one caveat here that would make a
+number an overcount rather than a lower bound, so every row reports the broad
+handlers in its file, and a test constructs one to show the limit is real.
 
 The classification is deliberately one-sided. Poisoning a module that other
 libraries import during collection can break collection for reasons that have
@@ -121,6 +127,12 @@ def pytest_configure(config):
 '''
 
 OUTCOME = re.compile(r"(\d+) (passed|failed|skipped|error|errors)")
+#: `-v` names every test and its outcome, which `-rA` does not: its SKIPPED lines
+#: carry a file and line rather than a node identifier, so they cannot be intersected
+#: with anything.
+VERBOSE_OUTCOME = re.compile(
+    r"^(\S+::\S+) (PASSED|FAILED|SKIPPED|ERROR|XFAIL|XPASS)", re.MULTILINE
+)
 
 
 def fixture_level_sites() -> list[tuple[Path, str, list[str]]]:
@@ -164,8 +176,8 @@ def run(path: Path, target: str, mode: str) -> dict[str, int | list[str]]:
                 "-m",
                 "pytest",
                 str(path if not path.is_relative_to(REPO) else path.relative_to(REPO)),
-                "-q",
-                "-rs",
+                "-v",
+                "--tb=no",
                 "-p",
                 name,
                 "-p",
@@ -182,12 +194,19 @@ def run(path: Path, target: str, mode: str) -> dict[str, int | list[str]]:
     counts = {kind: 0 for kind in ("passed", "failed", "skipped", "error")}
     for number, kind in OUTCOME.findall(tail):
         counts["error" if kind.startswith("error") else kind] += int(number)
-    skipped_here = sorted(
-        set(re.findall(r"SKIPPED \[\d+\] ([^:]+:\d+)", completed.stdout))
-    )
+    by_outcome: dict[str, list[str]] = {}
+    for node, outcome in VERBOSE_OUTCOME.findall(completed.stdout):
+        by_outcome.setdefault(outcome.lower(), []).append(node)
     return {
         **counts,
-        "skipped_locations": skipped_here,
+        # Per test, because the criterion is about individual tests and a count is
+        # not. A delta over counts cannot tell a test that moved from skipped into
+        # passing from one that moved from *failed* into passing, and it nets a rise
+        # against a drop to zero. Both of those were found in this sweep's published
+        # numbers by a reviewer who took this reading and I had not.
+        "nodes": {
+            outcome: sorted(nodes) for outcome, nodes in sorted(by_outcome.items())
+        },
         "parent_unavailable": "NPA_SWEEP_PARENT_UNAVAILABLE"
         in (completed.stdout + completed.stderr),
     }
@@ -219,6 +238,40 @@ def ci_installs(module: str) -> bool | None:
     if distribution in snapshot["observed_absent"]:
         return False
     return None
+
+
+def broad_except_sites(path: Path) -> list[int]:
+    """Line numbers of handlers that would swallow the poison's AssertionError.
+
+    This is the one limit of the instrument that errs in the unsafe direction. A test
+    that calls into the module inside `except Exception` catches the poison's
+    complaint and passes, and would be recorded as a test that does not need the
+    module. A reviewer demonstrated it with a purpose-built control rather than
+    arguing it, and then checked that no flagged file contains such a handler, so no
+    published number was affected.
+
+    Measured per file and published beside each row, so the claim is checkable at the
+    row level instead of resting on a one-time audit of three files.
+    """
+    try:
+        tree = ast.parse(path.read_text())
+    except SyntaxError:
+        return []
+    swallowing = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.ExceptHandler):
+            continue
+        caught = node.type
+        names: list[str] = []
+        if caught is None:
+            names = ["bare"]
+        elif isinstance(caught, ast.Name):
+            names = [caught.id]
+        elif isinstance(caught, ast.Tuple):
+            names = [e.id for e in caught.elts if isinstance(e, ast.Name)]
+        if {"bare", "Exception", "BaseException"} & set(names):
+            swallowing.append(node.lineno)
+    return swallowing
 
 
 def importable(module: str) -> bool:
@@ -257,8 +310,8 @@ def narrative(measured: dict[str, int]) -> dict[str, str]:
             f"makes the skip as broad as the widest dependency of anything in their "
             f"file rather than what the tests beneath them use. Of the "
             f"{measured['measurable']} fixture-and-module pairs this environment can "
-            f"decide, {measured['findings']} switch off tests that provably never "
-            f"touch the module, {measured['tests']} tests in total."
+            f"decide, {measured['findings']} switch off tests that never touch the "
+            f"module through any path that raises, {measured['tests']} tests in total."
         ),
         "what_it_costs_today": (
             f"{live} of those {measured['findings']} are costing coverage in CI now. "
@@ -283,6 +336,40 @@ def narrative(measured: dict[str, int]) -> dict[str, str]:
             "need the dependency, which is why the measurement is per test rather than "
             "per file. And not a complete census: a pair this environment cannot "
             "decide is reported as undecided, not as clean."
+        ),
+    }
+
+
+def classify(absent: dict, poisoned: dict) -> dict:
+    """Decide one row from the two runs, by test identity rather than by a count.
+
+    Separate from `main` so the two ways a count delta gets this wrong can be driven
+    directly by a test, instead of only through a three-minute sweep of the tree.
+    """
+    skipped_when_absent = set(absent["nodes"].get("skipped", []))
+    passing_when_poisoned = set(poisoned["nodes"].get("passed", []))
+    passing_when_absent = set(absent["nodes"].get("passed", []))
+
+    # The criterion, applied to the tests it is about. A reviewer reproduced this
+    # sweep's counts exactly and then took the one reading it had not: the single test
+    # behind its `torch` finding was FAILED under absence and PASSED under poison. It
+    # never skipped, so no over-broad skip ever switched it off, and a count delta had
+    # counted it anyway.
+    switched_off = sorted(skipped_when_absent & passing_when_poisoned)
+
+    # The same delta can also hide a finding, by netting a rise against a drop. That
+    # reviewer checked ten of the thirteen rows with the capacity for it and found
+    # none, so it was real in principle and had cost nothing in practice. Both
+    # directions are reported per row now rather than left to be rechecked by hand.
+    rose = passing_when_poisoned - passing_when_absent
+    return {
+        "tests_that_pass_without_it": len(switched_off),
+        "which_tests_pass_without_it": switched_off,
+        "what_a_count_delta_would_have_said": int(poisoned["passed"])
+        - int(absent["passed"]),
+        "rose_into_passing_without_having_skipped": sorted(rose - skipped_when_absent),
+        "dropped_out_of_passing_under_poison": sorted(
+            passing_when_absent - passing_when_poisoned
         ),
     }
 
@@ -337,7 +424,9 @@ def main() -> int:
                     flush=True,
                 )
                 continue
-            gained = int(poisoned["passed"]) - int(absent["passed"])
+            verdict = classify(absent, poisoned)
+            gained = verdict["tests_that_pass_without_it"]
+
             rows.append(
                 {
                     "file": str(path.relative_to(REPO)),
@@ -357,16 +446,19 @@ def main() -> int:
                         else "live: CI does not install this module, so these tests are "
                         "being skipped in CI now"
                     ),
-                    "tests_that_pass_without_it": gained,
+                    "handlers_that_could_swallow_the_poison": broad_except_sites(path),
+                    **verdict,
                     "absent": absent,
                     "poisoned": poisoned,
                 }
             )
+            delta = verdict["what_a_count_delta_would_have_said"]
             print(
                 f"{path.relative_to(TESTS)}::{fixture} [{target}] "
                 f"absent {absent['passed']}p/{absent['skipped']}s -> "
                 f"poison {poisoned['passed']}p/{poisoned['skipped']}s/"
-                f"{poisoned['failed']}f  gained {gained}",
+                f"{poisoned['failed']}f  switched off {gained}"
+                + (f"  (a count delta would say {delta})" if delta != gained else ""),
                 flush=True,
             )
 
@@ -387,8 +479,34 @@ def main() -> int:
         "what_this_measures": (
             "Whether a test skipped for a missing module actually uses that module. A "
             "test that skips when the module is absent and passes when the module is "
-            "importable but unusable never touched it, so the skip was switching off a "
-            "test that had nothing to do with the dependency."
+            "importable but unusable did not touch it through any path that raises, so "
+            "the skip was switching off a test that had nothing to do with the "
+            "dependency."
+        ),
+        "why_not_provably_never_touched_it": (
+            "An earlier version of this file said 'provably never touched it'. That is "
+            "stronger than the instrument can support, and a reviewer demonstrated it "
+            "rather than arguing it: the poison raises AssertionError, so a test that "
+            "calls into the module inside `except Exception` swallows the complaint and "
+            "passes. They built a control that does exactly that and it passed under "
+            "poison. No published number was affected, because no flagged file contains "
+            "such a handler -- which is now measured per row as "
+            "handlers_that_could_swallow_the_poison rather than audited once by hand. "
+            "This is the only caveat here that would make a number an overcount; the "
+            "others all make it a lower bound."
+        ),
+        "why_test_identity_and_not_a_count_delta": (
+            "The first version of this sweep classified a row by "
+            "poisoned_passed - absent_passed. That counts any test moving into passing, "
+            "while the criterion is narrower: a test that *skipped* and then passed. A "
+            "reviewer reproduced the counts exactly, took per-test identities, and found "
+            "the single test behind the torch finding was FAILED under absence and "
+            "PASSED under poison -- never skipped, so never switched off by a skip. The "
+            "same delta can also hide a finding by netting a rise against a drop; they "
+            "measured ten of the thirteen rows with that capacity and found none, so it "
+            "was real in principle and had cost nothing in practice. Both are now "
+            "measured by intersecting sets of test identities, and every row publishes "
+            "what the delta would have said so the two can be compared."
         ),
         "why_a_pass_under_poison_is_the_only_evidence_counted": (
             "Poisoning a module that other libraries import during collection can break "

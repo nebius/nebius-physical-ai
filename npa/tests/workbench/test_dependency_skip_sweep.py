@@ -244,3 +244,174 @@ def test_the_sweep_reports_sites_it_cannot_measure_rather_than_passing_them(
     for row in unmeasured:
         assert row["why"], row["module"]
         assert "tests_that_pass_without_it" not in row, row["module"]
+
+
+#: A test that skips when the module is absent and passes when it is poisoned -- a real
+#: finding -- beside a second test that is not gated at all and whose outcome tracks
+#: whether the module imports. That second one FAILS under absence and PASSES under
+#: poison without ever skipping, which is the shape that produced a false positive.
+FAILED_THEN_PASSED = f'''
+import pytest
+
+
+@pytest.fixture
+def dependency():
+    pytest.importorskip("{FAKE}")
+    return "not the module"
+
+
+def test_gated(dependency):
+    assert dependency == "not the module"
+
+
+def test_not_gated_at_all():
+    import {FAKE} as module
+
+    assert module is not None
+'''
+
+#: The other direction: one test rises into passing and one drops out of it, so the two
+#: cancel and a count delta reads zero over a row that has a real finding in it.
+RISE_CANCELS_DROP = f'''
+import pytest
+
+
+@pytest.fixture
+def dependency():
+    pytest.importorskip("{FAKE}")
+    return "not the module"
+
+
+def test_gated(dependency):
+    assert dependency == "not the module"
+
+
+def test_passes_only_while_the_module_is_missing():
+    with pytest.raises(ModuleNotFoundError):
+        import {FAKE}  # noqa: F401
+'''
+
+#: Touches the module, and swallows the poison's complaint. Passes under poison anyway.
+SWALLOWS_THE_POISON = f'''
+import pytest
+
+
+@pytest.fixture
+def dependency():
+    pytest.importorskip("{FAKE}")
+    return "not the module"
+
+
+def test_reads_an_attribute_but_catches_everything(dependency):
+    import {FAKE} as module
+
+    try:
+        module.some_attribute
+    except Exception:
+        pass
+'''
+
+
+def test_a_test_that_failed_rather_than_skipped_is_not_a_finding(
+    sweep, tmp_path: Path
+) -> None:
+    """The false positive, reproduced and then excluded.
+
+    A reviewer reproduced this sweep's counts exactly and then took the reading it had
+    not: the single test behind its `torch` finding was FAILED under absence and PASSED
+    under poison. Never skipped, so no over-broad skip had switched it off -- and
+    `poisoned.passed - absent.passed` counted it regardless. One of the three published
+    findings was that one test.
+
+    Both numbers are asserted here, because the point is not that the new one is right
+    but that the two disagree on a case that occurs in this repository.
+    """
+    path = tmp_path / "test_failed_then_passed.py"
+    path.write_text(FAILED_THEN_PASSED)
+
+    absent = sweep.run(path, FAKE, "absent")
+    poisoned = sweep.run(path, FAKE, "poison")
+    verdict = sweep.classify(absent, poisoned)
+
+    assert absent["skipped"] == 1 and absent["failed"] == 1, absent
+    assert poisoned["passed"] == 2, poisoned
+    assert verdict["what_a_count_delta_would_have_said"] == 2, verdict
+    assert verdict["tests_that_pass_without_it"] == 1, verdict
+    assert [
+        node.split("::")[-1] for node in verdict["which_tests_pass_without_it"]
+    ] == ["test_gated"]
+    assert [
+        node.split("::")[-1]
+        for node in verdict["rose_into_passing_without_having_skipped"]
+    ] == ["test_not_gated_at_all"]
+
+
+def test_a_rise_cancelling_a_drop_does_not_hide_the_finding(
+    sweep, tmp_path: Path
+) -> None:
+    """The other way a count delta is wrong: it nets out, and the row reads clean.
+
+    The reviewer who found the false positive raised this as the matching risk and
+    checked ten of the thirteen rows that had the capacity for it, finding none. So it
+    was real in principle and had cost nothing in practice. Here it is constructed, to
+    keep it that way: the delta is zero while a test was genuinely switched off.
+    """
+    path = tmp_path / "test_rise_cancels_drop.py"
+    path.write_text(RISE_CANCELS_DROP)
+
+    absent = sweep.run(path, FAKE, "absent")
+    poisoned = sweep.run(path, FAKE, "poison")
+    verdict = sweep.classify(absent, poisoned)
+
+    assert verdict["what_a_count_delta_would_have_said"] == 0, verdict
+    assert verdict["tests_that_pass_without_it"] == 1, verdict
+    assert [
+        node.split("::")[-1] for node in verdict["which_tests_pass_without_it"]
+    ] == ["test_gated"]
+    assert [
+        node.split("::")[-1] for node in verdict["dropped_out_of_passing_under_poison"]
+    ] == ["test_passes_only_while_the_module_is_missing"]
+
+
+def test_a_broad_handler_can_swallow_the_poison_and_is_reported(
+    sweep, tmp_path: Path
+) -> None:
+    """The instrument's one overcounting limit, demonstrated rather than asserted.
+
+    The poison raises `AssertionError` on attribute access, so a test that reads the
+    module inside `except Exception` passes anyway and is counted as not needing it.
+    That is why the record says these tests "did not touch it through any path that
+    raises" and not "provably never touched it".
+
+    No published row contains such a handler, which is a measurement rather than an
+    audit: `broad_except_sites` runs on every file the sweep visits, and this asserts
+    it finds the one here.
+    """
+    path = tmp_path / "test_swallows_the_poison.py"
+    path.write_text(SWALLOWS_THE_POISON)
+
+    poisoned = sweep.run(path, FAKE, "poison")
+    absent = sweep.run(path, FAKE, "absent")
+
+    assert absent["skipped"] == 1, absent
+    assert poisoned["passed"] == 1, poisoned
+    assert sweep.classify(absent, poisoned)["tests_that_pass_without_it"] == 1
+
+    swallowing = sweep.broad_except_sites(path)
+    assert len(swallowing) == 1, swallowing
+    source = path.read_text().splitlines()
+    assert source[swallowing[0] - 1].strip() == "except Exception:"
+
+
+def test_no_published_finding_rests_on_a_file_that_could_swallow_the_poison(
+    record,
+) -> None:
+    """The limit above, applied to the catalogue, by measurement rather than by eye."""
+    flagged = [
+        row
+        for row in record["rows"]
+        if row["verdict"] == "tests_switched_off_unnecessarily"
+    ]
+    assert flagged, "no findings to check"
+    for row in flagged:
+        assert row["handlers_that_could_swallow_the_poison"] == [], row["file"]
