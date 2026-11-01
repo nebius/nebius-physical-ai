@@ -26,6 +26,7 @@ gate that did not work:
 from __future__ import annotations
 
 import importlib.util
+import json
 import sys
 from pathlib import Path
 
@@ -564,3 +565,104 @@ def test_the_spread_floor_has_measured_margin_on_both_sides() -> None:
     # Recorded as asymmetric on purpose: the control side is the tighter one, and the record says
     # so rather than presenting the floor as comfortably placed.
     assert floor / max(stranded) < min(delivered) / floor
+
+
+def test_the_gated_statistic_is_the_one_the_mask_cannot_move() -> None:
+    """The mask dispute was about a diagnostic; the gate acts on a near-mask-free statistic.
+
+    This is the strongest justification for choosing the spread over the extent, and it was
+    recorded only as an absolute movement rather than as the ratio that makes the case. A
+    reviewer asked for the ratio after neither of us had thought to measure it.
+    """
+    report = json.loads((EVIDENCE / "statistic-mask-sensitivity.json").read_text())
+    sensitivity = report["sensitivity_at_the_certified_overlay_only_width"]
+
+    assert sensitivity["worst_extent_relative_change"] > 0.40, sensitivity
+    assert sensitivity["worst_spread_relative_change"] < 0.03, sensitivity
+    # An order of magnitude is the claim. Pinning the exact 26.7 would pin an incidental.
+    assert sensitivity["how_many_times_more_sensitive_the_extent_is"] >= 10.0, (
+        sensitivity
+    )
+
+
+def test_a_flat_extent_plateau_does_not_prove_the_box_holds_no_subject() -> None:
+    """The two controls disagree above 290px, and the pair diff is the one that is right.
+
+    The extent goes flat at 160px and stays flat to 440px, which is what made me treat the
+    widest box as safe. Flatness only means the annotation no longer pins the bounding box; a
+    wider box can then remove interior subject pixels without the extent noticing. The pair
+    diff does notice, because two reconstructions differ wherever real geometry sits.
+    """
+    report = json.loads((EVIDENCE / "statistic-mask-sensitivity.json").read_text())
+    certified = report["which_box_is_actually_overlay_only"]
+    readings = {r["exclusion_width"]: r for r in certified["readings"]}
+
+    assert certified["widest_certified_overlay_only"] == 290, certified
+    assert certified["first_width_proven_to_contain_subject_geometry"] == 320, certified
+    # The gate's own exclusion and the plateau onset both sit inside the certified region,
+    # which is what makes the published subject extent safe despite the correction.
+    assert readings[160]["max_pixels_differing_inside_the_band"] == 0
+    # And the contamination grows with width rather than appearing once, which is what a box
+    # eating into geometry looks like as opposed to a single stray glyph.
+    assert (
+        readings[320]["max_pixels_differing_inside_the_band"]
+        < readings[380]["max_pixels_differing_inside_the_band"]
+        < readings[440]["max_pixels_differing_inside_the_band"]
+    ), readings
+
+
+def test_the_corrected_spread_sensitivity_replaced_a_contaminated_measurement() -> None:
+    """0.0042 was measured at 440px, inside the region proven to contain subject geometry."""
+    report = json.loads((EVIDENCE / "statistic-mask-sensitivity.json").read_text())
+    correction = report["a_figure_this_corrects"]
+
+    assert correction["figure_the_record_carried"] == 0.0042
+    assert correction["corrected_figure"] == 0.0021
+    assert correction["measured_at_certified_width"] == 290
+    # The record must carry the corrected figure, not the one this report retires.
+    record = json.loads(
+        (EVIDENCE / "capability-record-frame-property-gate.json").read_text()
+    )
+    blob = json.dumps(record)
+    assert "0.0021" in blob
+    assert "0.0042" not in blob.replace("0.00421", "")
+
+
+def test_the_floors_fragility_is_stated_from_observed_movement_not_from_the_nine_frames() -> (
+    None
+):
+    """A margin statement that needs no new threshold, so it cannot be a disguised retune."""
+    report = json.loads((EVIDENCE / "statistic-mask-sensitivity.json").read_text())
+    fragility = report["the_floors_fragility_without_proposing_a_new_floor"]
+
+    assert fragility["weakest_delivered_frame_over_floor"] == 1.77
+    assert (
+        fragility["largest_movement_observed_between_matched_reconstructions"] == 1.50
+    )
+    # 1.77 / 1.50: the weakest frame survives one more worst-case movement by about 18%.
+    assert fragility["headroom_beyond_already_observed_movement"] == 1.18
+
+
+def test_the_certification_covered_the_annotations_full_height_not_a_strip() -> None:
+    """Certification on a sliver must not license a measurement over the full band.
+
+    Mutation testing found this: shrinking the pair-diff band to one pixel tall still produces
+    the same 290/320 boundary, so every other assertion here passed while the certified region
+    and the measured region had come apart.
+
+    My first fix was to have the report state the height it used and assert the two agreed,
+    which is a self-declaration a test reading that report cannot check -- the mutation changed
+    the band and left the declaration intact, and it survived again. The height has to be
+    inferred from behaviour instead. Contamination counts at a width known to cut into geometry
+    scale with how much of the annotation's height the band covers: 124 pixels at 1px tall,
+    1,248 at 10px, and 4,174 at 37px and above, where it saturates because the annotation is
+    about 37 rows deep.
+    """
+    report = json.loads((EVIDENCE / "statistic-mask-sensitivity.json").read_text())
+    readings = {
+        r["exclusion_width"]: r
+        for r in report["which_box_is_actually_overlay_only"]["readings"]
+    }
+
+    assert readings[440]["max_pixels_differing_inside_the_band"] >= 3000, readings[440]
+    assert readings[380]["max_pixels_differing_inside_the_band"] >= 2000, readings[380]

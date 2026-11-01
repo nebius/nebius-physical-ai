@@ -1,0 +1,196 @@
+{
+  "the_question": "How much could the mask dispute have changed the number the gate acts on?",
+  "the_answer": "Almost nothing, and that is the case for the statistic rather than a footnote to it.",
+  "which_statistic_gates": {
+    "gated": "interquartile spread of subject pixel positions, narrower axis",
+    "recorded_but_not_gated": "bounding-box extent",
+    "why_the_dispute_was_about_the_wrong_one": "Quartiles are insensitive to a compact cluster at one corner, which is exactly what a fixed annotation is. The extent is defined by the outermost pixel, so a single annotation glyph can set it."
+  },
+  "sensitivity_at_the_certified_overlay_only_width": {
+    "exclusion_width": 290,
+    "measured_at_band_height": 120,
+    "per_frame": [
+      {
+        "frame": "baseline_scan_and_surface__opposite.png",
+        "extent_before": 0.6802,
+        "extent_after": 0.4146,
+        "extent_relative_change": 0.3905,
+        "spread_before": 0.176,
+        "spread_after": 0.175,
+        "spread_absolute_change": 0.001,
+        "spread_relative_change": 0.0059
+      },
+      {
+        "frame": "baseline_scan_and_surface__overview.png",
+        "extent_before": 0.7125,
+        "extent_after": 0.5104,
+        "extent_relative_change": 0.2836,
+        "spread_before": 0.1906,
+        "spread_after": 0.1906,
+        "spread_absolute_change": 0.0,
+        "spread_relative_change": 0.0
+      },
+      {
+        "frame": "baseline_scan_and_surface__topdown.png",
+        "extent_before": 0.625,
+        "extent_after": 0.3365,
+        "extent_relative_change": 0.4617,
+        "spread_before": 0.149,
+        "spread_after": 0.1479,
+        "spread_absolute_change": 0.001,
+        "spread_relative_change": 0.007
+      },
+      {
+        "frame": "baseline_surface_only__overview.png",
+        "extent_before": 0.7125,
+        "extent_after": 0.5073,
+        "extent_relative_change": 0.288,
+        "spread_before": 0.1906,
+        "spread_after": 0.1896,
+        "spread_absolute_change": 0.001,
+        "spread_relative_change": 0.0055
+      },
+      {
+        "frame": "candidate_scan_and_surface__opposite.png",
+        "extent_before": 0.6556,
+        "extent_after": 0.3208,
+        "extent_relative_change": 0.5106,
+        "spread_before": 0.1313,
+        "spread_after": 0.1302,
+        "spread_absolute_change": 0.001,
+        "spread_relative_change": 0.0079
+      },
+      {
+        "frame": "candidate_scan_and_surface__overview.png",
+        "extent_before": 0.55,
+        "extent_after": 0.3354,
+        "extent_relative_change": 0.3902,
+        "spread_before": 0.1292,
+        "spread_after": 0.1281,
+        "spread_absolute_change": 0.001,
+        "spread_relative_change": 0.0081
+      },
+      {
+        "frame": "candidate_scan_and_surface__topdown.png",
+        "extent_before": 0.5521,
+        "extent_after": 0.2635,
+        "extent_relative_change": 0.5226,
+        "spread_before": 0.1062,
+        "spread_after": 0.1042,
+        "spread_absolute_change": 0.0021,
+        "spread_relative_change": 0.0196
+      },
+      {
+        "frame": "candidate_surface_only__overview.png",
+        "extent_before": 0.55,
+        "extent_after": 0.3323,
+        "extent_relative_change": 0.3958,
+        "spread_before": 0.1271,
+        "spread_after": 0.126,
+        "spread_absolute_change": 0.001,
+        "spread_relative_change": 0.0082
+      },
+      {
+        "frame": "observed_scan_only__overview.png",
+        "extent_before": 0.55,
+        "extent_after": 0.3354,
+        "extent_relative_change": 0.3902,
+        "spread_before": 0.1313,
+        "spread_after": 0.1292,
+        "spread_absolute_change": 0.0021,
+        "spread_relative_change": 0.0159
+      }
+    ],
+    "worst_extent_relative_change": 0.5226,
+    "worst_spread_relative_change": 0.0196,
+    "worst_spread_absolute_change": 0.0021,
+    "how_many_times_more_sensitive_the_extent_is": 26.7
+  },
+  "which_box_is_actually_overlay_only": {
+    "certified_at_band_height": 120,
+    "readings": [
+      {
+        "exclusion_width": 81,
+        "max_pixels_differing_inside_the_band": 0,
+        "certified_overlay_only": true
+      },
+      {
+        "exclusion_width": 120,
+        "max_pixels_differing_inside_the_band": 0,
+        "certified_overlay_only": true
+      },
+      {
+        "exclusion_width": 160,
+        "max_pixels_differing_inside_the_band": 0,
+        "certified_overlay_only": true
+      },
+      {
+        "exclusion_width": 200,
+        "max_pixels_differing_inside_the_band": 0,
+        "certified_overlay_only": true
+      },
+      {
+        "exclusion_width": 230,
+        "max_pixels_differing_inside_the_band": 0,
+        "certified_overlay_only": true
+      },
+      {
+        "exclusion_width": 260,
+        "max_pixels_differing_inside_the_band": 0,
+        "certified_overlay_only": true
+      },
+      {
+        "exclusion_width": 290,
+        "max_pixels_differing_inside_the_band": 0,
+        "certified_overlay_only": true
+      },
+      {
+        "exclusion_width": 320,
+        "max_pixels_differing_inside_the_band": 360,
+        "certified_overlay_only": false
+      },
+      {
+        "exclusion_width": 380,
+        "max_pixels_differing_inside_the_band": 2337,
+        "certified_overlay_only": false
+      },
+      {
+        "exclusion_width": 440,
+        "max_pixels_differing_inside_the_band": 4174,
+        "certified_overlay_only": false
+      }
+    ],
+    "widest_certified_overlay_only": 290,
+    "first_width_proven_to_contain_subject_geometry": 320
+  },
+  "the_plateau_is_necessary_but_not_sufficient": {
+    "what_the_extent_plateau_shows": "That the annotation stops pinning the bounding box at 160px of exclusion and the extent reading stops changing.",
+    "what_it_does_not_show": "That the box contains only annotation. The extent stays flat while a wider box removes interior subject pixels that were never on the boundary.",
+    "what_the_pair_diff_shows_instead": "Exactly zero differing pixels through 260px and thousands from 320px, because two reconstructions of one view differ wherever real geometry sits. The two controls disagree above 260px and the pair diff is right.",
+    "consequence": "The pair diff is the load-bearing control. The plateau is corroboration."
+  },
+  "a_figure_this_corrects": {
+    "figure_the_record_carried": 0.0042,
+    "measured_at_exclusion_width": 440,
+    "corrected_figure": 0.0021,
+    "measured_at_certified_width": 290,
+    "why_the_old_one_was_too_high": "At 440px the box provably contains subject geometry -- the matched pairs differ by thousands of pixels inside it -- so the movement it produced was the spread responding to removed subject content, not to the annotation. Roughly double the true figure.",
+    "how_it_got_past_me": "I took the extent plateau as licence to use the widest box in the sweep, because the extent was flat there. Flat extent means the annotation no longer pins the bounding box; it does not mean the box is empty of subject. The control I needed was the one I already had."
+  },
+  "the_floors_fragility_without_proposing_a_new_floor": {
+    "weakest_delivered_frame_over_floor": 1.77,
+    "largest_movement_observed_between_matched_reconstructions": 1.5,
+    "headroom_beyond_already_observed_movement": 1.18,
+    "stated_plainly": "A reconstruction that moved as much again as the worst movement already measured would put the weakest delivered frame within about 18% of the floor.",
+    "why_this_is_not_an_argument_for_retuning": "It is derived from measured movement, not from the nine frames the threshold was chosen on, so it argues for validating the edge against frames outside these nine rather than for moving the floor on them."
+  },
+  "what_this_does_not_establish": "That the floor's edge is correct. It establishes that the mask question could not have moved the gate, and that the statistic choice was the right one for a reason that is now measured rather than asserted.",
+  "provenance": {
+    "frames": "docs/evidence/open3d/frames-refit",
+    "anchored_at_overlay_origin_row_col": [
+      655,
+      27
+    ],
+    "why_the_anchor_is_stated": "Two disagreements about these frames were anchoring conventions rather than data."
+  }
+}

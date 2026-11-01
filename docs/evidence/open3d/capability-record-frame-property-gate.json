@@ -93,7 +93,7 @@
     "1_a_fixed_annotation_contaminates_the_obvious_measure": {
       "what": "Every one of the nine frames carries a scale bar reading '1.0 m (scan units)' drawn at a fixed bottom-left position. It is content, so it pins the content bounding box.",
       "the_tell": "All nine report a left margin of 27px, a bottom margin of 28px and a clipping headroom of 1.056 -- identical across nine different views of different geometry. Nine independent 3D projections cannot coincide like that; the number was describing the annotation.",
-      "magnitude": "Removing the annotation moves the extent reading by up to 0.335: the content box spans 0.550-0.713 of the narrower axis across the nine frames, and the subject alone spans 0.264-0.510. The largest single-frame shift is candidate_scan_and_surface__opposite, 0.656 to 0.321. The quartile spread moves by at most 0.0042 over the same removal, which is why stranding is gated on the spread and extent is recorded and not gated.",
+      "magnitude": "Removing the annotation moves the extent reading by up to 0.335: the content box spans 0.550-0.713 of the narrower axis across the nine frames, and the subject alone spans 0.264-0.510. The largest single-frame shift is candidate_scan_and_surface__opposite, 0.656 to 0.321. The quartile spread moves by at most 0.0021 over the same removal -- 1.96% against the extent's 52.3%, so the extent is 26.7x the more mask-sensitive of the two, which is why stranding is gated on the spread and extent is recorded and not gated.",
       "consequence": "A 0.40 floor on extent -- which is what gating the recorded number would have meant -- passes a frame whose geometry has collapsed to a 16x16 speck, at every placement tried, because the annotation still anchors a corner of the box.",
       "so": "Stranding is gated on an interquartile spread, and extent is recorded and not gated.",
       "this_also_corrects_a_review_statement": "The review's 'the subject spans 55-71% of each frame's narrower axis' is a reading of the content bounding box, not of the subject. The arithmetic was right; the annotation was in the frame. The review measured it independently, confirmed the 27px/28px margins on all nine, and struck the claim in their own report rather than quietly amending it.",
@@ -219,6 +219,14 @@
       {
         "path": "harness/spread_floor_margin.py",
         "sha256": "82c887ea35489d098cac2596bc708d8479ad26cfd7582543034094b1bcccc4bb"
+      },
+      {
+        "path": "harness/statistic_mask_sensitivity.py",
+        "sha256": "c4993b40e647907a1d2479cb0762682b796abff462aab015bf33c2551e2bd693"
+      },
+      {
+        "path": "statistic-mask-sensitivity.json",
+        "sha256": "0a0c550b2e40e144cae25faa652e2146d371ed9ba1c2a9ffee458ea416a6eb8e"
       }
     ],
     "one_of_these_pins_goes_stale_when_a_sibling_lands": "harness/frame_edge_audit.py is edited by the evidence-binding branch (PR 982), which makes it record the sha256 of each file it measures. That digest is correct for the bytes on this branch and stops being correct the moment 982 merges. Whichever of the two lands second must re-read it. Written down rather than left for a reader to discover, because a stale pin and a tampered one look the same.",
@@ -241,6 +249,23 @@
       "result": "6 of 7 killed.",
       "the_one_that_survived_is_equivalent": "Shrinking the stranded control's speck from 16x16 to 1x1. Both of the control's claims still hold -- the naive extent reading passes and the spread fails -- because a 1x1 speck is still a stranded subject. Pinning the exact speck size would pin an incidental constant, so it is recorded rather than chased.",
       "one_real_gap_it_found": "Removing the speck entirely left a frame that also reads below the floor, so a test asserting only 'the control fails' could not tell an empty frame from a collapsed one. The test now also asserts the naive extent reading still passes, which is the control's actual claim."
+    },
+    "but_the_two_controls_disagree_above_290px_and_only_one_of_them_is_right": {
+      "what_i_believed": "That the plateau and the pair diff agreed, so either would do and the widest box in the sweep was safe.",
+      "what_is_true": "The pair diff is exactly zero through 290px and nonzero from 320px, rising to 4,174 differing pixels at 440px. The extent plateau is flat across that whole range. A flat extent means the annotation no longer pins the bounding box; it does not mean the box is empty of subject, because interior pixels that were never on the boundary can be removed without the extent moving.",
+      "consequence": "The pair diff is the load-bearing control and the plateau is corroboration. The published subject extent is unaffected, because the plateau onset at 160px sits well inside the certified region.",
+      "what_it_cost_me": "One figure in this record, the spread's sensitivity, was measured at 440px and was therefore about double the true value. A reviewer's independent figure disagreed with mine, and the disagreement is what found this."
     }
+  },
+  "the_gated_statistic_is_the_one_the_mask_cannot_move": {
+    "why_this_matters_more_than_the_dispute_it_settles": "The figure argued over at length is the bounding-box extent, which this gate records and does not act on. The gate acts on the interquartile spread. Removing the annotation moves the extent by up to 52.3% and the spread by 1.96%, so the statistic that gates is 26.7x less exposed to the mask question than the one that was disputed.",
+    "who_noticed": "A reviewer, after neither of us had thought to ask. I had recorded the absolute movement and drawn the right conclusion from it, but never as the ratio that makes the case, which is the form that shows the dispute could not have changed a verdict.",
+    "why_quartiles_behave_this_way": "An interquartile spread is insensitive to a compact cluster at one corner, which is what a fixed annotation is. An extent is defined by the outermost pixel, so one glyph can set it.",
+    "what_this_does_not_excuse": "The extent figure was still published wrong and corrected twice. Being a diagnostic makes it less dangerous, not less wrong."
+  },
+  "the_floors_fragility_stated_from_measured_movement": {
+    "the_figures": "The weakest delivered frame sits 1.77x above the floor. The largest movement the statistic has shown between two reconstructions of one view is 1.50x.",
+    "what_follows": "The headroom beyond already-observed movement is about 18%. A reconstruction that moved as much again as the worst case measured would put the weakest delivered frame close to the floor.",
+    "why_this_is_recorded_instead_of_a_tighter_floor": "It is derived from measured movement rather than from the nine frames the threshold was chosen on, so it needs no new threshold and cannot be a disguised retune. It argues for validating the edge against frames outside these nine. A reviewer proposed it on exactly that basis and explicitly did not ask for 0.065."
   }
 }
