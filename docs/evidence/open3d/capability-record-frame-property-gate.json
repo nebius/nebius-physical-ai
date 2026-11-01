@@ -93,12 +93,25 @@
     "1_a_fixed_annotation_contaminates_the_obvious_measure": {
       "what": "Every one of the nine frames carries a scale bar reading '1.0 m (scan units)' drawn at a fixed bottom-left position. It is content, so it pins the content bounding box.",
       "the_tell": "All nine report a left margin of 27px, a bottom margin of 28px and a clipping headroom of 1.056 -- identical across nine different views of different geometry. Nine independent 3D projections cannot coincide like that; the number was describing the annotation.",
-      "magnitude": "Mask-dependent, and that is the finding rather than any single number. The annotation has no edge the pixels define, so how far the extent moves depends on how much you remove: 0.051 with a mask that provably contains no geometry, 0.218 with a reviewer's rectangle out to the label's right edge, 0.335 with the generous rectangle I first used. The quartile spread moves by at most 0.0021, 0.0021 and 0.0042 under those same three masks -- robust under all of them.",
+      "magnitude": "Removing the annotation moves the extent reading by up to 0.335: the content box spans 0.550-0.713 of the narrower axis across the nine frames, and the subject alone spans 0.264-0.510. The largest single-frame shift is candidate_scan_and_surface__opposite, 0.656 to 0.321. The quartile spread moves by at most 0.0042 over the same removal, which is why stranding is gated on the spread and extent is recorded and not gated.",
       "consequence": "A 0.40 floor on extent -- which is what gating the recorded number would have meant -- passes a frame whose geometry has collapsed to a 16x16 speck, at every placement tried, because the annotation still anchors a corner of the box.",
       "so": "Stranding is gated on an interquartile spread, and extent is recorded and not gated.",
       "this_also_corrects_a_review_statement": "The review's 'the subject spans 55-71% of each frame's narrower axis' is a reading of the content bounding box, not of the subject. The arithmetic was right; the annotation was in the frame. The review measured it independently, confirmed the 27px/28px margins on all nine, and struck the claim in their own report rather than quietly amending it.",
-      "a_correction_to_my_first_published_magnitude": "I first reported 'up to 0.335, an 80x difference in sensitivity' and an annotation share of 1.6-3.6% of content pixels. Both were inflated, because the mask I measured with was a rectangle of rows 645-700 by cols 18-435 -- 22,935 pixels -- which removes real geometry along with the label. A reviewer asked which region I had removed, which is the question that found it. Measured instead over pixels that are identical in all nine frames and non-background -- 693 pixels, cols 27-107, rows 655-691, which nine different projections cannot agree on by chance and so provably contain no geometry -- the annotation is 0.47-1.10% of content pixels and the extent shift is 0.051, a 25x ratio rather than 80x. The reviewer and I independently derived the same 693-pixel mask.",
-      "the_argument_that_needs_no_mask_at_all": "A reviewer found the decisive version and it is stronger than any shift figure. With the annotation anchoring one corner, moving a 16x16 speck further from centre makes the extent reading go UP: 0.472 dead centre, 0.794 upper-right, 0.906 in a far corner, all three passing a 0.40 floor. So an extent floor is weakest exactly where the framing is worst. The quartile spread reads 0.036 at every placement and fires on all three. Reproduced here independently; their figures were 0.461 / 0.683 / 0.822 from different speck coordinates, agreeing in direction and magnitude."
+      "the_argument_that_needs_no_mask_at_all": "A reviewer found the decisive version and it is stronger than any shift figure. With the annotation anchoring one corner, moving a 16x16 speck further from centre makes the extent reading go UP: 0.472 dead centre, 0.794 upper-right, 0.906 in a far corner, all three passing a 0.40 floor. So an extent floor is weakest exactly where the framing is worst. The quartile spread reads 0.036 at every placement and fires on all three. Reproduced here independently; their figures were 0.461 / 0.683 / 0.822 from different speck coordinates, agreeing in direction and magnitude.",
+      "which_pixels_are_the_annotation_was_settled_by_two_controls_not_by_choosing_a_mask": {
+        "why_it_needed_settling": "The annotation has no edge the pixel values define, so for a while every figure here was a function of how much I removed. A reviewer and I produced three different shifts from three different masks and each of us argued for our own. That is not a measurement.",
+        "control_1_a_matched_pair_diff": "Baseline and candidate are different reconstructions of the same view. If the band held any subject geometry, a matched pair must differ inside it. Across all four matched pairs the band differs by exactly 0 pixels while the rest of the same frames differ by 82,788 to 97,765. The band is overlay end to end. Reproduced independently here; the reviewer proposed it and their four figures match mine to the digit.",
+        "control_2_a_plateau_sweep": "Growing the exclusion rectangle from the overlay's own origin (row 655, col 27) gives 0.332-0.596 at 81px wide, 0.321-0.510 at 120px, and then 0.264-0.510 from 160px all the way out to 440px -- flat to three decimals over a 280px growth. If the box were eating geometry the value would keep drifting. It does not, so there is nothing in those rows left to remove, and the box is minimal sufficient rather than generous.",
+        "why_this_is_better_than_either_mask_argument": "Neither control requires agreeing where the glyphs end. One asks whether the band responds to a change of reconstruction; the other asks where the answer stops changing. That is the figure to show if the boundary is ever questioned again."
+      },
+      "i_published_a_correction_that_was_wrong_and_have_reverted_it": {
+        "what_i_published_first": "Extent shift up to 0.335, subject extent 0.264-0.510.",
+        "what_i_then_corrected_it_to": "0.051 and 0.332-0.596, on a reviewer's mask of the 693 pixels that are identical across all nine frames and non-background, with the conclusion that my first figure was inflated by a mask that removed real geometry.",
+        "what_is_actually_true": "The first figure. 0.335 and 0.264-0.510 are reproduced above by two controls that need no mask at all, and the reviewer has retracted their number with a proof rather than a concession.",
+        "why_i_got_it_wrong": "The reviewer's mask was derived from a defensible-sounding rule -- pixels identical in all nine frames -- and I accepted the number it produced as a correction. The rule is the wrong invariance class: the overlay is view-dependent, 729 pixels in the overview frames, 1,049 opposite and 1,481 topdown, so intersecting all nine keeps only the view-invariant remnant of 693 and leaves the rest of the label in the image, still pinning the bounding box. Within a view the band is identical across reconstructions, which is the invariance that isolates it.",
+        "the_mistake_was_mine_and_it_was_not_deference": "I had already written that the figure was mask-dependent, which was true and was the wrong place to stop. The right move was the plateau test -- find where the answer stops changing -- and it costs one sweep. I ran it only after the reviewer retracted. Taking a second mask-dependent number as a correction to a first one is not a correction.",
+        "verified_before_reverting": "I did not revert on the reviewer's word. I reproduced the pair diff (4 pairs, 0 band pixels, 82,788-97,765 elsewhere), the plateau (flat 0.264-0.510 from 160px to 440px), the per-view overlay sizes (729/1,049/1,481) and the 693-pixel remnant, independently. The reviewer's stated sweep parameters are anchored at their mask origin, not at the frame's bottom edge; anchored their way their figures reproduce exactly, and my first attempt to reproduce them bottom-anchored did not. Anchoring convention has now caused two disagreements about these frames and neither was about the data."
+      }
     },
     "2_the_framing_pair_had_a_hole_and_the_sweep_found_it": {
       "what": "candidate_scan_and_surface__topdown.png fails the framing checks at 1.1x and 1.2x and passes again at 1.3x. By 1.3x the scale bar has been cropped out of the frame entirely, so it no longer contributes border content, and the geometry happens to miss the border on that step.",
@@ -118,7 +131,23 @@
     "wall_above": "clipping -- zoom in and content reaches the border band",
     "so": "No zoom satisfies both while ruining the framing, and the label check admits only 1.00."
   },
-  "honest_note_on_the_thresholds": "Regression ratchets, not quality claims, and set with the current measurements in hand, so they are not a blind pre-registration. Zero border pixels is the exception and is not a tuned number. The rest sit far from observed values on purpose: a gate that trips on ordinary re-render variation gets deleted, and then it protects nothing. What makes them mean anything is that each is shown to fire on the defect it names.",
+  "honest_note_on_the_thresholds": "Regression ratchets, not quality claims, and set with the current measurements in hand, so they are not a blind pre-registration. Zero border pixels is the exception and is not a tuned number. The rest sit far from observed values on purpose: a gate that trips on ordinary re-render variation gets deleted, and then it protects nothing. What makes them mean anything is that each is shown to fire on the defect it names. A review lane pointed out that the bracketing argument establishes the band exists and says nothing about its edges, and that with nine frames and a width chosen after seeing all nine, no argument from those nine can validate the edges. They asked for a control instead of an argument; harness/spread_floor_margin.py is it, and the answer is below.",
+  "what_the_floor_margin_actually_measures": {
+    "the_question": "Is 0.06 too generous, and is its exact value doing work?",
+    "both_bounds": {
+      "weakest_delivered_frame": "0.1062 (candidate_scan_and_surface__topdown), 1.77x the floor",
+      "healthiest_delivered_frame": "0.1906, 3.18x the floor",
+      "hardest_stranded_control": "0.0472, with the floor 1.27x above it",
+      "so": "The floor separates the two, but not symmetrically: it sits nearer the control it must catch than the frame it must admit."
+    },
+    "the_blind_spot_stated_as_a_number": "A subject may shrink to 0.60 of its delivered linear size and still pass. That is the gate's admissible degradation on this axis, and it is larger than the phrase 'catches stranding' suggests.",
+    "whether_to_tighten_is_also_measured": {
+      "what_the_data_would_carry": "0.065 or 0.07 balances the two margins and tightens the admissible shrink to 0.65 or 0.70.",
+      "what_it_rules_out": "0.08, because its headroom above the weakest frame (1.33x) falls below the movement the statistic already shows between two reconstructions of the same view (up to 1.50x across four matched pairs). A gate that fails a frame which is fine gets deleted, and then it protects nothing.",
+      "why_the_floor_is_not_moving": "The movement estimate rests on four pairs, and the reason this report exists is that a threshold cannot be validated against the same nine frames it was chosen from. Tightening on that evidence repeats the error with a smaller number. The floor stays, the asymmetry is recorded, and a reviewer who wants 0.065 now has the figures to ask for it."
+    },
+    "what_this_does_not_do": "It does not make the threshold pre-registered and does not show the floor catches every bad frame. It bounds one failure mode -- a subject that shrank away from the camera -- and says how much room there is on that axis."
+  },
   "why_i_did_not_use_the_repos_existing_freeze_machinery": {
     "the_pointer": "A review lane noted that acceptance_visual_review_binding already expresses a frozen control committed before a result, as hashes an acceptance script verifies, and suggested ten minutes on it before hand-rolling anything.",
     "what_that_design_leans_on": "Not the hashes. vlm_evidence.py's _attempt_marker commits freeze_sha256 and request_sha256 to object storage with if_none_match=True before the hosted call, reads the object back, and compares body and etag; an existing object aborts with 'retry is prohibited'. Priority is enforced by a third party that refuses to let the author overwrite their own history, around a one-shot external call that cannot be silently retried.",
@@ -182,6 +211,14 @@
       {
         "path": "harness/gate_zoom_sweep.py",
         "sha256": "305ddc353f63c06b55a94c875d38013b34a5d7c3142c5cf0d6cb89f19b5d173d"
+      },
+      {
+        "path": "harness/overlay_isolation_controls.py",
+        "sha256": "8d49ff37ede658e674d43562d707acf720650a328ce0dda2928f7b03169e0bd3"
+      },
+      {
+        "path": "harness/spread_floor_margin.py",
+        "sha256": "82c887ea35489d098cac2596bc708d8479ad26cfd7582543034094b1bcccc4bb"
       }
     ],
     "one_of_these_pins_goes_stale_when_a_sibling_lands": "harness/frame_edge_audit.py is edited by the evidence-binding branch (PR 982), which makes it record the sha256 of each file it measures. That digest is correct for the bytes on this branch and stops being correct the moment 982 merges. Whichever of the two lands second must re-read it. Written down rather than left for a reader to discover, because a stale pin and a tampered one look the same.",
@@ -193,5 +230,17 @@
     "why_it_was_wrong": "That 27px is the annotation, not the subject -- the same conflation I had just corrected one section earlier, and the constant 1.056 headroom across nine different views was in my own list of tells that a number is describing the overlay. A reviewer caught that my conclusion had inherited the error its own evidence refuted.",
     "what_is_actually_measured": "The subject's left margin is nowhere near 27px. Removing only the provable annotation leaves 73-76px, which is still contaminated upward by glyph edges anti-aliased against the geometry behind them; a reviewer's rectangular exclusion out to col 107 gives 108-236px, censored at its own boundary. Both are bounds on the same quantity from opposite directions, and neither is 27. Right margins run 237-405px.",
     "so": "The fragility claim is withdrawn, not deferred. The frames are less badly framed than I said. A sound subject-only margin cannot be measured from these bytes alone -- it needs the renderer to declare its overlay region -- and a genuine centring gate is a separate measurement this change does not make."
+  },
+  "two_controls_replaced_three_arguments_about_masks": {
+    "why": "Three masks produced three different annotation shifts and each of us argued for our own. A reviewer and I both corrected the figure in the wrong direction before either of us ran a control.",
+    "control_1_matched_pair_diff": "Baseline and candidate are different reconstructions of one view. The band differs by 0 pixels in all four matched pairs while the rest of the same frames differ by 82,788 to 97,765. The band does not respond to a change of reconstruction, so it is not the subject.",
+    "control_2_plateau_sweep": "Growing the exclusion rectangle from the overlay's origin: 0.332-0.596 at 81px, 0.321-0.510 at 120px, then 0.264-0.510 flat from 160px to 440px at every height tested. A box eating geometry keeps moving the answer; this one has stopped.",
+    "why_these_beat_a_mask_argument": "Neither needs agreement about where the glyphs end. One asks whether the band responds to a change of reconstruction; the other asks where the answer stops changing.",
+    "harnesses": "harness/overlay_isolation_controls.py and harness/spread_floor_margin.py, both pinned by tests.",
+    "i_mutation_tested_them": {
+      "result": "6 of 7 killed.",
+      "the_one_that_survived_is_equivalent": "Shrinking the stranded control's speck from 16x16 to 1x1. Both of the control's claims still hold -- the naive extent reading passes and the spread fails -- because a 1x1 speck is still a stranded subject. Pinning the exact speck size would pin an incidental constant, so it is recorded rather than chased.",
+      "one_real_gap_it_found": "Removing the speck entirely left a frame that also reads below the floor, so a test asserting only 'the control fails' could not tell an empty frame from a collapsed one. The test now also asserts the naive extent reading still passes, which is the control's actual claim."
+    }
   }
 }

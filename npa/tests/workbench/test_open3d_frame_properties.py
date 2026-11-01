@@ -477,3 +477,90 @@ def test_a_fill_gate_would_have_no_ceiling(tmp_path: Path) -> None:
 
     assert fills == sorted(fills)
     assert fills[-1] > fills[0] * 2
+
+
+def test_the_matched_pair_diff_isolates_the_overlay_without_a_mask() -> None:
+    """The control that settled which pixels are annotation, after three masks disagreed.
+
+    Baseline and candidate are different reconstructions of the same view. If the band held any
+    subject geometry, a matched pair must differ inside it. Pinned because this is the evidence a
+    published figure now rests on, and because an earlier figure here was corrected twice before
+    anyone ran a control instead of arguing about mask boundaries.
+    """
+    controls = _load("overlay_isolation_controls")
+    rows = controls.pair_diff(160, 37)
+
+    assert len(rows) == 4, rows
+    for row in rows:
+        assert row["pixels_differing_inside_the_band"] == 0, row
+        assert row["pixels_differing_elsewhere"] > 80_000, row
+
+
+def test_the_plateau_sweep_settles_and_stays_settled() -> None:
+    """A box still eating geometry keeps moving the answer; one that has stopped is the boundary."""
+    controls = _load("overlay_isolation_controls")
+    sweep = controls.plateau()
+
+    for height in controls.SWEEP_HEIGHTS:
+        flat = controls.flat_region(sweep, height)
+        assert flat["settles_at"] == (0.2635, 0.5104), (height, flat)
+        assert flat["first_width_that_settles"] <= 160, (height, flat)
+        # Flat over a wide growth is the whole argument: a narrow flat region would not establish
+        # that there is no subject content left in those rows.
+        assert flat["flat_over_px_of_growth"] >= 200, (height, flat)
+
+
+def test_the_all_nine_intersection_keeps_only_part_of_the_overlay() -> None:
+    """Why the obvious isolation rule is wrong, which is what made the first correction wrong.
+
+    The overlay's bar length encodes each view's metres-per-pixel, so it is view-dependent.
+    Intersecting all nine frames keeps only the view-invariant remnant and leaves the rest of the
+    label in the image, where it goes on pinning the content bounding box.
+    """
+    controls = _load("overlay_isolation_controls")
+    sizes = controls.per_view_overlay_size(160, 37)
+    remnant = controls.view_invariant_remnant()
+
+    assert len(set(sizes.values())) > 1, sizes
+    assert remnant < min(sizes.values()), (remnant, sizes)
+
+
+def test_the_spread_floor_has_measured_margin_on_both_sides() -> None:
+    """Answers 'is 0.06 too generous' with two measurements instead of an assertion.
+
+    A review lane pointed out that the bracketing argument establishes the pass band exists and
+    says nothing about its edges, and that no argument from these nine frames can validate them.
+    So this pins the separation rather than the choice: the control the floor must catch, and the
+    weakest frame it must admit, both stay on their own side of it.
+    """
+    margin = _load("spread_floor_margin")
+    floor = gate.MIN_SUBJECT_SPREAD
+
+    delivered = [
+        gate.subject_spread(path)["narrower_axis"]
+        for path in sorted(FRAMES.glob("*.png"))
+    ]
+    assert min(delivered) > floor, min(delivered)
+
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as scratch:
+        built = [
+            (path, margin.stranded_control(path, Path(scratch)))
+            for path in sorted(FRAMES.glob("*.png"))
+        ]
+        stranded = [spread for _, spread in built]
+        # The control must be the collapsed-speck case, not merely an empty frame: the naive
+        # extent reading has to still pass, because that false negative is the reason stranding
+        # is gated on the spread at all. Mutation testing added this -- removing the speck left a
+        # frame that also reads below the floor, so a test asserting only that could not tell the
+        # two apart, and the weaker control would have proved a weaker claim.
+        naive = [
+            extent_of(Path(scratch) / f"stranded-{path.stem}.png") for path, _ in built
+        ]
+    assert max(stranded) < floor, max(stranded)
+    assert min(naive) >= NAIVE_EXTENT_FLOOR, min(naive)
+
+    # Recorded as asymmetric on purpose: the control side is the tighter one, and the record says
+    # so rather than presenting the floor as comfortably placed.
+    assert floor / max(stranded) < min(delivered) / floor
