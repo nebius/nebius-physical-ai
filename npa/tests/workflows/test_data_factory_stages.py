@@ -2220,7 +2220,7 @@ def test_grade_gate_cosmos_promotion_keeps_legacy_gate_id_basis(
     assert payload["gate_id"] == dfs._payload_sha256(legacy_basis)
 
 
-def test_prepare_refinement_accepts_legacy_decision_without_scope_disclosure(
+def test_prepare_refinement_accepts_compatible_decision_without_scope_disclosure(
     tmp_path: Path,
 ) -> None:
     grade = tmp_path / "grade"

@@ -379,7 +379,13 @@ written by `grade_gate` records
 `visual_correctness_established`, and
 `submitted_frame_byte_equivalence_established`. Missing or invalid reports establish
 no consistency, and the Cosmos report path checks only terminal status, literal
-pass, and score. Frame digests are checked for valid SHA-256 format and binding to
+pass, and score. These five fields are producer-specific extensions of the direct
+`grade_gate` payload, not required fields of every
+`npa.sim2real.threshold_decision.v1` artifact. Terminal routers, standard Stage 11
+decisions, and generic workflow decision writers share that schema, and a later
+stage can replace the same decision URI with another producer's payload. The schema
+id or omission of these fields proves neither the producer, artifact age, nor any
+evidence scope. Frame digests are checked for valid SHA-256 format and binding to
 the request manifest; this gate does not fetch image bytes to recompute their
 hashes. Consumers that need payload verification must retain and independently
 hash the submitted normalized images. Schema-v2 sampling counts, indices,
