@@ -70,7 +70,18 @@ def generator() -> ModuleType:
 
 @pytest.fixture(scope="module")
 def harness() -> ModuleType:
-    pytest.importorskip("open3d")
+    """Only scipy, because only scipy is used by the functions these tests reach.
+
+    This fixture asked for Open3D as well, and the two tests that depend on it were
+    therefore switched off everywhere -- no CI workflow installs Open3D. One of them
+    is the test that validates the lump-versus-rind reading this change is named for,
+    and the other is the one that *executes* the labeller controls the record
+    publishes as passing rather than taking the record's word. A review lane found
+    them skipped and ran them by stubbing the module out; they pass.
+
+    An importorskip in a shared fixture is as broad as the widest dependency of
+    anything in the file, which is not usually what the tests beneath it need.
+    """
     pytest.importorskip("scipy")
     return _load(HARNESS, "consumer_error_structure")
 
@@ -307,6 +318,48 @@ def test_the_baseline_is_a_real_positive_control_for_the_negative_result(record)
     assert min(base["largest_component_extent_cells"]) >= 2
     assert base["structured_components"] >= 2
     assert base["cells_in_structured_components"] > base["cells_total"] // 2
+
+
+def test_open3d_is_imported_by_the_one_function_that_uses_it() -> None:
+    """Keep the two tests below switched on by keeping the import where it belongs.
+
+    Both of them used to skip everywhere, because the fixture they share guarded
+    itself with `importorskip("open3d")` to satisfy a module-scope import that only
+    `main` needs. The fixture no longer asks, so the import must not drift back: a
+    module-scope `import open3d` would make loading this harness impossible without
+    it and switch these tests off again, silently and in CI.
+    """
+    tree = ast.parse(HARNESS.read_text())
+    scopes: dict[str, list[str]] = {}
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        for inner in ast.walk(node):
+            if isinstance(inner, ast.Import):
+                for alias in inner.names:
+                    if alias.name.split(".")[0] == "open3d":
+                        scopes.setdefault(node.name, []).append(alias.name)
+
+    module_scope = [
+        alias.name
+        for node in tree.body
+        if isinstance(node, ast.Import)
+        for alias in node.names
+        if alias.name.split(".")[0] == "open3d"
+    ]
+    assert module_scope == [], module_scope
+    assert sorted(scopes) == ["main"], sorted(scopes)
+
+    # And the functions the tests below reach do not reference it under any name, so
+    # a stub would not be hiding a real dependency from them.
+    reached = {"classify", "validate_labeller", "components", "components_with"}
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name in reached
+        ):
+            names = {n.id for n in ast.walk(node) if isinstance(n, ast.Name)}
+            assert "o3d" not in names and "open3d" not in names, node.name
 
 
 def test_the_harness_instrument_passes_its_own_controls(harness):

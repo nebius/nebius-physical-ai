@@ -38,8 +38,14 @@ import os
 from pathlib import Path
 
 import numpy as np
-import open3d as o3d
 from scipy import ndimage
+
+# Open3D is imported inside `main`, which is the only function that uses it. At module
+# scope it switched off the tests that check the two functions below: the fixture that
+# loads this file guarded itself with `importorskip("open3d")`, and no CI workflow
+# installs Open3D, so the test validating the lump-versus-rind reading in this change's
+# own title never ran anywhere. An import is a dependency of whoever needs it, and
+# hoisting one to module scope silently widens that to every reader of the file.
 
 BUNDLE = Path(os.environ.get("NPA_OPEN3D_BUNDLE", "/data/final-bundle"))
 PUBLISHED = Path(
@@ -143,6 +149,8 @@ def classify(mask: np.ndarray) -> dict[str, object]:
 
 
 def main() -> int:
+    import open3d as o3d
+
     cloud = o3d.io.read_point_cloud(str(BUNDLE / "multiway/fused.ply"))
     box = cloud.get_axis_aligned_bounding_box()
     origin = np.asarray(box.get_min_bound())
