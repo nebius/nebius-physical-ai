@@ -370,6 +370,344 @@
       "why_this_is_the_useful_form": "Three exchanges produced two refuted hypotheses, mine about row attribution and theirs about the axis definition. A pairing matrix narrows it to a single term without either of us guessing, and it is a term either harness can print."
     }
   },
+  "why_that_ratio_could_sustain_four_exchanges": {
+    "the_mechanism": "The denominator is the relative movement of an interquartile spread under the overlay exclusion. On the disputed frame that movement is two pixels out of 126 at the published tolerance and one pixel at a looser one. Halving a denominator that small doubles the ratio, so the quantity has a one-pixel hinge in it.",
+    "the_published_tolerance": 6,
+    "the_disputed_frame_band_by_band": [
+      {
+        "tolerances": [
+          0,
+          2,
+          4,
+          6,
+          8
+        ],
+        "ratio": 24.58,
+        "horizontal_quartile_pixels_moved": 2.0
+      },
+      {
+        "tolerances": [
+          10,
+          12,
+          14,
+          16
+        ],
+        "ratio": 48.77,
+        "horizontal_quartile_pixels_moved": 1.0
+      },
+      {
+        "tolerances": [
+          18
+        ],
+        "ratio": 24.58,
+        "horizontal_quartile_pixels_moved": 2.0
+      },
+      {
+        "tolerances": [
+          20,
+          22
+        ],
+        "ratio": 24.38,
+        "horizontal_quartile_pixels_moved": 2.0
+      },
+      {
+        "tolerances": [
+          24,
+          26,
+          28,
+          30
+        ],
+        "ratio": 48.38,
+        "horizontal_quartile_pixels_moved": 1.0
+      }
+    ],
+    "the_plateau_around_the_published_condition": {
+      "stable_from": 0,
+      "stable_through": 8,
+      "why_it_matters": "The published reading is not balanced on the hinge; it sits on a plateau that runs from 0 through 8. That is why it is reproducible, and it is not an argument that the quantity is robust."
+    },
+    "this_is_broader_than_the_frame_it_was_found_on": {
+      "frames_swinging_2x_or_more": 5,
+      "of": 9,
+      "widest_swing": 2.98,
+      "frames_passing_through_undefined": [
+        "baseline_scan_and_surface__overview.png",
+        "candidate_surface_only__overview.png"
+      ],
+      "what_that_changes": "The reviewer found the hinge on one frame and asked for a stability note. The sweep makes it a property of the ratio rather than a quirk of that frame, which is worse than the note would have implied, so every entry is published with its interval instead."
+    },
+    "per_frame_interval": [
+      {
+        "frame": "baseline_scan_and_surface__opposite.png",
+        "ratio_at_the_published_tolerance": 66.0,
+        "ratio_lowest_over_the_sweep": 66.0,
+        "ratio_highest_over_the_sweep": 66.0,
+        "swing": 1.0,
+        "undefined_at_tolerances": []
+      },
+      {
+        "frame": "baseline_scan_and_surface__overview.png",
+        "ratio_at_the_published_tolerance": null,
+        "ratio_lowest_over_the_sweep": 52.19,
+        "ratio_highest_over_the_sweep": 52.19,
+        "swing": 1.0,
+        "undefined_at_tolerances": [
+          0,
+          2,
+          4,
+          6,
+          8,
+          10,
+          12,
+          14,
+          16,
+          18,
+          30
+        ]
+      },
+      {
+        "frame": "baseline_scan_and_surface__topdown.png",
+        "ratio_at_the_published_tolerance": 66.02,
+        "ratio_lowest_over_the_sweep": 33.24,
+        "ratio_highest_over_the_sweep": 66.48,
+        "swing": 2.0,
+        "undefined_at_tolerances": []
+      },
+      {
+        "frame": "baseline_surface_only__overview.png",
+        "ratio_at_the_published_tolerance": 52.71,
+        "ratio_lowest_over_the_sweep": 52.71,
+        "ratio_highest_over_the_sweep": 52.71,
+        "swing": 1.0,
+        "undefined_at_tolerances": []
+      },
+      {
+        "frame": "candidate_scan_and_surface__opposite.png",
+        "ratio_at_the_published_tolerance": 64.33,
+        "ratio_lowest_over_the_sweep": 21.62,
+        "ratio_highest_over_the_sweep": 64.33,
+        "swing": 2.98,
+        "undefined_at_tolerances": []
+      },
+      {
+        "frame": "candidate_scan_and_surface__overview.png",
+        "ratio_at_the_published_tolerance": 48.38,
+        "ratio_lowest_over_the_sweep": 23.99,
+        "ratio_highest_over_the_sweep": 48.38,
+        "swing": 2.02,
+        "undefined_at_tolerances": []
+      },
+      {
+        "frame": "candidate_scan_and_surface__topdown.png",
+        "ratio_at_the_published_tolerance": 26.65,
+        "ratio_lowest_over_the_sweep": 17.94,
+        "ratio_highest_over_the_sweep": 53.31,
+        "swing": 2.97,
+        "undefined_at_tolerances": []
+      },
+      {
+        "frame": "candidate_surface_only__overview.png",
+        "ratio_at_the_published_tolerance": 48.29,
+        "ratio_lowest_over_the_sweep": 48.29,
+        "ratio_highest_over_the_sweep": 48.29,
+        "swing": 1.0,
+        "undefined_at_tolerances": [
+          22,
+          24,
+          26,
+          28,
+          30
+        ]
+      },
+      {
+        "frame": "observed_scan_only__overview.png",
+        "ratio_at_the_published_tolerance": 24.58,
+        "ratio_lowest_over_the_sweep": 24.38,
+        "ratio_highest_over_the_sweep": 48.77,
+        "swing": 2.0,
+        "undefined_at_tolerances": []
+      }
+    ],
+    "the_gate_is_unaffected_and_this_is_the_measurement_not_the_assertion": {
+      "frames_whose_verdict_changes_anywhere_in_the_sweep": [],
+      "worst_delivered_spread_over_the_whole_sweep": 0.1042,
+      "worst_as_multiple_of_floor": 1.74,
+      "gated_spread_by_frame_and_tolerance": {
+        "baseline_scan_and_surface__opposite.png": {
+          "0": 0.175,
+          "2": 0.175,
+          "4": 0.175,
+          "6": 0.175,
+          "8": 0.175,
+          "10": 0.175,
+          "12": 0.175,
+          "14": 0.175,
+          "16": 0.175,
+          "18": 0.175,
+          "20": 0.175,
+          "22": 0.175,
+          "24": 0.175,
+          "26": 0.175,
+          "28": 0.175,
+          "30": 0.175
+        },
+        "baseline_scan_and_surface__overview.png": {
+          "0": 0.1906,
+          "2": 0.1906,
+          "4": 0.1906,
+          "6": 0.1906,
+          "8": 0.1906,
+          "10": 0.1906,
+          "12": 0.1906,
+          "14": 0.1906,
+          "16": 0.1906,
+          "18": 0.1906,
+          "20": 0.1906,
+          "22": 0.1906,
+          "24": 0.1906,
+          "26": 0.1906,
+          "28": 0.1906,
+          "30": 0.1917
+        },
+        "baseline_scan_and_surface__topdown.png": {
+          "0": 0.1479,
+          "2": 0.1479,
+          "4": 0.1479,
+          "6": 0.1479,
+          "8": 0.1479,
+          "10": 0.1479,
+          "12": 0.1479,
+          "14": 0.1479,
+          "16": 0.1479,
+          "18": 0.1479,
+          "20": 0.1479,
+          "22": 0.149,
+          "24": 0.149,
+          "26": 0.149,
+          "28": 0.149,
+          "30": 0.149
+        },
+        "baseline_surface_only__overview.png": {
+          "0": 0.1896,
+          "2": 0.1896,
+          "4": 0.1896,
+          "6": 0.1896,
+          "8": 0.1896,
+          "10": 0.1896,
+          "12": 0.1896,
+          "14": 0.1896,
+          "16": 0.1896,
+          "18": 0.1896,
+          "20": 0.1896,
+          "22": 0.1896,
+          "24": 0.1896,
+          "26": 0.1896,
+          "28": 0.1896,
+          "30": 0.1896
+        },
+        "candidate_scan_and_surface__opposite.png": {
+          "0": 0.1302,
+          "2": 0.1302,
+          "4": 0.1302,
+          "6": 0.1302,
+          "8": 0.1302,
+          "10": 0.1302,
+          "12": 0.1302,
+          "14": 0.1302,
+          "16": 0.1302,
+          "18": 0.1302,
+          "20": 0.1302,
+          "22": 0.1302,
+          "24": 0.1302,
+          "26": 0.1292,
+          "28": 0.1292,
+          "30": 0.1302
+        },
+        "candidate_scan_and_surface__overview.png": {
+          "0": 0.1281,
+          "2": 0.1281,
+          "4": 0.1281,
+          "6": 0.1281,
+          "8": 0.1271,
+          "10": 0.1271,
+          "12": 0.1271,
+          "14": 0.1271,
+          "16": 0.1271,
+          "18": 0.1271,
+          "20": 0.1271,
+          "22": 0.1271,
+          "24": 0.1271,
+          "26": 0.1271,
+          "28": 0.126,
+          "30": 0.1271
+        },
+        "candidate_scan_and_surface__topdown.png": {
+          "0": 0.1042,
+          "2": 0.1042,
+          "4": 0.1042,
+          "6": 0.1042,
+          "8": 0.1042,
+          "10": 0.1042,
+          "12": 0.1042,
+          "14": 0.1042,
+          "16": 0.1042,
+          "18": 0.1042,
+          "20": 0.1042,
+          "22": 0.1042,
+          "24": 0.1042,
+          "26": 0.1052,
+          "28": 0.1052,
+          "30": 0.1052
+        },
+        "candidate_surface_only__overview.png": {
+          "0": 0.126,
+          "2": 0.126,
+          "4": 0.126,
+          "6": 0.126,
+          "8": 0.126,
+          "10": 0.126,
+          "12": 0.126,
+          "14": 0.126,
+          "16": 0.126,
+          "18": 0.126,
+          "20": 0.126,
+          "22": 0.126,
+          "24": 0.126,
+          "26": 0.126,
+          "28": 0.126,
+          "30": 0.126
+        },
+        "observed_scan_only__overview.png": {
+          "0": 0.1292,
+          "2": 0.1292,
+          "4": 0.1292,
+          "6": 0.1292,
+          "8": 0.1292,
+          "10": 0.1292,
+          "12": 0.1292,
+          "14": 0.1292,
+          "16": 0.1292,
+          "18": 0.1292,
+          "20": 0.1281,
+          "22": 0.1281,
+          "24": 0.1281,
+          "26": 0.1281,
+          "28": 0.1281,
+          "30": 0.1281
+        }
+      },
+      "why_the_table_is_here_and_not_just_the_summary": "Mutation testing on this very section found that inflating the summary margin threefold changed the report and broke no test, because the test was reading the claim rather than the readings. That is the same defect a reviewer found in another gate of mine, where the report asserted its own validity. The table lets the test recompute both figures.",
+      "why_the_gated_statistic_has_no_hinge": "The gate reads the spread itself, not the relative movement of the spread. An absolute quartile position shifts by a pixel when a pixel crosses the threshold; a ratio whose denominator is that shift moves by a factor of two. The fragile quantity is the diagnostic, and it is fragile because it is a ratio of two small differences."
+    },
+    "the_dispute_is_now_explained_rather_than_adjudicated": {
+      "what_the_reviewer_published": "48.5 for the disputed frame and undefined for candidate_surface_only__overview.",
+      "what_reproduces_here": "At tolerances 24 through 30 this harness reads 48.38 on the disputed frame, and candidate_surface_only__overview is undefined from 22 upward. Their pair is reproducible on these frames at a looser threshold than the one this harness publishes.",
+      "so_the_cause_was": "An unstated background tolerance acting on a quantity with a one-pixel hinge. Not a misattributed row, not an axis convention, and not the pairing asymmetry that replaced it.",
+      "who_found_it": "The reviewer, by sweeping their own harness after their first two explanations failed, and against their own published figure. Confirmed here independently on these frames; all five bands match their table.",
+      "what_it_cost": "Four exchanges, three dead hypotheses -- one of mine about rows, two of theirs about axes and pairing -- for a quantity neither of us had swept."
+    },
+    "what_this_does_not_claim": "That the diagnostic should be removed or that its value at the published tolerance is wrong. It is well defined at a stated condition and it is reproducible there. The claim is narrower: it must be quoted with that condition and with its interval, because a reader recomputing it at a different threshold will otherwise conclude one of the two of us made an arithmetic error."
+  },
   "the_floors_fragility_without_proposing_a_new_floor": {
     "weakest_delivered_frame_over_floor": 1.77,
     "largest_movement_observed_between_matched_reconstructions": 1.5,

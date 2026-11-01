@@ -54,6 +54,11 @@ WIDTHS = (81, 120, 160, 200, 230, 260, 290, 320, 380, 440)
 # test infers the height from the contamination counts, which scale with it.
 BAND_HEIGHT = 120
 
+# Background tolerances to sweep. The published condition is overlay_isolation_controls'
+# CONTENT_TOLERANCE; the rest exist because a reviewer's unstated threshold turned out to be the
+# whole of a four-exchange disagreement about one diagnostic ratio.
+TOLERANCES = tuple(range(0, 32, 2))
+
 # The spread floor the gate enforces, and the two figures the margin analysis produced.
 SPREAD_FLOOR = 0.06
 WEAKEST_DELIVERED_SPREAD = 0.1062
@@ -361,6 +366,204 @@ def fragility_from_observed_movement() -> dict[str, object]:
     }
 
 
+def tolerance_hinge(width: int, height: int = BAND_HEIGHT) -> dict[str, object]:
+    """Why the disputed ratio could sustain four exchanges: its denominator is one pixel wide.
+
+    A reviewer swept the background tolerance on their own copy and found the disputed frame
+    oscillating between roughly 24.6 and 48.8 as the threshold moved, which reproduces both of
+    the values they had published. Their diagnosis was a one-pixel hinge: the denominator is the
+    *relative movement* of an interquartile spread, that movement is one to two pixels in a
+    126-pixel range, and one pixel crossing the threshold halves the denominator and doubles the
+    ratio.
+
+    It reproduces here in all five bands. It is also broader than the frame it was found on --
+    five of the nine frames swing by 2x to 3x across the sweep, and two of them pass through
+    undefined -- so this is a property of the quantity, not an anomaly of one frame. That makes a
+    stability note too weak a response: a ratio with a one-pixel denominator cannot honestly be
+    quoted as a bare number, so each one is published here with the interval it occupies.
+
+    The gate is a separate question, and asserting it is unaffected is not the same as measuring
+    it. The sweep therefore carries the gated statistic too.
+    """
+    row, col = ORIGIN
+    frames = {path.name: controls.rgb(path) for path in sorted(FRAMES.glob("*.png"))}
+
+    def at(frame: np.ndarray, tolerance: int) -> dict[str, object]:
+        background = np.median(frame.reshape(-1, 3), axis=0)
+        mask = (np.abs(frame - background) > tolerance).any(axis=2)
+        cut = mask.copy()
+        cut[row : row + height, col : col + width] = False
+        rows_, cols_ = np.nonzero(mask)
+        kept_rows, kept_cols = np.nonzero(cut)
+        frame_height, frame_width = mask.shape
+
+        def narrower_spread(r: np.ndarray, c: np.ndarray) -> float:
+            return min(
+                (np.percentile(c, 75) - np.percentile(c, 25)) / frame_width,
+                (np.percentile(r, 75) - np.percentile(r, 25)) / frame_height,
+            )
+
+        def narrower_extent(r: np.ndarray, c: np.ndarray) -> float:
+            return min(
+                (c.max() - c.min() + 1) / frame_width,
+                (r.max() - r.min() + 1) / frame_height,
+            )
+
+        before = narrower_spread(rows_, cols_)
+        after = narrower_spread(kept_rows, kept_cols)
+        moved_spread = abs(before - after) / before if before else 0.0
+        moved_extent = abs(
+            narrower_extent(rows_, cols_) - narrower_extent(kept_rows, kept_cols)
+        ) / narrower_extent(rows_, cols_)
+        return {
+            "ratio": round(moved_extent / moved_spread, 2) if moved_spread else None,
+            "gated_spread": round(after, 4),
+            "horizontal_quartile_pixels_moved": float(
+                round(
+                    (np.percentile(cols_, 75) - np.percentile(cols_, 25))
+                    - (np.percentile(kept_cols, 75) - np.percentile(kept_cols, 25)),
+                    1,
+                )
+            ),
+        }
+
+    sweep = {
+        name: {tolerance: at(frame, tolerance) for tolerance in TOLERANCES}
+        for name, frame in frames.items()
+    }
+    published = controls.CONTENT_TOLERANCE
+
+    per_frame = []
+    for name, readings in sorted(sweep.items()):
+        finite = [r["ratio"] for r in readings.values() if r["ratio"] is not None]
+        undefined_at = [t for t, r in readings.items() if r["ratio"] is None]
+        per_frame.append(
+            {
+                "frame": name,
+                "ratio_at_the_published_tolerance": readings[published]["ratio"],
+                "ratio_lowest_over_the_sweep": min(finite),
+                "ratio_highest_over_the_sweep": max(finite),
+                "swing": round(max(finite) / min(finite), 2),
+                "undefined_at_tolerances": undefined_at,
+            }
+        )
+    knife_edge = [entry for entry in per_frame if entry["swing"] >= 2.0]
+
+    gate_verdict_changes = [
+        name
+        for name, readings in sweep.items()
+        if not all(r["gated_spread"] >= SPREAD_FLOOR for r in readings.values())
+    ]
+    worst_gated = min(
+        r["gated_spread"] for readings in sweep.values() for r in readings.values()
+    )
+
+    disputed = sweep["observed_scan_only__overview.png"]
+    bands: list[dict[str, object]] = []
+    for tolerance in TOLERANCES:
+        reading = disputed[tolerance]
+        if bands and bands[-1]["ratio"] == reading["ratio"]:
+            tolerances = bands[-1]["tolerances"]
+            assert isinstance(tolerances, list)
+            tolerances.append(tolerance)
+            continue
+        bands.append(
+            {
+                "tolerances": [tolerance],
+                "ratio": reading["ratio"],
+                "horizontal_quartile_pixels_moved": reading[
+                    "horizontal_quartile_pixels_moved"
+                ],
+            }
+        )
+
+    return {
+        "the_mechanism": "The denominator is the relative movement of an interquartile spread "
+        "under the overlay exclusion. On the disputed frame that movement is two pixels out of "
+        "126 at the published tolerance and one pixel at a looser one. Halving a denominator "
+        "that small doubles the ratio, so the quantity has a one-pixel hinge in it.",
+        "the_published_tolerance": published,
+        "the_disputed_frame_band_by_band": bands,
+        "the_plateau_around_the_published_condition": {
+            "stable_from": min(
+                t
+                for t in TOLERANCES
+                if disputed[t]["ratio"] == disputed[published]["ratio"]
+            ),
+            "stable_through": max(
+                t
+                for t in TOLERANCES
+                if all(
+                    disputed[u]["ratio"] == disputed[published]["ratio"]
+                    for u in TOLERANCES
+                    if published <= u <= t
+                )
+            ),
+            "why_it_matters": "The published reading is not balanced on the hinge; it sits on a "
+            "plateau that runs from 0 through 8. That is why it is reproducible, and it is not an "
+            "argument that the quantity is robust.",
+        },
+        "this_is_broader_than_the_frame_it_was_found_on": {
+            "frames_swinging_2x_or_more": len(knife_edge),
+            "of": len(per_frame),
+            "widest_swing": max(entry["swing"] for entry in per_frame),
+            "frames_passing_through_undefined": sorted(
+                entry["frame"]
+                for entry in per_frame
+                if entry["undefined_at_tolerances"]
+            ),
+            "what_that_changes": "The reviewer found the hinge on one frame and asked for a "
+            "stability note. The sweep makes it a property of the ratio rather than a quirk of "
+            "that frame, which is worse than the note would have implied, so every entry is "
+            "published with its interval instead.",
+        },
+        "per_frame_interval": per_frame,
+        "the_gate_is_unaffected_and_this_is_the_measurement_not_the_assertion": {
+            "frames_whose_verdict_changes_anywhere_in_the_sweep": gate_verdict_changes,
+            "worst_delivered_spread_over_the_whole_sweep": round(worst_gated, 4),
+            "worst_as_multiple_of_floor": round(worst_gated / SPREAD_FLOOR, 2),
+            "gated_spread_by_frame_and_tolerance": {
+                name: {
+                    str(tolerance): readings[tolerance]["gated_spread"]
+                    for tolerance in TOLERANCES
+                }
+                for name, readings in sorted(sweep.items())
+            },
+            "why_the_table_is_here_and_not_just_the_summary": "Mutation testing on this very "
+            "section found that inflating the summary margin threefold changed the report and "
+            "broke no test, because the test was reading the claim rather than the readings. "
+            "That is the same defect a reviewer found in another gate of mine, where the report "
+            "asserted its own validity. The table lets the test recompute both figures.",
+            "why_the_gated_statistic_has_no_hinge": "The gate reads the spread itself, not the "
+            "relative movement of the spread. An absolute quartile position shifts by a pixel "
+            "when a pixel crosses the threshold; a ratio whose denominator is that shift moves "
+            "by a factor of two. The fragile quantity is the diagnostic, and it is fragile "
+            "because it is a ratio of two small differences.",
+        },
+        "the_dispute_is_now_explained_rather_than_adjudicated": {
+            "what_the_reviewer_published": "48.5 for the disputed frame and undefined for "
+            "candidate_surface_only__overview.",
+            "what_reproduces_here": "At tolerances 24 through 30 this harness reads 48.38 on the "
+            "disputed frame, and candidate_surface_only__overview is undefined from 22 upward. "
+            "Their pair is reproducible on these frames at a looser threshold than the one this "
+            "harness publishes.",
+            "so_the_cause_was": "An unstated background tolerance acting on a quantity with a "
+            "one-pixel hinge. Not a misattributed row, not an axis convention, and not the "
+            "pairing asymmetry that replaced it.",
+            "who_found_it": "The reviewer, by sweeping their own harness after their first two "
+            "explanations failed, and against their own published figure. Confirmed here "
+            "independently on these frames; all five bands match their table.",
+            "what_it_cost": "Four exchanges, three dead hypotheses -- one of mine about rows, "
+            "two of theirs about axes and pairing -- for a quantity neither of us had swept.",
+        },
+        "what_this_does_not_claim": "That the diagnostic should be removed or that its value at "
+        "the published tolerance is wrong. It is well defined at a stated condition and it is "
+        "reproducible there. The claim is narrower: it must be quoted with that condition and "
+        "with its interval, because a reader recomputing it at a different threshold will "
+        "otherwise conclude one of the two of us made an arithmetic error.",
+    }
+
+
 def build() -> dict[str, object]:
     certified = overlay_only_width()
     width = certified["widest_certified_overlay_only"]
@@ -399,6 +602,7 @@ def build() -> dict[str, object]:
         "whether_the_ratios_depend_on_the_axis_convention": axis_convention_sensitivity(
             width
         ),
+        "why_that_ratio_could_sustain_four_exchanges": tolerance_hinge(width),
         "the_floors_fragility_without_proposing_a_new_floor": fragility_from_observed_movement(),
         "what_this_does_not_establish": "That the floor's edge is correct. It establishes that "
         "the mask question could not have moved the gate, and that the statistic choice was the "

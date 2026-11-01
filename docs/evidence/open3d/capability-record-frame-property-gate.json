@@ -222,11 +222,11 @@
       },
       {
         "path": "harness/statistic_mask_sensitivity.py",
-        "sha256": "3c058ede7a2b9a7b7083b4156424f163ad7417f11040f67c7d1728af8b218b5f"
+        "sha256": "eb704f063b0a3dd30ea5bcd3eafb3033b54b9bf51a25aac0633a77ebd92b3fca"
       },
       {
         "path": "statistic-mask-sensitivity.json",
-        "sha256": "0f1303fe91c080fa11a951657cd7274a15d7ecdb69c23b5a313b18d5c5b51ebf"
+        "sha256": "df4baeb175ca8d236ae6dc5391f8c9b41f46ce8a055ad367dfd18faca1bc94f2"
       }
     ],
     "one_of_these_pins_goes_stale_when_a_sibling_lands": "harness/frame_edge_audit.py is edited by the evidence-binding branch (PR 982), which makes it record the sha256 of each file it measures. That digest is correct for the bytes on this branch and stops being correct the moment 982 merges. Whichever of the two lands second must re-read it. Written down rather than left for a reader to discover, because a stale pin and a tampered one look the same.",
@@ -273,9 +273,17 @@
     "a_sentence_that_understated_my_own_result": "Review found a sentence reading 'zero differing pixels through 260px' beside a table whose zero-diff readings run to 290 and a widest_certified_overlay_only of 290. It understated the certified range by one step of the sweep and changed no conclusion, which is why nothing else would have caught it. Corrected, and pinned as an agreement between the prose and the field rather than as a literal, so a re-run cannot leave the sentence behind.",
     "the_cross_measurement_disagreement_is_resolved": {
       "how": "I asked review for one number -- their horizontal quartile spread before and after the cut on observed_scan_only__overview -- rather than proposing a third cause. They measured it from their own retained bytes: Q1 332 to 334, Q3 458 unchanged, horizontal IQR 126 to 124 px, relative movement 0.015873. Against their extent movement that gives 24.58, which rounds to 24.6.",
-      "outcome": "They withdrew 48.5 and confirmed this harness's 24.6. Two further entries of mine reproduce the same way on their copy, and their published 'undefined' for candidate_surface_only__overview is also withdrawn in favour of this harness's 48.3.",
+      "outcome": "They withdrew 48.5 and confirmed this harness's 24.6, and their published 'undefined' for candidate_surface_only__overview is withdrawn in favour of this harness's 48.3. They then reproduced all 16 defined pairing entries, including both undefined cells in the right places, after replacing their fixed annotation box with a per-view band.",
       "what_actually_closed_it": "A pairing matrix and a request for one term, not another hypothesis. Three hypotheses died before that: my row misattribution, their axis definition, and their first pairing account. Naming both axes of every ratio is what made the remaining disagreement small enough to settle with a single measurement.",
-      "their_remaining_hypothesis_is_labelled_as_one": "They note 48.5 sits within 0.1 of this harness's 48.4 for the adjacent candidate_scan_and_surface__overview, consistent with their own computation having paired one frame's spread with another's extent. They assert only that their figure was wrong, and so do I: my byte-identity check refuted a claim about my rows and never tested their pairing."
+      "how_much_of_their_reproduction_is_independent": "Eight of the sixteen are independent: the five overview frames, where the band they used was one they had measured themselves before this exchange and which produced this harness's 729 overlay pixels without reference to that number. The other eight are not. They found the opposite and topdown right edges by searching for the value that reproduces this harness's published pixel counts, which is fitting to my data. They said so unprompted and asked to be cited as 'consistent with' rather than 'independently confirmed' on that half, so that is how it is cited here. The arithmetic check on top of a fitted band is still real and is still weaker than the overview half.",
+      "the_cause_is_now_measured_and_it_was_neither_of_the_candidates": {
+        "what_it_turned_out_to_be": "An unstated background tolerance acting on a quantity with a one-pixel hinge. The ratio's denominator is the relative movement of an interquartile spread; that movement is one to two pixels in 126, so one pixel crossing the threshold halves the denominator and doubles the ratio.",
+        "reproduced_here": "Their whole sweep reproduces on these frames: 24.58 at tolerances 0-8, 48.77 at 10-16, 24.58 at 18, 24.38 at 20-22 and 48.38 at 24-30, with the horizontal quartile movement reading 2px in the low bands and 1px in the high ones. Their published pair -- 48.38 on the disputed frame and undefined on candidate_surface_only__overview -- is exactly what this harness produces at tolerance 24 and above.",
+        "who_found_it": "The reviewer, by sweeping their own harness after two of their own explanations had failed, and against their own published figure. Each of their three hypotheses was tested and discarded by them, including the pairing asymmetry they had raised an hour earlier.",
+        "what_it_cost": "Four exchanges and three dead hypotheses -- one of mine about rows, two of theirs about axes and pairing -- over a quantity neither of us had swept.",
+        "what_i_did_beyond_confirming_it": "They asked for a one-line stability note. The sweep showed five of the nine frames swing by 2x to 3x and two pass through undefined, so it is a property of the ratio rather than a quirk of the disputed frame, and a note would have understated it. Every entry is now published with the interval it occupies over the sweep.",
+        "the_gate_is_unaffected_and_that_is_measured_not_asserted": "Every frame clears the 0.06 spread floor at every tolerance from 0 to 30, worst reading 0.1042, 1.74x the floor. The gate reads the spread itself; only the diagnostic reads the ratio of two small differences."
+      }
     }
   },
   "the_floors_fragility_stated_from_measured_movement": {

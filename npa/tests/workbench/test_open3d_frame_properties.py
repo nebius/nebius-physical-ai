@@ -777,3 +777,122 @@ def test_the_pairing_matrix_isolates_the_disagreement_to_the_horizontal_spread()
     # Differs from their horizontal-spread column on both: they read 48.5 and undefined.
     assert observed["extent_horizontal_over_spread_horizontal"] == 24.6, observed
     assert candidate["extent_horizontal_over_spread_horizontal"] == 48.3, candidate
+
+
+def test_the_disputed_ratio_is_published_with_its_interval_not_as_a_bare_number() -> (
+    None
+):
+    """A ratio whose denominator is one pixel wide cannot honestly be quoted as one number.
+
+    A reviewer swept the background tolerance and found this diagnostic oscillating between
+    roughly 24.6 and 48.8, which reproduced both figures they had published. The denominator is
+    the relative movement of an interquartile spread; that movement is one to two pixels in 126,
+    so one pixel crossing the threshold doubles the ratio. They asked for a stability note. The
+    sweep showed it was not one frame, so every entry carries its interval instead.
+    """
+    report = json.loads((EVIDENCE / "statistic-mask-sensitivity.json").read_text())
+    hinge = report["why_that_ratio_could_sustain_four_exchanges"]
+
+    for entry in hinge["per_frame_interval"]:
+        assert "ratio_lowest_over_the_sweep" in entry, entry
+        assert "ratio_highest_over_the_sweep" in entry, entry
+        assert (
+            entry["ratio_highest_over_the_sweep"]
+            >= entry["ratio_lowest_over_the_sweep"]
+        )
+        # An interval that excludes the published reading would be a different quantity's.
+        published = entry["ratio_at_the_published_tolerance"]
+        if published is not None:
+            assert (
+                entry["ratio_lowest_over_the_sweep"]
+                <= published
+                <= entry["ratio_highest_over_the_sweep"]
+            ), entry
+
+    breadth = hinge["this_is_broader_than_the_frame_it_was_found_on"]
+    assert breadth["frames_swinging_2x_or_more"] >= 5, breadth
+    assert breadth["widest_swing"] >= 2.9, breadth
+
+
+def test_the_published_reading_sits_on_a_plateau_rather_than_on_the_hinge() -> None:
+    """Reproducibility of the published figure is a property of where it sits, not of the ratio.
+
+    The value is stable from tolerance 0 through 8 and jumps at 10. That is why two harnesses can
+    agree at the stated condition while disagreeing by 2x a few steps away.
+    """
+    report = json.loads((EVIDENCE / "statistic-mask-sensitivity.json").read_text())
+    hinge = report["why_that_ratio_could_sustain_four_exchanges"]
+    plateau = hinge["the_plateau_around_the_published_condition"]
+    published = hinge["the_published_tolerance"]
+
+    assert plateau["stable_from"] <= published <= plateau["stable_through"], plateau
+
+    bands = hinge["the_disputed_frame_band_by_band"]
+    containing = [b for b in bands if published in b["tolerances"]]
+    assert len(containing) == 1, bands
+    assert sorted(containing[0]["tolerances"]) == list(
+        range(plateau["stable_from"], plateau["stable_through"] + 1, 2)
+    ), (containing, plateau)
+    # The mechanism, not just the symptom: the bands differ by one pixel of quartile movement.
+    moved = {b["horizontal_quartile_pixels_moved"] for b in bands}
+    assert len(moved) > 1, bands
+    assert max(moved) - min(moved) == 1.0, moved
+
+
+def test_the_gate_survives_every_tolerance_in_the_sweep() -> None:
+    """The reviewer asserted the gated statistic was unaffected; this is the measurement.
+
+    The distinction is the whole reason the dispute was harmless: the gate reads the spread, while
+    the fragile diagnostic reads the relative movement of the spread. A pixel moves an absolute
+    quartile by a pixel and a ratio of two small differences by a factor of two.
+    """
+    report = json.loads((EVIDENCE / "statistic-mask-sensitivity.json").read_text())
+    measured = report["why_that_ratio_could_sustain_four_exchanges"][
+        "the_gate_is_unaffected_and_this_is_the_measurement_not_the_assertion"
+    ]
+
+    floor = json.loads(
+        (HARNESS / "statistic_mask_sensitivity.py")
+        .read_text()
+        .split("SPREAD_FLOOR = ")[1]
+        .split("\n")[0]
+    )
+    table = measured["gated_spread_by_frame_and_tolerance"]
+    assert len(table) == 9, sorted(table)
+
+    # Recomputed from the readings, because asserting the summary let a 3x inflation of the
+    # margin pass mutation testing: the test was reading the claim, not the measurement.
+    readings = [value for row in table.values() for value in row.values()]
+    assert min(readings) == measured["worst_delivered_spread_over_the_whole_sweep"], (
+        min(readings),
+        measured["worst_delivered_spread_over_the_whole_sweep"],
+    )
+    assert measured["worst_as_multiple_of_floor"] == pytest.approx(
+        min(readings) / floor, abs=0.01
+    ), measured
+    assert min(readings) >= floor, min(readings)
+
+    failing = sorted(
+        name for name, row in table.items() if any(v < floor for v in row.values())
+    )
+    assert failing == measured["frames_whose_verdict_changes_anywhere_in_the_sweep"]
+    assert failing == [], failing
+
+
+def test_the_dispute_record_names_the_tolerance_that_reproduces_the_other_figure() -> (
+    None
+):
+    """An explanation that cannot be rerun is an assertion. This one names its condition."""
+    report = json.loads((EVIDENCE / "statistic-mask-sensitivity.json").read_text())
+    explained = report["why_that_ratio_could_sustain_four_exchanges"][
+        "the_dispute_is_now_explained_rather_than_adjudicated"
+    ]
+
+    assert "24 through 30" in explained["what_reproduces_here"], explained
+    assert "48.38" in explained["what_reproduces_here"], explained
+    hinge = report["why_that_ratio_could_sustain_four_exchanges"]
+    reproducing = [
+        b for b in hinge["the_disputed_frame_band_by_band"] if b["ratio"] == 48.38
+    ]
+    assert len(reproducing) == 1, hinge["the_disputed_frame_band_by_band"]
+    assert reproducing[0]["tolerances"] == [24, 26, 28, 30], reproducing
