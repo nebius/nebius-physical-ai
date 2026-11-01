@@ -1,0 +1,59 @@
+{
+  "capability": "Hole and outlier quantification for the Open3D reconstruction",
+  "recorded_utc": "2026-11-01T05:40:00Z",
+  "what_this_closes": "The lane brief asks for support, coverage, outliers and holes. Support and coverage were already measured. Outliers and holes had no metric key in any record in this directory, and the collision-fitness PR deliberately refused to read its undefined-cell fraction as a hole count. This supplies both, each with its control.",
+  "holes": {
+    "finding": "The candidate carries 13 interior holes totalling 0.9628 m2, 0.0916 of its surface area. The baseline carries 0. So the pruning that cut phantom obstacle volume from 0.871 to 0.138 m3 in downstream-consumer.json did not come free: it opened interior holes where the baseline had none. That trade is not stated anywhere else in this evidence directory, and it is the honest cost of the variant this chain prefers.",
+    "candidate": {
+      "interior_holes": 13,
+      "interior_hole_area_m2": 0.9628,
+      "share_of_surface": 0.0916,
+      "largest_interior_hole_m2": 0.3253,
+      "surface_area_m2": 10.5147
+    },
+    "baseline": {
+      "interior_holes": 0,
+      "surface_area_m2": 22.245
+    },
+    "the_distinction_that_is_the_whole_measurement": "The largest boundary loop is the outer edge of the reconstructed patch, not a hole. It reaches 5 of the mesh bounding box's 6 faces and contains 13/13 of the other loops' bounding boxes. Counting it would report 6.1662 m2 of hole instead of 0.9628 -- a 6.4x overstatement, and it would describe the reconstruction's extent as a defect.",
+    "the_trade_this_makes_visible": "The candidate is the variant this chain prefers, because it cut phantom obstacle volume from 0.871 to 0.138 m3. It also has 13 interior holes where the baseline has none. Both are true, the second was not written down anywhere, and a reader choosing between the variants needs it."
+  },
+  "outliers": {
+    "finding": "142 of 6341 source points are statistical outliers at the reported setting, and the reconstruction fitted them rather than rejecting them: the median outlier sits 0.0066 from the surface against 0.0032 for retained points -- only 2.1x further.",
+    "the_control_that_makes_that_readable": "Without it, 'the surface is 6.6mm from the median outlier' is unreadable: it could mean the surface is everywhere. Random points in the same box sit 41x further away, so the surface is not everywhere and the outliers were fitted rather than pruned.",
+    "the_count_is_a_parameter_choice_and_the_sweep_is_reported": "Outlier counts move by more than an order of magnitude across standard settings, 56 to 1091, so a single number would be a choice presented as a fact. The fitted-not-rejected conclusion is about the ratio to the random control and does not depend on which setting is picked."
+  },
+  "a_test_i_built_controlled_and_threw_away": {
+    "the_test": "Call nearby surface attributable to an outlier when that surface is closer to the outlier than to any retained point.",
+    "rate_for_outliers": 0.915,
+    "rate_for_the_control": 0.933,
+    "why_discarded": "The control rate is as high as the outlier rate, so the test says almost every point owns its nearest surface and separates nothing. It would have read as a strong causal finding. Recorded because a discarded test is evidence about the method, and because the fitting result above is correlational for exactly this reason: proving an outlier *caused* its nearby surface needs a re-reconstruction without it, which this does not do.",
+    "why_it_is_in_the_record": "It would have read as a strong causal finding -- 91.5% of outliers generated the surface near them -- and the control says it separates nothing. This is the third instrument in this lane that a control caught before publication, after the axis-aligned ray parity and the report that declared its own band height. The pattern is worth the space."
+  },
+  "detector_validation": {
+    "intact_closed_sphere_loops": 0,
+    "one_cap_removed_loops": 1,
+    "two_caps_removed_loops": 2,
+    "area_error_against_analytic_circle": 0.0041,
+    "detector_is_valid": true,
+    "the_guard_is_behavioural": "Verified by mutation. Treating edges used by two triangles as boundary edges makes the sphere control fail; the harness then prints that no hole counts are published and exits 1. Restored, it exits 0."
+  },
+  "what_this_does_not_claim": "Not that the holes are in the wrong places or that the outliers are noise rather than real thin structure; neither is decidable without ground truth, which no artifact in this chain carries. Not that an outlier caused the surface near it -- see the discarded test. And an interior hole is not automatically a defect: on an open patch some holes are honest absence of observation, which is why the area is reported next to the surface area rather than as a score.",
+  "regression_tests": {
+    "file": "npa/tests/workbench/test_open3d_holes_and_outliers.py"
+  },
+  "provenance": {
+    "harness_that_produced_this": [
+      {
+        "path": "harness/holes_and_outliers.py",
+        "sha256": "1c3a0f7ffa6fed99517dadda4cc7864a2b80620ce24b9e70339aa414e12d622e"
+      },
+      {
+        "path": "holes-and-outliers.json",
+        "sha256": "6a725b33753ade29f6fbb98153fb0f8ebd79b4a5a3c797c4ba5389f036784ab9"
+      }
+    ],
+    "inputs": "The privately retained final bundle's fused cloud and both mesh variants, not committed. Bundle root comes from OPEN3D_BUNDLE so the same script runs in the Open3D image against /data/final-bundle and locally against the retained copy.",
+    "open3d_version": "0.20.0"
+  }
+}

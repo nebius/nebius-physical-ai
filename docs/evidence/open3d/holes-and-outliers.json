@@ -1,0 +1,100 @@
+{
+  "question": "How many holes does the reconstructed surface have, and did the reconstruction reject the source cloud's outliers or fit them?",
+  "detector_validation": {
+    "control_mesh": "open3d.geometry.TriangleMesh.create_sphere(radius=1.0, resolution=20)",
+    "loops_found_on_the_intact_closed_sphere": 0,
+    "loops_found_with_one_cap_removed": 1,
+    "loops_found_with_two_caps_removed": 2,
+    "measured_area_of_the_one_cap_hole": 0.6448,
+    "analytic_area_of_that_boundary_circle": 0.6475,
+    "area_error_fraction": 0.0041,
+    "detector_is_valid": true
+  },
+  "holes": {
+    "baseline": {
+      "loops": 1,
+      "boundary_edges": 156,
+      "outer_boundary": {
+        "area": 9.1511,
+        "span": [
+          3.918,
+          1.967,
+          2.666
+        ],
+        "mesh_bbox_faces_it_reaches": 4,
+        "other_loops_whose_boxes_it_contains": "0/0",
+        "why_this_is_not_counted_as_a_hole": "It spans the mesh bounding box and contains every other loop's box, so it is the outer edge of the reconstructed patch. Counting it as a hole would inflate the hole area several-fold and describe the reconstruction's extent as a defect."
+      },
+      "interior_holes": 0,
+      "interior_hole_area": 0,
+      "largest_interior_hole_area": 0.0,
+      "surface_area": 22.245,
+      "interior_hole_area_as_share_of_surface": 0.0
+    },
+    "candidate": {
+      "loops": 14,
+      "boundary_edges": 1256,
+      "outer_boundary": {
+        "area": 5.2034,
+        "span": [
+          3.582,
+          1.616,
+          2.041
+        ],
+        "mesh_bbox_faces_it_reaches": 5,
+        "other_loops_whose_boxes_it_contains": "13/13",
+        "why_this_is_not_counted_as_a_hole": "It spans the mesh bounding box and contains every other loop's box, so it is the outer edge of the reconstructed patch. Counting it as a hole would inflate the hole area several-fold and describe the reconstruction's extent as a defect."
+      },
+      "interior_holes": 13,
+      "interior_hole_area": 0.9628,
+      "largest_interior_hole_area": 0.3253,
+      "surface_area": 10.5147,
+      "interior_hole_area_as_share_of_surface": 0.0916
+    }
+  },
+  "the_finding_on_holes": "The candidate carries 13 interior holes totalling 0.9628 m2, 0.0916 of its surface area. The baseline carries 0. So the pruning that cut phantom obstacle volume from 0.871 to 0.138 m3 in downstream-consumer.json did not come free: it opened interior holes where the baseline had none. That trade is not stated anywhere else in this evidence directory, and it is the honest cost of the variant this chain prefers.",
+  "outliers": {
+    "source_points": 6341,
+    "setting_reported": "nb_neighbors=20, std_ratio=2.0",
+    "outliers": 142,
+    "outlier_fraction": 0.0224,
+    "the_count_is_a_parameter_choice_so_here_is_the_sweep": {
+      "nb=20,std=1.0": {
+        "outliers": 1091,
+        "fraction": 0.1721
+      },
+      "nb=20,std=2.0": {
+        "outliers": 142,
+        "fraction": 0.0224
+      },
+      "nb=20,std=3.0": {
+        "outliers": 56,
+        "fraction": 0.0088
+      },
+      "nb=50,std=2.0": {
+        "outliers": 233,
+        "fraction": 0.0367
+      }
+    },
+    "distance_to_the_reconstructed_surface": {
+      "retained_points_median": 0.0032,
+      "outlier_points_median": 0.0066,
+      "random_points_in_the_same_bbox_median": 0.2704,
+      "control_samples": 20000
+    },
+    "were_they_rejected_or_fitted": {
+      "answer": "fitted",
+      "outliers_are_this_much_closer_than_random": 41.0,
+      "and_this_much_further_than_retained_points": 2.1,
+      "why_the_random_control_is_the_load_bearing_part": "Without it, 'the surface is 6.6mm from the median outlier' is unreadable: it could mean the surface is everywhere. Random points in the same box sit 41x further away, so the surface is not everywhere and the outliers were fitted rather than pruned."
+    }
+  },
+  "a_test_i_built_and_discarded": {
+    "the_test": "Call nearby surface attributable to an outlier when that surface is closer to the outlier than to any retained point.",
+    "rate_for_outliers": 0.915,
+    "rate_for_retained_points_as_a_control": 0.933,
+    "verdict": "discarded",
+    "why": "The control rate is as high as the outlier rate, so the test says almost every point owns its nearest surface and separates nothing. It would have read as a strong causal finding. Recorded because a discarded test is evidence about the method, and because the fitting result above is correlational for exactly this reason: proving an outlier *caused* its nearby surface needs a re-reconstruction without it, which this does not do."
+  },
+  "what_this_does_not_claim": "Not that the holes are in the wrong places or that the outliers are noise rather than real thin structure; neither is decidable without ground truth, which no artifact in this chain carries. Not that an outlier caused the surface near it -- see the discarded test. And an interior hole is not automatically a defect: on an open patch some holes are honest absence of observation, which is why the area is reported next to the surface area rather than as a score."
+}
