@@ -33,6 +33,7 @@ from npa.workflows.sim2real.constants import (
 from npa.workflows.sim2real.models import (
     Sim2RealLoopConfig,
     Sim2RealLoopError,
+    require_sim2real_boolean,
 )
 from npa.workflows.sim2real.k8s_components import (
     _component_job_script as _component_job_script,
@@ -512,7 +513,10 @@ def _normalize_heldout_report(
         score = max(
             0.0, min(1.0, float(item.get("score", item.get("success_score", 0.0))))
         )
-        success = bool(item.get("success", score >= config.threshold))
+        success = require_sim2real_boolean(
+            item.get("success", score >= config.threshold),
+            field=f"held-out per_env[{index}].success",
+        )
         passed += int(success)
         per_env.append(
             {
