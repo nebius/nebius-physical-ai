@@ -12,7 +12,7 @@
     "why_i_did_not_do_what_was_asked": "The ask was to bind each record to a commit that is an ancestor of the head. That would have meant rewriting nine values to commits the measurements were not taken at, which is falsification, not provenance."
   },
   "the_finding_this_turned_up": {
-    "what": "Nine of the ten named commits are on ZERO remote refs. They exist only in the clones that made them, so no other reader can resolve them -- and one, 77bff008fff, is on zero refs of any kind, local included, so it survives only until a garbage collection.",
+    "what": "Nine of the ten records that name a provenance commit name one that is on ZERO refs this remote advertises. Those nine records name seven distinct commits. They exist only in the clones that made them, so no other reader can resolve them -- and one, 77bff008fff, is on zero refs of any kind, local included, so it survives only until a garbage collection.",
     "why_it_matters_more_than_the_key_names": "A uniform key naming an unresolvable commit is tidier and no more auditable. This was not in the original finding and I would not have seen it by standardising key names alone.",
     "what_each_record_now_also_names": "The commit on main where that work landed, so a reader has something they can resolve.",
     "how_that_claim_was_checked_rather_than_asserted": "For each stranded commit, a symbol or source line it introduced under npa/ was searched at origin/main and traced with `git log -S`. All seven distinct commits resolve to the same merge.",
@@ -53,7 +53,24 @@
         "entered_main_at": "15b0b11f0"
       }
     },
-    "what_the_probes_do_not_show": "That the trees are identical. A probe proves this commit's contribution reached main at that merge, which is strictly weaker and is what the records now say."
+    "what_the_probes_do_not_show": "That the trees are identical. A probe proves this commit's contribution reached main at that merge, which is strictly weaker and is what the records now say.",
+    "a_counting_error_in_my_own_summary_of_this_finding": {
+      "what_i_wrote": "Nine of the ten named commits are on ZERO remote refs. They exist only in the clones that made them, so no other reader  ...",
+      "what_is_true": "Nine RECORDS, seven distinct COMMITS, out of ten commits named. I wrote 'nine of the ten named commits', which conflates the two: three records share 256c26bc9150. The three named commits that are NOT stranded (15b0b11f0bc1, d06e95846286, d22893238d75) are all resolvable, on 328, 18 and 613 origin refs.",
+      "why_it_slipped": "Nine is the number the guard prints, because the guard iterates records. I copied the count into prose about commits without re-deriving it. Every per-record claim was correct; only the roll-up was wrong."
+    },
+    "how_the_zero_remote_refs_claim_was_actually_established": {
+      "the_problem_with_how_i_first_checked_it": "I asserted zero remote refs from a clone whose only fetch refspec is refs/heads/*, against a remote that advertises 1274 refs of which 933 are PR heads. I consulted roughly a quarter of the refs a reader could resolve a commit from, and the clone was shallow as well. The claim was true. It was not established, which is a defect of the same kind as the ones this change exists to fix.",
+      "what_the_test_does_now": "harness/audit_commit_reachability.py takes git ls-remote as the denominator, fetches every refs/pull/*/head and refs/tags/* into its own namespace, and asks reachability against all of them.",
+      "coverage": "1274 advertised refs: 933 PR heads, 11 tags, the rest branches. 23 refs/pull/N/merge refs are skipped because a merge ref has the PR head as an ancestor and cannot contain a commit the head lacks.",
+      "how_shallowness_was_ruled_out_rather_than_waved_at": "A shallow clone makes absence unsound, because a commit below the graft boundary is unreachable in the walk whether or not a ref contains it. This clone has one graft point. None of the ten named commits is an ancestor of it, so none can be concealed by the truncation -- tested per commit with merge-base --is-ancestor rather than argued from commit dates, which rebases make unreliable. A commit that could be concealed is now reported as indeterminate and fails the harness, rather than being reported as stranded.",
+      "result": "7 on zero remote refs, 3 resolvable, 0 indeterminate."
+    },
+    "two_defects_in_the_first_version_of_that_test": {
+      "an_allowlist_that_under_covered": "I extracted provenance shas from three key names I expected, which found seven of the eleven object-shaped values the records carry and silently missed base_commit, built_on_main, candidate_commit and commit_on_main_carrying_this_source. It therefore reported zero resolvable commits, which should have been impossible given 15b0b11f0 is on main. The tell was that the answer was too clean. Any object-shaped value in provenance is now a candidate.",
+      "object_type_was_assumed": "producing_tree_identity holds a TREE, not a commit. Asking whether a tree is on a branch is a category error, not a finding. Type is checked with cat-file -t and non-commits are reported separately.",
+      "orphaned_tracking_refs_counted_as_remote": "This clone carries refs under refs/remotes/ belonging to remotes that no longer exist -- npabase627, npapr607 and 69 others -- which are as local as any branch. They inflated one commit's reachability to 684 refs. Reachability is now scoped to configured remotes, with orphans counted separately. The direction was safe for the stranded verdict, since a wider net can only find more, but 'another reader can resolve this' is a claim about the remote."
+    }
   },
   "two_commits_were_recovered_not_invented": {
     "capability-record-viewer-reconciliation.json": "Named no commit. `git log -S` for the regression test it lists finds exactly one: 6e8cd115f, whose message restates this record's capability line and which predates the record's own recorded_at by four minutes.",
@@ -108,8 +125,18 @@
       {
         "path": "harness/audit_record_provenance.py",
         "sha256": "4ee0a79ac4cf6f36c8433294406422b21eb68be5fdaa79b9854721962776bfda"
+      },
+      {
+        "path": "harness/audit_commit_reachability.py",
+        "sha256": "667379fa03823e2d6c8751e80a7bf3a245f34b543402a8f6c94f9240bf3830b1"
+      },
+      {
+        "path": "commit-reachability-audit.json",
+        "sha256": "584b787dc9de4bb57e395709e86ad3770be6df04164ba72ad55f017fab4e61cb"
       }
     ],
-    "why_this_shape": "A review lane found provenance recorded six different ways across these records, so an auditor had to learn each file. This is the one shape. A record about provenance that carried none would have been the defect it complains about."
+    "why_this_shape": "A review lane found provenance recorded six different ways across these records, so an auditor had to learn each file. This is the one shape. A record about provenance that carried none would have been the defect it complains about.",
+    "reachability_audit": "docs/evidence/open3d/commit-reachability-audit.json, produced by harness/audit_commit_reachability.py. Re-running it requires network access to the remote, so it is evidence rather than a CI gate; the committed report is what the tests check.",
+    "one_of_these_pins_goes_stale_when_the_audit_is_rerun": "commit-reachability-audit.json is bound by hash and is also the harness's own output, so re-running the audit invalidates the pin until it is re-bound. That is the intended behaviour -- a stale pin is a visible failure, where an unbound report is a silent one -- but it means the audit is not a thing to re-run casually."
   }
 }

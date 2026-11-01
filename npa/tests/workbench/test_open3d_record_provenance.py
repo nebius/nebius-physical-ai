@@ -276,3 +276,85 @@ def test_the_recovered_commits_are_the_ones_the_records_name(evidence: Path) -> 
         assert sha in found, (
             f"{name} names {sha[:11]}, but no commit introducing {probe} matches it"
         )
+
+
+def test_the_reachability_audit_consulted_the_refs_the_remote_advertises() -> None:
+    """The zero-remote-refs claim must rest on the remote's refs, not the clone's fetch refspec.
+
+    The first version of that claim was asserted from a clone whose only refspec is
+    refs/heads/*, against a remote advertising 1274 refs. It was true and unestablished. This
+    pins the coverage so a future run cannot quietly narrow back to the branches it happens to
+    have.
+    """
+    audit = json.loads((EVIDENCE / "commit-reachability-audit.json").read_text())
+    coverage = audit["ref_coverage"]
+
+    assert coverage["total_refs_advertised_by_remote"] >= 1000
+    # PR heads are the bulk of what a branch-only fetch misses, and the reason the first answer
+    # was unsound. If they stop being consulted the audit is back to checking a quarter of them.
+    assert coverage["fetched_pull_refs"] >= coverage["pull_heads_advertised"] - 1
+    assert coverage["fetched_tag_refs"] == coverage["tags_advertised"]
+
+
+def test_shallow_truncation_is_ruled_out_per_commit_not_waved_at() -> None:
+    """Absence of a ref is only evidence if truncation could not have hidden the commit."""
+    audit = json.loads((EVIDENCE / "commit-reachability-audit.json").read_text())
+
+    assert audit["shallow_clone"]["commits_that_could_be_concealed"] == 0
+    # Indeterminate is the state that would make the report untrustworthy: the clone could not
+    # tell stranded from reachable. The harness exits nonzero on it, so a committed report
+    # containing one means the report was produced by an older or patched harness.
+    assert "indeterminate_shallow_clone_could_conceal_it" not in audit["tally"]
+
+
+def test_reachability_is_scoped_to_the_remote_not_to_local_remote_shaped_refs() -> None:
+    """Orphaned tracking refs live under refs/remotes/ while being as local as a branch.
+
+    Counting them inflated one commit's reachability to 684 refs. For a stranded verdict the
+    wider net is harmless, but "another reader can resolve this" is a claim about the remote,
+    and this clone has 71 refs that look remote and are not.
+    """
+    audit = json.loads((EVIDENCE / "commit-reachability-audit.json").read_text())
+    stranded = [c for c in audit["commits"] if c["verdict"] == "on_zero_remote_refs"]
+
+    assert len(stranded) == 7, [c["commit"][:12] for c in stranded]
+    for commit in stranded:
+        assert commit["remote_refs_containing"] == 0, commit
+        assert commit["orphaned_tracking_refs_containing"] == 0, commit
+
+
+def test_every_record_claiming_no_remote_ref_names_a_commit_the_audit_agrees_is_stranded() -> (
+    None
+):
+    """The roll-up count was wrong once; this checks the per-record prose against the data.
+
+    My summary said "nine of the ten named commits", conflating nine records with seven
+    distinct commits because three records share one. Each individual claim was right, so a
+    test on the records alone would have passed. This one joins them to the audit.
+    """
+    audit = json.loads((EVIDENCE / "commit-reachability-audit.json").read_text())
+    verdicts = {c["commit"]: c["verdict"] for c in audit["commits"]}
+
+    claiming = []
+    for record in sorted(EVIDENCE.glob("capability-record-*.json")):
+        provenance = json.loads(record.read_text()).get("provenance", {})
+        if "this_commit_is_on_no_remote_ref" not in provenance:
+            continue
+        sha = provenance.get("source_commit") or provenance.get("candidate_commit")
+        claiming.append(record.name)
+        assert verdicts.get(sha) == "on_zero_remote_refs", (
+            record.name,
+            sha,
+            verdicts.get(sha),
+        )
+
+    assert len(claiming) == 9, claiming
+    # Nine records, seven commits: the gap is the whole point of the correction.
+    named = {
+        json.loads((EVIDENCE / name).read_text())["provenance"].get("source_commit")
+        or json.loads((EVIDENCE / name).read_text())["provenance"].get(
+            "candidate_commit"
+        )
+        for name in claiming
+    }
+    assert len(named) == 7, sorted(s[:12] for s in named)

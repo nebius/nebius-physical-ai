@@ -1,0 +1,186 @@
+{
+  "what_this_answers": "For every commit a capability record names, can another reader resolve it from a ref this remote advertises?",
+  "why_it_exists": "The records claimed zero remote refs. The clone that checked held only refs/heads/* out of 1271 advertised refs, and was shallow. The claim was true and unestablished, which is its own kind of defect.",
+  "ref_coverage": {
+    "total_refs_advertised_by_remote": 1274,
+    "pull_heads_advertised": 933,
+    "pull_merges_skipped": 24,
+    "tags_advertised": 11,
+    "fetched_pull_refs": 933,
+    "fetched_tag_refs": 11,
+    "why_merge_refs_are_skipped": "A refs/pull/N/merge is the computed merge of the base and the PR head, so it has the head as an ancestor and cannot contain what the head lacks."
+  },
+  "shallow_clone": {
+    "is_shallow": true,
+    "graft_points": 1,
+    "why_this_does_not_invalidate_the_result": "Truncation removes the ancestors of a graft point. A named commit is hidden only if it is one of them, which is tested per commit rather than argued from commit dates.",
+    "commits_that_could_be_concealed": 0
+  },
+  "tally": {
+    "on_zero_remote_refs": 7,
+    "resolvable_remotely": 3
+  },
+  "commits": [
+    {
+      "commit": "1441e211400cf7d07c8d832d3ad787ff71d7fad2",
+      "verdict": "on_zero_remote_refs",
+      "remote_refs_containing": 0,
+      "local_refs_containing": 5,
+      "shallow_clone_could_conceal_it": false,
+      "orphaned_tracking_refs_containing": 0,
+      "example_remote_refs": []
+    },
+    {
+      "commit": "15b0b11f0bc137631954ac87076f44753c513976",
+      "verdict": "resolvable_remotely",
+      "remote_refs_containing": 328,
+      "local_refs_containing": 29,
+      "shallow_clone_could_conceal_it": false,
+      "orphaned_tracking_refs_containing": 0,
+      "example_remote_refs": [
+        "refs/remotes/origin/HEAD",
+        "refs/remotes/origin/codex/aloha-paidf-comparable-20261005",
+        "refs/remotes/origin/codex/antioch-local-workflow-20260916"
+      ]
+    },
+    {
+      "commit": "16012b1088579569a8755a1483c4c260c6af3973",
+      "verdict": "on_zero_remote_refs",
+      "remote_refs_containing": 0,
+      "local_refs_containing": 5,
+      "shallow_clone_could_conceal_it": false,
+      "orphaned_tracking_refs_containing": 0,
+      "example_remote_refs": []
+    },
+    {
+      "commit": "256c26bc915080934814789be6a41bbc253f0d1c",
+      "verdict": "on_zero_remote_refs",
+      "remote_refs_containing": 0,
+      "local_refs_containing": 5,
+      "shallow_clone_could_conceal_it": false,
+      "orphaned_tracking_refs_containing": 0,
+      "example_remote_refs": []
+    },
+    {
+      "commit": "6e8cd115f1a9834cdc25c868eee1b4879d28e65f",
+      "verdict": "on_zero_remote_refs",
+      "remote_refs_containing": 0,
+      "local_refs_containing": 5,
+      "shallow_clone_could_conceal_it": false,
+      "orphaned_tracking_refs_containing": 0,
+      "example_remote_refs": []
+    },
+    {
+      "commit": "77bff008fff489b73ee2d8cd11466a105bf9d630",
+      "verdict": "on_zero_remote_refs",
+      "remote_refs_containing": 0,
+      "local_refs_containing": 0,
+      "shallow_clone_could_conceal_it": false,
+      "orphaned_tracking_refs_containing": 0,
+      "example_remote_refs": []
+    },
+    {
+      "commit": "b18d7aef56bbe25a5b45290e0b705f20a59ad4da",
+      "verdict": "on_zero_remote_refs",
+      "remote_refs_containing": 0,
+      "local_refs_containing": 5,
+      "shallow_clone_could_conceal_it": false,
+      "orphaned_tracking_refs_containing": 0,
+      "example_remote_refs": []
+    },
+    {
+      "commit": "d06e958462865af823b4f1479867df52421c8284",
+      "verdict": "resolvable_remotely",
+      "remote_refs_containing": 18,
+      "local_refs_containing": 19,
+      "shallow_clone_could_conceal_it": false,
+      "orphaned_tracking_refs_containing": 0,
+      "example_remote_refs": [
+        "refs/remotes/origin/HEAD",
+        "refs/remotes/origin/codex/sim2real-franka-cube-experimental-20261031",
+        "refs/remotes/origin/codex/sim2real-pi05-20261006"
+      ]
+    },
+    {
+      "commit": "d22893238d75efbb05a69eb75bca1b82eb5fe280",
+      "verdict": "resolvable_remotely",
+      "remote_refs_containing": 613,
+      "local_refs_containing": 1101,
+      "shallow_clone_could_conceal_it": false,
+      "orphaned_tracking_refs_containing": 71,
+      "example_remote_refs": [
+        "refs/remotes/origin/HEAD",
+        "refs/remotes/origin/codex/aloha-paidf-comparable-20261005",
+        "refs/remotes/origin/codex/antioch-local-workflow-20260916"
+      ]
+    },
+    {
+      "commit": "e8e12b12a367f1a1bc7ef7aca7ac68866e8e5e97",
+      "verdict": "on_zero_remote_refs",
+      "remote_refs_containing": 0,
+      "local_refs_containing": 11,
+      "shallow_clone_could_conceal_it": false,
+      "orphaned_tracking_refs_containing": 0,
+      "example_remote_refs": []
+    }
+  ],
+  "object_kinds": {
+    "1441e211400cf7d07c8d832d3ad787ff71d7fad2": "commit",
+    "15b0b11f0bc137631954ac87076f44753c513976": "commit",
+    "16012b1088579569a8755a1483c4c260c6af3973": "commit",
+    "256c26bc915080934814789be6a41bbc253f0d1c": "commit",
+    "46ae993d10e251913fc4942fa5cf0e4fa689dfe7": "tree",
+    "6e8cd115f1a9834cdc25c868eee1b4879d28e65f": "commit",
+    "77bff008fff489b73ee2d8cd11466a105bf9d630": "commit",
+    "b18d7aef56bbe25a5b45290e0b705f20a59ad4da": "commit",
+    "d06e958462865af823b4f1479867df52421c8284": "commit",
+    "d22893238d75efbb05a69eb75bca1b82eb5fe280": "commit",
+    "e8e12b12a367f1a1bc7ef7aca7ac68866e8e5e97": "commit"
+  },
+  "records_naming_them": {
+    "capability-record-distance-bands.json": [
+      "15b0b11f0bc137631954ac87076f44753c513976",
+      "e8e12b12a367f1a1bc7ef7aca7ac68866e8e5e97"
+    ],
+    "capability-record-provenance-bound-preview.json": [
+      "1441e211400cf7d07c8d832d3ad787ff71d7fad2",
+      "15b0b11f0bc137631954ac87076f44753c513976"
+    ],
+    "capability-record-record-provenance-shape.json": [
+      "d06e958462865af823b4f1479867df52421c8284"
+    ],
+    "capability-record-standard-runtime.json": [
+      "15b0b11f0bc137631954ac87076f44753c513976",
+      "256c26bc915080934814789be6a41bbc253f0d1c"
+    ],
+    "capability-record-support-claim-correction.json": [
+      "15b0b11f0bc137631954ac87076f44753c513976",
+      "16012b1088579569a8755a1483c4c260c6af3973"
+    ],
+    "capability-record-support-crop.json": [
+      "15b0b11f0bc137631954ac87076f44753c513976",
+      "77bff008fff489b73ee2d8cd11466a105bf9d630",
+      "d22893238d75efbb05a69eb75bca1b82eb5fe280"
+    ],
+    "capability-record-support-crop.json#non-commit": [
+      "producing_tree_identity=tree"
+    ],
+    "capability-record-view-framing.json": [
+      "15b0b11f0bc137631954ac87076f44753c513976",
+      "256c26bc915080934814789be6a41bbc253f0d1c"
+    ],
+    "capability-record-viewer-reconciliation.json": [
+      "15b0b11f0bc137631954ac87076f44753c513976",
+      "6e8cd115f1a9834cdc25c868eee1b4879d28e65f"
+    ],
+    "capability-record-viewer-ui-capture.json": [
+      "15b0b11f0bc137631954ac87076f44753c513976",
+      "256c26bc915080934814789be6a41bbc253f0d1c"
+    ],
+    "capability-record-workflow-replay.json": [
+      "15b0b11f0bc137631954ac87076f44753c513976",
+      "b18d7aef56bbe25a5b45290e0b705f20a59ad4da"
+    ]
+  },
+  "what_this_does_not_establish": "That any measurement taken at these commits is correct. Reachability is about whether a reader can look the commit up, nothing more."
+}
