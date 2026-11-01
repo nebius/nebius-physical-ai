@@ -2270,15 +2270,70 @@ def test_preflight_images_accepts_the_same_config_vars_as_submit(mocker) -> None
     assert set(checked_images) == {digest_image}
 
 
-def test_preflight_images_materializes_its_workflow_owned_accounts(mocker) -> None:
+def test_preflight_images_materializes_its_workflow_owned_accounts(
+    tmp_path: Path, mocker
+) -> None:
     """The standalone command must use the same exact-owned lifecycle as submit."""
     from npa.orchestration.skypilot.registry_preflight import KubernetesPullTarget
     from npa.workflows.sim2real.runtime_prerequisites import resource_identities
 
     digest_image = f"cr.example.invalid/npa@sha256:{'a' * 64}"
-    expected_run_id = "sim2real-preflight"
+    expected_run_id = "workflow-owned-preflight"
     identities = resource_identities(expected_run_id)
     observed: dict[str, object] = {}
+    path = tmp_path / "workflow-owned.yaml"
+    path.write_text(
+        yaml.safe_dump(
+            {
+                "apiVersion": "npa.workflow/v0.0.1",
+                "kind": "Workflow",
+                "metadata": {"name": "workflow-owned"},
+                "config": {"runtime_prerequisites_mode": "workflow_owned"},
+                "resources": {
+                    "base": {
+                        "image": digest_image,
+                        "cloud": "kubernetes",
+                        "kubernetes": {
+                            "pod_config": {
+                                "spec": {
+                                    "serviceAccountName": identities[
+                                        "base_service_account"
+                                    ]
+                                }
+                            }
+                        },
+                    },
+                    "adapted": {
+                        "image": digest_image,
+                        "cloud": "kubernetes",
+                        "kubernetes": {
+                            "pod_config": {
+                                "spec": {
+                                    "serviceAccountName": identities[
+                                        "adapted_service_account"
+                                    ]
+                                }
+                            }
+                        },
+                    },
+                },
+                "initial": "base",
+                "states": {
+                    "base": {
+                        "resources": "base",
+                        "run": {"shell": "true"},
+                        "next": "adapted",
+                    },
+                    "adapted": {
+                        "resources": "adapted",
+                        "run": {"shell": "true"},
+                        "terminal": True,
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
 
     def lifecycle(**kwargs):
         observed.update(kwargs)
@@ -2307,24 +2362,10 @@ def test_preflight_images_materializes_its_workflow_owned_accounts(mocker) -> No
         "workbench",
         "workflow",
         "preflight-images",
-        str(SIM2REAL_SPEC),
-        "--assume-decision",
-        "promote_checkpoint",
+        str(path),
         "--infra",
         "k8s/target-context",
-        "--var",
-        "source_sha=" + "a" * 40,
-        "--var",
-        "runtime_prerequisites_mode=workflow_owned",
     ]
-    for name in (
-        "controller_image",
-        "cosmos3_image",
-        "envgen_image",
-        "isaac_image",
-        "viewer_image",
-    ):
-        args.extend(["--var", f"{name}={digest_image}"])
 
     result = runner.invoke(app, args)
 
