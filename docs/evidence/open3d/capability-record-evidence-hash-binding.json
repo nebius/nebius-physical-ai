@@ -61,5 +61,13 @@
   ],
   "still_open_and_deliberately_not_in_this_change": {
     "provenance_conventions": "A review lane found provenance recorded five different ways across ten capability records, and asked for one key plus binding each record to a commit that is an ancestor of the head. The key standardisation is worth doing. Blind ancestor-binding is not: three records name a source_commit that is deliberately not an ancestor because they attest to builds from a different line of development, and rewriting those to ancestors would falsify them. The honest form is one key name plus an explicit statement of whether the commit is an ancestor. That is a separate coherent change, not a stack on this one."
+  },
+  "provenance": {
+    "source_commit": "e781b1264f13b02fbd01dc698dbe7c800904c10e",
+    "built_on_main": "d06e958462865af823b4f1479867df52421c8284",
+    "main_is_an_ancestor_of_this_commit": true,
+    "why_this_field_exists": "A review lane found provenance recorded five different ways across these records, so an auditor cannot read the set mechanically. This is the uniform shape: which commit the record attests to, and whether that commit sits on the line of development it claims to. The second part matters because three records in this set name a commit that is deliberately not an ancestor -- they attest to builds from a different line -- and a reader cannot currently tell that apart from a stale reference.",
+    "standardising_the_other_records_is_a_separate_change": "Only this record is given the shape here. Rewriting the other ten belongs in its own change, and binding them all to ancestor commits would falsify the three that are non-ancestors on purpose.",
+    "what_source_commit_means_here": "e781b1264 is the commit whose source this evidence was produced from -- the harnesses, the manifest and the tests as they ran. It is deliberately not this record's own commit, which cannot be known before the record is written. Nothing in the later commit changes a measurement; it adds this field."
   }
 }
