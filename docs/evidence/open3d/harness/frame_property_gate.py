@@ -29,12 +29,26 @@ stranded**. That case is constructed and asserted in
 gate at 0.40 and fails this one.
 
 So stranding is gated on an interquartile spread instead -- the middle half of
-the content's row and column positions. An annotation that is 1.6-3.6% of
-content pixels cannot move a quartile: measured across the nine frames, removing
-the block shifts the spread by at most 0.0042 while shifting the extent by up to
-0.335, an **80x difference in sensitivity**. Extent is still recorded, because it
-is the intuitive reading and a reviewer will want to see it, and because the gap
-between the two numbers is itself the evidence for this paragraph.
+the content's row and column positions. An annotation of around 1% of content
+pixels cannot move a quartile.
+
+The sharpest way to see why extent is the wrong reading is not the size of that
+shift. Because the annotation anchors one corner of the bounding box, moving a
+16x16 speck *further from centre* makes the extent go **up**: 0.472 dead centre,
+0.794 upper-right, 0.906 in a far corner, all three clearing a 0.40 floor. An
+extent floor is weakest exactly where the framing is worst. The spread reads
+0.036 at every placement and fails all three.
+
+How far the extent moves when the annotation is removed is worth stating
+carefully, because it depends on what you remove and I got this wrong once.
+"The annotation" has no edge the pixels define, so the shift is 0.051 under a
+mask that provably contains no geometry -- pixels identical in all nine frames,
+which nine different projections cannot agree on by chance -- and 0.335 under a
+generous rectangle that also deletes real scan. I first published the 0.335 and
+called it an 80x sensitivity ratio; on the provable mask it is 25x. The spread
+moves by at most 0.0042 under every mask tried, which is the half of this that
+does not depend on the judgement call. Extent is still recorded, because it is
+the intuitive reading and a reviewer will want to see it.
 
 Why not gate fill
 -----------------

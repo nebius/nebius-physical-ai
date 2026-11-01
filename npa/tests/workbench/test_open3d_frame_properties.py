@@ -213,6 +213,34 @@ def test_a_frame_that_lost_its_scale_label_is_caught(
     ]
 
 
+def test_the_label_check_also_fires_on_a_harmless_restyle_so_a_red_may_be_cosmetic(
+    tmp_path: Path, original: np.ndarray
+) -> None:
+    """Names the intended failure mode, so the next reader does not loosen the gate.
+
+    An exact pixel hash cannot distinguish *the frame lost its scale reference*
+    from *someone changed the label's colour*. Both come out as the same red. A
+    reviewer who meets this failure after a deliberate restyle should re-bless
+    ``LABEL_SHA256`` having checked the label by eye -- not widen the check, which
+    is how a repository ends up with an assertion that no longer asserts.
+
+    The restyle here is as benign as it gets: the glyphs keep their exact shape
+    and shift by four levels of grey.
+    """
+    pixels = original.copy()
+    top, bottom, left, right = gate.LABEL_RECT
+    patch = pixels[top:bottom, left:right]
+    glyphs = np.abs(patch.astype(np.int16) - background()).max(axis=2) > 32
+    patch[glyphs] = (patch[glyphs].astype(np.int16) - 4).astype(pixels.dtype)
+
+    path = write(tmp_path, "restyled_label", pixels)
+
+    assert verdict(path) == ["scale label missing or altered"]
+    # The frame is otherwise untouched: nothing else the gate measures moved.
+    assert edge.audit(path)["is_clipped"] is False
+    assert gate.subject_spread(path)["narrower_axis"] > gate.MIN_SUBJECT_SPREAD
+
+
 def test_a_crop_that_slips_past_the_framing_checks_is_caught_by_the_label(
     tmp_path: Path,
 ) -> None:
@@ -283,47 +311,153 @@ def test_both_axes_of_the_spread_are_quartile_measures(tmp_path: Path) -> None:
     )
 
 
-def test_the_fixed_annotation_contaminates_the_extent_but_not_the_spread() -> None:
-    """The measurement behind the gate's central design decision.
+def narrower_readings(flags: np.ndarray) -> tuple[float, float]:
+    """The extent and the quartile spread of a mask, on its narrower axis."""
+    rows, cols = np.where(flags)
+    height, width = flags.shape
+    return (
+        min(
+            (cols.max() - cols.min() + 1) / width,
+            (rows.max() - rows.min() + 1) / height,
+        ),
+        min(
+            (np.percentile(cols, 75) - np.percentile(cols, 25)) / width,
+            (np.percentile(rows, 75) - np.percentile(rows, 25)) / height,
+        ),
+    )
 
-    Removing the annotation block moves the extent reading by a lot and the
-    spread reading by almost nothing. That ratio is why one is gated and the
-    other is only recorded.
+
+def provable_annotation() -> np.ndarray:
+    """Pixels that are identical in all nine frames and are not background.
+
+    Nine projections of different geometry from different cameras cannot agree
+    pixel for pixel, so whatever is identical across all nine was drawn by the
+    renderer rather than seen by the camera. That makes this a mask which
+    provably contains no geometry.
+
+    It is a *lower bound* on the annotation: the bar's length encodes each
+    view's metres-per-pixel, so the part of it that varies is excluded, as are
+    glyph edges anti-aliased against differing geometry behind them.
     """
-    extent_shifts, spread_shifts = [], []
+    stack = np.stack(
+        [
+            np.asarray(Image.open(path).convert("RGB")).astype(np.int16)
+            for path in sorted(FRAMES.glob("*.png"))
+        ]
+    )
+    identical = (stack == stack[0]).all(axis=(0, 3))
+    return identical & content_mask(stack[0])
+
+
+def test_the_spread_is_insensitive_to_the_annotation_under_every_mask_tried() -> None:
+    """Half of the gate's central design decision, and the half that is robust.
+
+    Removing the annotation barely moves the quartile spread, whether the mask is
+    the provable one or a generous rectangle around the whole block. The extent is
+    the opposite: how much it moves depends on how much you remove, which is the
+    subject of the companion test.
+    """
+    annotation = provable_annotation()
+    provable_spread_shifts, rectangle_spread_shifts = [], []
 
     for path in sorted(FRAMES.glob("*.png")):
         pixels = np.asarray(Image.open(path).convert("RGB")).astype(np.int16)
         mask = content_mask(pixels)
-        without = mask.copy()
-        without[645:700, 18:435] = False
+        _, spread = narrower_readings(mask)
 
-        def narrower(flags: np.ndarray) -> tuple[float, float]:
-            rows, cols = np.where(flags)
-            height, width = flags.shape
-            return (
-                min(
-                    (cols.max() - cols.min() + 1) / width,
-                    (rows.max() - rows.min() + 1) / height,
-                ),
-                min(
-                    (np.percentile(cols, 75) - np.percentile(cols, 25)) / width,
-                    (np.percentile(rows, 75) - np.percentile(rows, 25)) / height,
-                ),
-            )
+        _, provable = narrower_readings(mask & ~annotation)
+        rectangle = mask.copy()
+        rectangle[645:700, 18:435] = False
+        _, generous = narrower_readings(rectangle)
 
-        with_extent, with_spread = narrower(mask)
-        without_extent, without_spread = narrower(without)
-        extent_shifts.append(abs(with_extent - without_extent))
-        spread_shifts.append(abs(with_spread - without_spread))
+        provable_spread_shifts.append(abs(spread - provable))
+        rectangle_spread_shifts.append(abs(spread - generous))
 
-    assert max(spread_shifts) < 0.01, (
-        "the spread reading is supposed to be insensitive to a small fixed "
-        f"annotation, but it moved by {max(spread_shifts):.4f}"
+    assert max(provable_spread_shifts) < 0.01, (
+        f"the spread moved by {max(provable_spread_shifts):.4f} when a mask "
+        f"containing no geometry was removed"
     )
-    assert max(extent_shifts) > 0.20, (
-        "if the extent reading were no longer contaminated, this gate could be "
-        "simplified back to measuring extents"
+    assert max(rectangle_spread_shifts) < 0.01, (
+        f"the spread moved by {max(rectangle_spread_shifts):.4f} under a "
+        f"generous mask, so its robustness does not survive mask choice"
+    )
+
+
+def test_how_much_the_extent_moves_depends_on_where_you_draw_the_annotation() -> None:
+    """Why no single number here is quotable, including the one I first published.
+
+    I reported the extent as shifting by up to 0.335 on the strength of a
+    rectangle that also removed real geometry. Removing only pixels that provably
+    contain none moves it by about a fifth of that. Both are measurements of the
+    same frames; they differ because "the annotation" has no edge the pixels
+    define. A reading whose value is set by that choice is not a reading of the
+    subject, which is the actual argument -- not any one of the numbers.
+    """
+    annotation = provable_annotation()
+    provable_shifts, rectangle_shifts = [], []
+
+    for path in sorted(FRAMES.glob("*.png")):
+        pixels = np.asarray(Image.open(path).convert("RGB")).astype(np.int16)
+        mask = content_mask(pixels)
+        extent, _ = narrower_readings(mask)
+
+        provable, _ = narrower_readings(mask & ~annotation)
+        rectangle = mask.copy()
+        rectangle[645:700, 18:435] = False
+        generous, _ = narrower_readings(rectangle)
+
+        provable_shifts.append(abs(extent - provable))
+        rectangle_shifts.append(abs(extent - generous))
+
+    assert max(rectangle_shifts) > 3 * max(provable_shifts), (
+        "the extent reading is supposed to be the mask-sensitive one; if the two "
+        "masks now agree, the contamination argument needs restating"
+    )
+
+
+def test_the_extent_reading_rewards_worse_placement_and_the_spread_does_not(
+    tmp_path: Path, original: np.ndarray
+) -> None:
+    """The decisive argument, and the one that needs no mask at all.
+
+    A reviewer measured this independently and it is stronger than the shift
+    figure I first leaned on. With the annotation anchoring one corner, moving a
+    16x16 speck *further from centre* makes the extent reading go *up*. So an
+    extent floor is weakest exactly where the framing is worst, which is the
+    opposite of what a gate must do. The quartile spread is flat across all three
+    placements and fires on every one.
+    """
+    placements = {
+        "dead centre": (352, 472),
+        "upper right": (120, 800),
+        "far corner": (40, 900),
+    }
+    extents, spreads = [], []
+
+    for name, (top, left) in placements.items():
+        pixels = original.copy()
+        keep = np.zeros(pixels.shape[:2], bool)
+        keep[640:700, 0:440] = True
+        pixels[~keep] = background().astype(pixels.dtype)
+        pixels[top : top + 16, left : left + 16] = np.array(
+            [220, 220, 224], dtype=pixels.dtype
+        )
+
+        path = write(tmp_path, f"speck_{name.replace(' ', '_')}", pixels)
+        extents.append(extent_of(path))
+        spreads.append(gate.subject_spread(path)["narrower_axis"])
+
+        assert extent_of(path) >= NAIVE_EXTENT_FLOOR, (
+            f"the {name} speck scores {extent_of(path):.3f} on extent, so this "
+            f"control no longer shows the floor being passed"
+        )
+        assert verdict(path) == ["stranded"]
+
+    assert extents == sorted(extents), (
+        f"extent is supposed to reward worse placement here, but read {extents}"
+    )
+    assert max(spreads) - min(spreads) < 0.01, (
+        f"the spread is supposed to be placement-invariant, but ranged {spreads}"
     )
 
 

@@ -93,10 +93,12 @@
     "1_a_fixed_annotation_contaminates_the_obvious_measure": {
       "what": "Every one of the nine frames carries a scale bar reading '1.0 m (scan units)' drawn at a fixed bottom-left position. It is content, so it pins the content bounding box.",
       "the_tell": "All nine report a left margin of 27px, a bottom margin of 28px and a clipping headroom of 1.056 -- identical across nine different views of different geometry. Nine independent 3D projections cannot coincide like that; the number was describing the annotation.",
-      "magnitude": "Removing the annotation block moves the extent reading by up to 0.335 and the quartile spread by at most 0.0042, an 80x difference in sensitivity. Recorded extent spans are 0.550-0.713; the subject alone spans 0.264-0.510.",
-      "consequence": "A 0.40 floor on extent -- which is what gating the recorded number would have meant -- passes a frame whose geometry has collapsed to a 16x16 speck, because the annotation still anchors a corner of the box. That frame measures extent 0.472 and spread 0.036. It is constructed and asserted in the test module.",
+      "magnitude": "Mask-dependent, and that is the finding rather than any single number. The annotation has no edge the pixels define, so how far the extent moves depends on how much you remove: 0.051 with a mask that provably contains no geometry, 0.218 with a reviewer's rectangle out to the label's right edge, 0.335 with the generous rectangle I first used. The quartile spread moves by at most 0.0021, 0.0021 and 0.0042 under those same three masks -- robust under all of them.",
+      "consequence": "A 0.40 floor on extent -- which is what gating the recorded number would have meant -- passes a frame whose geometry has collapsed to a 16x16 speck, at every placement tried, because the annotation still anchors a corner of the box.",
       "so": "Stranding is gated on an interquartile spread, and extent is recorded and not gated.",
-      "this_also_corrects_a_review_statement": "The review's 'the subject spans 55-71% of each frame's narrower axis' is a reading of the content bounding box, not of the subject. The arithmetic was right; the annotation was in the frame. Sent to the review lane rather than left in a file."
+      "this_also_corrects_a_review_statement": "The review's 'the subject spans 55-71% of each frame's narrower axis' is a reading of the content bounding box, not of the subject. The arithmetic was right; the annotation was in the frame. The review measured it independently, confirmed the 27px/28px margins on all nine, and struck the claim in their own report rather than quietly amending it.",
+      "a_correction_to_my_first_published_magnitude": "I first reported 'up to 0.335, an 80x difference in sensitivity' and an annotation share of 1.6-3.6% of content pixels. Both were inflated, because the mask I measured with was a rectangle of rows 645-700 by cols 18-435 -- 22,935 pixels -- which removes real geometry along with the label. A reviewer asked which region I had removed, which is the question that found it. Measured instead over pixels that are identical in all nine frames and non-background -- 693 pixels, cols 27-107, rows 655-691, which nine different projections cannot agree on by chance and so provably contain no geometry -- the annotation is 0.47-1.10% of content pixels and the extent shift is 0.051, a 25x ratio rather than 80x. The reviewer and I independently derived the same 693-pixel mask.",
+      "the_argument_that_needs_no_mask_at_all": "A reviewer found the decisive version and it is stronger than any shift figure. With the annotation anchoring one corner, moving a 16x16 speck further from centre makes the extent reading go UP: 0.472 dead centre, 0.794 upper-right, 0.906 in a far corner, all three passing a 0.40 floor. So an extent floor is weakest exactly where the framing is worst. The quartile spread reads 0.036 at every placement and fires on all three. Reproduced here independently; their figures were 0.461 / 0.683 / 0.822 from different speck coordinates, agreeing in direction and magnitude."
     },
     "2_the_framing_pair_had_a_hole_and_the_sweep_found_it": {
       "what": "candidate_scan_and_surface__topdown.png fails the framing checks at 1.1x and 1.2x and passes again at 1.3x. By 1.3x the scale bar has been cropped out of the frame entirely, so it no longer contributes border content, and the geometry happens to miss the border on that step.",
@@ -146,7 +148,8 @@
     "The zoom sweep is a 2D rescale about the frame centre, not a re-render. It exercises the gate, not the renderer or the camera fitting, which are pinned separately.",
     "The thresholds are not calibrated against human judgement. No VLM was called: this is a pixel-measurement gate over committed bytes, so visual evaluation is not applicable rather than manufactured.",
     "The label check encodes the current renderer's overlay convention. It does not verify the scale bar is numerically correct, only that the label's pixels are unchanged.",
-    "The off-centre framing the measurements exposed -- margins as lopsided as 27px against 405px, and a true clipping headroom near 1.06 -- is reported, not fixed. Re-centring would change accepted evidence bytes and belongs in its own change."
+    "No centring property is gated. The spread answers 'is the content concentrated', not 'is the subject well placed'. A reviewer pointed out that subject-only left against right margin would answer the placement question; it needs a sound overlay boundary first, so it is not built here.",
+    "The occupancy of these frames is low -- four are under 13% fill -- and nothing in this change improves that. A reviewer was explicit that pinning low occupancy is not fixing it, and that the original framing complaint stays open. This change should not be read as closing it."
   ],
   "reproduce": [
     "npa/.venv/bin/python docs/evidence/open3d/harness/frame_property_gate.py --out docs/evidence/open3d/delivered-frame-property-gate.json docs/evidence/open3d/frames-refit/*.png",
@@ -166,7 +169,7 @@
       },
       {
         "path": "harness/frame_property_gate.py",
-        "sha256": "d9da5d0e0dd701ad10cf576e04965346b0638ea802efa8415bd7696094ecd03a"
+        "sha256": "e5dc7411c3619f96fade9ee96500bd9a48daabff3c1652d3ac9f51b5b66ced1e"
       },
       {
         "path": "harness/gate_zoom_sweep.py",
@@ -174,5 +177,11 @@
       }
     ],
     "the_two_hashes_this_change_leaves_unbound": "LABEL_SHA256 appears twice -- once in the gate report's thresholds and once in what_is_gated above -- and the evidence guard counts both as hashes that name no file. That is correct: it digests a pixel rectangle inside a frame, not a file, so no file-binding guard can check it. It first appeared 20 times, once per frame as well, which was 18 identical hashes of pure noise; the per-frame record is now a boolean and the expected value is stated once. The extended guard on the evidence-binding branch cross-checks hashes that two records state side by side, which is the check that will cover these two."
+  },
+  "a_claim_i_withdrew": {
+    "what_i_said": "That the delivered frames are 'one small camera change from clipping', on the strength of margins as uneven as 27px against 405px and a clipping headroom near 1.06.",
+    "why_it_was_wrong": "That 27px is the annotation, not the subject -- the same conflation I had just corrected one section earlier, and the constant 1.056 headroom across nine different views was in my own list of tells that a number is describing the overlay. A reviewer caught that my conclusion had inherited the error its own evidence refuted.",
+    "what_is_actually_measured": "The subject's left margin is nowhere near 27px. Removing only the provable annotation leaves 73-76px, which is still contaminated upward by glyph edges anti-aliased against the geometry behind them; a reviewer's rectangular exclusion out to col 107 gives 108-236px, censored at its own boundary. Both are bounds on the same quantity from opposite directions, and neither is 27. Right margins run 237-405px.",
+    "so": "The fragility claim is withdrawn, not deferred. The frames are less badly framed than I said. A sound subject-only margin cannot be measured from these bytes alone -- it needs the renderer to declare its overlay region -- and a genuine centring gate is a separate measurement this change does not make."
   }
 }
