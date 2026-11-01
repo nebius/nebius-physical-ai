@@ -721,3 +721,54 @@ def test_the_sweep_restores_a_record_when_the_guard_run_raises(tmp_path: Path) -
         sweep.main()
 
     assert record.read_text() == before, "the record was left mutated"
+
+
+def test_no_record_restates_a_length_it_cannot_see() -> None:
+    """The defect this record exists to catch, found by a reviewer inside the record.
+
+    `mutations_the_guard_was_tested_against.count` said 9 against the 13 results beside
+    it, and `verification.guard_tests` said "9 passed" against 12 tests collected.
+    Nothing read either -- the guard binds `len(results)` -- so both drifted. A number
+    with no reader is exactly what this pull request argues against.
+
+    Both are deleted rather than given a second reader. This stops that shape coming
+    back, and only that shape: a count whose *name* says which collection it counts must
+    agree with it.
+
+    The first version of this test compared any `*_count` against every sibling list,
+    and it immediately failed on `capability-record.json`, where
+    `published_object_count` is 17 and the sibling `rrd_entities` holds 6. Those are
+    unrelated quantities and the record is correct. Counting something that is not a
+    sibling list is ordinary, so a guard that forbids it is wrong -- the narrow rule
+    below still catches `count` beside `results`, which is what drifted.
+    """
+    offenders: list[str] = []
+    for record in records():
+        payload = json.loads(record.read_text())
+
+        def walk(node: object, path: str) -> None:
+            if not isinstance(node, dict):
+                if isinstance(node, list):
+                    for index, item in enumerate(node):
+                        walk(item, f"{path}[{index}]")
+                return
+            for key, value in node.items():
+                if isinstance(value, int) and not isinstance(value, bool):
+                    # Only where the name says which collection it counts: a bare
+                    # `count` beside `results`, or `<name>_count` beside `<name>`.
+                    named = (
+                        key[: -len("_count")]
+                        if key.endswith("_count")
+                        else ("results" if key == "count" else None)
+                    )
+                    sibling = node.get(named) if named else None
+                    if isinstance(sibling, list) and value != len(sibling):
+                        offenders.append(
+                            f"{record.name}:{path}.{key} is {value} while the "
+                            f"{named} it names holds {len(sibling)}"
+                        )
+                walk(value, f"{path}.{key}")
+
+        walk(payload, "")
+
+    assert not offenders, "\n".join(offenders)

@@ -22,16 +22,16 @@
     "records_pinned_by_a_precise_figure_cited_elsewhere": 7,
     "records_total": 42,
     "records_with_at_least_one_meaning_bearing_check": 40,
-    "records_with_range_or_sign_invariants": 40,
+    "records_with_range_or_sign_invariants": 39,
     "records_with_structural_checks_only": 2,
     "values_checked_by_invariant": {
-      "count": 143,
+      "count": 142,
       "delta": 4,
       "fit_ratio": 12,
       "non_negative": 89,
       "proportion": 845
     },
-    "values_checked_in_total": 1093
+    "values_checked_in_total": 1092
   },
   "design_constraint": {
     "adopted": "Every check derives what it expects from something outside the record: the bytes of a file the record names, a figure another file cites, or an invariant implied by the field's own name.",
@@ -61,7 +61,6 @@
     "why": "The first version of this guard reached 27 of 42 records and left 13 with structural checks only. Among those 13 were both downstream-consumer records and a capability record -- the lane's actual consumer evidence, and the records review said were worth the most. They were not inherently uncheckable; the field-name rules were too narrow."
   },
   "mutations_the_guard_was_tested_against": {
-    "count": 9,
     "evidence_files_left_dirty_after_the_battery": 0,
     "harness": "harness/evidence_guard_mutations.py",
     "missed": [],
@@ -166,7 +165,8 @@
       "what_was_run": "The previous committed guard and the previous committed coverage record, both restored from the earlier commit so the comparison is not confounded by the schema change, then the same two records corrupted.",
       "widened_guard_on_the_same_corruption": "2 failed"
     },
-    "why_figures_here_are_written_as_text": "Mutation 2 moves a fraction that test_open3d.py quotes. Recording the before and after as numbers would put that figure in a second record, making it ambiguous and so silently removing the binding this record exists to document. The harness recomputes both values on every run."
+    "why_figures_here_are_written_as_text": "Mutation 2 moves a fraction that test_open3d.py quotes. Recording the before and after as numbers would put that figure in a second record, making it ambiguous and so silently removing the binding this record exists to document. The harness recomputes both values on every run.",
+    "why_there_is_no_count_field": "There was one, and it said 9 against the 13 results beside it. Nothing read it -- the guard binds len(results) -- so it drifted, which is the exact defect this record exists to catch, sitting inside the record. A reviewer found it. Deleted rather than given a second reader: len(results) is already authoritative and already bound, and a field whose only job is to restate a length it cannot see is the thing this pull request argues against."
   },
   "two_things_found_while_measuring": {
     "a_duplicated_record": {
@@ -184,8 +184,8 @@
   "verification": {
     "existing_open3d_suites_rerun": "test_open3d.py and test_open3d_lineage.py unchanged and passing",
     "guard_imports_no_product_code": "deliberate. It reads files by path from a root derived from __file__, so it cannot resolve to another worktree's copy of the package the way an imported threshold did in #1004.",
-    "guard_tests": "9 passed",
-    "lint": "ruff check and ruff format clean"
+    "lint": "ruff check and ruff format clean",
+    "why_there_is_no_test_count": "There was one, and it said '9 passed' against 12 tests collected. A test count is reproducible on demand and goes stale every time a test is added, so it is recorded nowhere now. The suites above are named instead, which is the part a reader cannot regenerate."
   },
   "what_a_believable_edit_actually_resists": {
     "a_migration_this_sweep_found_and_the_fix": {
@@ -230,5 +230,6 @@
     "why_it_is_not_closed_with_a_digest_manifest": "A manifest over all 42 would detect every change including every legitimate regeneration, so it reports edits rather than errors. It is the right instrument if review wants acknowledge-on-change, and it is a different decision from this one.",
     "why_these_two_and_not_others": "Neither contains a single number. live-runtime-attempt.json and viewer-ui/ordinary-native-capture-status.json are entirely prose and booleans, so there is no quantity for a range or sign rule to hold and no figure for code or prose to quote. That is a floor, not an oversight: the only instruments left for them are a byte digest or a schema the catalogue does not share."
   },
-  "what_this_records": "The Open3D evidence catalogue had no reader. 41 committed records, and no test, script or workflow opened one of them. This records the guard added in answer, what it covers, what it does not, and the mutations proving it fails when a record is wrong."
+  "what_this_records": "The Open3D evidence catalogue had no reader. 41 committed records, and no test, script or workflow opened one of them. This records the guard added in answer, what it covers, what it does not, and the mutations proving it fails when a record is wrong.",
+  "why_the_coverage_figures_moved_by_one": "Deleting the stale `count` field removed one integer from the swept population, so the record's own coverage figures moved with it: 40 records to 39, 1093 values to 1092, and the `count` invariant from 143 to 142. These are published and bound, so the guard failed until they were updated -- which is the behaviour the two deleted fields did not have."
 }
