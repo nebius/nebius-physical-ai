@@ -5,16 +5,21 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
+import random
 import shutil
 import subprocess
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
 
-from npa.workbench.seedvr2 import artifacts, conditioning, runtime
+from npa.sdk.workbench import seedvr2 as seedvr2_sdk
+from npa.workbench.cosmos_evaluator.upstream import CosmosEvaluatorError
+from npa.workbench.seedvr2 import artifacts, conditioning, quality, runtime
 from npa.workbench.seedvr2.service import create_app
 from npa.workbench.seedvr2.schemas import (
     MODEL_REVISION,
+    QUALITY_BOUNDARY_SCHEMA,
     RESULT_SCHEMA,
     SOURCE_REVISION,
     RestoreRequest,
@@ -409,6 +414,400 @@ def test_verify_and_review_recompute_identity_and_make_nonblended_media(
         assert "s3://example-bucket/run/review/" + name in storage.objects
 
 
+def test_quality_boundary_binds_exact_media_and_stays_review_only(
+    tmp_path: Path,
+    source_video: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    result, storage = _restore(tmp_path, source_video, monkeypatch)
+    output_uri = "s3://example-bucket/run/quality-boundary.json"
+
+    boundary = quality.assess(
+        VideoArtifactRequest(
+            input_path=result["artifacts"]["result"],
+            output_path=output_uri,
+            run_id=result["run_id"],
+        ),
+        storage_factory=lambda: storage,
+    )
+
+    assert boundary["schema"] == QUALITY_BOUNDARY_SCHEMA
+    assert boundary["status"] == "review_only"
+    assert boundary["quality_qualified"] is False
+    assert boundary["sensor_truth_qualified"] is False
+    assert boundary["downstream_use"] == "review_only"
+    assert boundary["source"]["sha256"] == result["input"]["sha256"]
+    assert boundary["candidate"]["sha256"] == result["output"]["sha256"]
+    assert boundary["candidate"]["derived_sensor_truth"] is False
+    assert boundary["timing_evidence"] == {
+        "fully_decoded": True,
+        "source_frames": 3,
+        "candidate_frames": 3,
+        "frame_counts_match": True,
+        "frame_rates_match": True,
+    }
+    assert boundary["diagnostics"]["temporal_consistency"]["enforcement"] == "advisory"
+    assert boundary["diagnostics"]["motion_hallucination"]["enforcement"] == "advisory"
+    assert boundary["diagnostics"]["temporal_consistency"]["configuration"][
+        "threshold"
+    ] == pytest.approx(0.8)
+    assert boundary["diagnostics"]["motion_hallucination"]["configuration"] == {
+        "threshold": 0.682,
+        "grad_thresh": 10.0,
+        "blur_ksize": 7,
+        "morph_k": 3,
+        "dist_tol_px": 7.0,
+        "prefer_upstream": False,
+    }
+    assert json.loads(storage.objects[output_uri]) == boundary
+
+
+def test_temporal_validator_allows_bounded_float32_region_reduction_error(
+    tmp_path: Path,
+) -> None:
+    width, height, frames = 320, 240, 3
+    raw_frames = random.Random(1).randbytes(width * height * 3 * frames)
+    video = tmp_path / "random-noise.mp4"
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-v",
+            "error",
+            "-nostdin",
+            "-f",
+            "rawvideo",
+            "-pixel_format",
+            "rgb24",
+            "-video_size",
+            f"{width}x{height}",
+            "-framerate",
+            "3",
+            "-i",
+            "pipe:0",
+            "-frames:v",
+            str(frames),
+            "-c:v",
+            "libx264",
+            "-crf",
+            "0",
+            "-pix_fmt",
+            "yuv444p",
+            str(video),
+        ],
+        input=raw_frames,
+        check=True,
+    )
+    payload = json.loads(
+        json.dumps(
+            quality.check_temporal_consistency(
+                clip_id="float32-reduction",
+                original_video=video,
+                augmented_video=video,
+                threshold=quality.TEMPORAL_THRESHOLD,
+                regions=quality._temporal_region_configuration(),
+                noise_floor=quality.TEMPORAL_NOISE_FLOOR,
+                blur_ksize=quality.TEMPORAL_BLUR_KSIZE,
+            ).to_dict()
+        )
+    )
+    differences = [
+        abs(
+            payload["regions"][0][field]
+            - sum(region[field] for region in payload["regions"][1:]) / 4.0
+        )
+        for field in (
+            "source_mean_acceleration",
+            "augmented_mean_acceleration",
+            "residual_mean_acceleration",
+        )
+    ]
+    assert max(differences) > 1e-6
+
+    quality._validate_temporal_diagnostic(
+        payload,
+        run_id="float32-reduction",
+        frame_count=frames,
+        frame_width=width,
+        frame_height=height,
+    )
+
+
+def test_failing_advisory_diagnostics_never_become_quality_acceptance(
+    tmp_path: Path,
+    source_video: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    result, storage = _restore(tmp_path, source_video, monkeypatch)
+    temporal = quality.check_temporal_consistency(
+        clip_id=result["run_id"],
+        original_video=source_video,
+        augmented_video=source_video,
+    ).to_dict()
+    temporal.update(passed=False, score=0.1)
+    for region in temporal["regions"]:
+        region.update(
+            source_mean_acceleration=2.0,
+            augmented_mean_acceleration=2.0,
+            passed=False,
+            residual_mean_acceleration=2.5,
+            acceleration_ratio=1.0,
+            score=0.1,
+        )
+    motion = quality.check_hallucination(
+        clip_id=result["run_id"],
+        original_video=source_video,
+        augmented_video=source_video,
+        prefer_upstream=False,
+    ).to_dict()
+    motion.update(
+        passed=False,
+        score=0.0,
+        total_hallucinated_dynamic_pixels=1,
+        total_augmented_dynamic_pixels=1,
+    )
+    monkeypatch.setattr(
+        quality,
+        "check_temporal_consistency",
+        lambda **kwargs: SimpleNamespace(to_dict=lambda: temporal),
+    )
+    monkeypatch.setattr(
+        quality,
+        "check_hallucination",
+        lambda **kwargs: SimpleNamespace(to_dict=lambda: motion),
+    )
+
+    boundary = quality.assess(
+        VideoArtifactRequest(
+            input_path=result["artifacts"]["result"],
+            output_path="s3://example-bucket/run/failed-diagnostics.json",
+            run_id=result["run_id"],
+        ),
+        storage_factory=lambda: storage,
+    )
+
+    assert boundary["status"] == "review_only"
+    assert boundary["quality_qualified"] is False
+    assert boundary["diagnostics"]["temporal_consistency"]["result"]["passed"] is False
+    assert boundary["diagnostics"]["motion_hallucination"]["result"]["passed"] is False
+
+
+def test_quality_boundary_fails_closed_before_diagnostics_on_incomplete_timing(
+    tmp_path: Path,
+    source_video: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    result, storage = _restore(tmp_path, source_video, monkeypatch)
+    output_uri = "s3://example-bucket/run/incomplete-quality-boundary.json"
+    decoded = iter(
+        [["source-0", "source-1", "source-2"], ["candidate-0", "candidate-1"]]
+    )
+    monkeypatch.setattr(quality, "_decoded_frame_hashes", lambda path: next(decoded))
+    monkeypatch.setattr(
+        quality,
+        "check_temporal_consistency",
+        lambda **kwargs: pytest.fail("diagnostics must not run on incomplete evidence"),
+    )
+    monkeypatch.setattr(
+        quality,
+        "check_hallucination",
+        lambda **kwargs: pytest.fail("diagnostics must not run on incomplete evidence"),
+    )
+
+    with pytest.raises(runtime.SeedVR2Error, match="timing evidence is incomplete"):
+        quality.assess(
+            VideoArtifactRequest(
+                input_path=result["artifacts"]["result"],
+                output_path=output_uri,
+                run_id=result["run_id"],
+            ),
+            storage_factory=lambda: storage,
+        )
+    assert output_uri not in storage.objects
+
+
+def test_quality_boundary_fails_closed_when_a_diagnostic_is_incomplete(
+    tmp_path: Path,
+    source_video: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    result, storage = _restore(tmp_path, source_video, monkeypatch)
+    output_uri = "s3://example-bucket/run/incomplete-diagnostic.json"
+
+    def fail_temporal(**kwargs):
+        raise CosmosEvaluatorError("decode stopped")
+
+    monkeypatch.setattr(quality, "check_temporal_consistency", fail_temporal)
+
+    with pytest.raises(runtime.SeedVR2Error, match="complete evidence"):
+        quality.assess(
+            VideoArtifactRequest(
+                input_path=result["artifacts"]["result"],
+                output_path=output_uri,
+                run_id=result["run_id"],
+            ),
+            storage_factory=lambda: storage,
+        )
+    assert output_uri not in storage.objects
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "temporal-missing-field",
+        "temporal-wrong-engine",
+        "temporal-frame-mismatch",
+        "temporal-nonfinite-score",
+        "temporal-verdict-contradiction",
+        "temporal-score-contradiction",
+        "temporal-ratio-contradiction",
+        "temporal-upper-triangle-contradiction",
+        "temporal-physical-range-contradiction",
+        "temporal-cross-region-contradiction",
+        "temporal-overprecision",
+        "temporal-wrong-blur-type",
+        "motion-wrong-threshold",
+        "motion-frame-mismatch",
+        "motion-inconsistent-counts",
+        "motion-impossible-pixel-count",
+        "motion-wrong-score-type",
+    ],
+)
+def test_quality_boundary_rejects_semantically_incomplete_diagnostics(
+    tmp_path: Path,
+    source_video: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    case: str,
+) -> None:
+    result, storage = _restore(tmp_path, source_video, monkeypatch)
+    temporal = quality.check_temporal_consistency(
+        clip_id=result["run_id"],
+        original_video=source_video,
+        augmented_video=source_video,
+    ).to_dict()
+    motion = quality.check_hallucination(
+        clip_id=result["run_id"],
+        original_video=source_video,
+        augmented_video=source_video,
+        prefer_upstream=False,
+    ).to_dict()
+    if case == "temporal-missing-field":
+        temporal.pop("engine")
+    elif case == "temporal-wrong-engine":
+        temporal["engine"] = "unreviewed-engine"
+    elif case == "temporal-frame-mismatch":
+        temporal["frame_counts_match"] = False
+    elif case == "temporal-nonfinite-score":
+        temporal["score"] = float("nan")
+    elif case == "temporal-verdict-contradiction":
+        temporal["regions"][0].update(
+            passed=True,
+            residual_mean_acceleration=2.5,
+            score=0.1,
+        )
+        temporal.update(passed=True, score=0.1)
+    elif case == "temporal-score-contradiction":
+        temporal["regions"][0].update(passed=False, score=0.1)
+        temporal.update(passed=False, score=0.1)
+    elif case == "temporal-ratio-contradiction":
+        temporal["regions"][0]["acceleration_ratio"] += 1.0
+    elif case == "temporal-upper-triangle-contradiction":
+        temporal["regions"][0].update(
+            source_mean_acceleration=0.0,
+            augmented_mean_acceleration=0.0,
+            passed=False,
+            residual_mean_acceleration=2.5,
+            acceleration_ratio=0.0,
+            score=0.1,
+        )
+        temporal.update(passed=False, score=0.1)
+    elif case == "temporal-physical-range-contradiction":
+        temporal["regions"][0].update(
+            source_mean_acceleration=1_000_000.0,
+            augmented_mean_acceleration=1_000_000.0,
+            acceleration_ratio=1.0,
+        )
+    elif case == "temporal-cross-region-contradiction":
+        temporal["regions"][0].update(
+            source_mean_acceleration=510.0,
+            augmented_mean_acceleration=510.0,
+            residual_mean_acceleration=0.0,
+            acceleration_ratio=1.0,
+            score=1.0,
+            passed=True,
+        )
+        for region in temporal["regions"][1:]:
+            region.update(
+                source_mean_acceleration=0.0,
+                augmented_mean_acceleration=0.0,
+                residual_mean_acceleration=0.0,
+                acceleration_ratio=0.0,
+                score=1.0,
+                passed=True,
+            )
+        temporal.update(score=1.0, passed=True)
+    elif case == "temporal-overprecision":
+        temporal["regions"][0]["acceleration_ratio"] += 0.0000001
+    elif case == "temporal-wrong-blur-type":
+        temporal["blur_ksize"] = 7.0
+    elif case == "motion-wrong-threshold":
+        motion["threshold"] = 0.8
+    elif case == "motion-frame-mismatch":
+        motion["total_frames"] = 2
+    elif case == "motion-inconsistent-counts":
+        motion["total_hallucinated_dynamic_pixels"] = 1
+        motion["total_augmented_dynamic_pixels"] = 0
+    elif case == "motion-impossible-pixel-count":
+        motion["total_augmented_dynamic_pixels"] = 1_000_000_000
+    elif case == "motion-wrong-score-type":
+        motion["score"] = 1
+    monkeypatch.setattr(
+        quality,
+        "check_temporal_consistency",
+        lambda **kwargs: SimpleNamespace(to_dict=lambda: temporal),
+    )
+    monkeypatch.setattr(
+        quality,
+        "check_hallucination",
+        lambda **kwargs: SimpleNamespace(to_dict=lambda: motion),
+    )
+    output_uri = f"s3://example-bucket/run/{case}.json"
+
+    with pytest.raises(runtime.SeedVR2Error, match="diagnostic evidence"):
+        quality.assess(
+            VideoArtifactRequest(
+                input_path=result["artifacts"]["result"],
+                output_path=output_uri,
+                run_id=result["run_id"],
+            ),
+            storage_factory=lambda: storage,
+        )
+
+    assert output_uri not in storage.objects
+
+
+def test_sdk_quality_boundary_uses_the_shared_operation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen = []
+    monkeypatch.setattr(
+        quality,
+        "assess",
+        lambda request: (
+            seen.append(request) or {"status": "review_only", "run_id": request.run_id}
+        ),
+    )
+
+    document = seedvr2_sdk.quality_boundary(
+        input_path="s3://example-bucket/run/result.json",
+        output_path="s3://example-bucket/run/quality-boundary.json",
+        run_id="sdk-quality",
+    )
+
+    assert document == {"status": "review_only", "run_id": "sdk-quality"}
+    assert len(seen) == 1
+    assert seen[0].input_path.endswith("/result.json")
+
+
 @pytest.mark.parametrize(
     ("height", "width"),
     [(479, 640), (480, 639)],
@@ -435,12 +834,14 @@ def test_dimensions_must_fit_the_reviewed_h100_pixel_budget() -> None:
         )
 
 
-def test_single_frame_is_rejected_before_gpu_or_model_work_and_publication(
+@pytest.mark.parametrize("frame_count", [1, 2])
+def test_short_clip_is_rejected_before_gpu_or_model_work_and_publication(
     tmp_path: Path,
     source_video: Path,
     monkeypatch: pytest.MonkeyPatch,
+    frame_count: int,
 ) -> None:
-    single_frame = tmp_path / "single-frame.mp4"
+    short_clip = tmp_path / f"{frame_count}-frame.mp4"
     subprocess.run(
         [
             "ffmpeg",
@@ -450,20 +851,20 @@ def test_single_frame_is_rejected_before_gpu_or_model_work_and_publication(
             "-i",
             str(source_video),
             "-frames:v",
-            "1",
+            str(frame_count),
             "-c:v",
             "copy",
-            str(single_frame),
+            str(short_clip),
         ],
         check=True,
     )
-    storage = FakeStorage({INPUT_URI: single_frame.read_bytes()})
+    storage = FakeStorage({INPUT_URI: short_clip.read_bytes()})
     monkeypatch.setenv("NPA_SEEDVR2_WORK_DIR", str(tmp_path / "runs"))
-    error = "at least two decodable frames"
+    error = "at least three decodable frames"
     with pytest.raises(runtime.SeedVR2Error, match=error):
         artifacts.probe(
             VideoArtifactRequest(
-                input_path=INPUT_URI, output_path=PROBE_URI, run_id="single-frame"
+                input_path=INPUT_URI, output_path=PROBE_URI, run_id="short-clip"
             ),
             storage_factory=lambda: storage,
         )
@@ -473,7 +874,7 @@ def test_single_frame_is_rejected_before_gpu_or_model_work_and_publication(
                 input_path=INPUT_URI,
                 output_path=OUTPUT_PREFIX,
                 probe_path=PROBE_URI,
-                run_id="single-frame",
+                run_id="short-clip",
                 output_height=16,
                 output_width=32,
             ),
@@ -486,7 +887,7 @@ def test_single_frame_is_rejected_before_gpu_or_model_work_and_publication(
                 "inference must not run"
             ),
         )
-    assert storage.objects == {INPUT_URI: single_frame.read_bytes()}
+    assert storage.objects == {INPUT_URI: short_clip.read_bytes()}
     assert list((tmp_path / "runs").glob("*/failure.json"))
     assert runtime._probe_video(source_video)["frames"] == 3
 
@@ -918,3 +1319,38 @@ def test_service_requires_auth_and_enforces_request_s3_roots(monkeypatch) -> Non
     response = client.post("/restore", json=body, headers=headers)
     assert response.status_code == 400
     assert "outside the configured" in response.json()["detail"]
+
+
+def test_service_exposes_the_shared_quality_boundary_operation(monkeypatch) -> None:
+    seen = []
+    monkeypatch.setattr(
+        quality,
+        "assess",
+        lambda request: (
+            seen.append(request) or {"status": "review_only", "run_id": request.run_id}
+        ),
+    )
+    client = TestClient(
+        create_app(
+            token="secret",
+            allowed_s3_roots=["s3://allowed/run"],
+        )
+    )
+    body = {
+        "input_path": "s3://allowed/run/result.json",
+        "output_path": "s3://allowed/run/quality-boundary.json",
+        "run_id": "service-quality",
+    }
+
+    response = client.post(
+        "/quality-boundary",
+        json=body,
+        headers={"Authorization": "Bearer secret"},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "status": "review_only",
+        "run_id": "service-quality",
+    }
+    assert len(seen) == 1

@@ -1414,6 +1414,25 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{run.id}}",
         ],
     ),
+    "workbench.seedvr2.quality_boundary": ToolEntry(
+        name="workbench.seedvr2.quality_boundary",
+        description=(
+            "Publish advisory source-relative diagnostics and an explicit "
+            "review-only, not-quality-qualified SeedVR2 boundary."
+        ),
+        argv_template=[
+            "npa",
+            "workbench",
+            "seedvr2",
+            "quality-boundary",
+            "--input-path",
+            "{{config.seedvr2_result_uri}}",
+            "--output-path",
+            "{{config.seedvr2_quality_boundary_uri}}",
+            "--run-id",
+            "{{run.id}}",
+        ],
+    ),
     "workbench.open3d.stage_demo": ToolEntry(
         name="workbench.open3d.stage_demo",
         description=(

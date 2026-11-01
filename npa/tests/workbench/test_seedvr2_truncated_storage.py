@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 import pytest
 
 from npa.clients.storage import StorageClient
-from npa.workbench.seedvr2 import artifacts, runtime
+from npa.workbench.seedvr2 import artifacts, quality, runtime
 from npa.workbench.seedvr2.service import create_app
 
 
@@ -49,7 +49,17 @@ def _absence_operation(provider, failures):
     return check
 
 
-@pytest.mark.parametrize("verb", ["probe", "restore", "verify", "review"])
+def _module_operation(verb):
+    if verb == "restore":
+        return runtime, "restore"
+    if verb == "quality-boundary":
+        return quality, "assess"
+    return artifacts, verb
+
+
+@pytest.mark.parametrize(
+    "verb", ["probe", "restore", "verify", "review", "quality-boundary"]
+)
 @pytest.mark.parametrize(
     "response_kind, expected_status",
     [("truncated", 503), ("complete", 400), ("missing-etag", 400), ("absent", 200)],
@@ -59,8 +69,8 @@ def test_streaming_body_classification_closes_body_and_releases_http_lock(
 ):
     provider = _StreamingObjectProvider(response_kind)
     failures = []
-    module = runtime if verb == "restore" else artifacts
-    monkeypatch.setattr(module, verb, _absence_operation(provider, failures))
+    module, operation = _module_operation(verb)
+    monkeypatch.setattr(module, operation, _absence_operation(provider, failures))
     app = create_app(token="fixture-token", allowed_s3_roots=["s3://example-bucket/"])
     headers = {"Authorization": "Bearer fixture-token"}
     payload = {
@@ -75,7 +85,9 @@ def test_streaming_body_classification_closes_body_and_releases_http_lock(
         assert provider.reads == 1
         if response_kind != "absent":
             assert provider.raw_stream.closed
-        monkeypatch.setattr(module, verb, lambda request: {"status": "next-control"})
+        monkeypatch.setattr(
+            module, operation, lambda request: {"status": "next-control"}
+        )
         assert client.post(f"/{verb}", headers=headers, json=payload).status_code == 200
     assert response.status_code == expected_status
     if response_kind == "truncated":

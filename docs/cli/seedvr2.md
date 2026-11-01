@@ -14,6 +14,7 @@ probe  Decode the exact input video and publish a verified media manifest.
 restore  Run pinned one-step SeedVR2-3B and publish immutable artifacts.
 verify  Re-download and independently verify a delivered SeedVR2 result.
 review  Build a non-blended bicubic-baseline versus SeedVR2 review package.
+quality-boundary  Publish advisory diagnostics and a fail-closed review-only boundary.
 status  Report local batch-stage readiness without claiming model-cache state.
 system-info  Report immutable source, model, and payload identities.
 list  List the real video-restoration and evidence operations.
@@ -33,6 +34,7 @@ list  List the real video-restoration and evidence operations.
 | `restore` | Run pinned one-step SeedVR2-3B and publish immutable artifacts. |
 | `verify` | Re-download and independently verify a delivered SeedVR2 result. |
 | `review` | Build a non-blended bicubic-baseline versus SeedVR2 review package. |
+| `quality-boundary` | Publish advisory diagnostics and a fail-closed review-only boundary. |
 | `status` | Report local batch-stage readiness without claiming model-cache state. |
 | `system-info` | Report immutable source, model, and payload identities. |
 | `list` | List the real video-restoration and evidence operations. |
