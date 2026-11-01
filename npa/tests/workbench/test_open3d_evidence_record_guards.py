@@ -638,3 +638,86 @@ def test_the_unguarded_remainder_is_named_and_not_just_counted() -> None:
         published["which_ones"],
         remainder,
     )
+
+
+SWEEP = REPO / "docs/evidence/open3d/harness/believable_edit_sweep.py"
+
+
+def load_sweep():
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("believable_edit_sweep", SWEEP)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_the_sweep_refuses_to_read_a_run_that_never_happened(tmp_path: Path) -> None:
+    """Zero passed is not zero failed, in the file that did not know it.
+
+    `run_guards` searched for "N failed" and returned 0 when it was absent, so a clean
+    run and a run that never started produced the same value. A reviewer's first
+    attempt at this sweep reported 0 caught and 40 unnoticed in both modes -- which
+    reads as a devastating result about every guard in this file, and was a broken
+    interpreter on their side. The pre-flight consumes the same value, so it would
+    also have gone on to edit 42 records on a false premise.
+
+    The two mutation harnesses in the same directory already require a populated pass
+    count. This file was the outlier.
+    """
+    sweep = load_sweep()
+    no_pytest = tmp_path / "python"
+    no_pytest.write_text("#!/bin/sh\necho 'No module named pytest' >&2\nexit 4\n")
+    no_pytest.chmod(0o755)
+    sweep.PYTHON = no_pytest
+
+    with pytest.raises(RuntimeError) as raised:
+        sweep.run_guards()
+
+    assert "never happened" in str(raised.value)
+
+
+def test_the_sweep_restores_a_record_when_the_guard_run_raises(tmp_path: Path) -> None:
+    """An interruption must not leave a believable-looking mutation on disk.
+
+    The write, run, restore sequence had no `try`/`finally`, so a failure anywhere in
+    the loop left one record edited. What makes that worth a test rather than a
+    shrug is that in type-respecting mode the residue is legitimate-looking -- counts
+    are still counts and proportions still sit in range -- so it is not something a
+    reader would catch by opening the file.
+    """
+    sweep = load_sweep()
+    record = tmp_path / "capability-record-under-test.json"
+    before = json.dumps({"count": 7, "fraction": 0.25}, indent=2) + "\n"
+    record.write_text(before)
+
+    calls = {"n": 0}
+
+    def exploding_guards() -> int:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return 0  # the pre-flight, which must pass for the loop to be reached
+        raise KeyboardInterrupt("interrupted mid-sweep")
+
+    class OneRecord:
+        @staticmethod
+        def records() -> list[Path]:
+            return [record]
+
+        @staticmethod
+        def record_key(path: Path) -> str:
+            return path.name
+
+        @staticmethod
+        def invariant_for(path: str) -> str | None:
+            return "count" if path.endswith("count") else None
+
+    sweep.run_guards = exploding_guards
+    sweep.load_guards = lambda: OneRecord()
+    sweep.OUT = tmp_path / "out.json"
+
+    with pytest.raises(KeyboardInterrupt):
+        sweep.main()
+
+    assert record.read_text() == before, "the record was left mutated"

@@ -120,6 +120,22 @@ def run_guards() -> int:
         if " passed" in line or " failed" in line
     )
     failed = re.search(r"(\d+) failed", summary)
+    passed = re.search(r"(\d+) passed", summary)
+
+    # Zero passed is not zero failed. This read an absent "N failed" as zero and so
+    # returned the same value whether every guard held or pytest never started. A
+    # reviewer's first run of this sweep reported 0 caught and 40 unnoticed in both
+    # modes -- which reads as a devastating result about these guards and was a broken
+    # interpreter on their side. The pre-flight below consumes the same value, so it
+    # would also have proceeded to edit 42 records on a false premise.
+    #
+    # The two mutation harnesses next to this file already require a populated pass.
+    # This one was the outlier, which is the best argument that it was an oversight.
+    if not passed:
+        raise RuntimeError(
+            "pytest produced no pass count, so this cannot tell a clean run from a run "
+            f"that never happened. Exit {result.returncode}.\n{result.stdout[-2000:]}"
+        )
     return int(failed.group(1)) if failed else 0
 
 
@@ -141,6 +157,7 @@ def main() -> int:
         "modes": {},
     }
 
+    mutated: set[str] = set()
     for mode in ("naive", "type_respecting"):
         caught: list[str] = []
         unnoticed: list[str] = []
@@ -156,9 +173,17 @@ def main() -> int:
             if edited == data:
                 skipped.append(key)
                 continue
+            mutated.add(str(path))
             path.write_text(json.dumps(edited, indent=2, sort_keys=True))
-            failures = run_guards()
-            path.write_text(original)
+            try:
+                failures = run_guards()
+            finally:
+                # Without this, an interruption anywhere in the run leaves a record
+                # mutated on disk -- and in type-respecting mode the leftover values
+                # are legitimate-looking, counts still counts and proportions still in
+                # range, so it is not something a reader would notice. Git recovers it;
+                # the point is that nothing tells you to look.
+                path.write_text(original)
             assert path.read_text() == original, f"{key} not restored"
             (caught if failures else unnoticed).append(key)
             print(f"  [{mode:15}] {'caught ' if failures else 'MISSED '} {key}")
@@ -176,9 +201,39 @@ def main() -> int:
             f"{len(skipped)} without numbers"
         )
 
+    # Say out loud whether anything was left mutated, the way the mutation harness on
+    # this branch already does. `try`/`finally` above restores on the normal paths;
+    # this is what notices when something got past it. A restoration failure that
+    # nobody reports is indistinguishable from a clean run, and in type-respecting
+    # mode the residue reads as legitimate data.
+    #
+    # Scoped to the records this run actually edited rather than to the evidence
+    # directory, so an unrelated edit elsewhere -- including to this file -- is not
+    # reported as an unrestored mutation. The first version said `docs/evidence/open3d`
+    # and duly accused the uncommitted harness source it was being run from.
+    left_modified = (
+        [
+            name
+            for name in subprocess.run(
+                ["git", "diff", "--name-only", "--", *sorted(mutated)],
+                cwd=REPO,
+                capture_output=True,
+                text=True,
+                check=False,
+            ).stdout.splitlines()
+            if name.strip()
+        ]
+        if mutated
+        else []
+    )
+    print(
+        f"\nof {len(mutated)} records edited and restored, "
+        f"left modified: {len(left_modified)} {left_modified}"
+    )
+
     OUT.write_text(json.dumps(report, indent=2, sort_keys=True))
-    print(f"\nwrote {OUT}")
-    return 0
+    print(f"wrote {OUT}")
+    return 1 if left_modified else 0
 
 
 if __name__ == "__main__":
