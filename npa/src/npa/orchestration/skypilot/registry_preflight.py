@@ -1817,6 +1817,8 @@ def _service_account_pull_secrets(
         if metadata["name"] != name or metadata["namespace"] != namespace:
             return None
         references = account.get("imagePullSecrets", [])
+        if references is None:
+            references = []
         if not isinstance(references, list):
             return None
         for reference in references:
