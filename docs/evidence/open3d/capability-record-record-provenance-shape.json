@@ -1,0 +1,115 @@
+{
+  "capability": "Every Open3D capability record says where it came from, in one shape a tool can read and a guard can check",
+  "recorded_utc": "2026-11-01T02:10:00Z",
+  "what_this_closes": {
+    "row": "The fifth row left open when PR 602 merged, raised again by a review lane during PR 982.",
+    "as_found": "A review lane found provenance recorded five different ways across these records. Measured against main it is six: a bare top-level `source_commit` in four records, a `provenance` object with `base_commit`/`candidate_commit` in one, a `provenance` object of per-capture notes in another, a `provenance_boundary` statement in a third, a `producing_source` file list in a fourth, and nothing at all in two. An auditor had to learn each file.",
+    "why_i_declined_to_stack_it_on_982": "It touches ten records and changes nothing about the frames, the gate or the binding. PROGRAM.md says not to stack unrelated changes onto the first PR."
+  },
+  "the_shape": {
+    "required": "A `provenance` object with `source_commit` (a bare hex sha, or null with `why_no_source_commit`) and `main_is_an_ancestor_of_this_commit`.",
+    "why_the_ancestry_flag": "Nine of the ten records name a commit that is not an ancestor of main, and they are right to. The problem was never the values -- it was that a reader could not distinguish a deliberate non-ancestor from a stale or mistyped reference. Stating it turns an ambiguity into a fact.",
+    "why_i_did_not_do_what_was_asked": "The ask was to bind each record to a commit that is an ancestor of the head. That would have meant rewriting nine values to commits the measurements were not taken at, which is falsification, not provenance."
+  },
+  "the_finding_this_turned_up": {
+    "what": "Nine of the ten named commits are on ZERO remote refs. They exist only in the clones that made them, so no other reader can resolve them -- and one, 77bff008fff, is on zero refs of any kind, local included, so it survives only until a garbage collection.",
+    "why_it_matters_more_than_the_key_names": "A uniform key naming an unresolvable commit is tidier and no more auditable. This was not in the original finding and I would not have seen it by standardising key names alone.",
+    "what_each_record_now_also_names": "The commit on main where that work landed, so a reader has something they can resolve.",
+    "how_that_claim_was_checked_rather_than_asserted": "For each stranded commit, a symbol or source line it introduced under npa/ was searched at origin/main and traced with `git log -S`. All seven distinct commits resolve to the same merge.",
+    "the_probes": {
+      "e8e12b12a367f1a1bc7ef7aca7ac68866e8e5e97": {
+        "probe": "validate_distance_bands",
+        "present_at_origin_main": true,
+        "entered_main_at": "15b0b11f0"
+      },
+      "256c26bc915080934814789be6a41bbc253f0d1c": {
+        "probe": "_sprawling_scene",
+        "present_at_origin_main": true,
+        "entered_main_at": "15b0b11f0"
+      },
+      "b18d7aef56bbe25a5b45290e0b705f20a59ad4da": {
+        "probe": "CAMERA_COLUMN_SHARES = (2, 1)",
+        "present_at_origin_main": true,
+        "entered_main_at": "15b0b11f0"
+      },
+      "1441e211400cf7d07c8d832d3ad787ff71d7fad2": {
+        "probe": "CAMERA_WINDOW_ASPECT = 4.0 / 3.0",
+        "present_at_origin_main": true,
+        "entered_main_at": "15b0b11f0"
+      },
+      "77bff008fff489b73ee2d8cd11466a105bf9d630": {
+        "probe": "_assert_support_crop_kept_the_observations",
+        "present_at_origin_main": true,
+        "entered_main_at": "15b0b11f0"
+      },
+      "6e8cd115f1a9834cdc25c868eee1b4879d28e65f": {
+        "probe": "test_a_cloud_only_run_offers_no_empty_surface_tab",
+        "present_at_origin_main": true,
+        "entered_main_at": "15b0b11f0"
+      },
+      "16012b1088579569a8755a1483c4c260c6af3973": {
+        "probe": "_assert_uneven_coverage_is_not_called_fabrication",
+        "present_at_origin_main": true,
+        "entered_main_at": "15b0b11f0"
+      }
+    },
+    "what_the_probes_do_not_show": "That the trees are identical. A probe proves this commit's contribution reached main at that merge, which is strictly weaker and is what the records now say."
+  },
+  "two_commits_were_recovered_not_invented": {
+    "capability-record-viewer-reconciliation.json": "Named no commit. `git log -S` for the regression test it lists finds exactly one: 6e8cd115f, whose message restates this record's capability line and which predates the record's own recorded_at by four minutes.",
+    "capability-record-support-claim-correction.json": "Named no commit. `git log -S FAR_BAND_AREA_SHARE`, the rename it describes, finds exactly one: 16012b108, committed 45 seconds after the record's recorded_utc -- consistent with writing the record and then committing.",
+    "capability-record-view-framing.json": "Named only the two files that produced it, which is a different fact. 256c26bc915 restates its capability line almost verbatim and was committed two seconds before its recorded_at.",
+    "why_this_is_not_guesswork": "Each search returned exactly one commit, and in each case the commit message, the record's capability line and the timestamps agree independently. Where no such evidence existed I would have used a null with a reason rather than a best guess."
+  },
+  "negative_controls_that_fire": [
+    "A record with no `provenance` object: caught, which is the state ten of them were in.",
+    "A `source_commit` carrying prose beside the sha -- the real pre-fix state of capability-record.json: caught as unparseable.",
+    "A commit named without the ancestry flag: caught.",
+    "An ancestry flag that contradicts the repository: caught.",
+    "A commit this clone cannot resolve, claimed as an ancestor: caught, because a clone that has main has every ancestor of main, so absence refutes the claim.",
+    "`generator.repository_commit` drifting from `provenance.source_commit`: caught.",
+    "A null `source_commit` with no stated reason: caught. Declining to name a commit is allowed; declining silently is not."
+  ],
+  "i_mutation_tested_the_guard": {
+    "why": "A review lane previously found a test of mine that passed when the thing it claimed to check was mutated, and mutation testing on the sibling branch found a second such hole yesterday. Asserting coverage is not evidence of it.",
+    "result": "8 of 8 mutations killed, after one survived and was fixed.",
+    "the_one_that_survived": "Disabling the 'commit named without the ancestry flag' branch. The missing key falls through to the comparison and is reported as claiming an ancestry of 'absent' -- which no record claims. The guard still exits 1, so a test asserting the exit code or the key name cannot tell the two apart. I reproduced both messages side by side rather than reasoning about it, then tightened the test to assert which check fired.",
+    "why_that_mattered_beyond_the_test": "The fallthrough message is wrong about what the author did. A guard that misreports the defect it found costs more time than one that stays quiet.",
+    "mutations_killed": [
+      "no-provenance finding removed",
+      "bare-sha check removed",
+      "ancestry-flag requirement removed (after the fix)",
+      "claimed-vs-actual comparison removed",
+      "absence inference removed",
+      "generator agreement check removed",
+      "null-reason requirement removed",
+      "shallow-clone detection disabled"
+    ]
+  },
+  "the_clone_this_was_validated_in_is_shallow": {
+    "what": "This worktree's repository is a shallow clone, so the absence inference -- a clone holding main holds every ancestor of main -- does not hold here and the guard declines to draw it.",
+    "found_how": "A negative control failed. I had written it to drive the inference through the guard's subprocess, and it reported no finding. The guard was right and the test was wrong about its environment.",
+    "consequence_for_the_tests": "The two absence controls now call the function with the git helpers replaced, so they test the inference itself rather than whatever the host happened to fetch. A control that passes or vanishes depending on clone depth looks like coverage and is not.",
+    "consequence_for_the_guard": "The skipped case is printed loudly to stderr and named per record, because the summary counts would otherwise read as though those records' ancestry had been checked."
+  },
+  "what_this_does_not_establish": [
+    "Nothing about whether any record's measurements are right. A correctly flagged commit can still be the wrong commit.",
+    "No product behavior change: no file under npa/src/ is touched.",
+    "Not reachability. The guard reports which commits are on no remote ref and deliberately does not fail on it, because that depends on how CI fetched the repository and a guard that fails on a fetch flag gets deleted.",
+    "Nothing about the three records whose provenance was already in the target shape; two are edited by open PRs and are left alone."
+  ],
+  "a_mistake_i_made_doing_this": "My first run wrote a 40-character sha for the 602 merge that I had produced by padding the abbreviation, rather than resolving it. The script's own assertion caught it on the first record. It is the exact failure this change is about -- a provenance value that looks authoritative and resolves to nothing -- and I made it while fixing it.",
+  "provenance": {
+    "source_commit": null,
+    "why_no_source_commit": "The harness and the ten rewritten records are added by this change, so the record cannot name its own commit -- the hash does not exist until after the record is written. The guard accepts a null with a reason for exactly this case, and the file digest below is what a reader can recompute now.",
+    "built_on_main": "d06e958462865af823b4f1479867df52421c8284",
+    "main_is_an_ancestor_of_this_commit": null,
+    "harness_that_checks_this": [
+      {
+        "path": "harness/audit_record_provenance.py",
+        "sha256": "4ee0a79ac4cf6f36c8433294406422b21eb68be5fdaa79b9854721962776bfda"
+      }
+    ],
+    "why_this_shape": "A review lane found provenance recorded six different ways across these records, so an auditor had to learn each file. This is the one shape. A record about provenance that carried none would have been the defect it complains about."
+  }
+}

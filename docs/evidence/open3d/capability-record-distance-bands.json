@@ -1,7 +1,6 @@
 {
   "capability": "open3d.reconstruct distinguishes an extrapolated Poisson shell from discretization",
   "why": "The complete-capture control on this branch found that support_distance_factor=1.0 can discard correct geometry while every published number looks healthy, and that the coverage guard cannot see it. That was recorded as prose. This measures the gap across scenes and gives the report the one number that does separate the cases.",
-  "source_commit": "e8e12b12a",
   "image": "npa-open3d:bands2 (built from this branch, --build-arg NPA_SOURCE_SHA=bbadf70f987cd8d9f06298a9bf40a00bf6635d2f for the first build; rebuilt for the smoke assertions)",
   "hardware": "CPU only. Open3D's registration and Poisson APIs have no CUDA path, so there is no GPU claim here and none is possible.",
   "what_was_added": {
@@ -348,5 +347,13 @@
     },
     "agreement": "two independent implementations within about 0.01",
     "note": "They had labelled their own reconciliation sweep inconclusive; it matches. The operator guidance falling out of it -- choose --voxel-size at or above twice the median sample spacing -- is in the skill and beside the constant."
+  },
+  "provenance": {
+    "source_commit": "e8e12b12a367f1a1bc7ef7aca7ac68866e8e5e97",
+    "main_is_an_ancestor_of_this_commit": false,
+    "this_commit_is_on_no_remote_ref": "PR 602 was squashed when it merged, so this commit never became an ancestor of main and is on no remote ref -- it exists only in the clones that made it, and another reader cannot resolve it. 15b0b11f0 is where its work reached main: a symbol or source line this commit introduced is present at main and `git log -S` traces it to that merge. That is a check on this commit's contribution reaching main, not a claim that the two trees are identical. The per-commit probes are in capability-record-record-provenance-shape.json.",
+    "commit_on_main_carrying_this_source": "15b0b11f0bc137631954ac87076f44753c513976",
+    "why_this_shape": "A review lane found provenance recorded six different ways across these records, so an auditor had to learn each file. This is the one shape: the commit the record attests to, whether main is an ancestor of it, and -- where the answer is no -- why that is deliberate and what a reader can resolve instead. harness/audit_record_provenance.py checks the ancestry claim against the repository rather than trusting it.",
+    "this_key_replaced": "A top-level `source_commit` holding 'e8e12b12a'. Moved rather than dropped."
   }
 }
