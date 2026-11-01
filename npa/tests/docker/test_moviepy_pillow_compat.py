@@ -1,6 +1,10 @@
 """Keep the Pillow compatibility repair bound to reviewed release bytes."""
 
+import base64
+import csv
+import hashlib
 import importlib.util
+import io
 import os
 from pathlib import Path
 import subprocess
@@ -26,6 +30,17 @@ def test_unknown_metadata_is_rejected(compat):
         compat.patched_metadata(b"Requires-Dist: pillow<12.0,>=9.2.0\n")
 
 
+def test_published_and_patched_metadata_hashes_are_exact(compat):
+    assert (
+        compat.ORIGINAL_SHA256
+        == "ba08814030a33c196589cb232d87518b2be874b342e8e5f6dfefb464e52e5569"
+    )
+    assert (
+        compat.PATCHED_SHA256
+        == "40bc8558f5dba3d3c3d31831b8f32253e1b9ad74527ced0242130c201a2e2595"
+    )
+
+
 def test_unknown_moviepy_version_is_rejected(compat, monkeypatch):
     monkeypatch.setattr(
         compat.metadata, "distribution", lambda _: SimpleNamespace(version="2.2.2")
@@ -34,16 +49,50 @@ def test_unknown_moviepy_version_is_rejected(compat, monkeypatch):
         compat.main()
 
 
-@pytest.mark.parametrize("pillow_version", ["11.3.0", "12.2.0", "13.0.0"])
-def test_unpatched_or_unreviewed_pillow_version_is_rejected(
-    compat, monkeypatch, pillow_version
-):
+@pytest.mark.parametrize("pillow_version", ["11.3.0", "12.3.0", "13.0.1", "14.0.0"])
+def test_unqualified_pillow_version_is_rejected(compat, monkeypatch, pillow_version):
     monkeypatch.setattr(
         compat.metadata, "distribution", lambda _: SimpleNamespace(version="2.2.1")
     )
     monkeypatch.setattr(compat.metadata, "version", lambda _: pillow_version)
-    with pytest.raises(RuntimeError, match="requires patched Pillow"):
+    with pytest.raises(RuntimeError, match="requires Pillow 13.0.0"):
         compat.main()
+
+
+def test_exact_pillow13_rebinds_metadata_record(compat, monkeypatch, tmp_path):
+    original = (
+        b"Metadata-Version: 2.4\n"
+        b"Name: moviepy\n"
+        b"Version: 2.2.1\n"
+        b"Requires-Dist: pillow<12.0,>=9.2.0\n"
+    )
+    patched = original.replace(
+        b"Requires-Dist: pillow<12.0,>=9.2.0",
+        b"Requires-Dist: pillow==13.0.0",
+    )
+    monkeypatch.setattr(compat, "ORIGINAL_SHA256", hashlib.sha256(original).hexdigest())
+    monkeypatch.setattr(compat, "PATCHED_SHA256", hashlib.sha256(patched).hexdigest())
+    relative = "moviepy-2.2.1.dist-info/METADATA"
+    target = tmp_path / relative
+    target.parent.mkdir()
+    target.write_bytes(original)
+    record = target.parent / "RECORD"
+    record.write_text(f"{relative},sha256=old,{len(original)}\n")
+    distribution = SimpleNamespace(
+        version="2.2.1",
+        locate_file=lambda _: tmp_path,
+    )
+    monkeypatch.setattr(compat.metadata, "distribution", lambda _: distribution)
+    monkeypatch.setattr(compat.metadata, "version", lambda _: "13.0.0")
+
+    compat.main()
+
+    assert target.read_bytes() == patched
+    rows = list(csv.reader(io.StringIO(record.read_text())))
+    expected_digest = (
+        base64.urlsafe_b64encode(hashlib.sha256(patched).digest()).rstrip(b"=").decode()
+    )
+    assert rows == [[relative, f"sha256={expected_digest}", str(len(patched))]]
 
 
 @pytest.mark.parametrize("closure", ["isaac", "leisaac", "unreviewed-moviepy"])

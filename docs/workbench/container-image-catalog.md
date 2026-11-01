@@ -146,12 +146,12 @@ closures, uses the verified upstream NLTK sandbox fix for Cosmos Transfer, and
 updates Wan's Accelerate and Transformers dependencies. Isaac's constrained
 Setuptools 81 receives the same hash-bound Unicode manifest backport used by
 Cosmos3 serving. MoviePy 2.2.1 retains its released code while its exact,
-hash-checked metadata adopts upstream Pillow 12 compatibility and requires the
-actual patched Pillow 12.3 installation. Wan's dependency union, real MoviePy
-resize/MP4 encode/decode, NLTK sandbox, and source-distribution regression checks
-pass. Isaac's vendor version constraints still need reconciliation and GPU
-qualification. These source repairs require fresh image builds and complete
-artifact scans; they do not repair existing release digests.
+hash-checked metadata is rebound only to security-fixed Pillow 13.0.0 after the
+complete upstream suite passes on those exact versions. Wan's dependency union,
+real MoviePy resize/MP4 encode/decode, NLTK sandbox, and source-distribution
+regression checks pass. Isaac's vendor version constraints still need
+reconciliation and GPU qualification. These source repairs require fresh image
+builds and complete artifact scans; they do not repair existing release digests.
 
 The subsequent [checkpoint-loader source repair](../../npa/docker/workbench/common/README.md)
 rejects malicious shard paths and named pipes in the exact Accelerate 1.12–1.15

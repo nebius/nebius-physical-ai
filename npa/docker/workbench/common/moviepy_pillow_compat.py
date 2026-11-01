@@ -1,9 +1,10 @@
-"""Apply MoviePy's upstream Pillow compatibility bound to exact 2.2.1 metadata.
+"""Bind MoviePy 2.2.1 metadata to the exact qualified Pillow 13 release.
 
-Upstream 211e4b15f6ce4f34a6a9efbfff40590e43a68f77 removes the Pillow<12
-bound. Keep the released 2.2.1 code, require the actual patched Pillow>=12.3
-bytes, and bound compatibility below Pillow 13. Versions and licenses stay
-unchanged; this is not a vulnerability-version override.
+MoviePy's released metadata caps Pillow below 12 even though its unchanged
+2.2.1 source passes the complete upstream suite against Pillow 13.0.0. Keep
+those released code bytes, require exactly the security-fixed Pillow 13.0.0
+closure, and update only the installed metadata and RECORD. Versions and
+licenses stay unchanged; this is not a vulnerability-version override.
 """
 
 import base64
@@ -17,7 +18,7 @@ from packaging.version import Version
 
 
 ORIGINAL_SHA256 = "ba08814030a33c196589cb232d87518b2be874b342e8e5f6dfefb464e52e5569"
-PATCHED_SHA256 = "9a8630797c4a2686ff5d4d0109d57a03c05d073a4d6258be9535841f6df5cd16"
+PATCHED_SHA256 = "40bc8558f5dba3d3c3d31831b8f32253e1b9ad74527ced0242130c201a2e2595"
 
 
 def patched_metadata(source: bytes) -> bytes:
@@ -29,7 +30,7 @@ def patched_metadata(source: bytes) -> bytes:
         raise RuntimeError("MoviePy metadata differs from reviewed 2.2.1 bytes")
     result = source.replace(
         b"Requires-Dist: pillow<12.0,>=9.2.0",
-        b"Requires-Dist: pillow<13.0,>=12.3.0",
+        b"Requires-Dist: pillow==13.0.0",
     )
     if hashlib.sha256(result).hexdigest() != PATCHED_SHA256:
         raise RuntimeError("MoviePy compatibility patch checksum mismatch")
@@ -41,10 +42,8 @@ def main() -> None:
     distribution = metadata.distribution("moviepy")
     if distribution.version != "2.2.1":
         raise RuntimeError("Pillow compatibility patch requires MoviePy 2.2.1")
-    if not Version("12.3.0") <= Version(metadata.version("pillow")) < Version("13"):
-        raise RuntimeError(
-            "Pillow compatibility patch requires patched Pillow 12.3.x or later"
-        )
+    if Version(metadata.version("pillow")) != Version("13.0.0"):
+        raise RuntimeError("MoviePy compatibility patch requires Pillow 13.0.0")
     root = Path(distribution.locate_file(""))
     relative = "moviepy-2.2.1.dist-info/METADATA"
     target = root / relative
