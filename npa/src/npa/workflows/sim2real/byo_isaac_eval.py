@@ -27,7 +27,7 @@ from pathlib import Path
 from typing import Any
 
 from npa.clients.storage import StorageClient, safe_s3_download_target
-from npa.literal_values import require_boolean
+from npa.literal_values import require_boolean, require_number
 from npa.workflows.sim2real.camera_views import camera_metadata, camera_views_json
 from npa.workflows.sim2real.capture import capture_settings
 from npa.workflows.sim2real.isaac_job_payload import (
@@ -146,14 +146,40 @@ def build_heldout_report(
 ) -> dict[str, Any]:
     """Build the payload _normalize_heldout_report consumes (per_env list)."""
 
+    row_successes: list[bool] = []
+    row_details: list[dict[str, Any]] = []
+    for index, row in enumerate(per_env):
+        if type(row) is not dict:
+            raise ValueError(f"per_env[{index}] must be a JSON object")
+        row_successes.append(
+            require_boolean(row.get("success"), field=f"per_env[{index}].success")
+        )
+        details = row.get("details", {})
+        if type(details) is not dict:
+            raise ValueError(f"per_env[{index}].details must be a JSON object")
+        for key in (
+            "reach",
+            "contact",
+            "stable_grasp",
+            "lift",
+            "place",
+            "placement_stable",
+        ):
+            if key in details:
+                require_boolean(details[key], field=f"per_env[{index}].details.{key}")
+        row_details.append(details)
+
     # Success at multiple object->goal distance thresholds: a single strict
     # threshold hides real progress (a policy that lifts + roughly places scores
     # 0 at 0.05m but high at 0.15m). Report the curve so accuracy improvement is
     # visible even before the policy is pinpoint-accurate.
     dists = [
-        r["details"]["object_goal_distance_m"]
-        for r in per_env
-        if "object_goal_distance_m" in r.get("details", {})
+        _finite_float(
+            details["object_goal_distance_m"],
+            field=f"per_env[{index}].details.object_goal_distance_m",
+        )
+        for index, details in enumerate(row_details)
+        if "object_goal_distance_m" in details
     ]
     success_summary = {}
     if dists:
@@ -166,10 +192,17 @@ def build_heldout_report(
         )
         success_summary["min_object_goal_distance_m"] = round(min(dists), 6)
         closest: list[float] = []
-        for row in per_env:
-            value = (row.get("details") or {}).get("closest_object_goal_distance_m")
+        for index, details in enumerate(row_details):
+            value = details.get("closest_object_goal_distance_m")
             if value is not None:
-                closest.append(float(value))
+                closest.append(
+                    _finite_float(
+                        value,
+                        field=(
+                            f"per_env[{index}].details.closest_object_goal_distance_m"
+                        ),
+                    )
+                )
         if closest:
             success_summary["mean_closest_object_goal_distance_m"] = round(
                 sum(closest) / len(closest), 6
@@ -179,7 +212,7 @@ def build_heldout_report(
             )
 
     n = len(per_env)
-    strict_count = sum(bool(row.get("success")) for row in per_env)
+    strict_count = sum(row_successes)
 
     def _wilson(k: int, total: int) -> list[float]:
         if total <= 0:
@@ -193,18 +226,18 @@ def build_heldout_report(
 
     decomposed = {}
     for key in ("reach", "contact", "stable_grasp", "lift", "place"):
-        count = sum(bool((row.get("details") or {}).get(key)) for row in per_env)
+        count = sum(details.get(key, False) for details in row_details)
         decomposed[key] = {
             "count": count,
             "rate": round(count / n, 6) if n else 0.0,
             "wilson_95": _wilson(count, n),
         }
     strata: dict[str, dict[str, Any]] = {}
-    for row in per_env:
-        difficulty = str((row.get("details") or {}).get("difficulty") or "unknown")
+    for index, details in enumerate(row_details):
+        difficulty = str(details.get("difficulty") or "unknown")
         entry = strata.setdefault(difficulty, {"count": 0, "strict_success_count": 0})
         entry["count"] += 1
-        entry["strict_success_count"] += int(bool(row.get("success")))
+        entry["strict_success_count"] += int(row_successes[index])
     for entry in strata.values():
         entry["strict_success_rate"] = round(
             entry["strict_success_count"] / entry["count"], 6
@@ -383,10 +416,13 @@ def per_env_from_distances(
     When provided, rows are labelled by the GENERATED env_id/seed they came from.
     """
 
+    success_distance = _finite_float(success_dist_m, field="success_dist_m")
+    if success_distance <= 0.0:
+        raise ValueError("success_dist_m must be greater than zero")
     rows: list[dict[str, Any]] = []
     for index, dist in enumerate(distances):
-        d = max(0.0, float(dist))
-        score = max(0.0, min(1.0, 1.0 - d / (2.0 * success_dist_m)))
+        d = max(0.0, _finite_float(dist, field=f"distances[{index}]"))
+        score = max(0.0, min(1.0, 1.0 - d / (2.0 * success_distance)))
         env_id = (
             env_ids[index]
             if env_ids and index < len(env_ids)
@@ -405,17 +441,17 @@ def per_env_from_distances(
                     "applied_config_provenance": "isaac_runtime_reset_event",
                 }
             )
-        if runtime_metrics and index < len(runtime_metrics):
-            details.update(runtime_metrics[index])
-        metrics = (
+        raw_metrics = (
             runtime_metrics[index]
             if runtime_metrics and index < len(runtime_metrics)
             else {}
         )
+        metrics = _validated_runtime_metrics(raw_metrics, index=index)
+        details.update(metrics)
         stable_place = _runtime_placement_stable(metrics, index=index)
         # A final 5 cm distance without a stable placement is not task success.
         # Runtime-free callers (unit/dry-run fixtures) retain distance-only behavior.
-        strict_success = d < success_dist_m and (
+        strict_success = d < success_distance and (
             stable_place if runtime_metrics is not None else True
         )
         rows.append(
@@ -427,6 +463,39 @@ def per_env_from_distances(
             }
         )
     return rows
+
+
+def _finite_float(value: Any, *, field: str) -> float:
+    """Return an exact finite JSON number representable as a float."""
+
+    number = require_number(value, field=field)
+    try:
+        return float(number)
+    except OverflowError as exc:
+        raise ValueError(f"{field} must be representable as a finite float") from exc
+
+
+def _validated_runtime_metrics(
+    metrics: dict[str, Any], *, index: int
+) -> dict[str, Any]:
+    """Copy runtime metrics after validating every retained boolean metric."""
+
+    if type(metrics) is not dict:
+        raise ValueError(f"runtime_metrics[{index}] must be a JSON object")
+    validated = dict(metrics)
+    for field in (
+        "reach",
+        "contact",
+        "stable_grasp",
+        "lift",
+        "place",
+        "placement_stable",
+    ):
+        if field in validated:
+            validated[field] = require_boolean(
+                validated[field], field=f"runtime_metrics[{index}].{field}"
+            )
+    return validated
 
 
 def _runtime_placement_stable(metrics: dict[str, Any], *, index: int) -> bool:

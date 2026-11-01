@@ -1224,7 +1224,7 @@ def run_structural_spine(
     )
     feedback = _feedback_payload_to_result(feedback_payload)
     components.append(feedback_status)
-    training_signal = adapt_feedback_to_training_signal(feedback_payload)
+    training_signal = _adapt_feedback_payload(feedback_payload)
     _write_json(local_dir / "training-signal.json", training_signal)
 
     try:

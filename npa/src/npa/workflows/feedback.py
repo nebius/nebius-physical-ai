@@ -185,6 +185,9 @@ def register_feedback_adapter(
 def adapt_feedback_to_training_signal(payload: FeedbackPayload) -> dict[str, Any]:
     """Convert typed feedback into a JSON-serializable training signal."""
 
+    _validate_feedback_value(payload.value, payload.feedback_type)
+    parse_feedback_score(payload.score)
+    parse_feedback_success(payload.success)
     try:
         adapter = _ADAPTERS[payload.feedback_type]
     except KeyError as exc:
@@ -458,6 +461,7 @@ def parse_source_payload(
         if "value" in payload
         else _fallback_value(payload, feedback_type)
     )
+    _validate_feedback_value(value, feedback_type)
     score = _score_from_payload(payload, value, feedback_type)
     success = score >= 0.5 if explicit_success is None else explicit_success
     if feedback_type == FeedbackType.PASS_FAIL and "success" in payload:
@@ -495,7 +499,7 @@ def _explicit_success_from_payload(payload: dict[str, Any]) -> bool | None:
 def parse_feedback_success(value: Any) -> bool:
     """Parse an explicit JSON-boolean feedback verdict."""
 
-    if not isinstance(value, bool):
+    if type(value) is not bool:
         raise FeedbackSourceError("feedback source 'success' must be a JSON boolean")
     return value
 
@@ -649,8 +653,33 @@ def _score_from_payload(
     return 0.0
 
 
+def _validate_feedback_value(value: Any, feedback_type: FeedbackType) -> None:
+    """Require the JSON shape and numeric leaves declared by a feedback type."""
+
+    if feedback_type == FeedbackType.SCALAR:
+        parse_feedback_score(value)
+        return
+    if feedback_type == FeedbackType.DENSE_PER_STEP:
+        if type(value) is not list:
+            raise FeedbackSourceError(
+                "feedback dense-per-step value must be a JSON array"
+            )
+        for item in value:
+            parse_feedback_score(item)
+        return
+    if feedback_type == FeedbackType.PASS_FAIL:
+        _parse_pass_fail_value(value)
+        return
+    if type(value) is not dict:
+        raise FeedbackSourceError(
+            f"feedback {feedback_type.value} value must be a JSON object"
+        )
+    if "score" in value:
+        parse_feedback_score(value["score"])
+
+
 def _parse_pass_fail_value(value: Any) -> bool:
-    if not isinstance(value, bool):
+    if type(value) is not bool:
         raise FeedbackSourceError("feedback pass-fail value must be a JSON boolean")
     return value
 
@@ -711,7 +740,7 @@ def parse_feedback_score(value: Any) -> float:
         FeedbackSourceError: The value is not a finite JSON number.
     """
 
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
+    if type(value) not in (int, float):
         raise FeedbackSourceError("feedback score must be a finite JSON number")
     try:
         score = float(value)

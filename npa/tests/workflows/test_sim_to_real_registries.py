@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 from pathlib import Path
 
 import pytest
@@ -20,6 +21,7 @@ from npa.workflows.feedback import (
     FeedbackType,
     adapt_feedback_to_training_signal,
     collect_feedback,
+    parse_feedback_score,
     parse_source_payload,
 )
 from npa.workflows.sim_to_real import (
@@ -254,6 +256,16 @@ def test_feedback_score_boundaries_reject_non_json_numbers(score: object) -> Non
         )
 
 
+def test_feedback_score_boundaries_reject_numeric_subclasses() -> None:
+    class NumericSubclass(float):
+        pass
+
+    with pytest.raises(
+        FeedbackSourceError, match="feedback score must be a finite JSON number"
+    ):
+        parse_feedback_score(NumericSubclass(0.5))
+
+
 @pytest.mark.parametrize(
     ("payload", "feedback_type"),
     [
@@ -273,6 +285,67 @@ def test_feedback_type_values_reject_coerced_scores(
     ):
         parse_source_payload(
             {**payload, "success": False},
+            source="byo-container",
+            feedback_type=feedback_type,
+        )
+
+
+@pytest.mark.parametrize(
+    ("feedback_type", "value", "message"),
+    [
+        (
+            FeedbackType.DENSE_PER_STEP,
+            None,
+            "feedback dense-per-step value must be a JSON array",
+        ),
+        (
+            FeedbackType.DENSE_PER_STEP,
+            "0.9",
+            "feedback dense-per-step value must be a JSON array",
+        ),
+        (
+            FeedbackType.CRITIQUE,
+            None,
+            "feedback critique value must be a JSON object",
+        ),
+        (
+            FeedbackType.CRITIQUE,
+            [],
+            "feedback critique value must be a JSON object",
+        ),
+        (
+            FeedbackType.PREFERENCE,
+            "candidate",
+            "feedback preference value must be a JSON object",
+        ),
+    ],
+)
+def test_feedback_type_values_reject_invalid_shapes_with_explicit_score(
+    feedback_type: FeedbackType, value: object, message: str
+) -> None:
+    with pytest.raises(FeedbackSourceError, match=message):
+        parse_source_payload(
+            {"value": value, "score": 0.8, "success": False},
+            source="byo-container",
+            feedback_type=feedback_type,
+        )
+
+
+@pytest.mark.parametrize(
+    "feedback_type", [FeedbackType.CRITIQUE, FeedbackType.PREFERENCE]
+)
+def test_feedback_object_values_validate_nested_score_when_top_score_is_present(
+    feedback_type: FeedbackType,
+) -> None:
+    with pytest.raises(
+        FeedbackSourceError, match="feedback score must be a finite JSON number"
+    ):
+        parse_source_payload(
+            {
+                "value": {"score": "0.7"},
+                "score": 0.8,
+                "success": False,
+            },
             source="byo-container",
             feedback_type=feedback_type,
         )
@@ -365,12 +438,71 @@ def test_feedback_adapters_reject_manually_constructed_boolean_score() -> None:
         adapt_feedback_to_training_signal(payload)
 
 
+@pytest.mark.parametrize(
+    "score", [True, "0.8", None, float("nan"), float("inf"), 10**400]
+)
+def test_feedback_adapters_reject_manually_constructed_invalid_payload_score(
+    score: object,
+) -> None:
+    payload = FeedbackPayload(
+        "test", FeedbackType.SCALAR, 0.5, score=score, success=False
+    )
+
+    with pytest.raises(
+        FeedbackSourceError, match="feedback score must be a finite JSON number"
+    ):
+        adapt_feedback_to_training_signal(payload)
+
+
+@pytest.mark.parametrize(
+    ("feedback_type", "value", "message"),
+    [
+        (
+            FeedbackType.DENSE_PER_STEP,
+            None,
+            "feedback dense-per-step value must be a JSON array",
+        ),
+        (
+            FeedbackType.CRITIQUE,
+            [],
+            "feedback critique value must be a JSON object",
+        ),
+        (
+            FeedbackType.PREFERENCE,
+            "candidate",
+            "feedback preference value must be a JSON object",
+        ),
+    ],
+)
+def test_feedback_adapters_reject_manually_constructed_invalid_shapes(
+    feedback_type: FeedbackType, value: object, message: str
+) -> None:
+    payload = FeedbackPayload("test", feedback_type, value, score=0.8, success=False)
+
+    with pytest.raises(FeedbackSourceError, match=message):
+        adapt_feedback_to_training_signal(payload)
+
+
 @pytest.mark.parametrize("success", ["false", "no", 0, 1, [], {}])
 def test_feedback_adapters_reject_manually_constructed_non_boolean_success(
     success: object,
 ) -> None:
     payload = FeedbackPayload(
         "test", FeedbackType.SCALAR, 0.9, score=0.9, success=success
+    )
+
+    with pytest.raises(
+        FeedbackSourceError, match="feedback source 'success' must be a JSON boolean"
+    ):
+        adapt_feedback_to_training_signal(payload)
+
+
+@pytest.mark.parametrize("success", ["false", "no", 0, 1, None, [], {}])
+def test_pass_fail_adapter_validates_payload_success_even_with_valid_value(
+    success: object,
+) -> None:
+    payload = FeedbackPayload(
+        "test", FeedbackType.PASS_FAIL, True, score=1.0, success=success
     )
 
     with pytest.raises(
@@ -388,6 +520,28 @@ def test_real_loop_adapter_boundary_translates_feedback_errors() -> None:
         SimToRealError, match="feedback source 'success' must be a JSON boolean"
     ):
         sim_to_real_workflow._adapt_feedback_payload(payload)
+
+
+def test_real_loop_adapter_boundary_translates_feedback_shape_errors() -> None:
+    payload = FeedbackPayload(
+        "test",
+        FeedbackType.DENSE_PER_STEP,
+        None,
+        score=0.8,
+        success=False,
+    )
+
+    with pytest.raises(
+        SimToRealError, match="feedback dense-per-step value must be a JSON array"
+    ):
+        sim_to_real_workflow._adapt_feedback_payload(payload)
+
+
+def test_structural_spine_routes_feedback_through_domain_boundary() -> None:
+    source = inspect.getsource(sim_to_real_workflow.run_structural_spine)
+
+    assert "_adapt_feedback_payload(feedback_payload)" in source
+    assert "adapt_feedback_to_training_signal(feedback_payload)" not in source
 
 
 @pytest.mark.parametrize("value", ["false", 0, 1, None, [], {}])
