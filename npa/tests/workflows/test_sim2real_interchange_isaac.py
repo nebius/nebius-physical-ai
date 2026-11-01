@@ -605,6 +605,7 @@ def test_teacher_tracking_receipt_binds_pose_residual_and_joint_margins() -> Non
         },
         waypoint,
         robot,
+        {name: 0.4 for name in robot.measured_state_names},
         measured,
         {
             "measurement": "unfiltered_net_contact_force_per_robot_rigid_body",
@@ -625,11 +626,13 @@ def test_teacher_tracking_receipt_binds_pose_residual_and_joint_margins() -> Non
     assert receipt["translation_error_before_m"] == pytest.approx([0.1, 0.0, 0.0])
     assert receipt["translation_error_after_m"] == pytest.approx([0.05, 0.0, 0.0])
     assert receipt["rotation_error_after_rad"] == pytest.approx([0.0, 0.0, 0.0])
+    assert receipt["arm_joint_positions_before_rad"] == [0.4] * 6
     assert receipt["arm_joint_positions_after_rad"] == [0.5] * 6
+    assert receipt["arm_joint_motion_rad"] == pytest.approx([0.1] * 6)
     assert receipt["arm_joint_position_limit_margins_after_rad"] == [1.5] * 6
     assert receipt["collision_evidence_available"] is True
     assert receipt["robot_contact"]["maximum_force_n"] == 0.0
-    assert receipt["solver_state_available"] is False
+    assert receipt["solver_state_available"] is True
     assert receipt["solver_kinematic_evidence_available"] is True
     assert receipt["differential_ik"]["jacobian_condition_number"] == 2.0
     assert receipt["controller_hand_frame"]["frame"] == robot.ee_link
@@ -658,6 +661,19 @@ def test_teacher_contact_evidence_binds_named_robot_body_forces() -> None:
 
 def test_teacher_solver_evidence_binds_commands_and_jacobian_conditioning() -> None:
     torch = pytest.importorskip("torch")
+    joint_names = [f"joint_{index}" for index in range(6)]
+    joint_target = torch.tensor([[0.2, 0.1, 0.0, -0.1, -0.2, -0.3, 0.5]])
+    joint_position = torch.tensor([[0.1, 0.0, 0.0, -0.2, -0.1, -0.4, 0.5]])
+    data = SimpleNamespace(
+        joint_pos_target=joint_target,
+        joint_pos=joint_position,
+        joint_vel=torch.tensor([[0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.0]]),
+        joint_stiffness=torch.tensor([[400.0] * 6 + [0.0]]),
+        joint_damping=torch.tensor([[80.0] * 6 + [0.0]]),
+        joint_effort_limits=torch.tensor([[87.0] * 6 + [12.0]]),
+        computed_torque=torch.tensor([[1.0] * 6 + [0.0]]),
+        applied_torque=torch.tensor([[0.5] * 6 + [0.0]]),
+    )
     arm = SimpleNamespace(
         raw_actions=torch.tensor([[1.0, 0.0, 0.0, 0.0, 0.0, 0.0]]),
         processed_actions=torch.tensor([[0.1, 0.0, 0.0, 0.0, 0.0, 0.0]]),
@@ -665,6 +681,9 @@ def test_teacher_solver_evidence_binds_commands_and_jacobian_conditioning() -> N
             0
         ),
         cfg=SimpleNamespace(controller=SimpleNamespace(ik_method="dls")),
+        _asset=SimpleNamespace(data=data),
+        _joint_ids=[0, 1, 2, 3, 4, 5],
+        _joint_names=joint_names,
     )
     native = SimpleNamespace(
         action_manager=SimpleNamespace(
@@ -681,7 +700,48 @@ def test_teacher_solver_evidence_binds_commands_and_jacobian_conditioning() -> N
     assert receipt["processed_action"] == pytest.approx([0.1, 0.0, 0.0, 0.0, 0.0, 0.0])
     assert receipt["jacobian_singular_values"] == pytest.approx([6, 5, 4, 3, 2, 1])
     assert receipt["jacobian_condition_number"] == pytest.approx(6.0)
-    assert receipt["joint_target_available"] is False
+    assert receipt["joint_target_available"] is True
+    assert receipt["joint_names"] == joint_names
+    assert receipt["joint_position_target_rad"] == pytest.approx(
+        [0.2, 0.1, 0.0, -0.1, -0.2, -0.3]
+    )
+    assert receipt["joint_position_measured_rad"] == pytest.approx(
+        [0.1, 0.0, 0.0, -0.2, -0.1, -0.4]
+    )
+    assert receipt["joint_target_error_rad"] == pytest.approx(
+        [0.1, 0.1, 0.0, 0.1, -0.1, 0.1]
+    )
+    assert receipt["joint_target_error_norm_rad"] == pytest.approx(5**0.5 / 10)
+    assert receipt["joint_stiffness_nm_per_rad"] == [400.0] * 6
+    assert receipt["joint_damping_nm_s_per_rad"] == [80.0] * 6
+    assert receipt["joint_effort_limit_nm"] == [87.0] * 6
+    assert receipt["computed_torque_nm"] == [1.0] * 6
+    assert receipt["applied_torque_nm"] == [0.5] * 6
+
+
+def test_teacher_solver_evidence_rejects_missing_joint_target() -> None:
+    torch = pytest.importorskip("torch")
+    arm = SimpleNamespace(
+        raw_actions=torch.zeros((1, 6)),
+        processed_actions=torch.zeros((1, 6)),
+        jacobian_w=torch.eye(6).unsqueeze(0),
+        cfg=SimpleNamespace(controller=SimpleNamespace(ik_method="dls")),
+        _asset=SimpleNamespace(data=SimpleNamespace()),
+        _joint_ids=[0],
+        _joint_names=["joint_0"],
+    )
+    native = SimpleNamespace(
+        action_manager=SimpleNamespace(
+            active_terms=["arm_action", "gripper_action"],
+            action_term_dim=[6, 1],
+            get_term=lambda name: arm if name == "arm_action" else SimpleNamespace(),
+        )
+    )
+
+    with pytest.raises(
+        RuntimeError, match="teacher articulation joint_pos_target telemetry is unavailable"
+    ):
+        _teacher_solver_evidence(native)
 
 
 def test_teacher_failure_evidence_error_does_not_replace_native_error(

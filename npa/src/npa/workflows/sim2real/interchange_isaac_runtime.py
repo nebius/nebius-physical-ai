@@ -607,6 +607,7 @@ def _teacher_tracking_receipt(
     pose_after: dict[str, list[float]],
     waypoint: Any,
     robot: Any,
+    measured_before: dict[str, float],
     measured_after: dict[str, float],
     contact_evidence: dict[str, Any],
     solver_evidence: dict[str, Any],
@@ -626,6 +627,7 @@ def _teacher_tracking_receipt(
     after_rotation = _axis_angle_error(
         pose_after["quaternion_xyzw"], target.quaternion_xyzw
     )
+    joints_before = [float(measured_before[name]) for name in robot.arm_joint_names]
     joints = [float(measured_after[name]) for name in robot.arm_joint_names]
     margins = [
         min(value - lower, upper - value)
@@ -639,11 +641,16 @@ def _teacher_tracking_receipt(
         "translation_error_after_m": (target_position - after_position).tolist(),
         "rotation_error_before_rad": before_rotation.tolist(),
         "rotation_error_after_rad": after_rotation.tolist(),
+        "arm_joint_positions_before_rad": joints_before,
         "arm_joint_positions_after_rad": joints,
+        "arm_joint_motion_rad": [
+            after - before
+            for before, after in zip(joints_before, joints, strict=True)
+        ],
         "arm_joint_position_limit_margins_after_rad": margins,
         "collision_evidence_available": True,
         "robot_contact": contact_evidence,
-        "solver_state_available": False,
+        "solver_state_available": True,
         "solver_kinematic_evidence_available": True,
         "differential_ik": solver_evidence,
         "controller_hand_frame": controller_evidence,
@@ -709,6 +716,7 @@ def _teacher_solver_evidence(native: Any) -> dict[str, Any]:
         raise RuntimeError("teacher differential-IK Jacobian spectrum is invalid")
     largest = float(max(singular_values))
     smallest = float(min(singular_values))
+    joint_state = _teacher_joint_command_state(arm)
     return {
         "method": str(arm.cfg.controller.ik_method),
         "raw_action": [float(value) for value in raw[0].detach().cpu().tolist()],
@@ -720,9 +728,68 @@ def _teacher_solver_evidence(native: Any) -> dict[str, Any]:
         "jacobian_condition_number": (
             largest / smallest if smallest > torch.finfo(jacobian.dtype).eps else None
         ),
-        "joint_target_available": False,
+        **joint_state,
         "damping_internal_state_available": False,
     }
+
+
+def _teacher_joint_command_state(arm: Any) -> dict[str, Any]:
+    """Read the joint target and physical response for the IK-controlled arm."""
+
+    import torch
+
+    asset = getattr(arm, "_asset", None)
+    joint_ids = getattr(arm, "_joint_ids", None)
+    joint_names = tuple(getattr(arm, "_joint_names", ()))
+    if asset is None or joint_ids is None or not joint_names:
+        raise RuntimeError("teacher differential-IK joint mapping is unavailable")
+    names = (
+        "joint_pos_target",
+        "joint_pos",
+        "joint_vel",
+        "joint_stiffness",
+        "joint_damping",
+        "joint_effort_limits",
+        "computed_torque",
+        "applied_torque",
+    )
+    values = {
+        name: _teacher_arm_joint_values(asset.data, joint_ids, joint_names, name)
+        for name in names
+    }
+    target = torch.tensor(values["joint_pos_target"], dtype=torch.float64)
+    measured = torch.tensor(values["joint_pos"], dtype=torch.float64)
+    error = target - measured
+    return {
+        "joint_target_available": True,
+        "joint_names": list(joint_names),
+        "joint_position_target_rad": values["joint_pos_target"],
+        "joint_position_measured_rad": values["joint_pos"],
+        "joint_target_error_rad": error.tolist(),
+        "joint_target_error_norm_rad": float(torch.linalg.vector_norm(error)),
+        "joint_velocity_rad_s": values["joint_vel"],
+        "joint_stiffness_nm_per_rad": values["joint_stiffness"],
+        "joint_damping_nm_s_per_rad": values["joint_damping"],
+        "joint_effort_limit_nm": values["joint_effort_limits"],
+        "computed_torque_nm": values["computed_torque"],
+        "applied_torque_nm": values["applied_torque"],
+    }
+
+
+def _teacher_arm_joint_values(
+    data: Any, joint_ids: Any, joint_names: tuple[str, ...], field: str
+) -> list[float]:
+    """Select one finite arm-joint telemetry row from native articulation data."""
+
+    import torch
+
+    tensor = _native_tensor(getattr(data, field, None))
+    if tensor is None or not hasattr(tensor, "detach") or tensor.ndim != 2:
+        raise RuntimeError(f"teacher articulation {field} telemetry is unavailable")
+    selected = tensor[:, joint_ids]
+    if selected.shape != (1, len(joint_names)) or not bool(torch.isfinite(selected).all()):
+        raise RuntimeError(f"teacher articulation {field} telemetry has an invalid shape")
+    return [float(value) for value in selected[0].detach().cpu().tolist()]
 
 
 def _teacher_camera_capture(
@@ -1034,7 +1101,16 @@ def _teacher_step(
         native, robot, args, trace, waypoint, first
     )
     command, errors, times, sample, measured_after, tracking = _apply_teacher_step(
-        env, native, robot, prop, task, layout, waypoint, initial_z, captures
+        env,
+        native,
+        robot,
+        prop,
+        task,
+        layout,
+        waypoint,
+        initial_z,
+        captures,
+        measured_before,
     )
     _update_events(context, sample, trace.step)
     _record_teacher_transition(
@@ -1119,6 +1195,7 @@ def _apply_teacher_step(
     waypoint: Any,
     initial_z: float,
     captures: dict[str, float],
+    measured_before: dict[str, float],
 ) -> tuple[
     Any,
     tuple[float, float],
@@ -1147,6 +1224,7 @@ def _apply_teacher_step(
         _teacher_end_effector_pose(native),
         waypoint,
         robot,
+        measured_before,
         measured_after,
         _teacher_contact_evidence(native),
         _teacher_solver_evidence(native),
