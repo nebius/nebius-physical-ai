@@ -16,7 +16,9 @@
         "observed scan only": 0.926,
         "supported surface only": 0.952,
         "removed: unsupported surface": 1.233,
-        "clipped_views": ["removed: unsupported surface"],
+        "clipped_views": [
+          "removed: unsupported surface"
+        ],
         "fraction_of_that_view_off_screen": 0.0016
       },
       "measured_after": {
@@ -42,10 +44,27 @@
       "measured_before": {
         "harness": "evidence/open3d/harness/frame_edge_audit.py",
         "record": "evidence/open3d/frame-edge-audit-before.json",
-        "01-before-unsupported-surface.png": {"clipped_edges": ["right", "top"]},
-        "02-after-support-crop.png": {"clipped_edges": []},
-        "03-before-topdown.png": {"clipped_edges": ["bottom", "top"]},
-        "04-after-topdown.png": {"clipped_edges": ["bottom", "top"]}
+        "01-before-unsupported-surface.png": {
+          "clipped_edges": [
+            "right",
+            "top"
+          ]
+        },
+        "02-after-support-crop.png": {
+          "clipped_edges": []
+        },
+        "03-before-topdown.png": {
+          "clipped_edges": [
+            "bottom",
+            "top"
+          ]
+        },
+        "04-after-topdown.png": {
+          "clipped_edges": [
+            "bottom",
+            "top"
+          ]
+        }
       },
       "measured_after": {
         "record": "evidence/open3d/frame-edge-audit-after.json",
@@ -65,9 +84,21 @@
     "what_i_expected": "A trade -- that darkening the page would buy the light floor's contrast at the dark sensor gaps' expense.",
     "what_the_measurement_said": "No trade. The content is not bimodal: median luminance 174, only about 1% below 34. The washed-out floor is most of the picture, which is why a near-white page cost so much.",
     "controlled_comparison_same_content_varying_only_the_page": {
-      "background_luminance_250_as_shipped": {"median_contrast": 75.7, "p05_contrast": 26.6, "low_contrast_fraction": 0.0474},
-      "background_luminance_17_as_chosen": {"median_contrast": 158.3, "p05_contrast": 60.9, "low_contrast_fraction": 0.0176},
-      "background_luminance_0_measured_optimum": {"median_contrast": 174.3, "p05_contrast": 76.9, "low_contrast_fraction": 0.0052}
+      "background_luminance_250_as_shipped": {
+        "median_contrast": 75.7,
+        "p05_contrast": 26.6,
+        "low_contrast_fraction": 0.0474
+      },
+      "background_luminance_17_as_chosen": {
+        "median_contrast": 158.3,
+        "p05_contrast": 60.9,
+        "low_contrast_fraction": 0.0176
+      },
+      "background_luminance_0_measured_optimum": {
+        "median_contrast": 174.3,
+        "p05_contrast": 76.9,
+        "low_contrast_fraction": 0.0052
+      }
     },
     "why_not_the_optimum": "The clipping and legibility audit defines content as differing from the page, so a page equal to a possible content value blinds the measurement to black geometry at the border -- the exact defect being measured. The offset costs about 16 levels of contrast.",
     "confound_disclosed": "Comparing the old delivered frames directly against the new ones does not isolate the page, because the framing fix changed which pixels are drawn. In that confounded comparison the low-contrast share rises slightly (for example 1.53% to 3.67% on the candidate overview) while median contrast roughly doubles (75-84 to 152-169). In the controlled comparison the low-contrast share falls. Both readings are recorded; the controlled one is the basis for the choice.",
@@ -79,7 +110,8 @@
     "focused_tests": "121 passed (npa/tests/workbench/test_open3d.py, npa/tests/cli/test_open3d_cli.py)",
     "lint": "ruff check and ruff format clean on both changed files",
     "real_capability_after_the_change": "Golden eval re-run inside the Open3D container against current source: ICP fitness 1.0000+, 3-node pose graph optimized, 7562 triangles, 0.4929 -> 0.0000 of area cropped with 0.4855 beyond three voxels, decode-verified RRD written.",
-    "renders_reproduced": "9 frames re-rendered in the container from the delivered PLY bytes; frame hashes recorded in the capture manifest."
+    "renders_reproduced": "9 frames re-rendered in the container from the delivered PLY bytes. Their digests are bound in delivered-frames-manifest.json, one row per frame beside the measurements taken from those bytes.",
+    "this_sentence_was_wrong_until_the_manifest_existed": "It previously said the frame hashes were recorded in the capture manifest. They were not recorded anywhere: a review lane hashed all nine delivered frames and found zero of the nine digests in any committed file, including every capture and manifest record this set ships. The frames were tied to their measurements by filename alone. The binding exists now, but it was added after the fact rather than written at capture time, and that is the honest order."
   },
   "explicitly_not_proven": {
     "rerun_ui": "These are offscreen CPU renders of the delivered PLY bytes, not captures of the Rerun web viewer. The product blueprint change is measured through the camera geometry it emits, not through a screenshot of the viewer. Root's directive is explicit that PLY renders alone do not prove the UI, so no viewer-improvement claim is made here on their basis.",

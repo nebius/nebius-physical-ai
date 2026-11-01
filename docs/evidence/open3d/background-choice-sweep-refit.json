@@ -26,7 +26,7 @@
     "candidate_surface_only__overview.png",
     "observed_scan_only__overview.png"
   ],
-  "reading": "I expected this to be a trade -- a light floor against dark sensor gaps, with no background serving both -- and the measurement says otherwise. The content is not bimodal: it is overwhelmingly light, with a median luminance near 177 and only about 1% below 33. So there is no trade to balance, and darkening the page improves both the worst-served content and the typical content at once. The light floor the review called washed out is most of the picture, which is exactly why putting it on a near-white page cost so much.",
+  "reading": "I expected this to be a trade -- a light floor against dark sensor gaps, with no background serving both -- and the measurement says otherwise. The content is not bimodal: it is overwhelmingly light, with a median luminance of 174.3 and a 1st percentile of 33.7, so about 1% of it sits below 34. So there is no trade to balance, and darkening the page improves both the worst-served content and the typical content at once. The light floor the review called washed out is most of the picture, which is exactly why putting it on a near-white page cost so much.",
   "shipped_background": {
     "background_luminance": 250.0,
     "low_contrast_fraction": 0.0473642306965486,
@@ -803,5 +803,6 @@
       "p05_contrast": 30.63899999999998
     }
   ],
-  "what": "Contrast a reader actually gets from the delivered content, as a function of background luminance. Content luminances are taken from the delivered frames and never altered; only the page changes."
+  "what": "Contrast a reader actually gets from the delivered content, as a function of background luminance. Content luminances are taken from the delivered frames and never altered; only the page changes.",
+  "a_correction_to_this_reading": "The prose said 'a median luminance near 177 and only about 1% below 33' while this file's own percentile block recorded 174.2888 and 33.6636. A review lane reproduced the metric independently and matched every recorded number to four decimals, so the measurements were right and only the sentence was wrong. It now quotes the figures beside it. The argument is unchanged -- the content is light, there is no trade to balance -- but the sentence a reader takes away should not be the one number in the file that nothing supports."
 }
