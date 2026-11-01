@@ -84,6 +84,44 @@ def test_the_pair_differs_in_one_thing_and_it_is_not_the_camera(controls) -> Non
     assert frames["D4_occluded"]["sha256"] != frames["D4_unoccluded"]["sha256"]
 
 
+def test_the_headline_ratio_is_the_one_the_committed_frames_give(controls) -> None:
+    """The published number had no reader tying it to the frames beside it.
+
+    A reviewer read this record as internally inconsistent: that the headline
+    0.521556785774199 was 3109/5961 while the committed footprint was 5960, making it a
+    value carried over from an earlier run. The committed footprint is 5961, that file
+    has only ever been written once, and re-running the harness here reproduces 5961 and
+    the published ratio to the digit. The record was consistent and the reading was of
+    their own fresh run, which produced 5960 in their environment.
+
+    But nothing here checked it, which is why the question could be open at all. So the
+    arithmetic now has a reader: the headline must equal the per-frame fraction it is
+    defined as, and that fraction must equal the visible-over-drawn counts published
+    beside it. A value carried over from an earlier run fails this, which is the defect
+    that was suspected and the one this lane keeps finding in its own records -- a number
+    with no reader drifts.
+
+    Needs no Open3D, so it runs wherever the suite runs.
+    """
+    frames, measurement = controls["frames"], controls["measurement"]
+    for name, frame in frames.items():
+        recomputed = frame["subject_pixels_visible"] / frame["subject_pixels_drawn"]
+        assert frame["visible_pixel_fraction"] == recomputed, (
+            f"{name}: published fraction {frame['visible_pixel_fraction']} is not "
+            f"{frame['subject_pixels_visible']}/{frame['subject_pixels_drawn']} "
+            f"= {recomputed}"
+        )
+
+    expected = (
+        frames["D4_occluded"]["visible_pixel_fraction"]
+        / frames["D4_unoccluded"]["visible_pixel_fraction"]
+    )
+    assert measurement["occluded_over_unoccluded"] == expected, (
+        f"the headline {measurement['occluded_over_unoccluded']} is not the ratio the "
+        f"committed frames give, {expected}"
+    )
+
+
 def test_the_frozen_control_strength_criterion_is_reported_as_failed(
     controls, summary
 ) -> None:
