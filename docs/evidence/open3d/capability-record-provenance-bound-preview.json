@@ -52,7 +52,8 @@
     "repository_commit": "1441e211400cf7d07c8d832d3ad787ff71d7fad2",
     "runner_source_dirty_at_generation": true,
     "dirty_note": "The runner was mounted into the image from the working tree, so the module hash above is the binding, not the commit. The commit is recorded for context only.",
-    "binding_note": "Generated from dirty working-tree source. The bytes are pinned at 15b0b11f0bc1, which is on main, so any checkout of this branch can verify the claim. They were previously pinned at cbbb22e170c1, which exists only on two lane branches -- byte-identical, but absent from main and from this branch, so no reviewer of this PR could resolve it and CI could not either."
+    "binding_note": "Generated from dirty working-tree source. The bytes are pinned at 15b0b11f0bc1, which is on main, so any checkout of this branch can verify the claim. They were previously pinned at cbbb22e170c1, which exists only on two lane branches -- byte-identical, but absent from main and from this branch, so no reviewer of this PR could resolve it and CI could not either.",
+    "repository_commit_note": "1441e21114 records where the run happened, and it is on two lane branches rather than main, so a reviewer of this branch cannot resolve it. It is left as it is on purpose: moving it to a main commit would be false, because the run did not happen there. It is informational and the audit does not treat it as a byte claim -- script_bytes_committed_at is the verifiable one, and that is pinned on main."
   },
   "camera": {
     "Scene: observed scan and supported surface": {
