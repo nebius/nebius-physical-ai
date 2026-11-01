@@ -1,0 +1,119 @@
+{
+  "what_this_records": "The Open3D evidence catalogue had no reader. 41 committed records, and no test, script or workflow opened one of them. This records the guard added in answer, what it covers, what it does not, and the mutations proving it fails when a record is wrong.",
+  "how_the_gap_was_found": {
+    "reported_by": "independent review",
+    "their_demonstration": "corrupted eight records in place, every boolean flipped and every number negated, and all 120 executing tests still passed",
+    "reproduced_here": "yes, independently, before writing anything: the same corruption applied to band-validity-sweep.json left test_open3d.py and test_open3d_lineage.py at 120 passed",
+    "why_mentions_were_not_enough": "Four records are cited by name in test_open3d.py docstrings and more in skills/tools/open3d/SKILL.md, but a citation in prose is read by people, not by CI."
+  },
+  "design_constraint": {
+    "rejected": "asserting each record's contents against a hardcoded copy in the test",
+    "why": "That doubles every figure and makes the test the thing that drifts. It is the defect this lane fixed in #1004, not a fix for it.",
+    "adopted": "Every check derives what it expects from something outside the record: the bytes of a file the record names, a figure another file cites, or an invariant implied by the field's own name."
+  },
+  "coverage": {
+    "records_total": 42,
+    "records_with_range_or_sign_invariants": 27,
+    "records_pinned_by_a_precise_figure_cited_elsewhere": 7,
+    "figure_bindings_derived": 29,
+    "records_naming_a_committed_file_with_its_digest": 2,
+    "digest_pairs_that_resolve_to_committed_bytes": 4,
+    "records_with_at_least_one_meaning_bearing_check": 29,
+    "records_with_structural_checks_only": 13,
+    "bounded_values_checked": 807,
+    "count_values_checked": 101
+  },
+  "what_is_still_unguarded": {
+    "structural_only_records": 13,
+    "the_hole_this_leaves": "A record with no bounded field, no count field, no committed digest and no precise figure quoted elsewhere is checked only for parsing, non-emptiness and finite numbers. Its contents can be rewritten to anything plausible and nothing here objects.",
+    "why_it_is_not_closed_with_a_digest_manifest": "A manifest over all 42 would detect every change including every legitimate regeneration, so it reports edits rather than errors. It is the right instrument if review wants acknowledge-on-change, and it is a different decision from this one.",
+    "honest_summary": "This closes the hole for 29 of 42 records and narrows it for the rest. It does not make the catalogue self-verifying."
+  },
+  "mutations_the_guard_was_tested_against": {
+    "harness": "harness/evidence_guard_mutations.py",
+    "rerun_with": "npa/.venv/bin/python docs/evidence/open3d/harness/evidence_guard_mutations.py",
+    "why_figures_here_are_written_as_text": "Mutation 2 moves a fraction that test_open3d.py quotes. Recording the before and after as numbers would put that figure in a second record, making it ambiguous and so silently removing the binding this record exists to document. The harness recomputes both values on every run.",
+    "results": [
+      {
+        "mutation": "an unpinned record corrupted the way review corrupted them",
+        "caught_by": [
+          "test_every_count_is_a_non_negative_whole_number",
+          "test_every_proportion_lies_between_zero_and_one",
+          "test_the_invariants_actually_detect_the_demonstrated_corruption"
+        ]
+      },
+      {
+        "mutation": "one cited fraction re-measured by 4 percent, from 0.009108 to 0.009473 as text, still finite and still inside [0, 1]",
+        "caught_by": [
+          "test_figures_quoted_in_code_and_prose_are_still_in_the_record_that_holds_them"
+        ],
+        "why_this_is_the_decisive_one": "The other four mutations are gross damage that several checks notice at once. This one is a believable number. Every other test in the file accepts it and test_open3d.py goes on quoting the old value."
+      },
+      {
+        "mutation": "a capability record emptied",
+        "caught_by": [
+          "test_every_record_parses_and_holds_something",
+          "test_the_coverage_this_file_provides_is_stated_rather_than_implied",
+          "test_the_invariants_actually_detect_the_demonstrated_corruption"
+        ]
+      },
+      {
+        "mutation": "a count field made negative",
+        "caught_by": [
+          "test_every_count_is_a_non_negative_whole_number",
+          "test_the_invariants_actually_detect_the_demonstrated_corruption"
+        ]
+      },
+      {
+        "mutation": "the duplicated filename made to disagree with its twin",
+        "caught_by": [
+          "test_the_one_duplicated_filename_stays_a_duplicate_rather_than_a_divergence"
+        ]
+      },
+      {
+        "mutation": "the coverage figures in this record edited without re-measuring",
+        "caught_by": [
+          "test_the_published_coverage_figures_are_the_measured_ones"
+        ],
+        "why_this_one_is_here": "This record publishes the coverage numbers and the test recomputes them, so the record cannot overstate what is guarded. Without this mutation that arrangement would itself be an unverified claim."
+      },
+      {
+        "mutation": "a record nothing checks added to the catalogue",
+        "caught_by": [
+          "test_the_published_coverage_figures_are_the_measured_ones",
+          "test_the_unguarded_remainder_is_named_and_not_just_counted"
+        ],
+        "why_this_one_is_here": "Coverage that silently dilutes is the way a guard like this decays. A new record with no bounded field, no count, no digest and no quoted figure cannot join without the published figures being brought up to date."
+      }
+    ],
+    "missed": [],
+    "evidence_files_left_dirty_after_the_battery": 0,
+    "count": 7
+  },
+  "two_things_found_while_measuring": {
+    "a_duplicated_record": {
+      "finding": "ordinary-window-audit.json is committed twice, at the top level and under viewer-ui/, byte for byte identical, and README.md refers to it by bare filename without saying which.",
+      "action_taken": "Held equal by a test rather than deleted. Both are committed evidence and the ambiguous reference does not establish which copy is meant; divergence is the failure worth catching, and that is now caught.",
+      "left_for_review": "whether one copy should go, and which"
+    },
+    "three_docstring_citations_that_do_not_hold": {
+      "finding": "Three figures in test_open3d.py docstrings that name an evidence record are not in the record they name. 1.5 is a descriptor (voxels wide), and 0.75126 is attributed in the prose itself to another lane's construction; floor-vs-voxel-multiple.json holds 0.7503 and 0.7536, not 0.75126.",
+      "consequence_for_the_guard": "This is why the figure binding is derived from the data rather than taken from the docstring's citation. A figure sourced from elsewhere falls out of scope instead of producing a false failure.",
+      "action_taken": "Recorded, not edited. test_open3d.py is touched by several open PRs in this lane and a prose-only correction there would conflict for no functional gain.",
+      "left_for_review": "whether those three docstrings should be reworded to separate their own figures from quoted ones"
+    }
+  },
+  "a_measurement_error_i_made_and_corrected": {
+    "what_i_first_reported_to_myself": "41 records, 26 covered by invariants, against a set of 40",
+    "the_bug": "I keyed the catalogue by basename. Two records share the filename ordinary-window-audit.json, so a name-keyed index holds 40 entries for 41 files and silently drops one. The first version of the coverage test asserted a count of 41 against that set of 40 and failed.",
+    "why_it_mattered_beyond_the_count": "The figure-binding table was also name-keyed, so one record was invisible to it and a figure held only by the shadowed copy could have been reported as uniquely binding a different record.",
+    "fix": "Every index is keyed by the path below the evidence root, and record_key() says why.",
+    "also_briefly_suspected": "a file appearing and disappearing between runs, since rglob returned 40 once and 41 twice. It was the same basename collision in a set, not a writer; no process held the worktree."
+  },
+  "verification": {
+    "guard_tests": "9 passed",
+    "lint": "ruff check and ruff format clean",
+    "guard_imports_no_product_code": "deliberate. It reads files by path from a root derived from __file__, so it cannot resolve to another worktree's copy of the package the way an imported threshold did in #1004.",
+    "existing_open3d_suites_rerun": "test_open3d.py and test_open3d_lineage.py unchanged and passing"
+  }
+}
