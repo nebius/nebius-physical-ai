@@ -388,9 +388,7 @@ def _enum_sites(node: object, pointer: str = "") -> dict[str, tuple[str, ...]]:
     if isinstance(node, dict):
         if "enum" in node:
             values = node["enum"]
-            assert isinstance(values, (list, tuple)), (
-                f"{pointer}/enum must be an array"
-            )
+            assert isinstance(values, (list, tuple)), f"{pointer}/enum must be an array"
             found[f"{pointer}/enum"] = tuple(values)
         for name, value in node.items():
             found.update(_enum_sites(value, f"{pointer}/{name}"))
