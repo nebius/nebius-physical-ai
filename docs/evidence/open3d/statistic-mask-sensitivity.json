@@ -177,6 +177,59 @@
     "why_the_old_one_was_too_high": "At 440px the box provably contains subject geometry -- the matched pairs differ by thousands of pixels inside it -- so the movement it produced was the spread responding to removed subject content, not to the annotation. Roughly double the true figure.",
     "how_it_got_past_me": "I took the extent plateau as licence to use the widest box in the sweep, because the extent was flat there. Flat extent means the annotation no longer pins the bounding box; it does not mean the box is empty of subject. The control I needed was the one I already had."
   },
+  "where_the_headline_ratio_sits_among_the_nine": {
+    "smallest_per_frame_ratio": 24.5,
+    "largest_per_frame_ratio": 66.2,
+    "frames_whose_spread_does_not_move_at_all": [
+      "baseline_scan_and_surface__overview.png"
+    ],
+    "per_frame": [
+      {
+        "frame": "baseline_scan_and_surface__opposite.png",
+        "ratio": 66.2
+      },
+      {
+        "frame": "baseline_scan_and_surface__topdown.png",
+        "ratio": 66.0
+      },
+      {
+        "frame": "baseline_surface_only__overview.png",
+        "ratio": 52.4
+      },
+      {
+        "frame": "candidate_scan_and_surface__opposite.png",
+        "ratio": 64.6
+      },
+      {
+        "frame": "candidate_scan_and_surface__overview.png",
+        "ratio": 48.2
+      },
+      {
+        "frame": "candidate_scan_and_surface__topdown.png",
+        "ratio": 26.7
+      },
+      {
+        "frame": "candidate_surface_only__overview.png",
+        "ratio": 48.3
+      },
+      {
+        "frame": "observed_scan_only__overview.png",
+        "ratio": 24.5
+      },
+      {
+        "frame": "baseline_scan_and_surface__overview.png",
+        "ratio": null
+      }
+    ],
+    "where_the_headline_figure_sits": "The published 26.7x is the second smallest of the nine, not the smallest -- that is 24.5x. Either way it is near the bottom of a 24.5x to 66.2x range, so the conclusion does not depend on a flattering frame."
+  },
+  "the_margin_masked_and_unmasked": {
+    "weakest_unmasked_spread": 0.1062,
+    "weakest_unmasked_over_floor": 1.77,
+    "weakest_masked_spread": 0.1042,
+    "weakest_masked_over_floor": 1.74,
+    "the_difference_is_the_mask_not_a_disagreement": "The gate reads the masked frame, so 1.74x is the operative margin and 1.77x is the unmasked view of the same thing."
+  },
   "the_floors_fragility_without_proposing_a_new_floor": {
     "weakest_delivered_frame_over_floor": 1.77,
     "largest_movement_observed_between_matched_reconstructions": 1.5,

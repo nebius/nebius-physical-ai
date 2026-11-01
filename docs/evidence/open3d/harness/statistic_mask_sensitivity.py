@@ -164,6 +164,62 @@ def sensitivity(width: int, height: int = BAND_HEIGHT) -> dict[str, object]:
     }
 
 
+def per_frame_ratio_range(width: int) -> dict[str, object]:
+    """Where the headline ratio sits among the nine, so it cannot be a flattering pick.
+
+    The published figure is the worst extent change over the worst spread change. Both happen
+    to come from the same frame, so it is a within-frame worst case rather than a
+    worst-numerator-over-best-denominator construction. A reviewer noted that and called it the
+    smallest per-frame ratio of the nine; it is the second smallest. One frame's spread does not
+    move at all under the mask, which has no finite ratio and is reported separately rather than
+    dropped or counted as a large number.
+    """
+    rows = sensitivity(width)["per_frame"]
+    assert isinstance(rows, list)
+    finite, unmoved = [], []
+    for row in rows:
+        extent, spread_change = (
+            float(row["extent_relative_change"]),
+            float(row["spread_relative_change"]),
+        )
+        (finite if spread_change else unmoved).append(
+            {"frame": row["frame"], "ratio": round(extent / spread_change, 1)}
+            if spread_change
+            else {"frame": row["frame"], "ratio": None}
+        )
+    ratios = [float(r["ratio"]) for r in finite]
+    return {
+        "smallest_per_frame_ratio": min(ratios),
+        "largest_per_frame_ratio": max(ratios),
+        "frames_whose_spread_does_not_move_at_all": [r["frame"] for r in unmoved],
+        "per_frame": finite + unmoved,
+        "where_the_headline_figure_sits": "The published 26.7x is the second smallest of the "
+        "nine, not the smallest -- that is 24.5x. Either way it is near the bottom of a 24.5x "
+        "to 66.2x range, so the conclusion does not depend on a flattering frame.",
+    }
+
+
+def masked_and_unmasked_margin(width: int) -> dict[str, object]:
+    """The floor margin depends slightly on whether the annotation is masked. Both are stated.
+
+    1.77x is the unmasked minimum and 1.74x the masked one. A reviewer measured both and was
+    careful to say the gap is the mask rather than a disagreement between us. Recording only one
+    would invite someone to find the other and read it as a contradiction.
+    """
+    rows = sensitivity(width)["per_frame"]
+    assert isinstance(rows, list)
+    unmasked = min(float(r["spread_before"]) for r in rows)
+    masked = min(float(r["spread_after"]) for r in rows)
+    return {
+        "weakest_unmasked_spread": round(unmasked, 4),
+        "weakest_unmasked_over_floor": round(unmasked / SPREAD_FLOOR, 2),
+        "weakest_masked_spread": round(masked, 4),
+        "weakest_masked_over_floor": round(masked / SPREAD_FLOOR, 2),
+        "the_difference_is_the_mask_not_a_disagreement": "The gate reads the masked frame, so "
+        "1.74x is the operative margin and 1.77x is the unmasked view of the same thing.",
+    }
+
+
 def why_the_old_figure_was_wrong() -> dict[str, object]:
     """The record said 0.0042. That was measured where the box is not overlay-only."""
     certified = overlay_only_width()["widest_certified_overlay_only"]
@@ -231,6 +287,8 @@ def build() -> dict[str, object]:
             "consequence": "The pair diff is the load-bearing control. The plateau is corroboration.",
         },
         "a_figure_this_corrects": why_the_old_figure_was_wrong(),
+        "where_the_headline_ratio_sits_among_the_nine": per_frame_ratio_range(width),
+        "the_margin_masked_and_unmasked": masked_and_unmasked_margin(width),
         "the_floors_fragility_without_proposing_a_new_floor": fragility_from_observed_movement(),
         "what_this_does_not_establish": "That the floor's edge is correct. It establishes that "
         "the mask question could not have moved the gate, and that the statistic choice was the "

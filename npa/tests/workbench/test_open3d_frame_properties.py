@@ -666,3 +666,39 @@ def test_the_certification_covered_the_annotations_full_height_not_a_strip() -> 
 
     assert readings[440]["max_pixels_differing_inside_the_band"] >= 3000, readings[440]
     assert readings[380]["max_pixels_differing_inside_the_band"] >= 2000, readings[380]
+
+
+def test_the_headline_ratio_is_not_a_flattering_pick_among_the_nine() -> None:
+    """The published ratio must sit near the bottom of the per-frame range, not the top.
+
+    A reviewer verified 26.7x and called it the smallest per-frame ratio of the nine. It is the
+    second smallest; 24.5x is smaller. Worth pinning because the claim being made is that the
+    conclusion does not depend on which frame you look at.
+    """
+    report = json.loads((EVIDENCE / "statistic-mask-sensitivity.json").read_text())
+    spread = report["where_the_headline_ratio_sits_among_the_nine"]
+    headline = report["sensitivity_at_the_certified_overlay_only_width"][
+        "how_many_times_more_sensitive_the_extent_is"
+    ]
+
+    assert spread["smallest_per_frame_ratio"] >= 10.0, spread
+    # The headline must be no kinder than the typical frame, which is the whole point.
+    assert (
+        headline
+        <= (spread["smallest_per_frame_ratio"] + spread["largest_per_frame_ratio"]) / 2
+    ), (headline, spread)
+    # One frame's spread does not move at all. Counting it as a huge ratio would inflate the
+    # range, and dropping it silently would hide a frame the mask cannot touch.
+    assert spread["frames_whose_spread_does_not_move_at_all"], spread
+
+
+def test_both_the_masked_and_unmasked_margins_are_recorded() -> None:
+    """1.74x and 1.77x are the same quantity read two ways, and only one is operative."""
+    report = json.loads((EVIDENCE / "statistic-mask-sensitivity.json").read_text())
+    margin = report["the_margin_masked_and_unmasked"]
+
+    assert margin["weakest_unmasked_over_floor"] == 1.77
+    assert margin["weakest_masked_over_floor"] == 1.74
+    # The gate reads the masked frame, so the masked figure must be the smaller of the two or
+    # the record is describing the kinder number as the operative one.
+    assert margin["weakest_masked_over_floor"] <= margin["weakest_unmasked_over_floor"]
