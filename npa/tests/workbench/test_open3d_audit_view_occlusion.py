@@ -230,6 +230,27 @@ def test_no_camera_angle_would_have_fixed_this(record) -> None:
     ) < 0.05
 
 
+def product_offset_direction(np, camera_fit, up: list[float]) -> list[float]:
+    """The direction the product places an eye in, from the product's own code.
+
+    Asked rather than reimplemented. The offset is built from `up` and
+    `CAMERA_ELEVATION_DEGREES` alone, so fitting any point set returns it -- a unit
+    tetrahedron and a larger offset box agree to nine decimals. Reimplementing the
+    formula here would pass just as well and would stop tracking the product the moment
+    it changed.
+    """
+    fit = camera_fit(
+        np.asarray(
+            [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]], float
+        ),
+        up,
+        1.0,
+    )
+    offset = [fit["eye"][i] - fit["look_target"][i] for i in range(3)]
+    span = math.sqrt(sum(value * value for value in offset))
+    return [value / span for value in offset]
+
+
 def test_the_harness_uses_the_product_camera_rather_than_its_own(record) -> None:
     """A measurement of a camera the harness fitted itself proves nothing about the
     one that ships, so the recorded camera has to be the production fit.
@@ -247,21 +268,36 @@ def test_the_harness_uses_the_product_camera_rather_than_its_own(record) -> None
 
     * the recorded angle equals the product's own constant, imported rather than
       copied -- which is what the earlier `> 0.0` was reaching for;
-    * the angle is *recovered from the eye's own geometry*, so it cannot be edited on
-      its own. The product places the eye at `centre + offset * distance` with
-      `offset` at `CAMERA_ELEVATION_DEGREES` above the horizontal, so the angle
-      between `eye - look_target` and `up` must come back out at 28 degrees. Changing
-      only the recorded angle now contradicts the eye it was fitted with;
-    * both scenes must share that direction. It depends only on the constant and `up`,
-      never on the geometry, so two different scenes fitted by one product function
-      agree exactly while two hand-written eyes would not.
+    * the eye's *whole direction* from its look target must equal the direction the
+      product fits. That direction is obtained by calling the product's own `_camera()`
+      on throwaway points, not by reimplementing its formula here: the offset depends
+      only on `up` and the constant, never on the geometry, so any point set returns
+      it. Two deliberately different ones were checked and agree to nine decimals.
+
+    An earlier version of this test bound only the *elevation* recovered from the eye,
+    and argued that two scenes agreeing on it could not both be hand-written. Review
+    falsified that directly: they replaced both eyes with invented ones chosen to sit
+    at exactly 28 degrees, roughly a thousand units out on a different azimuth, and
+    the suite passed 11 of 11. Two forgeries agree perfectly whenever the forger knows
+    the constant, and the constant is in the source. Binding the full direction closes
+    that: those same two eyes are 0.62 away from the product's direction, because their
+    azimuth is free and the product's is not.
+
+    What is still unbound is the *distance* along that direction. Solving it needs the
+    point geometry -- it is fitted so the widest actual sample sits just inside the
+    frame -- which is exactly why this test binds the direction instead. An eye placed
+    at the right direction and the wrong distance would pass here. Said plainly rather
+    than implied, because the previous version of this docstring claimed more than it
+    could support.
 
     `camera_look_target` and `camera_up` were added to the record for this. They come
     from the same `_view_cameras()` call as the eye, and the recomputation that added
     them reproduced the recorded eye to 0.0 in both scenes, so no measured value moved.
     """
 
-    from npa.workbench.open3d.runner import CAMERA_ELEVATION_DEGREES
+    import numpy as np
+
+    from npa.workbench.open3d.runner import CAMERA_ELEVATION_DEGREES, _camera
 
     directions = {}
     for row in record["scenes"]:
@@ -290,17 +326,18 @@ def test_the_harness_uses_the_product_camera_rather_than_its_own(record) -> None
             f"{scene}'s eye sits {recovered:.6f} degrees above its look target, not "
             f"the {CAMERA_ELEVATION_DEGREES} the product fits and the record claims"
         )
+
+        expected = product_offset_direction(np, _camera, row["camera_up"])
+        drift = max(abs(offset[i] - expected[i]) for i in range(3))
+        assert drift < 1e-9, (
+            f"{scene}'s eye sits {drift:.3e} away from the direction the product "
+            f"fits: recorded {[round(v, 6) for v in offset]} against the product's "
+            f"{[round(v, 6) for v in expected]}. The elevation alone can be right "
+            f"while the azimuth is invented."
+        )
         directions[scene] = offset
 
     assert len(directions) >= 2, f"need two scenes to compare fits, got {directions}"
-    scenes = sorted(directions)
-    first = directions[scenes[0]]
-    for other in scenes[1:]:
-        drift = max(abs(first[i] - directions[other][i]) for i in range(3))
-        assert drift < 1e-9, (
-            f"{scenes[0]} and {other} were fitted from different directions "
-            f"({drift:.3e} apart), so they cannot both be the one product fit"
-        )
 
 
 def test_the_record_states_its_own_stability_rather_than_implying_exactness(

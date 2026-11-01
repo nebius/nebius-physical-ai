@@ -137,8 +137,8 @@
     "it_was_a_guard_weakness_not_a_false_number": "Review confirmed independently that the harness does call the product's _view_cameras() and take cameras[REMOVED_VIEW], so the recorded 28.0 was correct. What was missing was anything that would keep it correct.",
     "what_binds_it_now": [
       "the recorded angle equals CAMERA_ELEVATION_DEGREES, imported from the product rather than copied as a literal",
-      "the angle is recovered from the eye's own geometry: the product places the eye at centre + offset * distance with offset at CAMERA_ELEVATION_DEGREES above the horizontal, so the angle between (eye - look_target) and up must come back out at 28. Editing the angle alone now contradicts the eye it was fitted with.",
-      "both scenes must share that direction. It depends only on the constant and up, never on the geometry, so one product function fitting two different scenes agrees exactly where two hand-written eyes would not."
+      "the elevation is recovered from the eye's own geometry, so the recorded angle cannot be edited on its own",
+      "the eye's whole direction from its look target equals the direction the product fits, obtained by calling the product's own _camera() on throwaway points rather than by reimplementing its formula. The offset depends only on up and the constant, never on the geometry, so any point set returns it -- a unit tetrahedron and a larger offset box agree to nine decimals."
     ],
     "fields_added_for_it": {
       "camera_look_target": "the centre the product fitted the eye around",
@@ -169,9 +169,28 @@
       {
         "mutation": "one scene's up tilted, the other left alone",
         "result": "1 failed"
+      },
+      {
+        "mutation": "review's own forgery: both eyes invented, both at exactly 28 degrees",
+        "result": "1 failed",
+        "note": "passed 11 of 11 against the elevation-only binding"
+      },
+      {
+        "mutation": "both eyes moved to 10x distance, direction preserved",
+        "result": "11 passed",
+        "note": "the limitation above, measured"
       }
     ],
     "baseline": "11 passed",
-    "where_this_note_lives": "At the top level, not under `controls`. I put it there first and test_the_instrument_reports_both_extremes failed on a KeyError: every entry under `controls` is a calibration control that must carry samples_behind_eye == 0, or its zero could be a clipping result. A guard note has no samples, so it does not belong in a section reserved for things that were measured."
+    "where_this_note_lives": "At the top level, not under `controls`. I put it there first and test_the_instrument_reports_both_extremes failed on a KeyError: every entry under `controls` is a calibration control that must carry samples_behind_eye == 0, or its zero could be a clipping result. A guard note has no samples, so it does not belong in a section reserved for things that were measured.",
+    "a_claim_of_mine_review_falsified": {
+      "what_i_wrote": "that two scenes agreeing on the recovered elevation could not both be hand-written, because the direction depends only on the constant and up",
+      "how_it_fell": "Review replaced both eyes with invented ones chosen to sit at exactly 28 degrees, about a thousand units out on a different azimuth, and the suite passed 11 of 11. Two forgeries agree perfectly whenever the forger knows the constant, and the constant is in the source. The two-scene check proved that the angle and the eye are consistent with each other and with the constant -- real, and it closed the original finding -- but not that the eye is the one _view_cameras() produced.",
+      "closed_rather_than_reworded": "Review asked only for the sentence to be corrected, judging the full eye unbindable from a CPU-only test. The azimuth turned out to be bindable: it is geometry-independent, so the product's own _camera() yields it without open3d. Review's two forged eyes are 0.62 away from the product's direction and now fail."
+    },
+    "what_is_still_not_bound": {
+      "the_distance_along_that_direction": "Solving it needs the point geometry -- it is fitted so the widest actual sample sits just inside the frame -- which is why the direction is what gets bound. Measured rather than reasoned: moving both eyes to 10x their distance along the correct direction still passes 11 of 11.",
+      "why_this_is_stated": "The previous version of this note claimed more than it could support, and a reviewer falsified it with a call rather than an argument."
+    }
   }
 }
