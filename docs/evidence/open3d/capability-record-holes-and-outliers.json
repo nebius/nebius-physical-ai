@@ -34,7 +34,7 @@
       "premise_measured": "The originating point is not the nearest retained point to its own surface point in 363 of 6199 cases, 5.9%. So the substitution they describe is real and not rare.",
       "effect_on_the_conclusion": "Nil. At a fixed sample the rank rule and identity exclusion give the same rate to three decimals, because in every one of those cases the verdict is already False under both rules: if another point is nearer the surface than the origin is, the origin loses either way.",
       "what_i_changed_and_what_i_am_not_claiming": "The exclusion is now by identity, which is legibility and not a correctness fix. I am not claiming it fixed a defect: review proved it could not have been one, and my own measurement agreed before I read the proof. It stays because a reader should not have to reconstruct a two-case proof to see that the arms are comparable.",
-      "the_asymmetry_that_was_real": "The sample. The published control ran on every seventh retained point while the outlier arm ran on all of them, and that is worth about 1.3 points where the exclusion rule is worth none. Both arms now run on their full sets.",
+      "the_asymmetry_that_was_real": "The sample, and it is my finding rather than review's: their row named only the rank rule. The published control ran on every seventh retained point while the outlier arm ran on all of them, worth 0.8 points -- 0.933 on the superseded commit against 0.941 here -- where the exclusion rule is worth none. I had published 'about 1.3 points' from an isolation run whose intermediate rates never shipped, so no reader could check it; withdrawn in favour of a pair that is in the record. Correcting it widened the gap between the arms from 0.018 to 0.026, which strengthened the discard it was checking rather than weakening it.",
       "my_near_miss": "My first corrected run changed the exclusion rule and the sample size together and came out higher, which I almost reported as the bias running opposite to review's prediction. It does not; the two changes had to be separated to see that one of them does nothing. Same lesson as the axis-pairing episode: vary one thing.",
       "outcome": "Yes, and now for a measured reason rather than an unexamined comparison. The corrected control is 0.941 against the outlier arm's 0.915.",
       "why_pointing_them_here_was_still_right": "I pointed review at the discarded test first and they went at it hardest. One of the two asymmetries they found was provably nil and they retracted it themselves within minutes; the other, the sampling one, was real and stands. Net effect: the conclusion is unchanged and now rests on a comparison whose arms I can show are comparable."
@@ -56,11 +56,11 @@
     "harness_that_produced_this": [
       {
         "path": "harness/holes_and_outliers.py",
-        "sha256": "9cfddeaec0acf89b2af71636e9c73e2c32fbb5689f121586ad8ad11e7a19019c"
+        "sha256": "334c65b284e0ead328dcc7a9ea2aa3467b1f812c47e675b894ff465f397b0b4a"
       },
       {
         "path": "holes-and-outliers.json",
-        "sha256": "8edd796a8a728f126655447d240bfc4fd72ce738de9264a66f71393d3bbc9255"
+        "sha256": "220ba920eb50f1c2541ef31fc5501f72eef55694a9e1343c86062b47d525015f"
       }
     ],
     "inputs": "The privately retained final bundle's fused cloud and both mesh variants, not committed. Bundle root comes from OPEN3D_BUNDLE so the same script runs in the Open3D image against /data/final-bundle and locally against the retained copy.",

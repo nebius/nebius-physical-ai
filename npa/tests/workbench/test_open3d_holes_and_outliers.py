@@ -10,9 +10,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from pathlib import Path
 
 EVIDENCE = Path(__file__).resolve().parents[3] / "docs" / "evidence" / "open3d"
+HARNESS = EVIDENCE / "harness"
 REPORT = EVIDENCE / "holes-and-outliers.json"
 RECORD = EVIDENCE / "capability-record-holes-and-outliers.json"
 
@@ -184,3 +186,94 @@ def test_the_record_binds_its_harness_and_report_bytes() -> None:
         assert hashlib.sha256(target.read_bytes()).hexdigest() == entry["sha256"], (
             entry["path"]
         )
+
+
+def test_the_sample_asymmetry_figure_is_checkable_from_rates_in_the_record() -> None:
+    """A reader must be able to recompute it. The previous figure could not be.
+
+    I published "about 1.3 points" for the sample asymmetry. Review did the arithmetic on the
+    committed bytes and found no pairing of the numbers in the record that yields it, because it
+    came from an isolation run whose intermediate rates were never shipped. The replacement names
+    both rates, so this test derives the claim instead of matching a literal.
+    """
+    report = json.loads((EVIDENCE / "holes-and-outliers.json").read_text())
+    discarded = report["a_test_i_built_and_discarded"]
+    asymmetry = discarded["an_asymmetry_review_found_in_this_discarded_test"]
+    worth = asymmetry["what_the_sample_asymmetry_was_worth"]
+
+    rates = [float(f"0.{part}") for part in re.findall(r"0\.(\d{3})", worth)]
+    assert len(rates) == 2, worth
+    points = round(abs(rates[1] - rates[0]) * 100, 1)
+    assert f"{points} points" in worth, (points, worth)
+
+    # The head rate it cites has to be the one the report actually publishes.
+    assert discarded["rate_for_retained_points_as_a_control"] in rates, (
+        rates,
+        discarded,
+    )
+    # And the withdrawn figure must be named as withdrawn rather than quietly dropped.
+    assert "1.3" in worth and "withdrawn" in worth, worth
+
+
+def test_the_sample_finding_is_not_attributed_to_review() -> None:
+    """Review raised the rank rule and never the sample; crediting them would be wrong.
+
+    The earlier wording said the asymmetry "was real, review did not retract it", which is
+    literally true and reads as though they had raised both and withdrawn one.
+    """
+    report = json.loads((EVIDENCE / "holes-and-outliers.json").read_text())
+    asymmetry = report["a_test_i_built_and_discarded"][
+        "an_asymmetry_review_found_in_this_discarded_test"
+    ]
+
+    claimed = asymmetry["what_was_actually_asymmetric"]
+    assert "mine rather than review's" in claimed, claimed
+    assert "review did not retract it" not in claimed, claimed
+
+    harness = (HARNESS / "holes_and_outliers.py").read_text()
+    assert "I found a second asymmetry in the same edit" in harness
+    assert "review did not retract it" not in harness
+
+
+def test_correcting_the_asymmetry_widened_the_gap_it_was_checking() -> None:
+    """The direction matters: the error made my own conclusion look weaker, not stronger."""
+    report = json.loads((EVIDENCE / "holes-and-outliers.json").read_text())
+    discarded = report["a_test_i_built_and_discarded"]
+    asymmetry = discarded["an_asymmetry_review_found_in_this_discarded_test"]
+    direction = asymmetry["the_correction_strengthened_the_conclusion_it_was_checking"]
+
+    gaps = [float(g) for g in re.findall(r"0\.0\d\d", direction)]
+    assert len(gaps) == 2 and gaps[1] > gaps[0], direction
+    published = round(
+        discarded["rate_for_retained_points_as_a_control"]
+        - discarded["rate_for_outliers"],
+        3,
+    )
+    assert published == gaps[1], (published, gaps)
+
+
+def test_the_hand_edit_declares_itself_and_names_why_it_was_not_regenerated() -> None:
+    """These prose corrections could not be made by re-running the harness.
+
+    The input bundle lived on an ephemeral volume the host reboot removed. A hand-edited report
+    is only trustworthy if it says so and if the edit is bounded, so the bound is stated as a
+    numeric-invariance check and the count is asserted against the file.
+    """
+    path = EVIDENCE / "holes-and-outliers.json"
+    report = json.loads(path.read_text())
+    note = report["a_test_i_built_and_discarded"][
+        "an_asymmetry_review_found_in_this_discarded_test"
+    ]["why_this_report_was_edited_rather_than_regenerated"]
+
+    assert "could not be re-run" in note, note
+
+    def numeric_leaves(node: object) -> list[object]:
+        if isinstance(node, dict):
+            return [leaf for value in node.values() for leaf in numeric_leaves(value)]
+        if isinstance(node, list):
+            return [leaf for value in node for leaf in numeric_leaves(value)]
+        if isinstance(node, bool) or node is None:
+            return [node]
+        return [node] if isinstance(node, (int, float)) else []
+
+    assert f"all {len(numeric_leaves(report))} are unchanged" in note, note

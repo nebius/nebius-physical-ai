@@ -306,10 +306,16 @@ def a_test_i_discarded(
         the same thing before reading the retraction -- identical rates to three decimals.
 
         So identity exclusion here is legibility, not a correctness fix, and it is not
-        claimed as one. The substantive change in the same edit is the sample: the control
-        arm ran on every seventh retained point while the outlier arm ran on all of them.
-        That asymmetry was real, review did not retract it, and it moves the rate about 1.3
-        points where the exclusion rule moves it none.
+        claimed as one. Review has since confirmed it should stay on exactly that basis.
+
+        I found a second asymmetry in the same edit, and it is the substantive one: the
+        control arm ran on every seventh retained point while the outlier arm ran on all of
+        them. Review did not raise this one and should not be credited with it. It moves the
+        control from 0.933 to 0.941, which is 0.8 points, where the exclusion rule moves it
+        none -- and because the exclusion rule provably moves nothing, the whole of that 0.8
+        is the sample. An earlier version of this sentence said 1.3 points, which came from
+        an isolation run whose intermediate rates were never shipped, so no reader could
+        check it. Withdrawn in favour of the pair above, both of which are in the record.
         """
         found = scene.compute_closest_points(o3d.core.Tensor(sample.astype(np.float32)))
         surface = found["points"].numpy()
@@ -369,15 +375,28 @@ def a_test_i_discarded(
             "their_premise_measured": f"The originating point is not the nearest retained "
             f"point to its own surface point in {not_nearest} of {len(retained_points)} cases, "
             f"{round(100 * not_nearest / len(retained_points), 1)}%. So the substitution they "
-            "describe is real and not rare.",
+            "describe is real and not rare. Their premise held and the conclusion they drew "
+            "from it did not, which is how they asked for it to be recorded and is a more "
+            "accurate description than calling the row wrong. They could not measure this "
+            "themselves: no venv on the review host has Open3D, which they verified.",
             "its_effect_on_the_rate": "Nil. At a fixed sample the rank rule and identity "
             "exclusion give the same rate to three decimals, because in every one of those "
             "cases the verdict is already False under both rules: if another point is nearer "
             "the surface than the origin is, the origin loses either way.",
-            "what_was_actually_asymmetric": "The sample. The published control ran on every "
-            "seventh retained point while the outlier arm ran on all of them, and that is "
-            "worth about 1.3 points where the exclusion rule is worth none. Both arms now run "
-            "on their full sets.",
+            "what_was_actually_asymmetric": "The sample, and this one is mine rather than "
+            "review's -- their row named only the rank rule, and crediting them with this "
+            "would be wrong. The published control ran on every seventh retained point while "
+            "the outlier arm ran on all of them. Both arms now run on their full sets.",
+            "what_the_sample_asymmetry_was_worth": "0.8 points: the control reads 0.933 on the "
+            "superseded commit and 0.941 here. Because the exclusion rule provably moves "
+            "nothing, the whole of that movement is the sample. An earlier version of this "
+            "field said 'about 1.3 points', which came from an isolation run whose "
+            "intermediate rates were never shipped; review pointed out that no pairing of the "
+            "committed numbers yields it, which was correct, and it is withdrawn.",
+            "the_correction_strengthened_the_conclusion_it_was_checking": "The control moved "
+            "up, so the gap between the arms widened from 0.018 to 0.026. The asymmetry had "
+            "been making the control look lower and the 'separates nothing' discard look "
+            "weaker than it was. It cost the clarity of the reason and never the verdict.",
             "a_mistake_i_nearly_made_checking_this": "My first corrected run changed the "
             "exclusion rule and the sample size together and came out higher, which I almost "
             "reported as the bias running opposite to review's prediction. It does not; the "
