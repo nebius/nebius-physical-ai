@@ -21,11 +21,40 @@ npa workbench workflow plan-spec workflows/testing/sim2real-smolvla-franka-cube-
   --var profile_uri='<qualified-profile-uri>' \
   --var gold_collection_uri='<sealed-gold-uri>' \
   --var adapted_checkpoint_uri='<selected-checkpoint-uri>' \
-  --var adapted_policy_adapter_uri='<checkpoint-adapter-uri>'
+  --var adapted_policy_adapter_uri='<checkpoint-adapter-uri>' \
+  --var runtime_storage_class='<target-storage-class>' \
+  --var service_gpu_node_selector_key='<target-gpu-label-key>' \
+  --var service_gpu_node_selector_value='<target-gpu-label-value>'
 ```
 
-After the same plan and normal health/access preflights pass, submit the same
-spec with `npa workbench workflow submit ... --runtime`. The workflow creates or
+Select a storage class and GPU label key/value available on the target cluster.
+The service and evaluator each require one compatible GPU during evaluation.
+Supply these target settings to both planning and submission; the YAML defaults
+are not automatically discovered from a selected cluster.
+
+After the plan and normal health/access preflights pass, submit through the same
+standard CLI with the same qualified inputs:
+
+```bash
+npa workbench workflow submit workflows/testing/sim2real-smolvla-franka-cube-eval.yaml \
+  --runtime --run-id '<fresh-run-id>' --project '<own-project-alias>' \
+  --infra 'k8s/<selected-context>' --durable-s3 --output-format json \
+  --var bucket='<bucket>' \
+  --var source_sha='<consumer-source-sha>' \
+  --var isaac_image='<exact-image-digest>' \
+  --var isaac_image_source_sha='<baked-source-sha>' \
+  --var runtime_image='<exact-image-digest>' \
+  --var runtime_image_source_sha='<baked-source-sha>' \
+  --var profile_uri='<qualified-profile-uri>' \
+  --var gold_collection_uri='<sealed-gold-uri>' \
+  --var adapted_checkpoint_uri='<selected-checkpoint-uri>' \
+  --var adapted_policy_adapter_uri='<checkpoint-adapter-uri>' \
+  --var runtime_storage_class='<target-storage-class>' \
+  --var service_gpu_node_selector_key='<target-gpu-label-key>' \
+  --var service_gpu_node_selector_value='<target-gpu-label-value>'
+```
+
+The workflow creates or
 adopts only its exact run-owned caches, authentication and service-controller
 RBAC, starts the selected checkpoint service, evaluates 8 sealed scenarios in
 each of three modes, emits native evidence, and deletes its exact service and

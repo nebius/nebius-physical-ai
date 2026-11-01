@@ -29,6 +29,9 @@ PAIDF_DEPLOY = (
     REPO_ROOT / "docs" / "workbench" / "guides" / "physical-ai-data-factory-deploy.md"
 )
 SIM2REAL_GUIDE = REPO_ROOT / "docs" / "workbench" / "guides" / "sim2real-workflow.md"
+SMOLVLA_FRANKA_CUBE_GUIDE = (
+    REPO_ROOT / "docs" / "workbench" / "guides" / "sim2real-smolvla-franka-cube-eval.md"
+)
 
 #: Docs a first-time user follows to install. They must agree on the venv path.
 USER_FACING_INSTALL_DOCS = (README, INSTALL, QUICKSTART, GUIDES_README, PAIDF_DEPLOY)
@@ -201,6 +204,23 @@ def test_sim2real_guide_separates_fresh_submit_from_exact_resume() -> None:
     resume_section = text.split("## Resume and verify", 1)[1]
     assert '--resume-run "$RUN_ID"' in resume_section
     assert "--run-id" not in resume_section.split("```", 2)[1]
+
+
+def test_smolvla_franka_cube_guide_submits_all_target_settings() -> None:
+    """Keep the experimental recipe complete for a selected target cluster."""
+    blocks = _submit_blocks(SMOLVLA_FRANKA_CUBE_GUIDE)
+    assert len(blocks) == 1
+    submit = blocks[0]
+    for required in (
+        "--runtime",
+        "--project",
+        "--infra 'k8s/",
+        "--durable-s3",
+        "--var runtime_storage_class=",
+        "--var service_gpu_node_selector_key=",
+        "--var service_gpu_node_selector_value=",
+    ):
+        assert required in submit, f"missing runnable target setting: {required}"
 
 
 def test_paidf_noninteractive_configure_uses_ids_not_secrets() -> None:
