@@ -235,11 +235,27 @@ else
 fi
 
 log "OSS dependency closure for Isaac Sim / Isaac Lab"
-sed -E '/^imageio-ffmpeg==/d' "${OSS_DEPS_FILE}" \
-  > /tmp/npa-isaac-oss-deps.txt
+MOVIEPY_PILLOW_QUALIFIED=0
+if [ "$ISAAC_PYTHON_MINOR" = 3.11 ] && grep -qiE '^moviepy==' "$OSS_DEPS_FILE"; then
+  grep -Fxq 'moviepy==2.2.1' "$OSS_DEPS_FILE"
+  grep -Fxq 'pillow==13.0.0' "$OSS_DEPS_FILE"
+  MOVIEPY_PILLOW_QUALIFIED=1
+  sed -E '/^(imageio-ffmpeg|moviepy|pillow)==/d' "${OSS_DEPS_FILE}" \
+    > /tmp/npa-isaac-oss-deps.txt
+else
+  sed -E '/^imageio-ffmpeg==/d' "${OSS_DEPS_FILE}" \
+    > /tmp/npa-isaac-oss-deps.txt
+fi
 "$ISAAC_VENV/bin/python" -m pip install --no-cache-dir \
   --no-deps \
   -r /tmp/npa-isaac-oss-deps.txt
+if [ "$MOVIEPY_PILLOW_QUALIFIED" = 1 ]; then
+  "$ISAAC_VENV/bin/python" -m pip install --no-cache-dir \
+    --no-deps \
+    --only-binary=:all: \
+    --require-hashes \
+    -r "${COMMON_DIR}/moviepy-pillow311.lock"
+fi
 # PyPI's ordinary imageio-ffmpeg wheel embeds a static FFmpeg executable. The
 # package itself is BSD-2-Clause, but that bundled executable is not admissible
 # in NPA's public image contract. Build its pure-Python wheel from the sdist and
@@ -260,7 +276,7 @@ test -z "$(find "$ISAAC_VENV" -type f -path '*/imageio_ffmpeg/binaries/ffmpeg*' 
 # otherwise impossible wheel>=24 / Isaac-Lab<24 packaging constraint without
 # weakening Isaac Lab's declared runtime contract.
 "$ISAAC_VENV/bin/python" -m pip uninstall --yes wheel
-if [ "$ISAAC_PYTHON_MINOR" = 3.11 ] && grep -qiE '^moviepy==' "$OSS_DEPS_FILE"; then
+if [ "$MOVIEPY_PILLOW_QUALIFIED" = 1 ]; then
   # MoviePy 2.2.1 passes its complete upstream suite on Pillow 13.0.0, but its
   # released metadata still caps Pillow below 12. Bind the compatibility patch
   # to exact metadata bytes and retain the real Pillow 13 installation and RECORD.

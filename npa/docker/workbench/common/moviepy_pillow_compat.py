@@ -14,9 +14,6 @@ import io
 from importlib import metadata
 from pathlib import Path
 
-from packaging.version import Version
-
-
 ORIGINAL_SHA256 = "ba08814030a33c196589cb232d87518b2be874b342e8e5f6dfefb464e52e5569"
 PATCHED_SHA256 = "40bc8558f5dba3d3c3d31831b8f32253e1b9ad74527ced0242130c201a2e2595"
 
@@ -71,7 +68,7 @@ def main() -> None:
     distribution = metadata.distribution("moviepy")
     if distribution.version != "2.2.1":
         raise RuntimeError("Pillow compatibility patch requires MoviePy 2.2.1")
-    if Version(metadata.version("pillow")) != Version("13.0.0"):
+    if metadata.version("pillow") != "13.0.0":
         raise RuntimeError("MoviePy compatibility patch requires Pillow 13.0.0")
     root = Path(distribution.locate_file(""))
     relative = "moviepy-2.2.1.dist-info/METADATA"

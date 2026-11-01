@@ -171,11 +171,13 @@ Cosmos3 serving uses the same verifier for its constrained 80.10.2 runtime.
 Both reject unknown source bytes and update installed `RECORD` hashes.
 Isaac's Python 3.11 closure installs security-fixed Pillow 13.0.0. MoviePy
 2.2.1's unchanged release source passes its complete upstream suite against
-that exact Pillow release, so the build repairs the stale `<12` requirement in
-exact installed metadata and updates its `RECORD`; released code and package
-versions stay intact. The repair rejects unknown metadata, any other MoviePy
-version, or any other Pillow version. A successful source or dependency check
-does not qualify an existing or replacement image digest.
+that exact Pillow release. Their reviewed Python 3.11 linux/amd64 wheels are
+installed through an exact `--require-hashes --only-binary` lock before the
+build repairs the stale `<12` requirement in exact installed metadata and
+updates its `RECORD`; released code and package versions stay intact. The
+repair rejects unknown metadata, any other MoviePy version, or any Pillow
+version string other than literal `13.0.0`. A successful source or dependency
+check does not qualify an existing or replacement image digest.
 
 The Sim2Real controller and Rerun viewer builds use the October 2, 2026 Debian
 snapshot and explicitly install `perl-base=5.40.1-6+deb13u1` to remove the three
