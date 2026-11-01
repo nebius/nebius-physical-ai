@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from npa.workbench.lerobot.policy_container import LeRobotEvalResult
+from npa.workflows import sim_to_real as sim_to_real_workflow
 from npa.workflows.eval_backends import (
     EvalMetric,
     RolloutContext,
@@ -344,7 +345,7 @@ def test_legacy_sim2real_normalizers_preserve_default_and_explicit_success() -> 
 
 
 def test_reference_adapter_diagnostics_reject_coerced_sim_success() -> None:
-    with pytest.raises(Sim2RealLoopError, match="success.*JSON boolean"):
+    with pytest.raises(Sim2RealLoopError, match="success.*literal boolean"):
         legacy_components._apply_reference_adapter_heldout_gate(
             [{"success": "false", "score": 0.1, "details": {}}],
             [{"env_id": "env-1", "physics": {}}],
@@ -362,6 +363,31 @@ def test_feedback_adapters_reject_manually_constructed_boolean_score() -> None:
         FeedbackSourceError, match="feedback score must be a finite JSON number"
     ):
         adapt_feedback_to_training_signal(payload)
+
+
+@pytest.mark.parametrize("success", ["false", "no", 0, 1, [], {}])
+def test_feedback_adapters_reject_manually_constructed_non_boolean_success(
+    success: object,
+) -> None:
+    payload = FeedbackPayload(
+        "test", FeedbackType.SCALAR, 0.9, score=0.9, success=success
+    )
+
+    with pytest.raises(
+        FeedbackSourceError, match="feedback source 'success' must be a JSON boolean"
+    ):
+        adapt_feedback_to_training_signal(payload)
+
+
+def test_real_loop_adapter_boundary_translates_feedback_errors() -> None:
+    payload = FeedbackPayload(
+        "test", FeedbackType.SCALAR, 0.9, score=0.9, success="false"
+    )
+
+    with pytest.raises(
+        SimToRealError, match="feedback source 'success' must be a JSON boolean"
+    ):
+        sim_to_real_workflow._adapt_feedback_payload(payload)
 
 
 @pytest.mark.parametrize("value", ["false", 0, 1, None, [], {}])
@@ -400,6 +426,73 @@ def test_sim_env_feedback_source_adapts_eval_metric(tmp_path: Path) -> None:
     assert payload.value is True
     assert status.name == "sim_env_feedback"
     assert signal["scalar_reward"] == 1.0
+
+
+@pytest.mark.parametrize("passed", ["false", "no", 0, 1, [], {}])
+def test_sim_env_feedback_rejects_non_boolean_metric_success(
+    tmp_path: Path, passed: object
+) -> None:
+    request = FeedbackRequest(
+        rollout_path=tmp_path,
+        output_path=tmp_path / "feedback",
+        task="pick",
+        checkpoint_uri="s3://bucket/checkpoint/",
+        threshold=0.8,
+        feedback_type=FeedbackType.SCALAR,
+        eval_metric=EvalMetric(name="state-success", score=0.9, passed=passed),
+    )
+
+    with pytest.raises(
+        FeedbackSourceError, match="feedback source 'success' must be a JSON boolean"
+    ):
+        collect_feedback("sim-env", request)
+
+
+@pytest.mark.parametrize(
+    ("score", "passed", "message"),
+    [
+        (True, False, "finite JSON number"),
+        ("0.9", False, "finite JSON number"),
+        (0.9, "false", "JSON boolean"),
+    ],
+)
+def test_vlm_feedback_rejects_coerced_internal_result(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    score: object,
+    passed: object,
+    message: str,
+) -> None:
+    from npa.workbench import vlm_eval
+
+    result = vlm_eval.VlmEvalResult(
+        status="completed",
+        backend="api",
+        input_path=str(tmp_path),
+        output_path=str(tmp_path / "feedback"),
+        result_uri="",
+        task="pick",
+        model="test-model",
+        score=score,
+        success_threshold=0.8,
+        passed=passed,
+        generated_at="2026-01-01T00:00:00Z",
+    )
+    monkeypatch.setattr(vlm_eval, "evaluate_vlm", lambda **_kwargs: result)
+    monkeypatch.setattr(
+        vlm_eval, "write_result", lambda *_args, **_kwargs: "result.json"
+    )
+    request = FeedbackRequest(
+        rollout_path=tmp_path,
+        output_path=tmp_path / "feedback",
+        task="pick",
+        checkpoint_uri="s3://bucket/checkpoint/",
+        threshold=0.8,
+        feedback_type=FeedbackType.SCALAR,
+    )
+
+    with pytest.raises(FeedbackSourceError, match=message):
+        collect_feedback("vlm", request)
 
 
 @pytest.mark.parametrize("feedback_type", list(FeedbackType))

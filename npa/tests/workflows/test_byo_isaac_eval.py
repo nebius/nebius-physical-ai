@@ -133,6 +133,22 @@ def test_per_env_runtime_stability_rejects_non_booleans(
         )
 
 
+@pytest.mark.parametrize("placement_stable", [False, True])
+@pytest.mark.parametrize("place", ["no", "false", 0, 1, None, [], {}])
+def test_per_env_runtime_stability_validates_retained_place_with_primary(
+    placement_stable: bool, place: object
+) -> None:
+    with pytest.raises(
+        ValueError,
+        match=r"runtime_metrics\[0\]\.place must be a literal boolean",
+    ):
+        ev.per_env_from_distances(
+            [0.02],
+            success_dist_m=0.05,
+            runtime_metrics=[{"placement_stable": placement_stable, "place": place}],
+        )
+
+
 def test_runtime_stability_controls_strict_success_statistics() -> None:
     per_env = ev.per_env_from_distances(
         [0.02, 0.02],

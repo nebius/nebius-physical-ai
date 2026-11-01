@@ -430,18 +430,23 @@ def per_env_from_distances(
 
 
 def _runtime_placement_stable(metrics: dict[str, Any], *, index: int) -> bool:
-    """Return downloaded placement stability without truthiness coercion."""
+    """Return placement stability after validating every retained place field."""
 
+    primary: bool | None = None
     if "placement_stable" in metrics:
-        field = "placement_stable"
-    elif "place" in metrics:
-        field = "place"
-    else:
-        return False
-    return require_boolean(
-        metrics[field],
-        field=f"runtime_metrics[{index}].{field}",
-    )
+        primary = require_boolean(
+            metrics["placement_stable"],
+            field=f"runtime_metrics[{index}].placement_stable",
+        )
+    fallback: bool | None = None
+    if "place" in metrics:
+        fallback = require_boolean(
+            metrics["place"],
+            field=f"runtime_metrics[{index}].place",
+        )
+    if primary is not None:
+        return primary
+    return fallback if fallback is not None else False
 
 
 # In-Isaac rollout script (runs in the sibling Job). Defensive: tries the

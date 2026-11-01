@@ -281,14 +281,18 @@ class SimEnvFeedbackSource:
                 tier="SEAM",
                 evidence="sim-env feedback selected, but no eval metric has been produced.",
             )
+        score = parse_feedback_score(metric.score)
+        success = (
+            parse_feedback_success(metric.passed)
+            if metric.passed is not None
+            else score >= request.threshold
+        )
         payload = _payload_from_score(
             source=self.name,
             feedback_type=request.feedback_type,
-            score=metric.score,
-            success=metric.passed
-            if metric.passed is not None
-            else metric.score >= request.threshold,
-            rationale=f"{metric.name} score={metric.score:.6f}",
+            score=score,
+            success=success,
+            rationale=f"{metric.name} score={score:.6f}",
             metadata=metric.metadata,
         )
         tier = (
@@ -343,8 +347,8 @@ class VlmFeedbackSource:
         feedback = _payload_from_score(
             source=self.name,
             feedback_type=request.feedback_type,
-            score=float(result.score),
-            success=bool(result.passed),
+            score=parse_feedback_score(result.score),
+            success=parse_feedback_success(result.passed),
             rationale=result.rationale or result.status,
             metadata={
                 "backend": result.backend,
@@ -506,6 +510,7 @@ def _payload_from_score(
     metadata: dict[str, Any] | None = None,
 ) -> FeedbackPayload:
     score = _bounded(score)
+    success = parse_feedback_success(success)
     if feedback_type == FeedbackType.SCALAR:
         value: Any = score
     elif feedback_type == FeedbackType.DENSE_PER_STEP:
@@ -589,12 +594,14 @@ def _base_signal(
     success: bool | None = None,
 ) -> TrainingSignal:
     score = _bounded(score)
-    resolved_success = payload.success if success is None else success
+    resolved_success = parse_feedback_success(
+        payload.success if success is None else success
+    )
     reward = score if resolved_success else min(score, 0.5)
     return TrainingSignal(
         schema="npa.sim_to_real.training_signal.v1",
         scalar_reward=round(float(reward), 6),
-        success=bool(resolved_success),
+        success=resolved_success,
         score=score,
         natural_language_critique=payload.rationale,
         loss_weight=round(1.0 + (1.0 - score), 6),

@@ -845,6 +845,13 @@ def _component_from_status(status: Any) -> ComponentStatus:
     )
 
 
+def _adapt_feedback_payload(payload: FeedbackPayload) -> dict[str, Any]:
+    try:
+        return adapt_feedback_to_training_signal(payload)
+    except FeedbackSourceError as exc:
+        raise SimToRealError(str(exc)) from exc
+
+
 def feedback_to_training_signal(feedback: FeedbackResult) -> dict[str, Any]:
     """Convert feedback into a bounded training signal."""
 
@@ -1643,7 +1650,7 @@ def run_real_lerobot_loop(
         except FeedbackSourceError as exc:
             raise SimToRealError(str(exc)) from exc
         latest_feedback = _feedback_payload_to_result(feedback_payload)
-        latest_signal = adapt_feedback_to_training_signal(feedback_payload)
+        latest_signal = _adapt_feedback_payload(feedback_payload)
         latest_eval_status = eval_status
         latest_feedback_status = feedback_status
         signal_path = local_dir / "training-signals" / f"iter-{iteration:02d}.json"
