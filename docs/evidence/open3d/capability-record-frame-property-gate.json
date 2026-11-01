@@ -222,11 +222,11 @@
       },
       {
         "path": "harness/statistic_mask_sensitivity.py",
-        "sha256": "330d601fe5bb114153a142e8187fca7bc1cd46b635ca9eddb32e6362a4d72f63"
+        "sha256": "48d4bc8661bdf569dd955f7a80c4f6071680e99b703785c827e871b6f430f8c2"
       },
       {
         "path": "statistic-mask-sensitivity.json",
-        "sha256": "a7ae5a58a76582534e0a79394bdc012c8e8ebfd20c8cb65638a99bd890dac157"
+        "sha256": "a2e98923754e81fd80cb736b08f9f8e5541042be425dfdd8bbe4b3216f174a84"
       }
     ],
     "one_of_these_pins_goes_stale_when_a_sibling_lands": "harness/frame_edge_audit.py is edited by the evidence-binding branch (PR 982), which makes it record the sha256 of each file it measures. That digest is correct for the bytes on this branch and stops being correct the moment 982 merges. Whichever of the two lands second must re-read it. Written down rather than left for a reader to discover, because a stale pin and a tampered one look the same.",
@@ -263,7 +263,13 @@
     "why_quartiles_behave_this_way": "An interquartile spread is insensitive to a compact cluster at one corner, which is what a fixed annotation is. An extent is defined by the outermost pixel, so one glyph can set it.",
     "what_this_does_not_excuse": "The extent figure was still published wrong and corrected twice. Being a diagnostic makes it less dangerous, not less wrong.",
     "where_the_headline_ratio_sits": "26.7x is the second smallest of the nine per-frame ratios, which run 24.5x to 66.2x, and one frame's spread does not move under the mask at all. A reviewer called it the smallest; it is the second smallest. Either way it is near the bottom of the range, so the conclusion does not rest on a flattering frame.",
-    "a_cross_measurement_disagreement_and_what_it_was_not": "A reviewer recomputed all nine frames and matched at the top of the range while differing by almost exactly 2x on observed_scan_only__overview, and proposed a spread-definition difference. Tested under four axis conventions, that frame is invariant -- 24.6x under all four -- so the definition cannot produce it. The other half of their disagreement, which frame has no finite ratio, does resolve as an axis question. Their 48.5x is within 0.2 of this harness's reading for the frame immediately above it in sorted order, so row attribution is the hypothesis the numbers support. Recorded because convention has already caused two disagreements about these frames that were not about the data."
+    "a_cross_measurement_disagreement_narrowed_to_one_term": {
+      "what_it_was_not": "Not a row misattribution. I proposed that, because a reviewer's 48.5x matched this harness's reading of the adjacent frame to within 0.2. They hashed all nine frames against the ones in this PR: 9 of 9 byte-identical under the same names. The coincidence was real and the inference from it was not.",
+      "what_it_was_not_either": "Not the axis definition they proposed. The frame reads the same under every convention that moves extent and spread together.",
+      "what_it_actually_is": "A pairing difference. They pin the extent to the horizontal axis and vary only the spread axis; this harness moved both together, so each of us was invariant within our own family and neither family was named. A nine-cell matrix of numerator axis against denominator axis now localises it: their extent-horizontal over spread-vertical column reproduces here exactly on both frames, and their spread-horizontal column does not, which leaves the horizontal quartile spread as the only term that can differ.",
+      "a_claim_of_mine_that_was_scoped_too_broadly": "I labelled a frame 'convention-invariant' on the strength of four conventions that all move both axes at once. It is invariant within that family and not across theirs. The label claimed more than the control tested.",
+      "the_durable_fix": "Any ratio quoted about these frames names its numerator axis and its denominator axis. Naming one is what let this run for three exchanges, and it is the fourth disagreement here caused by convention rather than data."
+    }
   },
   "the_floors_fragility_stated_from_measured_movement": {
     "the_figures": "The weakest delivered frame sits 1.77x above the floor. The largest movement the statistic has shown between two reconstructions of one view is 1.50x.",

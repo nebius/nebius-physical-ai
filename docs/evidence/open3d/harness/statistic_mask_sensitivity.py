@@ -240,68 +240,87 @@ def axis_convention_sensitivity(
     that were not about the data. Reporting convention-invariance turns the third into a lookup.
     """
     row, col = ORIGIN
-    conventions = {
-        "narrower_axis_as_the_gate_uses": lambda h, v: min(h, v),
-        "horizontal_only": lambda h, _: h,
-        "vertical_only": lambda _, v: v,
-        "mean_of_both_axes": lambda h, v: (h + v) / 2,
+    axis = {
+        "horizontal": lambda h, v: h,
+        "vertical": lambda h, v: v,
+        "narrower": lambda h, v: min(h, v),
     }
+
+    def quartile_axes(current):
+        rows_, cols_ = np.nonzero(current)
+        frame_height, frame_width = current.shape
+        return (
+            float((np.percentile(cols_, 75) - np.percentile(cols_, 25)) / frame_width),
+            float((np.percentile(rows_, 75) - np.percentile(rows_, 25)) / frame_height),
+        )
+
+    def extent_axes(current):
+        rows_, cols_ = np.nonzero(current)
+        frame_height, frame_width = current.shape
+        return (
+            float((cols_.max() - cols_.min() + 1) / frame_width),
+            float((rows_.max() - rows_.min() + 1) / frame_height),
+        )
+
     per_frame = []
     for path in sorted(FRAMES.glob("*.png")):
         mask = controls.content_mask(controls.rgb(path))
         cut = mask.copy()
         cut[row : row + height, col : col + width] = False
-        before, after = controls.narrower_extent(mask), controls.narrower_extent(cut)
-        extent_change = abs(before - after) / before
+        spread_before, spread_after = quartile_axes(mask), quartile_axes(cut)
+        extent_before, extent_after = extent_axes(mask), extent_axes(cut)
         ratios: dict[str, float | None] = {}
-        for name, pick in conventions.items():
-            axes = []
-            for current in (mask, cut):
-                rows_, cols_ = np.nonzero(current)
-                frame_height, frame_width = current.shape
-                axes.append(
-                    pick(
-                        float(
-                            (np.percentile(cols_, 75) - np.percentile(cols_, 25))
-                            / frame_width
-                        ),
-                        float(
-                            (np.percentile(rows_, 75) - np.percentile(rows_, 25))
-                            / frame_height
-                        ),
-                    )
+        for numerator_axis, take_extent in axis.items():
+            moved_extent = abs(
+                take_extent(*extent_before) - take_extent(*extent_after)
+            ) / take_extent(*extent_before)
+            for denominator_axis, take_spread in axis.items():
+                base = take_spread(*spread_before)
+                moved_spread = (
+                    abs(base - take_spread(*spread_after)) / base if base else 0.0
                 )
-            moved = abs(axes[0] - axes[1]) / axes[0] if axes[0] else 0.0
-            ratios[name] = round(extent_change / moved, 1) if moved else None
-        finite = [v for v in ratios.values() if v is not None]
-        per_frame.append(
-            {
-                "frame": path.name,
-                "ratio_by_convention": ratios,
-                "convention_invariant": len(finite) == len(conventions)
-                and max(finite) - min(finite) < 1.0,
-            }
-        )
+                ratios[f"extent_{numerator_axis}_over_spread_{denominator_axis}"] = (
+                    round(moved_extent / moved_spread, 1) if moved_spread else None
+                )
+        per_frame.append({"frame": path.name, "ratio_by_axis_pairing": ratios})
+
     return {
         "per_frame": per_frame,
-        "frames_whose_ratio_does_not_depend_on_the_convention": [
-            f["frame"] for f in per_frame if f["convention_invariant"]
-        ],
-        "what_this_settles": "A reviewer's 48.5x for observed_scan_only__overview against this "
-        "harness's 24.6x cannot be a spread-definition difference: that frame is "
-        "convention-invariant, reading the same under all four. Their undefined frame does "
-        "resolve as an axis question -- it is the undefined one under a vertical-only spread, "
-        "where this gate uses the narrower axis.",
-        "the_likeliest_remaining_explanation": "Row attribution rather than measurement. Their "
-        "48.5x is within 0.2 of this harness's 48.3x for candidate_surface_only__overview, the "
-        "frame immediately above observed_scan_only__overview in sorted order, and the frame "
-        "they report as having no finite ratio is the one this harness reads at 48.3x while its "
-        "own undefined frame is baseline_scan_and_surface__overview. Two labels moved by one row "
-        "would produce exactly both disagreements. Offered as the hypothesis the numbers "
-        "support, not as a verdict on their harness, which only they can run.",
-        "what_it_does_not_settle": "Whether that hypothesis is right. It is not the axis "
-        "convention and not the anchor, both of which are now tested, so the remaining "
-        "candidates are row attribution, the content threshold, or the frame bytes.",
+        "how_to_quote_a_ratio_about_these_frames": "Name the numerator axis and the denominator "
+        "axis. Naming only one is what let this run for three exchanges: a reviewer pinned the "
+        "extent to the horizontal axis and varied only the spread axis, while this harness moved "
+        "both together, so each of us was invariant within our own family and neither family was "
+        "stated. The operative figure is the one the gate reads, "
+        "extent_narrower_over_spread_narrower. The others are different quantities, not "
+        "competing measurements of one.",
+        "a_claim_of_mine_that_was_scoped_too_broadly": "I reported a frame as "
+        "'convention-invariant' on the strength of four conventions that all moved extent and "
+        "spread together. It is invariant within that family and not across the reviewer's, "
+        "where the numerator is pinned. The label claimed more than the control tested, which is "
+        "the same shape of error as a report that declares its own parameters.",
+        "a_hypothesis_of_mine_that_was_refuted": "I suggested their figure came from a row "
+        "misattribution, because it matched this harness's reading of the adjacent frame to "
+        "within 0.2. They hashed all nine frames against the ones in this PR and found 9 of 9 "
+        "byte-identical under the same names, which kills it. The coincidence was real and the "
+        "inference from it was not.",
+        "what_this_does_not_claim": "That one pairing is correct and another wrong. Both are "
+        "well-defined quantities over the same pixels. The gate reads one of them, and that is "
+        "the only reason this harness privileges it.",
+        "the_pairing_matrix_isolates_the_remaining_difference_to_one_term": {
+            "what_agrees": "The reviewer's extent-horizontal over spread-vertical column "
+            "reproduces here exactly on both frames they tabulated, 24.6x and 18.9x.",
+            "what_does_not": "Their extent-horizontal over spread-horizontal column does not: "
+            "they read 48.5x and undefined where this harness reads 24.6x and 48.3x.",
+            "what_follows": "Since the numerator is shared between their two columns and the "
+            "vertical spread agrees, neither the extent term nor the vertical spread can be the "
+            "difference. It is the horizontal quartile spread alone. On one frame this harness's "
+            "horizontal spread moves 1.97x what theirs does; on the other theirs does not move "
+            "at all while this one does.",
+            "why_this_is_the_useful_form": "Three exchanges produced two refuted hypotheses, "
+            "mine about row attribution and theirs about the axis definition. A pairing matrix "
+            "narrows it to a single term without either of us guessing, and it is a term either "
+            "harness can print.",
+        },
     }
 
 

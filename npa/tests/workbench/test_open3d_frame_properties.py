@@ -704,30 +704,50 @@ def test_both_the_masked_and_unmasked_margins_are_recorded() -> None:
     assert margin["weakest_masked_over_floor"] <= margin["weakest_unmasked_over_floor"]
 
 
-def test_the_disputed_frames_ratio_does_not_depend_on_the_axis_convention() -> None:
-    """A reviewer proposed a spread-definition difference for a 2x gap. It is testable, and no.
+def test_every_ratio_names_both_of_its_axes() -> None:
+    """Quoting one axis is what let a cross-measurement disagreement run for three exchanges.
 
-    Anchoring convention already caused two disagreements about these frames that were not about
-    the data, so convention-invariance is reported rather than argued. The frame we differ on
-    reads the same under the narrower axis, horizontal only, vertical only, and the mean, which
-    rules the definition out. Which frame has no finite ratio does depend on the axis, and that
-    half of the disagreement resolves.
+    A reviewer pinned the extent to the horizontal axis and varied only the spread axis; this
+    harness moved both together. Each of us was invariant within our own family, neither family
+    was stated, and two hypotheses died before the pairing was named. I had also reported a
+    frame as "convention-invariant" when it was only invariant across conventions that move both
+    axes at once, which is a label claiming more than the control tested.
+    """
+    report = json.loads((EVIDENCE / "statistic-mask-sensitivity.json").read_text())
+    pairings = report["whether_the_ratios_depend_on_the_axis_convention"]["per_frame"]
+
+    assert len(pairings) == 9, len(pairings)
+    for frame in pairings:
+        keys = frame["ratio_by_axis_pairing"].keys()
+        # Three axis choices on each side, so nine pairings, and every key names both.
+        assert len(keys) == 9, sorted(keys)
+        for key in keys:
+            assert key.startswith("extent_") and "_over_spread_" in key, key
+    assert (
+        "extent_narrower_over_spread_narrower" in pairings[0]["ratio_by_axis_pairing"]
+    )
+
+
+def test_the_pairing_matrix_isolates_the_disagreement_to_the_horizontal_spread() -> (
+    None
+):
+    """The reviewer's vertical-spread column reproduces here; their horizontal one does not.
+
+    The numerator is shared between their two columns, so agreeing on one and differing on the
+    other localises it to a single term without either side guessing. Pinned because this is the
+    handoff, and it is a term either harness can print.
     """
     report = json.loads((EVIDENCE / "statistic-mask-sensitivity.json").read_text())
     by_frame = {
-        f["frame"]: f
+        f["frame"]: f["ratio_by_axis_pairing"]
         for f in report["whether_the_ratios_depend_on_the_axis_convention"]["per_frame"]
     }
+    observed = by_frame["observed_scan_only__overview.png"]
+    candidate = by_frame["candidate_surface_only__overview.png"]
 
-    disputed = by_frame["observed_scan_only__overview.png"]
-    assert disputed["convention_invariant"] is True, disputed
-    assert len(set(disputed["ratio_by_convention"].values())) == 1, disputed
-
-    # The undefined frame is an axis question: under the gate's narrower axis it is this one,
-    # and it is finite under a vertical-only spread, which is what makes the other half of the
-    # disagreement explainable rather than contradictory.
-    undefined = by_frame["baseline_scan_and_surface__overview.png"][
-        "ratio_by_convention"
-    ]
-    assert undefined["narrower_axis_as_the_gate_uses"] is None, undefined
-    assert undefined["vertical_only"] is not None, undefined
+    # Reproduces their extent-horizontal over spread-vertical column exactly, on both frames.
+    assert observed["extent_horizontal_over_spread_vertical"] == 24.6, observed
+    assert candidate["extent_horizontal_over_spread_vertical"] == 18.9, candidate
+    # Differs from their horizontal-spread column on both: they read 48.5 and undefined.
+    assert observed["extent_horizontal_over_spread_horizontal"] == 24.6, observed
+    assert candidate["extent_horizontal_over_spread_horizontal"] == 48.3, candidate

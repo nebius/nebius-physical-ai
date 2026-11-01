@@ -234,101 +234,141 @@
     "per_frame": [
       {
         "frame": "baseline_scan_and_surface__opposite.png",
-        "ratio_by_convention": {
-          "narrower_axis_as_the_gate_uses": 66.0,
-          "horizontal_only": 66.0,
-          "vertical_only": 82.8,
-          "mean_of_both_axes": 75.6
-        },
-        "convention_invariant": false
+        "ratio_by_axis_pairing": {
+          "extent_horizontal_over_spread_horizontal": 66.0,
+          "extent_horizontal_over_spread_vertical": 82.8,
+          "extent_horizontal_over_spread_narrower": 66.0,
+          "extent_vertical_over_spread_horizontal": 0.0,
+          "extent_vertical_over_spread_vertical": 0.0,
+          "extent_vertical_over_spread_narrower": 0.0,
+          "extent_narrower_over_spread_horizontal": 66.0,
+          "extent_narrower_over_spread_vertical": 82.8,
+          "extent_narrower_over_spread_narrower": 66.0
+        }
       },
       {
         "frame": "baseline_scan_and_surface__overview.png",
-        "ratio_by_convention": {
-          "narrower_axis_as_the_gate_uses": null,
-          "horizontal_only": null,
-          "vertical_only": 52.5,
-          "mean_of_both_axes": 91.4
-        },
-        "convention_invariant": false
+        "ratio_by_axis_pairing": {
+          "extent_horizontal_over_spread_horizontal": null,
+          "extent_horizontal_over_spread_vertical": 54.8,
+          "extent_horizontal_over_spread_narrower": null,
+          "extent_vertical_over_spread_horizontal": null,
+          "extent_vertical_over_spread_vertical": 0.0,
+          "extent_vertical_over_spread_narrower": null,
+          "extent_narrower_over_spread_horizontal": null,
+          "extent_narrower_over_spread_vertical": 52.5,
+          "extent_narrower_over_spread_narrower": null
+        }
       },
       {
         "frame": "baseline_scan_and_surface__topdown.png",
-        "ratio_by_convention": {
-          "narrower_axis_as_the_gate_uses": 66.0,
-          "horizontal_only": 66.0,
-          "vertical_only": 56.1,
-          "mean_of_both_axes": 58.8
-        },
-        "convention_invariant": false
+        "ratio_by_axis_pairing": {
+          "extent_horizontal_over_spread_horizontal": 66.0,
+          "extent_horizontal_over_spread_vertical": 56.1,
+          "extent_horizontal_over_spread_narrower": 66.0,
+          "extent_vertical_over_spread_horizontal": 0.2,
+          "extent_vertical_over_spread_vertical": 0.2,
+          "extent_vertical_over_spread_narrower": 0.2,
+          "extent_narrower_over_spread_horizontal": 66.0,
+          "extent_narrower_over_spread_vertical": 56.1,
+          "extent_narrower_over_spread_narrower": 66.0
+        }
       },
       {
         "frame": "baseline_surface_only__overview.png",
-        "ratio_by_convention": {
-          "narrower_axis_as_the_gate_uses": 52.7,
-          "horizontal_only": 52.7,
-          "vertical_only": null,
-          "mean_of_both_axes": 123.7
-        },
-        "convention_invariant": false
+        "ratio_by_axis_pairing": {
+          "extent_horizontal_over_spread_horizontal": 55.0,
+          "extent_horizontal_over_spread_vertical": null,
+          "extent_horizontal_over_spread_narrower": 55.0,
+          "extent_vertical_over_spread_horizontal": 0.0,
+          "extent_vertical_over_spread_vertical": null,
+          "extent_vertical_over_spread_narrower": 0.0,
+          "extent_narrower_over_spread_horizontal": 52.7,
+          "extent_narrower_over_spread_vertical": null,
+          "extent_narrower_over_spread_narrower": 52.7
+        }
       },
       {
         "frame": "candidate_scan_and_surface__opposite.png",
-        "ratio_by_convention": {
-          "narrower_axis_as_the_gate_uses": 64.3,
-          "horizontal_only": 64.3,
-          "vertical_only": 103.1,
-          "mean_of_both_axes": 86.5
-        },
-        "convention_invariant": false
+        "ratio_by_axis_pairing": {
+          "extent_horizontal_over_spread_horizontal": 66.6,
+          "extent_horizontal_over_spread_vertical": 106.7,
+          "extent_horizontal_over_spread_narrower": 66.6,
+          "extent_vertical_over_spread_horizontal": 7.2,
+          "extent_vertical_over_spread_vertical": 11.6,
+          "extent_vertical_over_spread_narrower": 7.2,
+          "extent_narrower_over_spread_horizontal": 64.3,
+          "extent_narrower_over_spread_vertical": 103.1,
+          "extent_narrower_over_spread_narrower": 64.3
+        }
       },
       {
         "frame": "candidate_scan_and_surface__overview.png",
-        "ratio_by_convention": {
-          "narrower_axis_as_the_gate_uses": 48.4,
-          "horizontal_only": 48.4,
-          "vertical_only": 55.4,
-          "mean_of_both_axes": 52.4
-        },
-        "convention_invariant": false
+        "ratio_by_axis_pairing": {
+          "extent_horizontal_over_spread_horizontal": 48.4,
+          "extent_horizontal_over_spread_vertical": 55.4,
+          "extent_horizontal_over_spread_narrower": 48.4,
+          "extent_vertical_over_spread_horizontal": 5.1,
+          "extent_vertical_over_spread_vertical": 5.8,
+          "extent_vertical_over_spread_narrower": 5.1,
+          "extent_narrower_over_spread_horizontal": 48.4,
+          "extent_narrower_over_spread_vertical": 55.4,
+          "extent_narrower_over_spread_narrower": 48.4
+        }
       },
       {
         "frame": "candidate_scan_and_surface__topdown.png",
-        "ratio_by_convention": {
-          "narrower_axis_as_the_gate_uses": 26.7,
-          "horizontal_only": 26.7,
-          "vertical_only": 26.8,
-          "mean_of_both_axes": 26.7
-        },
-        "convention_invariant": true
+        "ratio_by_axis_pairing": {
+          "extent_horizontal_over_spread_horizontal": 26.7,
+          "extent_horizontal_over_spread_vertical": 26.8,
+          "extent_horizontal_over_spread_narrower": 26.7,
+          "extent_vertical_over_spread_horizontal": 5.3,
+          "extent_vertical_over_spread_vertical": 5.4,
+          "extent_vertical_over_spread_narrower": 5.3,
+          "extent_narrower_over_spread_horizontal": 26.7,
+          "extent_narrower_over_spread_vertical": 26.8,
+          "extent_narrower_over_spread_narrower": 26.7
+        }
       },
       {
         "frame": "candidate_surface_only__overview.png",
-        "ratio_by_convention": {
-          "narrower_axis_as_the_gate_uses": 48.3,
-          "horizontal_only": 48.3,
-          "vertical_only": 18.9,
-          "mean_of_both_axes": 24.8
-        },
-        "convention_invariant": false
+        "ratio_by_axis_pairing": {
+          "extent_horizontal_over_spread_horizontal": 48.3,
+          "extent_horizontal_over_spread_vertical": 18.9,
+          "extent_horizontal_over_spread_narrower": 48.3,
+          "extent_vertical_over_spread_horizontal": 5.0,
+          "extent_vertical_over_spread_vertical": 1.9,
+          "extent_vertical_over_spread_narrower": 5.0,
+          "extent_narrower_over_spread_horizontal": 48.3,
+          "extent_narrower_over_spread_vertical": 18.9,
+          "extent_narrower_over_spread_narrower": 48.3
+        }
       },
       {
         "frame": "observed_scan_only__overview.png",
-        "ratio_by_convention": {
-          "narrower_axis_as_the_gate_uses": 24.6,
-          "horizontal_only": 24.6,
-          "vertical_only": 24.6,
-          "mean_of_both_axes": 24.6
-        },
-        "convention_invariant": true
+        "ratio_by_axis_pairing": {
+          "extent_horizontal_over_spread_horizontal": 24.6,
+          "extent_horizontal_over_spread_vertical": 24.6,
+          "extent_horizontal_over_spread_narrower": 24.6,
+          "extent_vertical_over_spread_horizontal": 2.6,
+          "extent_vertical_over_spread_vertical": 2.6,
+          "extent_vertical_over_spread_narrower": 2.6,
+          "extent_narrower_over_spread_horizontal": 24.6,
+          "extent_narrower_over_spread_vertical": 24.6,
+          "extent_narrower_over_spread_narrower": 24.6
+        }
       }
     ],
-    "frames_whose_ratio_does_not_depend_on_the_convention": [
-      "candidate_scan_and_surface__topdown.png",
-      "observed_scan_only__overview.png"
-    ],
-    "what_this_settles": "A reviewer's 48.5x for observed_scan_only__overview against this harness's 24.6x cannot be a spread-definition difference: that frame is convention-invariant, reading the same under all four. Their undefined frame does resolve as an axis question -- it is the undefined one under a vertical-only spread, where this gate uses the narrower axis.",
-    "what_it_does_not_settle": "Why the 2x remains. It is not the axis convention and not the anchor, both of which are now tested. The next candidate is the content threshold or the frame bytes themselves, and it needs their harness rather than more of mine."
+    "how_to_quote_a_ratio_about_these_frames": "Name the numerator axis and the denominator axis. Naming only one is what let this run for three exchanges: a reviewer pinned the extent to the horizontal axis and varied only the spread axis, while this harness moved both together, so each of us was invariant within our own family and neither family was stated. The operative figure is the one the gate reads, extent_narrower_over_spread_narrower. The others are different quantities, not competing measurements of one.",
+    "a_claim_of_mine_that_was_scoped_too_broadly": "I reported a frame as 'convention-invariant' on the strength of four conventions that all moved extent and spread together. It is invariant within that family and not across the reviewer's, where the numerator is pinned. The label claimed more than the control tested, which is the same shape of error as a report that declares its own parameters.",
+    "a_hypothesis_of_mine_that_was_refuted": "I suggested their figure came from a row misattribution, because it matched this harness's reading of the adjacent frame to within 0.2. They hashed all nine frames against the ones in this PR and found 9 of 9 byte-identical under the same names, which kills it. The coincidence was real and the inference from it was not.",
+    "what_this_does_not_claim": "That one pairing is correct and another wrong. Both are well-defined quantities over the same pixels. The gate reads one of them, and that is the only reason this harness privileges it.",
+    "the_pairing_matrix_isolates_the_remaining_difference_to_one_term": {
+      "what_agrees": "The reviewer's extent-horizontal over spread-vertical column reproduces here exactly on both frames they tabulated, 24.6x and 18.9x.",
+      "what_does_not": "Their extent-horizontal over spread-horizontal column does not: they read 48.5x and undefined where this harness reads 24.6x and 48.3x.",
+      "what_follows": "Since the numerator is shared between their two columns and the vertical spread agrees, neither the extent term nor the vertical spread can be the difference. It is the horizontal quartile spread alone. On one frame this harness's horizontal spread moves 1.97x what theirs does; on the other theirs does not move at all while this one does.",
+      "why_this_is_the_useful_form": "Three exchanges produced two refuted hypotheses, mine about row attribution and theirs about the axis definition. A pairing matrix narrows it to a single term without either of us guessing, and it is a term either harness can print."
+    }
   },
   "the_floors_fragility_without_proposing_a_new_floor": {
     "weakest_delivered_frame_over_floor": 1.77,
