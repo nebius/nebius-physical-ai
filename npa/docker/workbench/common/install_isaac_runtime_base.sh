@@ -116,7 +116,6 @@ if [ "$ISAAC_PYTHON_MINOR" = 3.11 ]; then
     libreadline-dev
     libsqlite3-dev
     libssl-dev
-    tk-dev
     uuid-dev
     xz-utils
     zlib1g-dev
@@ -165,19 +164,29 @@ if [ "$ISAAC_PYTHON_MINOR" = 3.11 ]; then
     --directory /tmp --no-same-owner
   (
     cd "/tmp/Python-${PYTHON_VERSION}"
-    ./configure \
+    command -v dpkg-buildflags >/dev/null
+    CFLAGS="$(dpkg-buildflags --get CFLAGS)" \
+    CPPFLAGS="$(dpkg-buildflags --get CPPFLAGS)" \
+    LDFLAGS="$(dpkg-buildflags --get LDFLAGS)" \
+      ./configure \
       --prefix=/usr/local \
+      --enable-optimizations \
       --enable-option-checking=fatal \
       --enable-shared \
-      --with-ensurepip=install \
-      --with-system-expat
+      --with-lto \
+      --with-ensurepip=no \
+      --with-system-expat \
+      --without-static-libpython
     make -j "$PYTHON_BUILD_JOBS"
     make altinstall
+    install -d -m 0755 /usr/share/doc/cpython3.11
+    install -m 0444 LICENSE /usr/share/doc/cpython3.11/LICENSE
   )
   ldconfig
   test "$(command -v python3.11)" = /usr/local/bin/python3.11
   test "$(python3.11 -c 'import platform; print(platform.python_version())')" = "$PYTHON_VERSION"
-  python3.11 -c 'import bz2, ctypes, ensurepip, lzma, readline, sqlite3, ssl, tkinter, zlib'
+  python3.11 -c 'import bz2, ctypes, ensurepip, lzma, readline, sqlite3, ssl, zlib'
+  test -s /usr/share/doc/cpython3.11/LICENSE
   rm -rf "$PYTHON_SOURCE_ARCHIVE" "/tmp/Python-${PYTHON_VERSION}"
 elif [ "$ISAAC_PYTHON_MINOR" = 3.12 ]; then
   # Isaac Sim 6 / Isaac Lab 3 require Python 3.12. The 3.x image uses the
@@ -225,6 +234,16 @@ fi
   "wheel==0.47.0" \
   "packaging==26.3"
 "$ISAAC_VENV/bin/python" -m pip check
+if [ "$ISAAC_PYTHON_MINOR" = 3.11 ]; then
+  # The CPython release embeds an old bootstrap-only pip wheel. The venv now
+  # carries the reviewed current pip, so do not retain that dormant vulnerable
+  # wheel or a second global pip installation in the public image.
+  test "$("$ISAAC_VENV/bin/python" -c \
+    'from importlib import metadata; print(metadata.version("pip"))')" = 26.2.2
+  rm -rf /usr/local/lib/python3.11/ensurepip/_bundled
+  test -z "$(find /usr/local/lib/python3.11/site-packages -mindepth 1 -maxdepth 1 \
+    -iname 'pip*' -print -quit)"
+fi
 
 # Isaac releases require an exact Python minor; fail here rather than at first run.
 NPA_ISAAC_PYTHON_MINOR="$ISAAC_PYTHON_MINOR" "$ISAAC_VENV/bin/python" - <<'PY'
