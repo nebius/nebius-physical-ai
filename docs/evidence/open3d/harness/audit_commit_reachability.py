@@ -4,18 +4,27 @@
 `audit_record_provenance.py` already reports reachability, but it reports it *from the clone
 it happens to be run in*, and it says so. That turned out to matter. The records make the
 stronger claim -- "on ZERO remote refs", in ten files -- and the clone that produced it held
-only `refs/heads/*` and was shallow. This repository advertises 1271 refs, 955 of them under
-`refs/pull/`, so the original check consulted roughly a quarter of the refs a reader could
-resolve a commit from. The claim happens to be true. It was not established.
+only `refs/heads/*` and was shallow. Most of what this remote advertises is under `refs/pull/`,
+so the original check consulted roughly a quarter of the refs a reader could resolve a commit
+from. The claim happens to be true. It was not established.
+
+Counts are deliberately absent from this prose. They are in the report, because this remote
+gains refs continuously -- three in the three quarters of an hour between a reviewer's two
+measurements -- and a number written into a docstring is wrong shortly after it is written. One
+of mine was already wrong when it was published.
 
 So this harness consults what the remote actually advertises rather than what the local clone
 has fetched, and it closes the two holes that made the earlier answer unsound:
 
 1. **Unfetched refs.** `git ls-remote` is the ground truth for what exists remotely. Every
-   `refs/pull/*/head` and `refs/tags/*` is fetched into a namespace of its own before any
-   reachability question is asked. `refs/pull/*/merge` is deliberately skipped: a merge ref is
-   GitHub's computed merge of the base and the PR head, so it contains the head as an ancestor
-   and cannot contain a commit the head does not.
+   Every advertised ref -- `refs/pull/*/head`, `refs/pull/*/merge` and
+   `refs/tags/*` -- is fetched into a namespace of its own before any reachability question is
+   asked. Merge refs were skipped at first, on the argument that a merge ref is GitHub's
+   computed merge of the base and the PR head and so cannot contain a commit the head lacks. A
+   reviewer tested that on every merge ref here and found one where the property holds for a
+   different reason: the head had moved since the merge ref was computed. It was harmless, and
+   a force-push is the case that would not be, so the argument is gone and the refs are
+   measured.
 
 2. **Shallow truncation.** A shallow clone makes absence unsound in one direction -- a commit
    below the graft boundary is unreachable in the walk whether or not a ref contains it, so
@@ -317,7 +326,7 @@ def build() -> dict[str, object]:
         "what_this_answers": "For every commit a capability record names, can another reader "
         "resolve it from a ref this remote advertises?",
         "why_it_exists": "The records claimed zero remote refs. The clone that checked held "
-        "only refs/heads/* out of 1271 advertised refs, and was shallow. The "
+        "only refs/heads/* out of every ref this remote advertises, and was shallow. The "
         "claim was true and unestablished, which is its own kind of defect.",
         "ref_coverage": {
             "total_refs_advertised_by_remote": len(refs),

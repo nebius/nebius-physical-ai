@@ -81,7 +81,8 @@
       "what_the_first_version_did": "Skipped refs/pull/*/merge, arguing a merge ref has its PR head as an ancestor and so cannot hold a commit the head lacks.",
       "what_a_reviewer_found": "The property holds for every merge ref on this remote, but for one of them it holds for a different reason than the one I gave: the head had moved since the merge ref was last computed, so the merge ref was behind rather than derived from the current head. Harmless there. A force-push is the case that would not be harmless.",
       "the_fix": "They are fetched and tested with everything else. An audit about commits hiding on forgotten refs should not rest on an argument about refs when the measurement costs one more refspec. Including them changed no verdict, which is the empirical version of the reviewer's analysis.",
-      "a_count_i_published_that_was_stale_on_arrival": "I wrote 23 merge refs in prose. The harness measured 24, and the remote now advertises 25. This repository gains refs continuously, so a count written into prose is wrong almost immediately. Counts live in the report and the prose points there."
+      "a_count_i_published_that_was_stale_on_arrival": "I wrote 23 merge refs in prose. The harness measured 24, and the remote now advertises 25. This repository gains refs continuously, so a count written into prose is wrong almost immediately. Counts live in the report and the prose points there.",
+      "i_deleted_the_argument_from_my_commit_message_and_not_from_the_file": "The code fetched and iterated merge refs, and my commit message said the justification was gone. It was still in the module docstring, because I made the edit with a string replace whose anchor no longer matched after the file had been reformatted, and it failed silently. A reviewer found a confident reason to skip merge refs sitting above a code path that ignores it. Two hardcoded ref counts in the same docstring survived the same way, in the very change whose point was that these counts go stale. Fixed with an edit that fails loudly."
     },
     "what_this_changes_enforcement_does_not_reach": {
       "the_finding": "A reviewer measured the whole evidence directory instead of the records this change rewrote, and found files that carry digests, declare no provenance, and are not capability-record-*, so nothing inside this glob will ever reach them.",
@@ -145,11 +146,11 @@
       },
       {
         "path": "harness/audit_commit_reachability.py",
-        "sha256": "32a27773aabf21183cafa5eb369674abb88db35036fe9f14aff4025dc1c79540"
+        "sha256": "fadc96927c6c175f74bdaccc84e97aa728eb44c70f3cf61941d76e35a0a21250"
       },
       {
         "path": "commit-reachability-audit.json",
-        "sha256": "d85e01f8657745f5c57d9ae588061071fbda0306ce7d877834b1951c23767550"
+        "sha256": "90e340715cfbd0a7cceb04b62b66a52a5dfa20f47097e28a50e6fbb73111ea14"
       }
     ],
     "why_this_shape": "A review lane found provenance recorded six different ways across these records, so an auditor had to learn each file. This is the one shape. A record about provenance that carried none would have been the defect it complains about.",

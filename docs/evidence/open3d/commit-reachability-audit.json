@@ -1,6 +1,6 @@
 {
   "what_this_answers": "For every commit a capability record names, can another reader resolve it from a ref this remote advertises?",
-  "why_it_exists": "The records claimed zero remote refs. The clone that checked held only refs/heads/* out of 1271 advertised refs, and was shallow. The claim was true and unestablished, which is its own kind of defect.",
+  "why_it_exists": "The records claimed zero remote refs. The clone that checked held only refs/heads/* out of every ref this remote advertises, and was shallow. The claim was true and unestablished, which is its own kind of defect.",
   "ref_coverage": {
     "total_refs_advertised_by_remote": 1277,
     "pull_heads_advertised": 934,
@@ -16,7 +16,7 @@
   },
   "shallow_clone": {
     "is_shallow": true,
-    "graft_points": 12,
+    "graft_points": 16,
     "why_this_does_not_invalidate_the_result": "Truncation removes the ancestors of a graft point. A named commit is hidden only if it is one of them, which is tested per commit rather than argued from commit dates.",
     "commits_that_could_be_concealed": 0
   },
@@ -37,7 +37,7 @@
     {
       "commit": "15b0b11f0bc137631954ac87076f44753c513976",
       "verdict": "resolvable_remotely",
-      "remote_refs_containing": 338,
+      "remote_refs_containing": 332,
       "local_refs_containing": 26,
       "shallow_clone_could_conceal_it": false,
       "orphaned_tracking_refs_containing": 0,
@@ -95,7 +95,7 @@
     {
       "commit": "d06e958462865af823b4f1479867df52421c8284",
       "verdict": "resolvable_remotely",
-      "remote_refs_containing": 26,
+      "remote_refs_containing": 22,
       "local_refs_containing": 17,
       "shallow_clone_could_conceal_it": false,
       "orphaned_tracking_refs_containing": 0,
@@ -108,7 +108,7 @@
     {
       "commit": "d22893238d75efbb05a69eb75bca1b82eb5fe280",
       "verdict": "resolvable_remotely",
-      "remote_refs_containing": 623,
+      "remote_refs_containing": 617,
       "local_refs_containing": 1098,
       "shallow_clone_could_conceal_it": false,
       "orphaned_tracking_refs_containing": 71,
