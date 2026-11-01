@@ -646,10 +646,53 @@ def test_the_real_records_named_commit_actually_resolves_where_that_is_decidable
     pin both look like, and both are defects for a claim that has to be verifiable here.
     Only shallow-and-absent is genuinely undecidable, and only that skips.
     """
-    committed_at = json.loads(
-        (EVIDENCE / "capability-record-provenance-bound-preview.json").read_text()
-    )["generator"]["script_bytes_committed_at"]
+    declared = records_declaring_a_committed_at_pin()
+    # Enumerated rather than named. The harness honours `<name>_bytes_committed_at` on
+    # any record, so naming the only record that uses it today would hand the next one
+    # the lenient shallow path with nothing requiring its commit be reachable -- and that
+    # failure is silent, because the hash simply stops being checked. Review found this.
+    assert declared, (
+        "no record declares a committed-at pin, so this test is guarding nothing; if "
+        "the field was renamed, this is the test that should say so"
+    )
 
+    for record_name, field, committed_at in declared:
+        _assert_the_pin_is_reachable(record_name, field, committed_at)
+
+
+def records_declaring_a_committed_at_pin() -> list[tuple[str, str, str]]:
+    """Every record that pins bytes at a commit, found by the field's own shape.
+
+    The mechanism is keyed on the `_bytes_committed_at` suffix, so this looks for that
+    rather than for a filename, and a record that starts using it is covered the day it
+    does.
+    """
+
+    def pins(node: object, path: str = "") -> list[tuple[str, str]]:
+        # Walked generically rather than at a fixed depth: one record's top level is a
+        # list, and the field is identified by its name wherever it sits.
+        out: list[tuple[str, str]] = []
+        if isinstance(node, dict):
+            for key, value in node.items():
+                if key.endswith("_bytes_committed_at") and isinstance(value, str):
+                    out.append((f"{path}{key}", value))
+                else:
+                    out.extend(pins(value, f"{path}{key}."))
+        elif isinstance(node, list):
+            for index, value in enumerate(node):
+                out.extend(pins(value, f"{path}[{index}]."))
+        return out
+
+    found: list[tuple[str, str, str]] = []
+    for record in sorted(EVIDENCE.glob("*.json")):
+        for field, value in pins(json.loads(record.read_text())):
+            found.append((record.name, field, value))
+    return found
+
+
+def _assert_the_pin_is_reachable(
+    record_name: str, field: str, committed_at: str
+) -> None:
     try:
         probe = subprocess.run(
             ["git", "merge-base", "--is-ancestor", committed_at, "HEAD"],
@@ -675,12 +718,12 @@ def test_the_real_records_named_commit_actually_resolves_where_that_is_decidable
         ).stdout.strip()
         if shallow != "false":
             pytest.skip(
-                f"shallow checkout and no {committed_at[:12]}: a truncated history and "
-                "a commit that does not exist are the same error here"
+                f"shallow checkout and no {committed_at[:12]} for {record_name}: a "
+                "truncated history and a commit that does not exist are the same error"
             )
 
     assert probe.returncode == 0, (
-        f"the record pins its script bytes at {committed_at[:12]}, which is not an "
+        f"{record_name} pins bytes at {committed_at[:12]} in {field}, which is not an "
         "ancestor of this branch in a checkout that holds complete history, so nobody "
         "reviewing this branch can resolve it. A typo looks exactly like this, and so "
         f"does a commit that exists only on some other branch. git said: "
