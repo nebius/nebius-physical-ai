@@ -154,11 +154,13 @@ qualification. These source repairs require fresh image builds and complete
 artifact scans; they do not repair existing release digests.
 
 The shared Jammy Isaac source candidate removes its superseded Deadsnakes PPA
-dependency and builds exact CPython 3.11.17 from the hash-checked python.org
-release archive, with compiler and library inputs from the fixed Ubuntu
-snapshot. This changes source recipes for GR00T, SONIC, OpenArm, and LeIsaac;
-it does not change any accepted image digest or establish a replacement
-release.
+dependency and builds the expedited security release CPython 3.11.18 from the
+hash-checked python.org release archive. It uses the release's bundled Expat
+2.9.0, runs the four XML/Expat test modules before installation, and rejects a
+runtime extension linked to the older snapshot system Expat. Other compiler and
+library inputs remain fixed by the Ubuntu snapshot. This changes source recipes
+for GR00T, SONIC, OpenArm, and LeIsaac; it does not change any accepted image
+digest or establish a replacement release.
 
 The subsequent [checkpoint-loader source repair](../../npa/docker/workbench/common/README.md)
 rejects malicious shard paths and named pipes in the exact Accelerate 1.12–1.15

@@ -40,10 +40,10 @@ UBUNTU_SNAPSHOT="${NPA_UBUNTU_SNAPSHOT:-20261018T000000Z}"
 UBUNTU_SUITE="${NPA_UBUNTU_SUITE:-jammy}"
 ISAAC_PYTHON_MINOR="${NPA_ISAAC_PYTHON_MINOR:-3.11}"
 LINUX_LIBC_DEV_VERSION="${NPA_LINUX_LIBC_DEV_VERSION:-5.15.0-198.208}"
-PYTHON_VERSION="${NPA_ISAAC_PYTHON_VERSION:-3.11.17}"
-PYTHON_SOURCE_SHA256="${NPA_ISAAC_PYTHON_SOURCE_SHA256:-53cdee63ac4bf12387b7b33a53d3b1f8f4941cad73807a7b4fe91bb001ef004a}"
+PYTHON_VERSION="${NPA_ISAAC_PYTHON_VERSION:-3.11.18}"
+PYTHON_SOURCE_SHA256="${NPA_ISAAC_PYTHON_SOURCE_SHA256:-5f62711b12470fd435f83f1451c1b1ef4a179aebc715c716874b0967567d814e}"
 PYTHON_SOURCE_BASE="${NPA_ISAAC_PYTHON_SOURCE_BASE:-https://www.python.org/ftp/python}"
-PYTHON_SOURCE_EPOCH="${NPA_ISAAC_PYTHON_SOURCE_EPOCH:-1790815728}"
+PYTHON_SOURCE_EPOCH="${NPA_ISAAC_PYTHON_SOURCE_EPOCH:-1792957289}"
 PYTHON_BUILD_JOBS="${NPA_ISAAC_PYTHON_BUILD_JOBS:-$(nproc)}"
 # cu128 wheels carry sm_120 kernels, which RTX PRO 6000 Blackwell (compute capability
 # 12.0) requires. Verified in-pod: torch._C._cuda_getArchFlags() reports
@@ -108,7 +108,6 @@ if [ "$ISAAC_PYTHON_MINOR" = 3.11 ]; then
   system_packages+=(
     build-essential
     libbz2-dev
-    libexpat1-dev
     libffi-dev
     libgdbm-compat-dev
     libgdbm-dev
@@ -182,17 +181,26 @@ if [ "$ISAAC_PYTHON_MINOR" = 3.11 ]; then
       --enable-shared \
       --with-lto \
       --with-ensurepip=no \
-      --with-system-expat \
       --without-static-libpython
     make -j "$PYTHON_BUILD_JOBS"
+    ./python -m test --fail-env-changed \
+      test_pyexpat test_sax test_xml_etree test_xml_etree_c
     make altinstall
     install -d -m 0755 /usr/share/doc/cpython3.11
     install -m 0444 LICENSE /usr/share/doc/cpython3.11/LICENSE
+    install -m 0444 Modules/expat/COPYING \
+      /usr/share/doc/cpython3.11/EXPAT-LICENSE
   )
   ldconfig
   test "$(command -v python3.11)" = /usr/local/bin/python3.11
   test "$(python3.11 -c 'import platform; print(platform.python_version())')" = "$PYTHON_VERSION"
   python3.11 -c 'import bz2, ctypes, ensurepip, lzma, readline, sqlite3, ssl, zlib'
+  test "$(python3.11 -c 'import pyexpat; print(pyexpat.EXPAT_VERSION)')" = expat_2.9.0
+  PYEXPAT_EXTENSION="$(python3.11 -c 'import pyexpat; print(pyexpat.__file__)')"
+  if ldd "$PYEXPAT_EXTENSION" | grep -Fq libexpat.so; then
+    echo "CPython pyexpat unexpectedly links the snapshot system Expat" >&2
+    exit 1
+  fi
   NPA_CPYTHON_SOURCE_EPOCH="$PYTHON_SOURCE_EPOCH" python3.11 - <<'PY'
 from datetime import datetime, timezone
 import os
@@ -205,6 +213,7 @@ if expected not in sys.version:
     raise SystemExit(f"CPython build timestamp is not release-bound: {sys.version}")
 PY
   test -s /usr/share/doc/cpython3.11/LICENSE
+  test -s /usr/share/doc/cpython3.11/EXPAT-LICENSE
   rm -rf "$PYTHON_SOURCE_ARCHIVE" "/tmp/Python-${PYTHON_VERSION}"
 elif [ "$ISAAC_PYTHON_MINOR" = 3.12 ]; then
   # Isaac Sim 6 / Isaac Lab 3 require Python 3.12. The 3.x image uses the
