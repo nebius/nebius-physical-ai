@@ -46,6 +46,8 @@
   "generator": {
     "script": "harness/preview_from_retained_plys.py",
     "script_sha256": "9a359b060282f0482dafaa7e767bc6bb12e14349e2724e1e7141f8dd9ebebdca",
+    "script_bytes_committed_at": "cbbb22e170c19721f220c6b4e311ec535bd7817c",
+    "why_the_script_hash_is_not_the_hash_at_head": "This is the script that produced the recording and frame below, so it is a claim about history, not a checksum of the current file. The same change that added this field edits the script -- it unpacked sys.argv[1:5] and died with 'not enough values to unpack (expected 4, got 0)' when run with no arguments, and it now reports its usage. The preview cannot be regenerated to match: its input fragment clouds were never retained, and it was captured under a specific software rasterizer in a named image. So the hash stays the generating bytes and names the commit they are committed at, where it is verified. Overwriting it with the edited file's hash would have cleared an audit report by asserting that a September artifact was produced by a November script -- the same move this record's supersedes block documents an earlier capture making, and the reason that capture was superseded.",
     "runner_module_sha256": "eb4ad47c4e96210ac893e4dc3b97d301de4c02f6cd076fe325e972ba13784a1f",
     "repository_commit": "1441e211400cf7d07c8d832d3ad787ff71d7fad2",
     "runner_source_dirty_at_generation": true,

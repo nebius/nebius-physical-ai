@@ -17,6 +17,7 @@ correctly, so the fix was to match the neighbour rather than to invent a convent
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -421,3 +422,121 @@ def test_the_staged_volume_note_appears_only_for_paths_under_that_volume(
     assert 'resolved.parts[:2] == ("/", "data")' in source, (
         "the /data note is unconditional again; it is wrong for paths outside that volume"
     )
+
+
+AUDIT = HARNESS / "audit_evidence_references.py"
+EVIDENCE = HARNESS.parent
+PREVIEW = EVIDENCE / "capability-record-provenance-bound-preview.json"
+PINNED_SCRIPT = "harness/preview_from_retained_plys.py"
+
+
+def run_audit() -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [sys.executable, str(AUDIT)],
+        capture_output=True,
+        text=True,
+        timeout=180,
+        cwd=EVIDENCE.parents[2],
+    )
+
+
+def test_the_generator_hash_is_the_bytes_that_made_the_artifact(tmp_path: Path) -> None:
+    """The pinned script hash resolves at the commit the record names, not at HEAD.
+
+    This change edits that script, so the two are deliberately different now. The
+    record describes a viewer capture whose input clouds were never retained, so it
+    cannot be regenerated to match an edited generator, and the hash that would make
+    a working-tree check pass is the hash of a script written two months after the
+    artifact.
+    """
+    record = json.loads(PREVIEW.read_text())
+    generator = record["generator"]
+    commit = generator["script_bytes_committed_at"]
+
+    at_commit = subprocess.run(
+        ["git", "show", f"{commit}:docs/evidence/open3d/{PINNED_SCRIPT}"],
+        capture_output=True,
+        timeout=60,
+        cwd=EVIDENCE,
+        check=True,
+    ).stdout
+    assert (
+        hashlib.sha256(at_commit).hexdigest() == generator["script_sha256"]
+    ), "the record's provenance hash is not the script at the commit it names"
+
+    at_head = hashlib.sha256((EVIDENCE / PINNED_SCRIPT).read_bytes()).hexdigest()
+    assert at_head != generator["script_sha256"], (
+        "the working tree now matches the pin, so this test no longer demonstrates "
+        "the distinction it was written for -- check whether the pin was overwritten"
+    )
+
+
+def test_declaring_a_commit_redirects_the_check_and_does_not_exempt_it() -> None:
+    """The dangerous reading of this field would be 'stop checking this hash'.
+
+    So corrupt the hash while leaving the commit declared, and require a finding. If
+    the field were an exemption, a record could silence any mismatch by naming a
+    commit, which is a worse gate than the one this replaces.
+    """
+    original = PREVIEW.read_text()
+    try:
+        record = json.loads(original)
+        record["generator"]["script_sha256"] = "0" * 64
+        PREVIEW.write_text(json.dumps(record, indent=2) + "\n")
+
+        result = run_audit()
+
+        assert result.returncode == 1, result.stdout
+        assert "000000000000" in result.stdout, result.stdout
+        assert "which is actually" in result.stdout, result.stdout
+    finally:
+        # The bytes this test read, not whatever HEAD holds.
+        PREVIEW.write_text(original)
+
+
+def test_a_commit_this_checkout_lacks_is_reported_not_called_a_mismatch() -> None:
+    """A shallow clone is a property of the checkout, not a defect in the evidence."""
+    original = PREVIEW.read_text()
+    try:
+        record = json.loads(original)
+        record["generator"]["script_bytes_committed_at"] = "f" * 40
+        PREVIEW.write_text(json.dumps(record, indent=2) + "\n")
+
+        result = run_audit()
+
+        assert result.returncode == 0, result.stdout
+        assert "a commit this checkout does not have" in result.stdout, result.stdout
+        # And under its own heading, not folded into the run-artifact count, whose
+        # label would tell the only reader who can act on this the wrong thing.
+        assert "mostly a run's own artifacts" in result.stdout, result.stdout
+        assert "1 hash(es) claim bytes at a commit" in result.stdout, result.stdout
+    finally:
+        PREVIEW.write_text(original)
+
+
+def test_a_hash_with_no_declared_commit_is_still_read_from_the_working_tree() -> None:
+    """The ordinary case has to keep working, so break it on purpose.
+
+    Without this, making provenance resolve elsewhere could quietly have moved every
+    hash off the working tree, and the suite would have looked just as green.
+    """
+    original = PREVIEW.read_text()
+    try:
+        record = json.loads(original)
+        record["capture"]["frame_sha256"] = "1" * 64
+        PREVIEW.write_text(json.dumps(record, indent=2) + "\n")
+
+        result = run_audit()
+
+        assert result.returncode == 1, result.stdout
+        assert "capture.frame_sha256" in result.stdout, result.stdout
+    finally:
+        PREVIEW.write_text(original)
+
+
+def test_the_audit_is_clean_on_this_tree() -> None:
+    """The report review saw at this branch's head, resolved rather than overwritten."""
+    result = run_audit()
+
+    assert result.returncode == 0, result.stdout
+    assert "is a provenance claim" in result.stdout, result.stdout
