@@ -422,8 +422,14 @@
       }
     ],
     "the_plateau_around_the_published_condition": {
+      "ratio_at_the_published_tolerance": 24.58,
       "stable_from": 0,
       "stable_through": 8,
+      "tolerances_in_the_run": 5,
+      "of": 16,
+      "the_same_ratio_recurs_outside_the_run": [
+        18
+      ],
       "why_it_matters": "The published reading is not balanced on the hinge; it sits on a plateau that runs from 0 through 8. That is why it is reproducible, and it is not an argument that the quantity is robust."
     },
     "but_that_is_not_the_frame_the_headline_comes_from": {
@@ -470,16 +476,21 @@
         "stable_from": 4,
         "stable_through": 24,
         "tolerances_in_the_run": 11,
-        "of": 16
+        "of": 16,
+        "the_same_ratio_recurs_outside_the_run": []
       },
       "the_disputed_frame_for_comparison": {
         "ratio_at_the_published_tolerance": 24.58,
         "stable_from": 0,
         "stable_through": 8,
-        "tolerances_in_the_run": 6,
-        "of": 16
+        "tolerances_in_the_run": 5,
+        "of": 16,
+        "the_same_ratio_recurs_outside_the_run": [
+          18
+        ]
       },
-      "the_answer": "It sits on a plateau, and a longer one than the disputed frame's: the run containing the published tolerance covers 11 of the 16 swept tolerances against the disputed frame's 6. So the reading the headline quotes is not balanced on the hinge.",
+      "the_answer": "It sits on a plateau, and a longer one than the disputed frame's: the run containing the published tolerance covers 11 of the 16 swept tolerances against the disputed frame's 5. So the reading the headline quotes is not balanced on the hinge.",
+      "a_number_this_corrects": "This first published the disputed frame's run as 6, contradicting the band table beside it, which gives 0 through 8 at step 2 and so holds five values. The count had been taken over every tolerance sharing the ratio rather than over the run, and 24.58 returns at tolerance 18 after an excursion. Review raised it even though the correction favours the claim: the real contrast is 11 against 5.",
       "swing_and_local_stability_are_different_properties": "This is the part worth keeping. The concern was that the widest-swinging frame might be the fragile one, and swing is the ratio of the extremes across the whole sweep, which says nothing about how far the published condition sits from a transition. Here the frame with the widest swing has the longer plateau. Both frames are two steps from their nearest transition, so neither is more locally fragile than the other, and the frame that travels furthest across the sweep is not the one whose published reading is least reproducible. An interval still does not establish reproducibility -- that was the original point -- but neither does a wide interval refute it.",
       "where_the_published_condition_sits_in_each_run": {
         "candidate_scan_and_surface__topdown.png": "published tolerance 6, run 4 through 24: two steps above the lower edge and eighteen below the upper",

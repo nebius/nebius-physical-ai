@@ -490,26 +490,37 @@ def tolerance_hinge(width: int, height: int = BAND_HEIGHT) -> dict[str, object]:
     def plateau_of(readings: dict[int, dict[str, object]]) -> dict[str, object]:
         """How far the published reading holds on either side of the published condition.
 
-        `stable_through` walks up only while every intermediate tolerance still agrees,
-        so a value that recurs after an excursion does not extend the run.
+        Read off the contiguous band that contains the published tolerance, so the bounds
+        and the count cannot disagree with the band table printed beside them.
+
+        An earlier version computed each field independently against the whole sweep, and
+        the count was `sum(1 for t in TOLERANCES if ratio == here)` -- every tolerance
+        sharing the ratio, not the run. On the disputed frame 24.58 returns at tolerance
+        18 after an excursion through 48.77, so that counted 6 where the run holds 5, and
+        the number contradicted the table above it. Review caught it; the corrected
+        contrast is 11 against 5, which is stronger than what was published.
+
+        The old docstring claimed the recurrence case was handled, and it was -- for
+        `stable_through` alone, which walked up only while every intermediate agreed.
+        `stable_from` and the count were left as plain minima and totals over the sweep.
+        Getting the reasoning right in one of three places is how this survived.
         """
         here = readings[published]["ratio"]
+        band = next(b for b in bands_of(readings) if published in b["tolerances"])
+        tolerances = band["tolerances"]
+        assert isinstance(tolerances, list)
+        assert band["ratio"] == here, (band, here)
         return {
             "ratio_at_the_published_tolerance": here,
-            "stable_from": min(t for t in TOLERANCES if readings[t]["ratio"] == here),
-            "stable_through": max(
+            "stable_from": min(tolerances),
+            "stable_through": max(tolerances),
+            "tolerances_in_the_run": len(tolerances),
+            "of": len(TOLERANCES),
+            "the_same_ratio_recurs_outside_the_run": sorted(
                 t
                 for t in TOLERANCES
-                if all(
-                    readings[u]["ratio"] == here
-                    for u in TOLERANCES
-                    if published <= u <= t
-                )
+                if readings[t]["ratio"] == here and t not in tolerances
             ),
-            "tolerances_in_the_run": sum(
-                1 for t in TOLERANCES if readings[t]["ratio"] == here
-            ),
-            "of": len(TOLERANCES),
         }
 
     disputed = sweep["observed_scan_only__overview.png"]
@@ -523,20 +534,10 @@ def tolerance_hinge(width: int, height: int = BAND_HEIGHT) -> dict[str, object]:
         "the_published_tolerance": published,
         "the_disputed_frame_band_by_band": bands,
         "the_plateau_around_the_published_condition": {
-            "stable_from": min(
-                t
-                for t in TOLERANCES
-                if disputed[t]["ratio"] == disputed[published]["ratio"]
-            ),
-            "stable_through": max(
-                t
-                for t in TOLERANCES
-                if all(
-                    disputed[u]["ratio"] == disputed[published]["ratio"]
-                    for u in TOLERANCES
-                    if published <= u <= t
-                )
-            ),
+            # One implementation, so this block and the headline frame's cannot drift
+            # apart. It previously computed its own bounds inline and agreed only by
+            # coincidence.
+            **plateau_of(disputed),
             "why_it_matters": "The published reading is not balanced on the hinge; it sits on a "
             "plateau that runs from 0 through 8. That is why it is reproducible, and it is not an "
             "argument that the quantity is robust.",
@@ -559,8 +560,16 @@ def tolerance_hinge(width: int, height: int = BAND_HEIGHT) -> dict[str, object]:
             "the_answer": (
                 "It sits on a plateau, and a longer one than the disputed frame's: the "
                 "run containing the published tolerance covers 11 of the 16 swept "
-                "tolerances against the disputed frame's 6. So the reading the headline "
+                "tolerances against the disputed frame's 5. So the reading the headline "
                 "quotes is not balanced on the hinge."
+            ),
+            "a_number_this_corrects": (
+                "This first published the disputed frame's run as 6, contradicting the "
+                "band table beside it, which gives 0 through 8 at step 2 and so holds "
+                "five values. The count had been taken over every tolerance sharing the "
+                "ratio rather than over the run, and 24.58 returns at tolerance 18 after "
+                "an excursion. Review raised it even though the correction favours the "
+                "claim: the real contrast is 11 against 5."
             ),
             "swing_and_local_stability_are_different_properties": (
                 "This is the part worth keeping. The concern was that the "

@@ -26,6 +26,7 @@ gate that did not work:
 from __future__ import annotations
 
 import importlib.util
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -915,7 +916,7 @@ def test_the_frame_the_headline_comes_from_is_banded_too() -> None:
     sat on a plateau or beside a hinge.
 
     It sits on a plateau. The run containing the published tolerance covers 11 of the 16
-    swept tolerances, against 6 for the disputed frame.
+    swept tolerances, against 5 for the disputed frame.
 
     That 11 does not identify the frame: pointing `HEADLINE_FRAME` at
     `candidate_surface_only__overview.png` produces a run of 11 as well, which this test
@@ -927,18 +928,41 @@ def test_the_frame_the_headline_comes_from_is_banded_too() -> None:
     plateau = section["the_plateau_around_the_published_condition"]
 
     assert plateau["stable_from"] <= published <= plateau["stable_through"]
-    assert plateau["tolerances_in_the_run"] == 11, plateau
-    assert section["the_disputed_frame_for_comparison"]["tolerances_in_the_run"] == 6
 
-    # The run has to be contiguous in the sweep, or "plateau" is the wrong word for it.
-    band = next(
-        entry
-        for entry in section["the_headline_frame_band_by_band"]
-        if entry["ratio"] == plateau["ratio_at_the_published_tolerance"]
-    )
-    tolerances = band["tolerances"]
-    assert tolerances == list(range(min(tolerances), max(tolerances) + 1, 2)), band
-    assert len(tolerances) == plateau["tolerances_in_the_run"], (band, plateau)
+    # Both counts are read off the band table rather than asserted as literals. The
+    # first version of this test wrote `== 11` and `== 6`, and the 6 was wrong: the
+    # harness had counted every tolerance sharing the ratio instead of the run, and
+    # 24.58 returns at tolerance 18 after an excursion. A literal cannot notice that it
+    # disagrees with the table printed beside it, which is how it reached a reviewer.
+    for label, band_table, pl in (
+        (
+            "headline",
+            section["the_headline_frame_band_by_band"],
+            plateau,
+        ),
+        (
+            "disputed",
+            hinge["the_disputed_frame_band_by_band"],
+            section["the_disputed_frame_for_comparison"],
+        ),
+    ):
+        band = next(b for b in band_table if published in b["tolerances"])
+        tolerances = band["tolerances"]
+        # Contiguous, or "plateau" is the wrong word for it.
+        assert tolerances == list(range(min(tolerances), max(tolerances) + 1, 2)), band
+        assert pl["tolerances_in_the_run"] == len(tolerances), (label, band, pl)
+        assert pl["stable_from"] == min(tolerances), (label, band, pl)
+        assert pl["stable_through"] == max(tolerances), (label, band, pl)
+        # Recurrences belong outside the run by construction, and the disputed frame has
+        # one. Naming them is what makes the count auditable rather than merely correct.
+        assert all(
+            t not in tolerances for t in pl["the_same_ratio_recurs_outside_the_run"]
+        ), (label, pl)
+
+    assert plateau["tolerances_in_the_run"] == 11, plateau
+    assert section["the_disputed_frame_for_comparison"][
+        "the_same_ratio_recurs_outside_the_run"
+    ] == [18]
 
 
 def test_the_named_headline_frame_is_the_frame_the_headline_ratio_belongs_to() -> None:
@@ -1004,3 +1028,74 @@ def test_the_record_does_not_claim_a_wide_swing_makes_a_reading_fragile() -> Non
         "candidate_scan_and_surface__topdown.png",
         "observed_scan_only__overview.png",
     }
+
+
+#: The one hash in this record that names no file: it covers a rectangle of pixels
+#: inside a rendered frame, so there is nothing on disk to compare it against. Listed by
+#: name so the loop below can refuse any *other* unbound hash instead of skipping
+#: quietly past it.
+NOT_A_FILE_HASH = {"what_is_gated.scale_label_sha256"}
+
+
+def _sha256_fields(node: object, prefix: str = "") -> dict[str, str]:
+    found: dict[str, str] = {}
+    if isinstance(node, dict):
+        for key, value in node.items():
+            if key.endswith("sha256") and isinstance(value, str):
+                found[prefix + key] = value
+            else:
+                found.update(_sha256_fields(value, f"{prefix}{key}."))
+    elif isinstance(node, list):
+        for index, value in enumerate(node):
+            found.update(_sha256_fields(value, f"{prefix}[{index}]."))
+    return found
+
+
+def test_every_file_hash_in_the_capability_record_matches_the_file_it_names() -> None:
+    """The record's hashes went stale twice, because nothing compared them to anything.
+
+    Both times a harness edit invalidated a pin and the suite stayed green; both times
+    the repair was manual, after the fact. A reviewer demonstrated the gap rather than
+    asserting it -- they corrupted the harness and then its output, and this file
+    reported 36 passed each time.
+
+    The record is already parsed a few tests above for its prose, so this is a loop over
+    an object that was there all along. It would have failed at push time on both
+    occasions.
+    """
+    record = json.loads(
+        (EVIDENCE / "capability-record-frame-property-gate.json").read_text()
+    )
+    entries = record["provenance"]["harness_that_produced_this"]
+    assert entries, record["provenance"]
+
+    for entry in entries:
+        named = EVIDENCE / entry["path"]
+        assert named.is_file(), f"{entry['path']} is pinned but absent"
+        actual = hashlib.sha256(named.read_bytes()).hexdigest()
+        assert actual == entry["sha256"], (
+            f"{entry['path']} is pinned at {entry['sha256'][:12]} and is actually "
+            f"{actual[:12]}, so the record describes bytes this tree does not have"
+        )
+
+
+def test_no_hash_in_the_record_escapes_that_check_unclassified() -> None:
+    """A hash added later is the way this gap reopens, so a new one has to be classified.
+
+    Checking the seven entries that exist today would leave the next pin added anywhere
+    else in the record enforced by nothing -- which is the original defect, just deferred.
+    Every `*sha256` field must therefore either name a file under the entries the test
+    above walks, or be listed as deliberately not a file hash.
+    """
+    record = json.loads(
+        (EVIDENCE / "capability-record-frame-property-gate.json").read_text()
+    )
+    enforced = {
+        f"provenance.harness_that_produced_this.[{index}].sha256"
+        for index, _ in enumerate(record["provenance"]["harness_that_produced_this"])
+    }
+    assert _sha256_fields(record).keys() - enforced == NOT_A_FILE_HASH, (
+        "a hash in this record is neither checked against a file nor declared as not "
+        "being a file hash",
+        sorted(_sha256_fields(record).keys() - enforced - NOT_A_FILE_HASH),
+    )
