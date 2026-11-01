@@ -1,0 +1,114 @@
+{
+  "what_this_measures": "Whether the removed surface the audit view exists to show is actually visible from the camera that ships, rather than merely inside the frame. One ray from the camera eye per area-weighted sample of the removed surface, against the meshes the view draws.",
+  "why_in_frame_was_not_enough": "camera_framing_probe.py reports the worst point of each view in units of the frame half-extent, and the audit view was clean by that measure. It draws the retained surface in the same pane, so a sample can sit at reach 0.3 and be entirely behind opaque geometry. That is the failure the source's own VIEW_GEOMETRY comment names -- an audit view that looks like the audit happened -- reached by a mechanism the comment's fix does not address.",
+  "what_changed": "/world/mesh is hidden by default in this view, through the same table that gives the view its contents and its camera geometry. It is still carried and one click away. The fused cloud stays visible: points occlude nothing a ray can hit, so the overlay is still shown against the observations it is judged against.",
+  "why_the_camera_is_not_the_fix": {
+    "azimuths_measured": 24,
+    "elevation_degrees": 28.0,
+    "self_occlusion_excluded": true,
+    "best_visible_area_fraction": 0.48589397645863336,
+    "best_azimuth_degrees": 135,
+    "worst_visible_area_fraction": 0.2255369298344856,
+    "worst_azimuth_degrees": 270,
+    "shipped_visible_area_fraction": 0.4569356022993779
+  },
+  "the_residual_this_does_not_fix": "The removed surface occludes itself. It is an extrapolated shell, so from any single eye the far side of it sits behind the near side, which is the whole remaining loss after this change and is not something a visibility default or a camera can recover. An orbiting reviewer sees the rest; a single static frame does not.",
+  "reproducibility": {
+    "sampling_seed": 1729,
+    "why_seeded": "The armadillo scene resamples a complete mesh, and Open3D seeds a global generator rather than a call. Unseeded, the first two runs of this harness reported 38.5% and then 38.0% -- small enough to read as noise and really an unseeded draw.",
+    "and_still_not_bit_exact": "Seeding does not make this reproduce exactly, and claiming it would be wrong. Measured across two full runs: the visible fractions agree to 2e-5, while triangle counts move by 1 of 1.09M on the eagle and 22 of 1.04M on the armadillo, with the kept and removed counts moving by the same amount in opposite directions. Those are triangles sitting within floating-point reach of the crop limit changing which side they land on. orient_normals_consistent_tangent_plane is multithreaded and its tie-breaking is not seeded, so a seed cannot remove this. The synthetic controls are exactly identical across runs, which locates the variation in the reconstruction rather than in the measurement.",
+    "why_it_does_not_affect_the_verdict": "The gate is 50% and the measured values are 78% and 82%, so a 2e-5 wobble is 4 orders of magnitude below the margin. It is recorded because a figure republished to the last digit would otherwise look falsified on the next run."
+  },
+  "controls": {
+    "fully_behind_an_occluder": {
+      "samples": 12,
+      "occluder_triangles": 2,
+      "target_area": 4.0,
+      "visible_area_fraction": 0.0,
+      "occluded_area_fraction": 1.0,
+      "self_hit_tolerance": 0.0125,
+      "samples_behind_eye": 0
+    },
+    "fully_in_front_of_it": {
+      "samples": 12,
+      "occluder_triangles": 2,
+      "target_area": 4.0,
+      "visible_area_fraction": 1.0,
+      "occluded_area_fraction": 0.0,
+      "self_hit_tolerance": 0.0125,
+      "samples_behind_eye": 0
+    }
+  },
+  "scenes": [
+    {
+      "scene": "eagle_partial_scan",
+      "voxel_size": 0.019697681555263743,
+      "removed_triangles": 117868,
+      "retained_triangles": 973562,
+      "removed_area_fraction_of_surface": 0.12491141659330529,
+      "camera_eye": [
+        15.912635043805132,
+        17.311960533802996,
+        12.264551457346407
+      ],
+      "camera_elevation_degrees": 28.0,
+      "view_contents": [
+        "/world/mesh",
+        "/world/mesh_unsupported",
+        "/world/fused"
+      ],
+      "view_hidden_by_default": [
+        "/world/mesh"
+      ],
+      "entities_shown": [
+        "/world/mesh_unsupported",
+        "/world/fused"
+      ],
+      "visible_with_retained_surface_shown": 0.3521503113541809,
+      "visible_with_only_its_own_self_occlusion": 0.7848810005123376,
+      "area_the_retained_surface_hides": 0.43273068915815666,
+      "samples": 707208,
+      "occluder_triangles": 117868,
+      "target_area": 15.95890331143714,
+      "visible_area_fraction": 0.7848810005123376,
+      "occluded_area_fraction": 0.21511899948766228,
+      "self_hit_tolerance": 0.004924420388815936,
+      "samples_behind_eye": 0
+    },
+    {
+      "scene": "armadillo_complete",
+      "voxel_size": 0.33407864276462107,
+      "removed_triangles": 197608,
+      "retained_triangles": 841054,
+      "removed_area_fraction_of_surface": 0.2031756014472285,
+      "camera_eye": [
+        227.71297998587545,
+        249.16702320138162,
+        171.2431850728184
+      ],
+      "camera_elevation_degrees": 28.0,
+      "view_contents": [
+        "/world/mesh",
+        "/world/mesh_unsupported",
+        "/world/fused"
+      ],
+      "view_hidden_by_default": [
+        "/world/mesh"
+      ],
+      "entities_shown": [
+        "/world/mesh_unsupported",
+        "/world/fused"
+      ],
+      "visible_with_retained_surface_shown": 0.3821141245922638,
+      "visible_with_only_its_own_self_occlusion": 0.8180565351651206,
+      "area_the_retained_surface_hides": 0.43594241057285676,
+      "samples": 1185648,
+      "occluder_triangles": 197608,
+      "target_area": 7458.755812346742,
+      "visible_area_fraction": 0.8180565351651206,
+      "occluded_area_fraction": 0.18194346483487953,
+      "self_hit_tolerance": 0.08351966069115527,
+      "samples_behind_eye": 0
+    }
+  ]
+}

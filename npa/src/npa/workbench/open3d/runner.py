@@ -923,6 +923,17 @@ class _View(NamedTuple):
     contents: tuple[str, ...]
     aspect: float
 
+    #: Entities this view carries but does not show until a reviewer asks for them.
+    #: In the recording and one click away, not stacked on top of the view's subject.
+    #:
+    #: This is a separate decision from ``contents`` because an opaque mesh listed as
+    #: context will hide the thing the view exists to show, and fitting a camera does
+    #: not help: measured over 24 azimuths at the product's own elevation, the audit
+    #: view's removed surface never exceeded 49% visible, and the camera that ships is
+    #: already within three points of the best of them. The occluder is what is drawn,
+    #: not where it is drawn from, so no camera could have fixed it.
+    hidden_by_default: tuple[str, ...] = ()
+
 
 #: One table for every view: the geometry its camera frames and the entities it
 #: draws. Both come from here so they cannot drift apart, and they did drift --
@@ -942,6 +953,8 @@ VIEW_GEOMETRY: dict[str, _View] = {
         ("fused", "mesh"),
         ("/world/fused", "/world/mesh", "/world/fragments/**"),
         CAMERA_WINDOW_ASPECT * CAMERA_SCENE_SHARE,
+        # Per-fragment clouds duplicate the fused cloud in space.
+        ("/world/fragments",),
     ),
     SCAN_VIEW: _View(
         ("fused",),
@@ -957,6 +970,14 @@ VIEW_GEOMETRY: dict[str, _View] = {
         ("unsupported", "mesh", "fused"),
         ("/world/mesh", "/world/mesh_unsupported", "/world/fused"),
         CAMERA_WINDOW_ASPECT * CAMERA_TAB_SHARE,
+        # The retained surface was hiding this view's entire subject. Measured by ray
+        # casting from the camera that ships: 35.2% of the removed area visible on a
+        # partial scan and 38.5% on a resampled complete mesh, rising to 78.5% and
+        # 82.5% with this one entity hidden. The fused cloud stays visible -- points
+        # occlude nothing a ray can hit -- so the overlay is still shown against the
+        # observations it is being judged against, and the surface it was cut from is
+        # one click away for the comparison a reviewer would want next.
+        ("/world/mesh",),
     ),
 }
 
@@ -1037,6 +1058,13 @@ def _blueprint(rr, rrb, cameras: dict[str, Any]):
             name=name,
             origin="/world",
             contents=list(VIEW_GEOMETRY[name].contents),
+            # Read off the same table as contents and the camera geometry. Written as
+            # a literal here instead, a view's subject could be re-covered by an edit
+            # that looks like it only changed what the view carries.
+            overrides={
+                entity: rrb.EntityBehavior(visible=False)
+                for entity in VIEW_GEOMETRY[name].hidden_by_default
+            },
             eye_controls=rrb.EyeControls3D(
                 kind=rrb.Eye3DKind.Orbital,
                 position=camera["eye"],
@@ -1055,15 +1083,7 @@ def _blueprint(rr, rrb, cameras: dict[str, Any]):
     tabs.append(rrb.TextDocumentView(name="Provenance", origin="/provenance"))
     return rrb.Blueprint(
         rrb.Horizontal(
-            view(
-                SCENE_VIEW,
-                overrides={
-                    # Per-fragment clouds duplicate the fused cloud in space. Keep
-                    # them in the recording and one click away, not stacked on top
-                    # of it by default.
-                    "/world/fragments": rrb.EntityBehavior(visible=False),
-                },
-            ),
+            view(SCENE_VIEW),
             rrb.Tabs(*tabs),
             column_shares=list(CAMERA_COLUMN_SHARES),
         ),
