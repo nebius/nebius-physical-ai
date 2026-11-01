@@ -188,14 +188,31 @@ if [ "$ISAAC_PYTHON_MINOR" = 3.11 ]; then
       test_pyexpat test_sax test_xml_etree test_xml_etree_c
     make altinstall
     install -d -m 0755 /usr/share/doc/cpython3.11
+    printf '%s\n' \
+      'ea0b9c6b296c13aed6ecaa50b463e39a9c1bdc059b84f50507fd8247b2e660f9  Modules/_decimal/libmpdec/mpdecimal.h' \
+      '4633fc5859344c6f244939c27700fb941d12c4636215a8eccde17d9a6d1dcb0d  Modules/_sha3/LICENSE' \
+      '2f6c9d0ecf70be474f2853b52394993625a32960e0a64eae147ef97a3a5c1460  Modules/_blake2/impl/blake2.h' \
+      | sha256sum --check --strict
     install -m 0444 LICENSE /usr/share/doc/cpython3.11/LICENSE
     install -m 0444 Modules/expat/COPYING \
       /usr/share/doc/cpython3.11/EXPAT-LICENSE
+    install -m 0444 Modules/_decimal/libmpdec/mpdecimal.h \
+      /usr/share/doc/cpython3.11/MPDECIMAL-LICENSE.h
+    install -m 0444 Modules/_sha3/LICENSE \
+      /usr/share/doc/cpython3.11/SHA3-LICENSE
+    install -m 0444 Modules/_blake2/impl/blake2.h \
+      /usr/share/doc/cpython3.11/BLAKE2-CC0-SOURCE.h
+    cmp -s Modules/_decimal/libmpdec/mpdecimal.h \
+      /usr/share/doc/cpython3.11/MPDECIMAL-LICENSE.h
+    cmp -s Modules/_sha3/LICENSE \
+      /usr/share/doc/cpython3.11/SHA3-LICENSE
+    cmp -s Modules/_blake2/impl/blake2.h \
+      /usr/share/doc/cpython3.11/BLAKE2-CC0-SOURCE.h
   )
   ldconfig
   test "$(command -v python3.11)" = /usr/local/bin/python3.11
   test "$(python3.11 -c 'import platform; print(platform.python_version())')" = "$PYTHON_VERSION"
-  python3.11 -c 'import bz2, ctypes, ensurepip, lzma, readline, sqlite3, ssl, zlib'
+  python3.11 -c 'import _blake2, _sha3, bz2, ctypes, ensurepip, lzma, readline, sqlite3, ssl, zlib'
   test "$(python3.11 -c 'import pyexpat; print(pyexpat.EXPAT_VERSION)')" = expat_2.9.0
   PYEXPAT_EXTENSION="$(python3.11 -c 'import pyexpat; print(pyexpat.__file__)')"
   if ldd "$PYEXPAT_EXTENSION" | grep -Fq libexpat.so; then
@@ -215,6 +232,9 @@ if expected not in sys.version:
 PY
   test -s /usr/share/doc/cpython3.11/LICENSE
   test -s /usr/share/doc/cpython3.11/EXPAT-LICENSE
+  test -s /usr/share/doc/cpython3.11/MPDECIMAL-LICENSE.h
+  test -s /usr/share/doc/cpython3.11/SHA3-LICENSE
+  test -s /usr/share/doc/cpython3.11/BLAKE2-CC0-SOURCE.h
   rm -rf "$PYTHON_SOURCE_ARCHIVE" "/tmp/Python-${PYTHON_VERSION}"
 elif [ "$ISAAC_PYTHON_MINOR" = 3.12 ]; then
   # Isaac Sim 6 / Isaac Lab 3 require Python 3.12. The 3.x image uses the

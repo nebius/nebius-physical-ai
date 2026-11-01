@@ -191,10 +191,13 @@ package retention: Launchpad eventually deletes superseded PPA publications.
 Compiler and non-XML library inputs remain selected from the fixed Ubuntu
 snapshot. CPython uses its bundled Expat 2.9.0, executes the four XML/Expat test
 modules before installation, and rejects a runtime `pyexpat` linked to the
-older snapshot system Expat; the image retains both the CPython and bundled
-Expat license texts. The build verifies the archive before extraction and
-exercises the other required standard-library extension modules before creating
-the runtime virtualenv.
+older snapshot system Expat. The image retains exact source-derived notices for
+CPython, Expat, mpdecimal 2.5.1, tiny_sha3, and the BLAKE2 reference
+implementation; mpdecimal, SHA-3, and BLAKE2 are compiled into `_decimal`,
+`_sha3`, and `_blake2`, respectively. The build verifies the archive before
+extraction, byte-compares each bundled-component notice with its installed
+copy, and exercises the required standard-library extension modules before
+creating the runtime virtualenv.
 
 The Sim2Real controller and Rerun viewer builds use the October 2, 2026 Debian
 snapshot and explicitly install `perl-base=5.40.1-6+deb13u1` to remove the three
