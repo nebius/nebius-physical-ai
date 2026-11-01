@@ -573,6 +573,7 @@ def test_strict_json_rejects_hostile_machine_records(raw: bytes) -> None:
         lambda value: value["model_snapshot"]["files"][0].update(size=True),
         lambda value: value["qwen_snapshot"]["files"][0].update(role="retained notice"),
         lambda value: value["operation"].update(expected_action_dim=True),
+        lambda value: value["operation"].update(prompt=1),
         lambda value: value["consumer_view_layout"]["files"].reverse(),
         lambda value: value["consumer_view_layout"].update(manifest_sha256="0" * 64),
     ],

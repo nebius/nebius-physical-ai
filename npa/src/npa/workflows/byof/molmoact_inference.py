@@ -817,6 +817,8 @@ def _validate_operation(lock: Mapping[str, Any]) -> None:
     )
     if operation["instruction"] != "close the box":
         raise ValueError("instruction differs from the frozen operation")
+    if not isinstance(operation["prompt"], str):
+        raise ValueError("prompt must be a string")
     if (
         hashlib.sha256(operation["prompt"].encode("utf-8")).hexdigest()
         != _PROMPT_SHA256
