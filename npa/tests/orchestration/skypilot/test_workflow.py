@@ -1414,6 +1414,12 @@ def test_submit_keeps_isolated_api_control_config_separate_from_client_config(
         daemon_calls.append(kwargs)
         return workflow_module.ApiDaemonCwdProbe(True, "cwd_live")
 
+    def daemon_control_environment(_isolated, environment):
+        selected = dict(environment)
+        selected["PYTHONPATH"] = "/daemon/source"
+        selected["SKYPILOT_GLOBAL_CONFIG"] = str(persistent_config)
+        return selected
+
     def fake_run(command, **kwargs):
         launch_calls.append((command, kwargs))
         if _is_status_cmd(command):
@@ -1425,6 +1431,11 @@ def test_submit_keeps_isolated_api_control_config_separate_from_client_config(
     monkeypatch.setattr(
         workflow_module, "_ensure_local_api_daemon_cwd_locked", ensure_daemon
     )
+    monkeypatch.setattr(
+        workflow_module,
+        "isolated_api_control_environment",
+        daemon_control_environment,
+    )
     monkeypatch.setattr(subprocess, "run", fake_run)
 
     result = submit_workflow(
@@ -1433,13 +1444,16 @@ def test_submit_keeps_isolated_api_control_config_separate_from_client_config(
         isolated_config_dir=isolated,
         config_path=persistent_config,
         sky_bin=_fake_sky(tmp_path),
+        extra_env={"PYTHONPATH": "/client/source"},
     )
 
     assert len(daemon_calls) == 1
     assert daemon_calls[0]["env"]["SKYPILOT_GLOBAL_CONFIG"] == str(persistent_config)
+    assert daemon_calls[0]["env"]["PYTHONPATH"] == "/daemon/source"
     launch = next(call for call in launch_calls if call[0][1:3] == ["jobs", "launch"])
     generated_config = result.log_paths["config"]
     assert launch[1]["env"]["SKYPILOT_GLOBAL_CONFIG"] == generated_config
+    assert launch[1]["env"]["PYTHONPATH"] == "/client/source"
     assert generated_config != str(persistent_config)
 
 

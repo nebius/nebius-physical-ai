@@ -60,6 +60,37 @@ def test_isolated_api_canonicalizes_equivalent_symlinked_roots(tmp_path):
     assert record["root"] == str((target / "local-api").resolve())
 
 
+def test_control_environment_restores_every_daemon_identity_field(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setattr(api, "_read", lambda _root: {"interpreter": "/daemon/python"})
+    monkeypatch.setattr(
+        api,
+        "owned_daemon_environment",
+        lambda _root: {
+            "PYTHONPATH": "/daemon/source",
+            "SKYPILOT_GLOBAL_CONFIG": "/daemon/server-config.yaml",
+            "SKYPILOT_API_SERVER_ENDPOINT": "http://127.0.0.1:40000",
+        },
+    )
+
+    control = api.isolated_api_control_environment(
+        tmp_path,
+        {
+            "PYTHONPATH": "/client/source",
+            "SKYPILOT_GLOBAL_CONFIG": "/client/generated-config.yaml",
+            "SKYPILOT_API_SERVER_ENDPOINT": "http://127.0.0.1:40000",
+            "AWS_PROFILE": "client-only-profile",
+            "NPA_S3_PREFIX": "request-specific-prefix",
+        },
+    )
+
+    assert control["PYTHONPATH"] == "/daemon/source"
+    assert control["SKYPILOT_GLOBAL_CONFIG"] == "/daemon/server-config.yaml"
+    assert "AWS_PROFILE" not in control
+    assert control["NPA_S3_PREFIX"] == "request-specific-prefix"
+
+
 def test_darwin_owned_listener_uses_pid_fingerprint_and_lsof(monkeypatch):
     monkeypatch.setattr(api.sys, "platform", "darwin")
     record = {"pid": 731, "port": 43127}
