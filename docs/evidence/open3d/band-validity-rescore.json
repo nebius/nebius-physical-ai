@@ -1,0 +1,161 @@
+{
+  "what_this_is": "Criterion 5 of program/claims/open3d-signed-fabrication-measure/CLAIM.md: the direction and size of every change the stricter measure makes to the committed numbers, including none.",
+  "nothing_was_overwritten": "band-validity-sweep.json is untouched. These readings sit beside it.",
+  "why_only_two_rows_were_measured": {
+    "argument": "The stricter mask is a superset of the unsigned one -- `far | misoriented` contains `far` -- so the stricter reading is never below the unsigned reading. A row already at or above the threshold can therefore only move further above it, and no verdict can change.",
+    "this_is_proved_not_assumed": "It follows from the mask construction, and it is also visible in every row measured here: delta is non-negative in each run.",
+    "rows_covered_by_the_argument": [
+      {
+        "row": 2,
+        "committed_unsigned": 0.29607351719616726,
+        "already_at_or_above_threshold": true
+      },
+      {
+        "row": 3,
+        "committed_unsigned": 0.46009112305056166,
+        "already_at_or_above_threshold": true
+      },
+      {
+        "row": 4,
+        "committed_unsigned": 0.6812752516497076,
+        "already_at_or_above_threshold": true
+      },
+      {
+        "row": 5,
+        "committed_unsigned": 0.831668492854762,
+        "already_at_or_above_threshold": true
+      },
+      {
+        "row": 6,
+        "committed_unsigned": 0.9444449475080171,
+        "already_at_or_above_threshold": true
+      },
+      {
+        "row": 7,
+        "committed_unsigned": 0.9802731755886571,
+        "already_at_or_above_threshold": true
+      }
+    ],
+    "where_review_and_i_differ": "Review excluded rows[0] because it reads exactly 0.000000. Exactly zero is where the unsigned measure is most lenient, not least: in #1006 the two-box bridge read 0.000000 unsigned and 0.004602 under normal correspondence, the largest relative divergence in that experiment. So rows[0] is measured too."
+  },
+  "measured_rows": [
+    {
+      "row": 0,
+      "samples": 300000,
+      "committed_unsigned": 0.0,
+      "unsigned_this_run": {
+        "runs": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "median": 0.0,
+        "spread": 0.0,
+        "what_varies": "a fresh sample draw and a fresh reconstruction of it"
+      },
+      "stricter": {
+        "runs": [
+          5.87e-06,
+          7.71e-06,
+          9.74e-06
+        ],
+        "median": 7.71e-06,
+        "spread": 3.87e-06,
+        "what_varies": "a fresh sample draw and a fresh reconstruction of it"
+      },
+      "one_cloud_reconstructed_three_times": {
+        "unsigned": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "stricter": [
+          6.71e-06,
+          6.71e-06,
+          6.71e-06
+        ],
+        "unsigned_spread": 0.0,
+        "stricter_spread": 0.0,
+        "what_varies": "the reconstruction only; the cloud is held fixed",
+        "why": "Every sample_points_uniformly call advances the global RNG, so the three runs above draw three different clouds even inside one seeded process. Their spread therefore bounds sampling and reconstruction together, not Poisson alone. I first wrote it up as the latter."
+      },
+      "delta_within_each_run": [
+        5.87e-06,
+        7.71e-06,
+        9.74e-06
+      ],
+      "largest_stricter_reading": 9.74e-06,
+      "crosses_the_threshold": false,
+      "lift_needed_to_cross": "unbounded ratio from zero; the gap is 0.049990 in absolute terms",
+      "reproduction_drift_from_committed": 0.0
+    },
+    {
+      "row": 1,
+      "samples": 150000,
+      "committed_unsigned": 0.0027378386368625777,
+      "unsigned_this_run": {
+        "runs": [
+          0.00301476,
+          0.00299308,
+          0.00275095
+        ],
+        "median": 0.00299308,
+        "spread": 0.00026381,
+        "what_varies": "a fresh sample draw and a fresh reconstruction of it"
+      },
+      "stricter": {
+        "runs": [
+          0.00332136,
+          0.00325302,
+          0.00299974
+        ],
+        "median": 0.00325302,
+        "spread": 0.00032162,
+        "what_varies": "a fresh sample draw and a fresh reconstruction of it"
+      },
+      "one_cloud_reconstructed_three_times": {
+        "unsigned": [
+          0.00084107,
+          0.00084355,
+          0.00084224
+        ],
+        "stricter": [
+          0.00093182,
+          0.00093348,
+          0.00093293
+        ],
+        "unsigned_spread": 2.48e-06,
+        "stricter_spread": 1.66e-06,
+        "what_varies": "the reconstruction only; the cloud is held fixed",
+        "why": "Every sample_points_uniformly call advances the global RNG, so the three runs above draw three different clouds even inside one seeded process. Their spread therefore bounds sampling and reconstruction together, not Poisson alone. I first wrote it up as the latter."
+      },
+      "delta_within_each_run": [
+        0.0003066,
+        0.00025994,
+        0.00024879
+      ],
+      "largest_stricter_reading": 0.00332136,
+      "crosses_the_threshold": false,
+      "lift_needed_to_cross": "16.6x",
+      "reproduction_drift_from_committed": 0.00025525
+    }
+  ],
+  "what_the_spreads_mean": {
+    "within_a_run": "Both measures are computed on the same reconstructed mesh, so every delta reported here is exact. Nothing about the instability below touches it.",
+    "across_runs": "Two sources, separated above. Three fresh draws each reconstructed once bounds sampling and reconstruction together; one cloud reconstructed three times isolates the reconstruction.",
+    "a_correction_to_my_own_first_write_up": "I first labelled the combined spread as a bound on Poisson's nondeterminism. It is not: sample_points_uniformly advances the global RNG, so each repeat draws a different cloud even under a fixed seed. The one-cloud column was added to say which is which.",
+    "relation_to_the_bound_published_in_1004": "That bound -- worst relative difference 2.17e-3 across 106 leaves -- was measured on two seeded runs of one harness, which is a third experiment again. Neither of these columns contradicts it; they measure different things, and this note exists so the three are not conflated later."
+  },
+  "open3d_version": "0.20.0",
+  "sampling_seed": 20261101,
+  "normal_agreement_cutoff_degrees": 60.0,
+  "false_positive_threshold": 0.05,
+  "visual_evaluation": {
+    "status": "not_applicable",
+    "reason": "Scalar area shares computed from geometry, with no render and nothing for a vision model to see. The nonvisual allowance in EXPANDED-REVIEW-CONTRACT.md covers this, and review confirmed the same call on #1006."
+  },
+  "verdict": {
+    "any_verdict_moves": false,
+    "statement": "No verdict moves. Every row keeps the reading it was committed with, and criterion 5 is satisfied with 'none' on the only rows where change was possible."
+  }
+}
