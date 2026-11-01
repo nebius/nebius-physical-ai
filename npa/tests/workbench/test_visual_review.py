@@ -402,9 +402,14 @@ def test_visual_review_vocabularies_keep_exact_membership() -> None:
     actual = {
         name: value
         for name, value in vars(visual_review_schema).items()
-        if name.isupper() and isinstance(value, tuple)
+        if name.isupper() and isinstance(value, (tuple, list, set, frozenset))
     }
-    assert actual == _VISUAL_REVIEW_VOCABULARIES
+    assert {name: type(value) for name, value in actual.items()} == {
+        name: tuple for name in _VISUAL_REVIEW_VOCABULARIES
+    }, "visual-review vocabulary declarations must be exact tuples"
+    assert actual == _VISUAL_REVIEW_VOCABULARIES, (
+        "visual-review vocabulary values changed"
+    )
 
 
 def test_visual_review_schema_enums_match_pinned_vocabularies() -> None:
