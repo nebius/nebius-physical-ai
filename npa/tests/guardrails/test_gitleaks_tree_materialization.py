@@ -867,13 +867,18 @@ def test_history_exact_paths_shard_file_directory_prefix_transitions(
         exact_path_root=exact_root,
     )
 
-    assert receipt["exact_path_shards"] == 2
+    assert receipt["exact_path_shards"] == 4
     exact_files = {
         path.relative_to(exact_root).as_posix()
         for path in exact_root.rglob("*")
         if path.is_file()
     }
-    assert exact_files == {"0/node", "1/node/child"}
+    assert exact_files == {
+        "0/node",
+        "1/node/child",
+        "2/node",
+        "3/node/child",
+    }
 
 
 def test_history_view_preserves_compound_archive_basename(tmp_path: Path) -> None:
@@ -1582,6 +1587,83 @@ def test_fragment_overlap_preserves_exact_policy_path(
     assert token not in output.out
     assert token not in output.err
     assert "anchored-multiline" in output.err
+
+
+@pytest.mark.skipif(
+    shutil.which("gitleaks") is None, reason="gitleaks is not installed"
+)
+def test_exact_path_view_preserves_binary_content_anchors(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Keep absolute content anchors relative to the original blob bytes."""
+    repo = _repo(tmp_path)
+    (repo / ".gitleaks.toml").write_text(
+        "[[rules]]\n"
+        'id = "generic-api-key"\n'
+        'description = "Private scanner control"\n'
+        "regex = '''(?i)api[_-]?key\\s*=\\s*[\"']?[A-Za-z0-9]{32,}'''\n\n"
+        "[[rules]]\n"
+        'id = "pdf-start-only"\n'
+        'description = "Binary start anchor control"\n'
+        "regex = '''^%PDF-1\\.7\\nNPA_PDF_SECRET_[A-Z0-9]{24}'''\n"
+        "path = '''^carrier\\.pdf$'''\n",
+        encoding="utf-8",
+    )
+    (repo / "safe.txt").write_text("safe base\n", encoding="utf-8")
+    base = _commit(repo, "clean base")
+    token = "NPA_PDF_SECRET_" + ("A1" * 12)
+    (repo / "carrier.pdf").write_bytes(b"%PDF-1.7\n" + token.encode() + b"\n\0%%EOF\n")
+    candidate = _commit(repo, "binary anchored secret")
+    scanner = shutil.which("gitleaks")
+    assert scanner is not None
+
+    assert tree_scan.main(_runner_arguments(repo, candidate, base, scanner)) == 1
+    output = capsys.readouterr()
+    assert token not in output.out
+    assert token not in output.err
+    assert "pdf-start-only" in output.err
+
+
+@pytest.mark.skipif(
+    shutil.which("gitleaks") is None, reason="gitleaks is not installed"
+)
+def test_archive_member_starting_angle_bracket_retains_exact_path(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Do not interpret a valid archive member name as an internal sentinel."""
+    repo = _repo(tmp_path)
+    (repo / ".gitleaks.toml").write_text(
+        "[[rules]]\n"
+        'id = "generic-api-key"\n'
+        'description = "Private scanner control"\n'
+        "regex = '''(?i)api[_-]?key\\s*=\\s*[\"']?[A-Za-z0-9]{32,}'''\n\n"
+        "[[rules]]\n"
+        'id = "angle-member-only"\n'
+        'description = "Angle archive member path control"\n'
+        "regex = '''NPA_ANGLE_SECRET_[A-Z0-9]{24}'''\n"
+        "path = '''^carrier\\.zip!<hidden\\.txt>$'''\n",
+        encoding="utf-8",
+    )
+    (repo / "safe.txt").write_text("safe base\n", encoding="utf-8")
+    base = _commit(repo, "clean base")
+    token = "NPA_ANGLE_SECRET_" + ("A1" * 12)
+    with zipfile.ZipFile(
+        repo / "carrier.zip",
+        "w",
+        compression=zipfile.ZIP_DEFLATED,
+    ) as archive:
+        archive.writestr("<hidden.txt>", token + "\n")
+    candidate = _commit(repo, "angle member secret")
+    scanner = shutil.which("gitleaks")
+    assert scanner is not None
+
+    assert tree_scan.main(_runner_arguments(repo, candidate, base, scanner)) == 1
+    output = capsys.readouterr()
+    assert token not in output.out
+    assert token not in output.err
+    assert "angle-member-only" in output.err
 
 
 @pytest.mark.skipif(
@@ -3317,10 +3399,10 @@ def _assert_archive_probe_view(
     assert receipt["archive_bytes"] == archive.stat().st_size
     assert receipt["archive_decompressed_bytes"] == len(encoded)
     assert receipt["archive_files"] == 1
-    assert receipt["archive_member_probe_files"] == 3
-    assert receipt["archive_member_probe_bytes"] >= 3 * len(encoded)
-    assert receipt["archive_exact_path_files"] == 1
-    assert receipt["archive_exact_path_shards"] == 1
+    assert receipt["archive_member_probe_files"] == 4
+    assert receipt["archive_member_probe_bytes"] >= 4 * len(encoded)
+    assert receipt["archive_exact_path_files"] == 2
+    assert receipt["archive_exact_path_shards"] == 2
     assert receipt["archive_members"] == 1
     assert receipt["archive_streams"] == 1
     assert receipt["archive_structural_bytes"] > 0
@@ -3939,6 +4021,13 @@ def test_complete_tree_runner_accepts_clean_binary_blob(
     assert receipt["history_commits"] == [candidate]
     assert receipt["history_findings"] == 0
     assert receipt["native_history_input_bytes_per_scan"] > 0
+    assert receipt["native_history_patch_bytes_per_scan"] > 0
+    assert receipt["native_history_blob_bytes_upper_bound_per_scan"] > 0
+    assert receipt["native_history_diff_metadata_bytes"] > 0
+    assert receipt["native_history_input_bytes_per_scan"] == (
+        receipt["native_history_patch_bytes_per_scan"]
+        + receipt["native_history_blob_bytes_upper_bound_per_scan"]
+    )
     assert receipt["native_history_input_bytes"] == (
         receipt["native_history_input_bytes_per_scan"]
         * receipt["native_history_scan_invocations"]
@@ -4010,33 +4099,60 @@ def test_native_history_input_preflight_counts_and_bounds_replay(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Charge repeated native patch bytes before either Gitleaks invocation."""
+    """Charge repeated patches and reopened binary blobs before both scans."""
+
+    def stored_zip(content: bytes) -> bytes:
+        encoded = io.BytesIO()
+        with zipfile.ZipFile(encoded, "w", compression=zipfile.ZIP_STORED) as archive:
+            archive.writestr("payload.bin", content)
+        return encoded.getvalue()
+
     repo = _repo(tmp_path)
-    (repo / "carrier.bin").write_bytes(b"A" * 65_536)
+    (repo / "carrier.zip").write_bytes(stored_zip(b"A" * 65_536))
     base = _commit(repo, "base")
+    commits = []
     for index in range(4):
-        (repo / "carrier.bin").write_bytes((b"B" if index % 2 == 0 else b"A") * 65_536)
+        payload = (b"B" if index % 2 == 0 else b"A") * 65_536
+        (repo / "carrier.zip").write_bytes(stored_zip(payload))
         candidate = _commit(repo, f"alternating payload {index}")
+        commits.append(candidate)
     history_range = f"{base}..{candidate}"
     source = tree_scan._isolated_history_source(repo, tmp_path / "history-source")
 
-    measured = tree_scan._measure_native_history_input(source, history_range)
-    assert measured > 4 * 65_536
-
-    monkeypatch.setattr(
-        tree_scan,
-        "_MAX_NATIVE_HISTORY_INPUT_BYTES",
-        2 * measured,
+    measured = tree_scan._measure_native_history_input(
+        source,
+        history_range,
+        commits,
     )
-    assert tree_scan._measure_native_history_input(source, history_range) == measured
+    assert measured.patch_bytes > 0
+    assert measured.changed_blob_bytes_upper_bound > 4 * 65_536
+    assert measured.diff_metadata_bytes > 0
 
     monkeypatch.setattr(
         tree_scan,
         "_MAX_NATIVE_HISTORY_INPUT_BYTES",
-        2 * (measured - 1),
+        2 * measured.bytes_per_scan,
+    )
+    assert (
+        tree_scan._measure_native_history_input(
+            source,
+            history_range,
+            commits,
+        )
+        == measured
+    )
+
+    monkeypatch.setattr(
+        tree_scan,
+        "_MAX_NATIVE_HISTORY_INPUT_BYTES",
+        2 * (measured.bytes_per_scan - 1),
     )
     with pytest.raises(tree_scan._ScanError, match="bounded byte limit"):
-        tree_scan._measure_native_history_input(source, history_range)
+        tree_scan._measure_native_history_input(
+            source,
+            history_range,
+            commits,
+        )
 
 
 @pytest.mark.skipif(

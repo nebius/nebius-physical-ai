@@ -28,7 +28,7 @@ import zlib
 from collections.abc import Callable, Iterator
 from functools import partial
 from pathlib import Path, PurePosixPath
-from typing import BinaryIO, Self
+from typing import BinaryIO, NamedTuple, Self
 
 try:
     import tomllib
@@ -70,6 +70,8 @@ _MAX_GITLEAKS_REPORT_BYTES = 256 * 1024 * 1024
 _MAX_GITLEAKS_REPORT_TOTAL_BYTES = 512 * 1024 * 1024
 _MAX_GITLEAKS_DIAGNOSTIC_BYTES = 64 * 1024 * 1024
 _MAX_NATIVE_HISTORY_INPUT_BYTES = 2 * 1024 * 1024 * 1024
+_MAX_NATIVE_HISTORY_DIFF_METADATA_BYTES = 512 * 1024 * 1024
+_MAX_NATIVE_HISTORY_DIFF_COMMIT_BYTES = 64 * 1024 * 1024
 _NATIVE_HISTORY_SCAN_INVOCATIONS = 2
 _MAX_POLICY_BLOB_BYTES = 16 * 1024 * 1024
 _DECODE_PROBE_PREFIX = "npa-decode-depth-probe-"
@@ -216,6 +218,19 @@ regex = '''[\w\/+-]{16,}={0,2}'''
 
 class _ScanError(RuntimeError):
     """Report a tree scan that cannot prove complete fail-closed coverage."""
+
+
+class _NativeHistoryInput(NamedTuple):
+    """Describe one native history scan's bounded Git inputs."""
+
+    patch_bytes: int
+    changed_blob_bytes_upper_bound: int
+    diff_metadata_bytes: int
+
+    @property
+    def bytes_per_scan(self) -> int:
+        """Return the patch and possible archive-blob bytes per scan."""
+        return self.patch_bytes + self.changed_blob_bytes_upper_bound
 
 
 class _ReportBudget:
@@ -447,7 +462,8 @@ class _ArchiveMemberProbeWriter:
         test_context: bool,
         counts: _ProbeSourceCounts,
         candidates: _CandidateProbeWriter,
-        exact_path_target: Path | None = None,
+        raw_exact_path_target: Path | None = None,
+        transformed_exact_path_target: Path | None = None,
         fragment_exact_paths: _ExactPathAllocator | None = None,
         logical_scan_path: str | None = None,
     ) -> None:
@@ -466,15 +482,18 @@ class _ArchiveMemberProbeWriter:
         self.counts = counts
         self.candidates = candidates
         self.test_context = test_context
+        if (raw_exact_path_target is None) != (transformed_exact_path_target is None):
+            raise _ScanError("Archive exact-path representations are incomplete")
         logical_parts = _canonical_archive_member_parts(
             member if logical_scan_path is None else logical_scan_path
         )
         logical_path = Path(*logical_parts)
         self.wrapper_path = context_root / f"{identity}.txt"
         self.context_path = context_root / "path-context" / identity / logical_path
-        self.exact_path_target = exact_path_target
+        self.raw_exact_path_target = raw_exact_path_target
+        self.transformed_exact_path_target = transformed_exact_path_target
         self.fragment_exact_paths = (
-            fragment_exact_paths if exact_path_target is not None else None
+            fragment_exact_paths if raw_exact_path_target is not None else None
         )
         self.logical_parts = logical_parts
         self.context_path.parent.mkdir(mode=0o700, parents=True)
@@ -545,13 +564,20 @@ class _ArchiveMemberProbeWriter:
             )
             self.wrapper_stream.close()
             os.link(self.wrapper_path, self.context_path)
-            if self.exact_path_target is not None:
-                self.exact_path_target.parent.mkdir(
+            if self.raw_exact_path_target is not None:
+                self.raw_exact_path_target.parent.mkdir(
                     mode=0o700,
                     parents=True,
                     exist_ok=True,
                 )
-                os.link(self.wrapper_path, self.exact_path_target)
+                os.link(self.raw_path, self.raw_exact_path_target)
+            if self.transformed_exact_path_target is not None:
+                self.transformed_exact_path_target.parent.mkdir(
+                    mode=0o700,
+                    parents=True,
+                    exist_ok=True,
+                )
+                os.link(self.wrapper_path, self.transformed_exact_path_target)
             self.raw_path.unlink()
             before_files = self.counts.fragment_window_files
             before_bytes = self.counts.fragment_window_bytes
@@ -586,11 +612,22 @@ class _ArchiveMemberProbeWriter:
                 self.counts.fragment_window_bytes - before_bytes
             )
             wrapper_bytes = self.wrapper_path.stat().st_size
-            wrapper_copies = 2 + int(self.exact_path_target is not None)
-            self.counts.archive_member_probe_files += wrapper_copies
-            if self.exact_path_target is not None:
-                self.counts.archive_exact_path_files += 1
-            self.counts.archive_member_probe_bytes += wrapper_copies * wrapper_bytes
+            wrapper_copies = 2
+            exact_path_copies = int(self.raw_exact_path_target is not None)
+            exact_path_copies += int(self.transformed_exact_path_target is not None)
+            self.counts.archive_member_probe_files += wrapper_copies + exact_path_copies
+            self.counts.archive_exact_path_files += exact_path_copies
+            raw_bytes = (
+                self.raw_exact_path_target.stat().st_size
+                if self.raw_exact_path_target is not None
+                else 0
+            )
+            transformed_bytes = (
+                wrapper_bytes if self.transformed_exact_path_target is not None else 0
+            )
+            self.counts.archive_member_probe_bytes += (
+                (wrapper_copies * wrapper_bytes) + raw_bytes + transformed_bytes
+            )
             if transcoded:
                 self.counts.archive_member_transcoded_files += 1
                 self.counts.archive_member_transcoded_bytes += transcoded
@@ -609,8 +646,10 @@ class _ArchiveMemberProbeWriter:
         self.raw_path.unlink(missing_ok=True)
         self.wrapper_path.unlink(missing_ok=True)
         self.context_path.unlink(missing_ok=True)
-        if self.exact_path_target is not None:
-            self.exact_path_target.unlink(missing_ok=True)
+        if self.raw_exact_path_target is not None:
+            self.raw_exact_path_target.unlink(missing_ok=True)
+        if self.transformed_exact_path_target is not None:
+            self.transformed_exact_path_target.unlink(missing_ok=True)
 
 
 class _ScanPlan:
@@ -642,7 +681,7 @@ class _MaterializedSources:
         self,
         snapshot: Path,
         candidate_receipt: dict[str, object],
-        candidate_exact_path_view: Path,
+        candidate_exact_path_views: list[Path],
         historical_view: Path | None,
         historical_receipt: dict[str, object],
         historical_exact_path_views: list[Path],
@@ -653,7 +692,7 @@ class _MaterializedSources:
     ) -> None:
         self.snapshot = snapshot
         self.candidate_receipt = candidate_receipt
-        self.candidate_exact_path_view = candidate_exact_path_view
+        self.candidate_exact_path_views = candidate_exact_path_views
         self.historical_view = historical_view
         self.historical_receipt = historical_receipt
         self.historical_exact_path_views = historical_exact_path_views
@@ -1584,6 +1623,9 @@ def _validate_archive_file(
     budget: _ArchiveBudget | None = None,
     member_factory: Callable[[str], _ArchiveMemberProbeWriter] | None = None,
     structure_factory: Callable[[str], _ArchiveMemberProbeWriter] | None = None,
+    compressed_stream_factory: (
+        Callable[[str], _ArchiveMemberProbeWriter] | None
+    ) = None,
 ) -> None:
     """Fail closed on archive names or bytes Gitleaks cannot traverse completely."""
     archive_budget = _ArchiveBudget() if budget is None else budget
@@ -1628,7 +1670,11 @@ def _validate_archive_file(
             path,
             compressed_kind,
             archive_budget,
-            member_factory,
+            (
+                member_factory
+                if compressed_stream_factory is None
+                else compressed_stream_factory
+            ),
         )
         return
     if kind is not None:
@@ -1854,25 +1900,17 @@ def _link_probe_archives(
     """Link one raw file under every pinned archive-compatible name."""
     source_identity = os.fsencode(relative)
 
-    def member_factory(
+    def probe_writer(
         member: str,
-        logical_scan_path_override: str | None = None,
+        logical_scan_path: str,
+        identity_domain: bytes,
     ) -> _ArchiveMemberProbeWriter:
         member_identity = member.encode("utf-8", errors="surrogatepass")
-        identity = hashlib.sha256(source_identity + b"\0" + member_identity).hexdigest()
-        if logical_scan_path_override is not None:
-            logical_scan_path = logical_scan_path_override
-        elif member == "<compressed-stream>":
-            logical_scan_path = logical_relative
-        elif member.startswith("<"):
-            logical_scan_path = None
-        else:
-            logical_scan_path = f"{logical_relative}!{member}"
-        exact_path_target = (
-            None
-            if logical_scan_path is None
-            else exact_paths.allocate(logical_scan_path)
-        )
+        identity = hashlib.sha256(
+            source_identity + b"\0" + identity_domain + b"\0" + member_identity
+        ).hexdigest()
+        raw_exact_path_target = exact_paths.allocate(logical_scan_path)
+        transformed_exact_path_target = exact_paths.allocate(logical_scan_path)
         return _ArchiveMemberProbeWriter(
             destination,
             identity,
@@ -1880,18 +1918,32 @@ def _link_probe_archives(
             relative.startswith("npa/tests/"),
             counts,
             candidates,
-            exact_path_target,
+            raw_exact_path_target,
+            transformed_exact_path_target,
             fragment_exact_paths,
             logical_scan_path,
+        )
+
+    def member_factory(member: str) -> _ArchiveMemberProbeWriter:
+        return probe_writer(
+            member,
+            f"{logical_relative}!{member}",
+            b"member",
         )
 
     _validate_archive_file(
         path,
         archive_budget,
         member_factory=member_factory,
-        structure_factory=lambda member: member_factory(
+        structure_factory=lambda member: probe_writer(
             f"<container>{member}",
             logical_relative,
+            b"structure",
+        ),
+        compressed_stream_factory=lambda member: probe_writer(
+            member,
+            logical_relative,
+            b"compressed-stream",
         ),
     )
     archive_names = _archive_probe_names(path)
@@ -2239,8 +2291,154 @@ def _read_scanner_diagnostic(stream: BinaryIO, label: str) -> bytes:
     return stream.read()
 
 
-def _measure_native_history_input(source: Path, history_range: str) -> int:
-    """Bound the exact Git patch stream replayed by native history scans."""
+def _read_native_diff_metadata(
+    source: Path,
+    commit: str,
+    remaining_bytes: int,
+) -> bytes:
+    """Read one bounded raw changed-path inventory."""
+    if remaining_bytes <= 0:
+        raise _ScanError("Native Git diff metadata exceeds its bounded byte limit")
+    limit = min(remaining_bytes, _MAX_NATIVE_HISTORY_DIFF_COMMIT_BYTES)
+    arguments = materializer._git_command(
+        source,
+        "diff-tree",
+        "--root",
+        "-m",
+        "-r",
+        "--no-renames",
+        "--raw",
+        "-z",
+        "--no-commit-id",
+        commit,
+    )
+    with (
+        tempfile.TemporaryFile() as stdout_sink,
+        tempfile.TemporaryFile() as stderr_sink,
+    ):
+        result = subprocess.run(
+            arguments,
+            check=False,
+            stdout=stdout_sink,
+            stderr=stderr_sink,
+            env=_scan_environment(),
+            preexec_fn=partial(_limit_scanner_output_files, limit),
+        )
+        size = os.fstat(stdout_sink.fileno()).st_size
+        diagnostic_bytes = os.fstat(stderr_sink.fileno()).st_size
+        if result.returncode != 0 or diagnostic_bytes or size > limit:
+            raise _ScanError(
+                "Native Git diff metadata exceeds its bounded byte limit "
+                "or could not be verified"
+            )
+        stdout_sink.seek(0)
+        return stdout_sink.read()
+
+
+def _changed_blob_ids(metadata: bytes, object_format: bytes) -> list[bytes]:
+    """Parse nondeleted regular blobs from one NUL-delimited raw diff."""
+    fields = metadata.split(b"\0")
+    if not fields or fields[-1] != b"" or len(fields) % 2 != 1:
+        raise _ScanError("Native Git returned invalid raw diff metadata")
+    object_ids: list[bytes] = []
+    for index in range(0, len(fields) - 1, 2):
+        header, path = fields[index : index + 2]
+        parts = header.split()
+        if len(parts) != 5 or not parts[0].startswith(b":") or not path:
+            raise _ScanError("Native Git returned invalid raw diff metadata")
+        _old_mode, new_mode, _old_id, new_id, status = parts
+        if status not in {b"A", b"D", b"M", b"T", b"U"}:
+            raise _ScanError("Native Git returned unsupported raw diff status")
+        if status != b"D" and new_mode in materializer.REGULAR_MODES:
+            materializer._validate_object_id(new_id, object_format)
+            object_ids.append(new_id)
+    return object_ids
+
+
+def _request_checked_blob_size(
+    process: subprocess.Popen[bytes],
+    object_id: bytes,
+) -> int:
+    """Request and validate one blob size from a batch-check process."""
+    if process.stdin is None or process.stdout is None:
+        raise _ScanError("Native Git blob-size stream is unavailable")
+    process.stdin.write(object_id + b"\n")
+    process.stdin.flush()
+    fields = process.stdout.readline(1024).removesuffix(b"\n").split()
+    if len(fields) != 3 or fields[:2] != [object_id, b"blob"]:
+        raise _ScanError("Native Git returned invalid blob-size metadata")
+    try:
+        size = int(fields[2])
+    except ValueError as exc:
+        raise _ScanError("Native Git returned invalid blob-size metadata") from exc
+    if size < 0:
+        raise _ScanError("Native Git returned invalid blob-size metadata")
+    return size
+
+
+def _sum_changed_blob_sizes(
+    source: Path,
+    object_ids: list[bytes],
+    byte_limit: int,
+) -> int:
+    """Upper-bound archive replay with every changed regular blob."""
+    process = subprocess.Popen(
+        materializer._git_command(
+            source,
+            "cat-file",
+            "--batch-check=%(objectname) %(objecttype) %(objectsize)",
+        ),
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        env=_scan_environment(),
+    )
+    total = 0
+    try:
+        for object_id in object_ids:
+            total += _request_checked_blob_size(process, object_id)
+            if total > byte_limit:
+                raise _ScanError(
+                    "Native Git history input exceeds its bounded byte limit"
+                )
+        materializer._finish_blob_process(process)
+    finally:
+        active_error = sys.exc_info()[1]
+        cleanup_errors = materializer._cleanup_blob_process(process, ())
+        if cleanup_errors and active_error is None:
+            raise _ScanError("Could not clean up native Git blob-size stream") from (
+                cleanup_errors[0]
+            )
+    return total
+
+
+def _changed_blob_replay_upper_bound(
+    source: Path,
+    commits: list[str],
+    byte_limit: int,
+) -> tuple[int, int]:
+    """Bound all blobs that native Gitleaks could reopen for archives."""
+    object_format = materializer._object_format(source)
+    total = 0
+    metadata_bytes = 0
+    for commit in commits:
+        metadata = _read_native_diff_metadata(
+            source,
+            commit,
+            _MAX_NATIVE_HISTORY_DIFF_METADATA_BYTES - metadata_bytes,
+        )
+        metadata_bytes += len(metadata)
+        object_ids = _changed_blob_ids(metadata, object_format)
+        total += _sum_changed_blob_sizes(source, object_ids, byte_limit - total)
+    return total, metadata_bytes
+
+
+def _measure_native_history_input(
+    source: Path,
+    history_range: str,
+    commits: list[str],
+) -> _NativeHistoryInput:
+    """Bound patch and possible archive-blob replay for native scans."""
     per_scan_limit = _MAX_NATIVE_HISTORY_INPUT_BYTES // _NATIVE_HISTORY_SCAN_INVOCATIONS
     arguments = materializer._git_command(
         source,
@@ -2276,10 +2474,15 @@ def _measure_native_history_input(source: Path, history_range: str) -> int:
                     "Native Git history diagnostic exceeds the bounded byte limit"
                 )
             raise _ScanError("Native Git history preflight emitted a diagnostic")
-    aggregate_bytes = output_bytes * _NATIVE_HISTORY_SCAN_INVOCATIONS
-    if aggregate_bytes > _MAX_NATIVE_HISTORY_INPUT_BYTES:
+    blob_bytes, metadata_bytes = _changed_blob_replay_upper_bound(
+        source,
+        commits,
+        per_scan_limit - output_bytes,
+    )
+    measured = _NativeHistoryInput(output_bytes, blob_bytes, metadata_bytes)
+    if measured.bytes_per_scan > per_scan_limit:
         raise _ScanError("Native Git history input exceeds its bounded byte limit")
-    return output_bytes
+    return measured
 
 
 def _reject_scanner_diagnostics(
@@ -3016,13 +3219,16 @@ def _materialize_sources(
     """Materialize exact candidate and intermediate tree sources."""
     snapshot = root / "tree"
     snapshot.mkdir(mode=0o700)
-    candidate_exact_path_view = root / "tree-exact-paths"
+    candidate_exact_path_root = root / "tree-exact-paths"
     candidate_receipt = materializer.materialize(
         repo,
         snapshot,
         str(plan.candidate["commit"]),
         scan_view=True,
-        exact_path_view=candidate_exact_path_view,
+        exact_path_view=candidate_exact_path_root,
+    )
+    candidate_exact_path_views = sorted(
+        path for path in candidate_exact_path_root.iterdir() if path.is_dir()
     )
     historical_view: Path | None = None
     historical_exact_path_views: list[Path] = []
@@ -3053,7 +3259,7 @@ def _materialize_sources(
     return _MaterializedSources(
         snapshot,
         candidate_receipt,
-        candidate_exact_path_view,
+        candidate_exact_path_views,
         historical_view,
         historical_receipt,
         historical_exact_path_views,
@@ -3536,7 +3742,7 @@ def _run_content_scans(
     candidate_exact_path_scans = _scan_exact_path_views(
         executable,
         root,
-        [sources.candidate_exact_path_view],
+        sources.candidate_exact_path_views,
         "candidate-exact-path",
         config,
         ignore,
@@ -3649,7 +3855,7 @@ def _render_scan_receipt(
     sources: _MaterializedSources,
     probes: _ProbeSources,
     findings: _FindingSets,
-    native_history_input_bytes: int,
+    native_history_input: _NativeHistoryInput,
     config: Path,
     ignore: Path,
     report_budget: _ReportBudget,
@@ -3676,9 +3882,14 @@ def _render_scan_receipt(
         "history_range": plan.commit_range,
         "history_commits": plan.commits,
         "history_findings": len(findings.history),
-        "native_history_input_bytes_per_scan": native_history_input_bytes,
+        "native_history_patch_bytes_per_scan": native_history_input.patch_bytes,
+        "native_history_blob_bytes_upper_bound_per_scan": (
+            native_history_input.changed_blob_bytes_upper_bound
+        ),
+        "native_history_diff_metadata_bytes": native_history_input.diff_metadata_bytes,
+        "native_history_input_bytes_per_scan": native_history_input.bytes_per_scan,
         "native_history_input_bytes": (
-            native_history_input_bytes * _NATIVE_HISTORY_SCAN_INVOCATIONS
+            native_history_input.bytes_per_scan * _NATIVE_HISTORY_SCAN_INVOCATIONS
         ),
         "native_history_input_byte_limit": _MAX_NATIVE_HISTORY_INPUT_BYTES,
         "native_history_scan_invocations": _NATIVE_HISTORY_SCAN_INVOCATIONS,
@@ -3734,9 +3945,10 @@ def _scan_workspace(
     sources = _materialize_sources(repo, root, plan)
     probes = _prepare_probe_sources(root, plan, sources)
     _verify_root_ignore_exact_path_coverage(plan, sources, probes)
-    native_history_input_bytes = _measure_native_history_input(
+    native_history_input = _measure_native_history_input(
         sources.history_source,
         plan.commit_range,
+        plan.commits,
     )
     _verify_probe_sources(
         executable,
@@ -3763,7 +3975,7 @@ def _scan_workspace(
         sources,
         probes,
         findings,
-        native_history_input_bytes,
+        native_history_input,
         config,
         ignore,
         report_budget,

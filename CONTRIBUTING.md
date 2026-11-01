@@ -525,21 +525,22 @@ exposes raw policy blobs at inert scan paths. Every blob, path, and commit body
 also receives isolated neutral and logical-path scanner-safe text/Unicode
 wrappers so binary bytes remain visible, path-constrained rules still apply,
 and a rule match cannot span unrelated objects. Separate collision-free scan
-roots expose transformed wrappers at their exact source-relative paths, so
-anchored path rules keep their original semantics across candidate, historical,
-archive-member, and fragment-overlap views. Historical file/directory prefix
+roots expose both original raw bytes and transformed wrappers at their exact
+source-relative paths. The independent raw and transformed domains preserve
+absolute content anchors and path-constrained Unicode/archive matches without
+letting either representation replace the other. Historical file/directory prefix
 transitions are placed in different exact-path roots instead of becoming an
-unrepresentable collision. Each transformed exact-path root is scanned both as
+unrepresentable collision. Each exact-path root is scanned both as
 an isolated filesystem source and as a generated forced-text Git commit. The
 generated repository force-adds every path, overrides candidate
 `.gitignore`/`.gitattributes`/filter behavior through private Git metadata, and
 rejects a generated commit identity named by the trusted policy. The Git view
-keeps full transformed files in one diff hunk, so wide trusted rules do not
+keeps each complete raw file in one forced-text diff hunk, so wide trusted rules do not
 depend only on bounded overlap windows and archive-suffixed logical paths are
 not redispatched as archives. The root `.gitleaksignore` is retained in inert
-neutral/logical wrappers instead, because exposing transformed bytes there would
-make Gitleaks interpret candidate content as scanner control. Its transformed
-wrapper is committed at the exact root path only in the forced-text Git view,
+neutral/logical wrappers instead, because exposing its raw bytes there would
+make Gitleaks interpret candidate content as scanner control. The raw file is
+committed at the exact root path only in the forced-text Git view,
 then removed from that generated repository's worktree before Gitleaks starts.
 Path-independent wide rules therefore inspect the complete file without letting
 candidate ignore bytes control the scanner. If a committed custom-rule path
@@ -569,8 +570,13 @@ aggregate authenticated commit reads. Authenticated tree objects, aggregate
 tree metadata, expanded path count/path bytes, and generated scan-view bytes
 have separate ceilings before materialization. Before the two native Gitleaks
 history passes, the helper reproduces the pinned `git log -p -U0` input and
-requires each patch stream to fit 1 GiB, charging both invocations against a
-2-GiB aggregate native-history input ceiling.
+also inventories every changed regular blob per selected commit. It charges the
+full size of every such blob as a conservative upper bound for binary archives
+that Gitleaks can reopen through `git cat-file`, even when Git's patch contains
+only a short binary marker. The patch plus changed-blob upper bound must fit
+1 GiB per pass, and both invocations share a 2-GiB aggregate native-history
+input ceiling. NUL-delimited raw-diff metadata is bounded to 64 MiB per commit
+and 512 MiB in aggregate before blob sizes are queried.
 It also scans localized UTF-16/32 text, disables inline `gitleaks:allow`
 suppression, and runs private binary/archive/decode controls. Those controls
 pass only when findings identify all three distinct binary, archive-member, and
@@ -578,7 +584,10 @@ decoded carrier paths; duplicate findings from one carrier cannot satisfy the
 check. Each bounded archive member receives neutral and logical-path
 raw/Unicode wrappers plus an encoded-span probe. ZIP and TAR members retain the
 pinned `outer-archive!member` identity; standalone gzip, bzip2, and xz streams
-retain their outer path. Validated raw archives remain inert in ordinary scans
+retain their outer path. Member names are always literal, including names that
+begin with `<`; synthetic structure and compressed-stream labels use separate
+identity domains instead of overloading user-controlled names. Validated raw
+archives remain inert in ordinary scans
 while generated member and exact-path views provide complete coverage without
 filename-driven redispatch. A separate private control still proves native
 Gitleaks archive traversal. The

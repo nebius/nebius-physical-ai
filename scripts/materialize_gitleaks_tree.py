@@ -53,6 +53,7 @@ _UNICODE_RUNS = (
 )
 
 _Entry = tuple[bytes, bytes, bytes]
+_ExactPathTargets = tuple[Path, Path]
 
 
 class _WriteReceipt:
@@ -64,7 +65,7 @@ class _WriteReceipt:
         self.scan_bytes = 0
         self.raw_scan_files = 0
         self.wrapper_scan_files = 0
-        self.exact_path_wrapper_files = 0
+        self.exact_path_files = 0
         self.path_bytes = 0
         self.transcoded_files = 0
         self.transcoded_bytes = 0
@@ -833,13 +834,22 @@ def _historical_target_path(object_id: bytes, raw_path: bytes) -> bytes:
 def _candidate_exact_path_targets(
     entries: list[_Entry],
     root: Path | None,
-) -> dict[tuple[bytes, bytes], Path] | None:
-    """Map each candidate wrapper to its exact logical path in a separate view."""
+) -> dict[tuple[bytes, bytes], _ExactPathTargets] | None:
+    """Map candidate bytes and wrappers into separate exact-path views."""
     if root is None:
         return None
     root.mkdir(mode=0o700)
+    if not entries:
+        return {}
+    raw_root = root / "0"
+    wrapper_root = root / "1"
+    raw_root.mkdir(mode=0o700)
+    wrapper_root.mkdir(mode=0o700)
     return {
-        (object_id, raw_path): _target_path(root, raw_path)
+        (object_id, raw_path): (
+            _target_path(raw_root, raw_path),
+            _target_path(wrapper_root, raw_path),
+        )
         for _mode, object_id, raw_path in entries
     }
 
@@ -847,12 +857,12 @@ def _candidate_exact_path_targets(
 def _history_exact_path_targets(
     entries: list[_Entry],
     root: Path | None,
-) -> tuple[dict[tuple[bytes, bytes], Path] | None, int]:
-    """Shard historical wrappers so each source exposes exact logical paths."""
+) -> tuple[dict[tuple[bytes, bytes], _ExactPathTargets] | None, int]:
+    """Shard raw and transformed history under independent logical paths."""
     if root is None:
         return None, 0
     root.mkdir(mode=0o700)
-    targets: dict[tuple[bytes, bytes], Path] = {}
+    raw_targets: dict[tuple[bytes, bytes], Path] = {}
     full_paths: list[set[tuple[bytes, ...]]] = []
     strict_prefixes: list[set[tuple[bytes, ...]]] = []
     for _mode, object_id, raw_path in entries:
@@ -867,7 +877,7 @@ def _history_exact_path_targets(
             ):
                 break
             shard += 1
-        if shard >= _MAX_EXACT_PATH_SHARDS:
+        if shard >= _MAX_EXACT_PATH_SHARDS // 2:
             raise SnapshotError("Historical exact-path views exceed the shard limit")
         if shard == len(full_paths):
             full_paths.append(set())
@@ -878,8 +888,18 @@ def _history_exact_path_targets(
             shard_root = root / str(shard)
         full_paths[shard].add(parts)
         strict_prefixes[shard].update(ancestors)
-        targets[(object_id, raw_path)] = _target_path(shard_root, raw_path)
-    return targets, len(full_paths)
+        raw_targets[(object_id, raw_path)] = _target_path(shard_root, raw_path)
+    raw_shards = len(full_paths)
+    targets = {
+        identity: (
+            raw_target,
+            root
+            / str(int(raw_target.relative_to(root).parts[0]) + raw_shards)
+            / Path(*raw_target.relative_to(root).parts[1:]),
+        )
+        for identity, raw_target in raw_targets.items()
+    }
+    return targets, raw_shards * 2
 
 
 def _start_blob_process(repo: Path) -> subprocess.Popen[bytes]:
@@ -958,7 +978,7 @@ def _write_scan_blob(
     preserve_paths: bool,
     size: int,
     digest: _Digest,
-    exact_path_target: Path | None,
+    exact_path_targets: _ExactPathTargets | None,
 ) -> tuple[int, int, int]:
     """Write exact raw bytes plus neutral and logical-path text wrappers."""
     target_path = _raw_scan_path(expected_id, raw_path, preserve_paths)
@@ -980,9 +1000,12 @@ def _write_scan_blob(
     )
     context_target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     os.link(wrapper_target, context_target)
-    if exact_path_target is not None:
-        exact_path_target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-        os.link(wrapper_target, exact_path_target)
+    if exact_path_targets is not None:
+        raw_exact_target, wrapper_exact_target = exact_path_targets
+        raw_exact_target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        wrapper_exact_target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        os.link(raw_target, raw_exact_target)
+        os.link(wrapper_target, wrapper_exact_target)
     wrapper_bytes = (
         len(SCAN_PREFIX)
         + len(path_payload)
@@ -990,8 +1013,10 @@ def _write_scan_blob(
         + size
         + transcoded
     )
-    wrapper_copies = 2 + int(exact_path_target is not None)
-    scan_bytes = size + (wrapper_copies * wrapper_bytes)
+    exact_path_copies = int(exact_path_targets is not None)
+    wrapper_copies = 2 + exact_path_copies
+    raw_copies = 1 + exact_path_copies
+    scan_bytes = (raw_copies * size) + (wrapper_copies * wrapper_bytes)
     return scan_bytes, transcoded, size + wrapper_bytes
 
 
@@ -1001,12 +1026,12 @@ def _record_scan_blob(
     scan_bytes: int,
     transcoded: int,
     materialized_bytes: int,
-    has_exact_path_wrapper: bool,
+    exact_path_files: int,
 ) -> None:
     """Record one raw blob and its neutral/logical text wrappers."""
     receipt.raw_scan_files += 1
-    receipt.wrapper_scan_files += 2 + int(has_exact_path_wrapper)
-    receipt.exact_path_wrapper_files += int(has_exact_path_wrapper)
+    receipt.wrapper_scan_files += 2
+    receipt.exact_path_files += exact_path_files
     receipt.path_bytes += len(raw_path) + 2
     receipt.scan_bytes += scan_bytes
     receipt.materialized_bytes += materialized_bytes
@@ -1023,7 +1048,7 @@ def _write_blob_entry(
     preserve_paths: bool,
     object_format: bytes,
     receipt: _WriteReceipt,
-    exact_path_target: Path | None,
+    exact_path_targets: _ExactPathTargets | None,
 ) -> None:
     """Write and cryptographically verify one requested blob."""
     _, expected_id, raw_path = entry
@@ -1059,7 +1084,7 @@ def _write_blob_entry(
             preserve_paths,
             size,
             digest,
-            exact_path_target,
+            exact_path_targets,
         )
         _record_scan_blob(
             receipt,
@@ -1067,7 +1092,7 @@ def _write_blob_entry(
             scan_bytes,
             transcoded,
             materialized_bytes,
-            exact_path_target is not None,
+            2 if exact_path_targets is not None else 0,
         )
     else:
         target = _target_path(destination, raw_path)
@@ -1106,7 +1131,7 @@ def _write_blobs(
     *,
     preserve_paths: bool = True,
     scan_paths: list[bytes] | None = None,
-    exact_path_targets: dict[tuple[bytes, bytes], Path] | None = None,
+    exact_path_targets: dict[tuple[bytes, bytes], _ExactPathTargets] | None = None,
 ) -> _WriteReceipt:
     """Stream, validate, and write every requested Git object."""
     process = _start_blob_process(repo)
@@ -1148,14 +1173,18 @@ def _scan_receipt(
     """Render common scan-view counts from one write receipt."""
     scan_files = source_files
     if scan_view:
-        scan_files = receipt.raw_scan_files + receipt.wrapper_scan_files
+        scan_files = (
+            receipt.raw_scan_files
+            + receipt.wrapper_scan_files
+            + receipt.exact_path_files
+        )
     return {
         "scan_view": scan_view,
         "scan_prefix_bytes": len(SCAN_PREFIX) if scan_view else 0,
         "scan_files": scan_files,
         "raw_scan_files": receipt.raw_scan_files,
         "wrapper_scan_files": receipt.wrapper_scan_files,
-        "exact_path_wrapper_files": receipt.exact_path_wrapper_files,
+        "exact_path_files": receipt.exact_path_files,
         "scan_bytes": receipt.scan_bytes,
         "materialized_bytes": receipt.materialized_bytes,
         "scan_path_bytes": receipt.path_bytes,
@@ -1230,7 +1259,7 @@ def materialize(
     rendered["tree_metadata_bytes"] = tree_budget.metadata_bytes
     rendered["tree_paths"] = tree_budget.paths
     rendered["tree_path_bytes"] = tree_budget.path_bytes
-    rendered["exact_path_shards"] = int(bool(exact_path_targets))
+    rendered["exact_path_shards"] = 2 * int(bool(exact_path_targets))
     rendered["root_ignore_exact_path_exclusions"] = int(
         exact_path_view is not None
         and any(raw_path == b".gitleaksignore" for _, _, raw_path in entries)
