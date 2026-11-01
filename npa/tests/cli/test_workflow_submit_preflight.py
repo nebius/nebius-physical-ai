@@ -2839,6 +2839,202 @@ def test_submit_image_preflight_keeps_pull_and_bootstrap_deadlines_separate(
     assert contracts.call_args.kwargs["observation_timeout_seconds"] == 45
 
 
+def test_workflow_owned_preflight_accounts_match_adoption_contract_and_cleanup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from npa.workflows.sim2real import runtime_prerequisites
+
+    run_id = "preflight-account-contract"
+    identities = runtime_prerequisites.resource_identities(run_id)
+
+    class NotFound(RuntimeError):
+        status = 404
+
+    class Core:
+        def __init__(self) -> None:
+            self.accounts: dict[str, dict] = {}
+            self.created: list[dict] = []
+            self.deleted: list[str] = []
+
+        def read_namespaced_service_account(self, name, namespace):
+            assert namespace == "default"
+            if name not in self.accounts:
+                raise NotFound()
+            return self.accounts[name]
+
+        def create_namespaced_service_account(self, namespace, body):
+            assert namespace == "default"
+            created = {
+                **body,
+                "metadata": {
+                    **body["metadata"],
+                    "uid": f"uid-{body['metadata']['name']}",
+                },
+            }
+            self.accounts[body["metadata"]["name"]] = created
+            self.created.append(created)
+            return created
+
+        def delete_namespaced_service_account(self, name, namespace, *, body):
+            assert namespace == "default"
+            assert body["preconditions"]["uid"] == f"uid-{name}"
+            self.deleted.append(name)
+            self.accounts.pop(name)
+
+    core = Core()
+    monkeypatch.setattr(
+        workflow_cli,
+        "_workflow_owned_preflight_core_api",
+        lambda **_kwargs: core,
+    )
+    spec = SimpleNamespace(config={"runtime_prerequisites_mode": "workflow_owned"})
+    selected = {
+        identities["base_service_account"],
+        identities["adapted_service_account"],
+    }
+
+    with workflow_cli._workflow_owned_preflight_service_accounts(
+        spec=spec,
+        run_id=run_id,
+        service_account_names=selected,
+        namespace="default",
+        context="unit-context",
+        kubeconfig="",
+    ):
+        assert all(
+            item["automountServiceAccountToken"] is True for item in core.created
+        )
+        runtime_prerequisites._assert_contract(
+            "base_service_account", core.created[0], {}
+        )
+
+    assert core.accounts == {}
+    assert set(core.deleted) == selected
+
+
+def test_workflow_owned_preflight_cleanup_isolates_accounts_after_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from npa.workflows.sim2real.runtime_prerequisites import resource_identities
+
+    run_id = "preflight-account-cleanup"
+    identities = resource_identities(run_id)
+    base = identities["base_service_account"]
+    adapted = identities["adapted_service_account"]
+
+    class NotFound(RuntimeError):
+        status = 404
+
+    class Core:
+        def __init__(self) -> None:
+            self.accounts: dict[str, dict] = {}
+            self.deleted: list[str] = []
+
+        def read_namespaced_service_account(self, name, _namespace):
+            if name not in self.accounts:
+                raise NotFound()
+            return self.accounts[name]
+
+        def create_namespaced_service_account(self, _namespace, body):
+            created = {
+                **body,
+                "metadata": {
+                    **body["metadata"],
+                    "uid": f"uid-{body['metadata']['name']}",
+                },
+            }
+            self.accounts[body["metadata"]["name"]] = created
+            return created
+
+        def delete_namespaced_service_account(self, name, _namespace, *, body):
+            assert body["preconditions"]["uid"] == f"uid-{name}"
+            self.deleted.append(name)
+            if name == base:
+                raise RuntimeError("first deletion failed")
+            self.accounts.pop(name)
+
+    core = Core()
+    monkeypatch.setattr(
+        workflow_cli,
+        "_workflow_owned_preflight_core_api",
+        lambda **_kwargs: core,
+    )
+    spec = SimpleNamespace(config={"runtime_prerequisites_mode": "workflow_owned"})
+
+    with pytest.raises(RuntimeError, match="first deletion failed"):
+        with workflow_cli._workflow_owned_preflight_service_accounts(
+            spec=spec,
+            run_id=run_id,
+            service_account_names={base, adapted},
+            namespace="default",
+            context="unit-context",
+            kubeconfig="",
+        ):
+            pass
+
+    assert core.deleted == [base, adapted]
+
+
+def test_workflow_owned_preflight_cleanup_treats_already_absent_account_as_clean(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from npa.workflows.sim2real.runtime_prerequisites import resource_identities
+
+    run_id = "preflight-account-absent"
+    identities = resource_identities(run_id)
+    base = identities["base_service_account"]
+    adapted = identities["adapted_service_account"]
+
+    class NotFound(RuntimeError):
+        status = 404
+
+    class Core:
+        def __init__(self) -> None:
+            self.accounts: dict[str, dict] = {}
+            self.deleted: list[str] = []
+
+        def read_namespaced_service_account(self, name, _namespace):
+            if name not in self.accounts:
+                raise NotFound()
+            return self.accounts[name]
+
+        def create_namespaced_service_account(self, _namespace, body):
+            created = {
+                **body,
+                "metadata": {
+                    **body["metadata"],
+                    "uid": f"uid-{body['metadata']['name']}",
+                },
+            }
+            self.accounts[body["metadata"]["name"]] = created
+            return created
+
+        def delete_namespaced_service_account(self, name, _namespace, *, body):
+            assert body["preconditions"]["uid"] == f"uid-{name}"
+            self.deleted.append(name)
+            self.accounts.pop(name)
+
+    core = Core()
+    monkeypatch.setattr(
+        workflow_cli,
+        "_workflow_owned_preflight_core_api",
+        lambda **_kwargs: core,
+    )
+    spec = SimpleNamespace(config={"runtime_prerequisites_mode": "workflow_owned"})
+
+    with workflow_cli._workflow_owned_preflight_service_accounts(
+        spec=spec,
+        run_id=run_id,
+        service_account_names={base, adapted},
+        namespace="default",
+        context="unit-context",
+        kubeconfig="",
+    ):
+        core.accounts.pop(base)
+
+    assert core.deleted == [adapted]
+
+
 def test_preflight_images_deduplicates_declared_and_explicit_pull_secret(
     mocker,
 ) -> None:

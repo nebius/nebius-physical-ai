@@ -146,7 +146,7 @@ def test_060_image_build_and_smoke_cover_real_diffusion_construction() -> None:
     )
     for dependency in ("diffusers==", "transformers==", "accelerate==", "num2words=="):
         assert dependency in lock
-    assert "python -m npa.smoke.test_lerobot_env" in dockerfile
+    assert '"$NPA_BAKED_PYTHON" -m npa.smoke.test_lerobot_env' in dockerfile
     assert "DiffusionPolicy(config)" in smoke
     assert "NPA_LEROBOT_SMOKE_REQUIRE_CUDA" in smoke
     assert 'policy.to("cuda")' in smoke

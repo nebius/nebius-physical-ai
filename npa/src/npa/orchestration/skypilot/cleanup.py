@@ -2103,7 +2103,20 @@ def sky_environment(
         env["SKYPILOT_USER_ID"] = f"npa-{state_digest}"
     env["PYTHONUNBUFFERED"] = "1"
     repo_src = Path(__file__).resolve().parents[3]
-    env["PYTHONPATH"] = str(repo_src) + os.pathsep + env.get("PYTHONPATH", "")
+    repo_src_text = str(repo_src)
+    existing_pythonpath = [
+        item for item in env.get("PYTHONPATH", "").split(os.pathsep) if item
+    ]
+    # This function is crossed once while preparing a submission and again by
+    # the persistent isolated API boundary.  Re-prepending the same source path
+    # changes the API's hashed executing identity even though the source bytes
+    # and interpreter are unchanged, fencing every otherwise-valid submission.
+    env["PYTHONPATH"] = os.pathsep.join(
+        [
+            repo_src_text,
+            *(item for item in existing_pythonpath if item != repo_src_text),
+        ]
+    )
     from npa.clients.config import NPA_CONFIG_DIR
     from npa.orchestration.skypilot.local_api import isolated_api_environment
 

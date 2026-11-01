@@ -3,6 +3,7 @@
 FROM nvidia/cuda:12.4.1-devel-ubuntu22.04@sha256:da6791294b0b04d7e65d87b7451d6f2390b4d36225ab0701ee7dfec5769829f5
 
 ARG LEROBOT_VERSION=0.5.1
+ARG NPA_SOURCE_SHA
 
 LABEL npa.tool="lerobot" \
       npa.version="${LEROBOT_VERSION}"
@@ -20,10 +21,14 @@ ENV DEBIAN_FRONTEND=noninteractive \
     NPA_LEROBOT_VERSION=${LEROBOT_VERSION} \
     IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg
 
+COPY --chmod=0755 docker/workbench/common/workflow_runtime_entrypoint.sh \
+    /usr/local/bin/npa-workflow-entrypoint
 COPY docker/workbench/lerobot/install_immutable_system_packages.sh \
     /usr/local/bin/install-immutable-lerobot-system-packages
 RUN chmod 0755 /usr/local/bin/install-immutable-lerobot-system-packages \
-    && /usr/local/bin/install-immutable-lerobot-system-packages
+    && /usr/local/bin/install-immutable-lerobot-system-packages \
+    && test "$(npa-workflow-entrypoint /bin/sh -c 'printf workflow-argv-ok')" \
+         = workflow-argv-ok
 
 RUN useradd -m -s /bin/bash -u 1000 ubuntu \
     && install -d -m 0755 -o ubuntu -g ubuntu \
@@ -80,6 +85,9 @@ RUN python3.12 -m venv /opt/lerobot/venv \
     && /opt/lerobot/venv/bin/python -m pip install \
          --no-cache-dir --disable-pip-version-check --only-binary=:all: \
          --require-hashes --no-deps -r /opt/lerobot/bootstrap-requirements.lock \
+    && test "$(/opt/lerobot/venv/bin/python -c \
+         'from pip._vendor import certifi; print(certifi.__version__)')" \
+         = 2026.10.19 \
     && if [ "${LEROBOT_VERSION}" = "0.6.0" ]; then \
          /opt/lerobot/venv/bin/python /opt/lerobot/prepare-secure-wheel-060.py \
            --output-dir /opt/lerobot/secure-wheel \
@@ -116,6 +124,8 @@ RUN python3.12 -m venv /opt/lerobot/venv \
     && test ! -e /opt/lerobot/venv/lib/python3.12/site-packages/cmake/data/share/cmake-4.1/Templates/Windows/Windows_TemporaryKey.pfx \
     && test ! -L /opt/lerobot/venv/lib/python3.12/site-packages/cmake/data/share/cmake-4.1/Templates/Windows/Windows_TemporaryKey.pfx \
     && test -z "$(find /opt/lerobot/venv \( -iname '*.p12' -o -iname '*.pfx' \) -print -quit)" \
+    && /opt/lerobot/venv/bin/python -c \
+         "from kubernetes import client, config; assert client and config" \
     && /opt/lerobot/venv/bin/pip check \
     && find /opt/lerobot/venv -type f \
          -path '*/imageio_ffmpeg/binaries/ffmpeg*' -delete \
@@ -150,19 +160,24 @@ USER ubuntu
 
 ENV PATH=/opt/lerobot/venv/bin:$PATH \
     PYTHONPATH=/opt/npa/src \
+    NPA_BAKED_PYTHON=/opt/lerobot/venv/bin/python \
+    NPA_IMAGE_SOURCE_SHA=${NPA_SOURCE_SHA} \
     NPA_SKIP_EAGER_IMPORTS=1
 
 COPY --chown=ubuntu:ubuntu pyproject.toml /opt/npa/pyproject.toml
-# Keep this image-local SDK intentionally partial. The stage's own NPA install
-# must supply npa.workbench; shipping it here would make the repair's import
-# probe pass against the baked tree.
-COPY --chown=ubuntu:ubuntu src/npa/__init__.py /opt/npa/src/npa/__init__.py
-COPY --chown=ubuntu:ubuntu src/npa/clients/__init__.py /opt/npa/src/npa/clients/__init__.py
-COPY --chown=ubuntu:ubuntu src/npa/clients/storage.py /opt/npa/src/npa/clients/storage.py
-COPY --chown=ubuntu:ubuntu src/npa/server /opt/npa/src/npa/server
-COPY --chown=ubuntu:ubuntu src/npa/smoke /opt/npa/src/npa/smoke
+COPY --chown=ubuntu:ubuntu src/npa /opt/npa/src/npa
+COPY --chown=ubuntu:ubuntu workflows /opt/npa/workflows
 
-RUN python -m npa.smoke.test_lerobot_env
+# Register the complete baked source without resolving dependencies again. The
+# service deployment starts directly from this image and cannot depend on a
+# workflow-stage source overlay to supply its lifecycle or policy modules.
+RUN "$NPA_BAKED_PYTHON" -m pip install --no-deps -e /opt/npa \
+    && test "$(command -v npa)" = /opt/lerobot/venv/bin/npa \
+    && "$NPA_BAKED_PYTHON" -c \
+      "import importlib.metadata as metadata; assert metadata.version('npa')" \
+    && "$NPA_BAKED_PYTHON" -c \
+      "from lerobot.datasets.lerobot_dataset import LeRobotDataset; import av; import pyarrow.parquet; import defusedxml; import npa.workbench.lerobot.policy_container; import npa.workflows.lerobot_dataset; import npa.workflows.sim2real.interchange_stage; import npa.workflows.sim2real.smolvla_service_lifecycle; assert LeRobotDataset and hasattr(av, 'option')" \
+    && "$NPA_BAKED_PYTHON" -m npa.smoke.test_lerobot_env
 
 USER root
 
@@ -208,10 +223,22 @@ RUN packages='dirmngr gnupg gnupg-utils gnupg2 gpg gpg-agent nodejs software-pro
 
 USER ubuntu
 
+# Recheck the actual baked lifecycle and policy entry points after final PATH
+# and security hardening, not only in the earlier cached source layer.
+RUN test "$(command -v npa)" = /opt/lerobot/venv/bin/npa \
+    && test "$(dpkg-query -W -f='${Version}' fuse)" = 2.9.9-5ubuntu3 \
+    && test "$(dpkg-query -W -f='${Version}' wget)" = 1.21.2-2ubuntu1.4 \
+    && test -x /bin/fusermount \
+    && test -x /usr/bin/wget \
+    && "$NPA_BAKED_PYTHON" -c \
+      "from kubernetes import client, config; import defusedxml; import npa.workbench.lerobot.policy_container; import npa.workflows.sim2real.interchange_stage; import npa.workflows.sim2real.smolvla_service_lifecycle; assert client and config"
+
 # Exercise the final hardened 0.5.1 integration and declared server interpreter.
 # The separately qualified 0.6.0 recipe retains its existing acceptance path.
 RUN if [ "${LEROBOT_VERSION}" = "0.5.1" ]; then \
-      /opt/lerobot/venv/bin/python /opt/lerobot/smoke-native-cpu.py; \
+      /opt/lerobot/venv/bin/python -c \
+        "from kubernetes import client, config; assert client and config" \
+      && /opt/lerobot/venv/bin/python /opt/lerobot/smoke-native-cpu.py; \
     fi
 
 EXPOSE 8080
@@ -219,4 +246,5 @@ EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
   CMD /opt/lerobot/venv/bin/python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=3)" || exit 1
 
-ENTRYPOINT ["/opt/lerobot/venv/bin/python", "-m", "npa.server.app"]
+ENTRYPOINT ["/usr/local/bin/npa-workflow-entrypoint"]
+CMD ["/opt/lerobot/venv/bin/python", "-m", "npa.server.app"]

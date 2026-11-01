@@ -195,6 +195,7 @@ still required for the operator-selected bytes.
 | `workflows/testing/lyra-scene-actions.yaml` | `isaac_image` |
 | `workflows/testing/multicamera-rgbd-warehouse.yaml` | `isaac_image` |
 | `workflows/testing/physical-augmentation.yaml` | `isaac_image` |
+| `workflows/testing/sim2real-smolvla-franka-cube-eval.yaml` | `isaac_image, runtime_image` |
 | `workflows/main/rgbd-scan-to-policy-demo.yaml` | `assembly_image, reconstruction_image, isaac_image` |
 | `workflows/main/sim2real.yaml` | `controller_image, cosmos3_image, envgen_image, isaac_image, viewer_image` |
 | `workflows/testing/rgbd-scan-to-isaac.yaml` | `isaac_image` |
