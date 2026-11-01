@@ -14,7 +14,6 @@ torch.
 from __future__ import annotations
 
 import importlib.util
-import inspect
 import json
 from pathlib import Path
 from types import ModuleType
@@ -423,11 +422,11 @@ def test_the_documented_reproduction_matches_what_the_sweep_actually_runs(
 ) -> None:
     """A reproduction note that drifts from the code is worse than none at all.
 
-    A reviewer running this sweep from an exported archive hit eight errors, then
-    seven more from a harness missing the interpreter it shells out to, and reported
-    both as their own plumbing rather than as defects here. The record now says so, and
-    this keeps the saying true: both paths in that note are derived from the module
-    rather than retyped beside it.
+    A reviewer running this sweep from an exported archive hit errors from the missing
+    repository marker, then more from a harness missing the interpreter it shells out
+    to, and reported both as their own plumbing rather than as defects here. The record
+    now says so, and this keeps the saying true: both paths in that note are derived
+    from the module rather than retyped beside it.
     """
     how = record["how_to_reproduce_this"]
 
@@ -437,7 +436,22 @@ def test_the_documented_reproduction_matches_what_the_sweep_actually_runs(
         str(sweep.PYTHON.relative_to(REPO)) in how["needs_the_interpreter_it_invokes"]
     )
 
-    # The checkout requirement is a real behaviour, not a caveat in prose: resolution
-    # walks up for `.git` and raises when it runs out of parents.
-    resolver = inspect.getsource(sweep.repository_root)
-    assert ".git" in resolver and "raise" in resolver, resolver
+
+def test_the_sweep_refuses_a_tree_that_is_not_a_checkout(sweep, tmp_path) -> None:
+    """Exercise the refusal the note promises, rather than grepping for its spelling.
+
+    This assertion used to read the resolver's source for `.git` and `raise`, under a
+    comment claiming to distinguish a real behaviour from a caveat in prose -- which a
+    substring search is precisely unable to do. Review mutated the resolver the way an
+    ordinary refactor would, adding a `return` above the raise so it falls back to the
+    file's own directory, and it passed: both words were still there while the sweep
+    silently accepted a non-checkout and resolved a wrong root. Deleting the body
+    outright did fail, so the guard caught vandalism and missed the realistic edit.
+
+    Calling it is the whole fix. Every mutant that keeps the contract survives this and
+    every mutant that breaks it fails, including theirs.
+    """
+    assert sweep.repository_root(REPO / "npa/tests/workbench/anything.py") == REPO
+
+    with pytest.raises(RuntimeError):
+        sweep.repository_root(tmp_path / "nowhere" / "deep")

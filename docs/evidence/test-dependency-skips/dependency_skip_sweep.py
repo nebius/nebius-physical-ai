@@ -51,8 +51,16 @@ import tempfile
 from pathlib import Path
 
 
-def repository_root() -> Path:
-    for candidate in Path(__file__).resolve().parents:
+def repository_root(start: Path | None = None) -> Path:
+    """Walk up for a repository marker, refusing to guess when there is none.
+
+    ``start`` exists so the refusal can be asserted as behaviour. Its one real caller
+    below passes nothing. Review's guard for this used to grep the function's own source
+    for ``.git`` and ``raise``, which cannot tell a real behaviour from a caveat in
+    prose -- an added ``return`` above the raise keeps both words and silently resolves
+    a wrong root, and that mutant passed.
+    """
+    for candidate in (start or Path(__file__).resolve()).parents:
         if (candidate / ".git").exists():
             return candidate
     raise RuntimeError("not inside a repository checkout")
@@ -532,14 +540,15 @@ def main() -> int:
                 "The sweep refuses to run outside a git checkout, because it resolves the "
                 "repository root by walking up for .git and its findings are per-file. An "
                 "exported archive has no repository marker, so the evidence cannot be "
-                "regenerated from one. A reviewer hit this as eight errors and reported it "
-                "as their own plumbing rather than a defect here; recorded so the next one "
-                "does not have to discover it."
+                "regenerated from one. A reviewer hit this and reported it as their own "
+                "plumbing rather than a defect here; recorded so the next one does not "
+                "have to discover it. No failure count is quoted because the number "
+                "depends on the environment and neither of us can reproduce it."
             ),
             "needs_the_interpreter_it_invokes": (
                 "It shells out to npa/.venv/bin/python, so that path must exist. Link the "
                 "environment *directory* if you are relocating it -- linking the interpreter "
-                "binary alone corrupts prefix resolution and the run fails with seven "
+                "binary alone corrupts prefix resolution and the run fails with "
                 "unrelated-looking test failures. That is the same reviewer's finding."
             ),
             "runtime": "about three minutes, two pytest runs per fixture-and-module pair",
