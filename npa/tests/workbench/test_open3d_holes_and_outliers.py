@@ -134,16 +134,25 @@ def test_the_discarded_attribution_test_is_recorded_with_both_rates() -> None:
 
 
 def test_both_arms_of_the_discarded_test_ask_the_same_question() -> None:
-    """Review found the arms were not comparable, in the direction that props up the discard.
+    """One raised asymmetry was retracted with a proof; the other one was real.
 
-    The control excluded its own self-match by rank, which only removes the self when the
-    self is the nearest, and the tree is queried with the surface point. Their premise holds
-    in 5.9% of cases here. The effect on the rate is nil, and that is measured rather than
-    assumed, because this test is what protects the conclusion in CI.
+    Review flagged the control's rank-based self-exclusion as an upward bias, in the
+    direction that props up the discard, then retracted it four minutes later with an
+    exhaustive two-case proof of equivalence. The sampling asymmetry in the same code was
+    real and was not retracted. The record has to keep those straight, because this test is
+    what protects the conclusion in CI.
     """
     asymmetry = _report()["a_test_i_built_and_discarded"][
         "an_asymmetry_review_found_in_this_discarded_test"
     ]
+    # The retraction, and that the identity change is not claimed as a bug fix.
+    assert "retracted" in asymmetry["their_finding_and_their_retraction_of_it"], (
+        asymmetry
+    )
+    not_a_fix = asymmetry["what_i_changed_and_what_i_am_not_claiming"]
+    assert "not a correctness fix" in not_a_fix, not_a_fix
+    assert "not claiming it fixed a defect" in not_a_fix, not_a_fix
+
     assert "5.9%" in asymmetry["their_premise_measured"], asymmetry
     assert asymmetry["its_effect_on_the_rate"].startswith("Nil"), asymmetry
     # The sampling asymmetry was the real one, and it is recorded as such.

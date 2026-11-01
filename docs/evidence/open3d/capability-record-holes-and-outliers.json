@@ -30,13 +30,14 @@
     "why_discarded": "The control rate is as high as the outlier rate, so the test says almost every point owns its nearest surface and separates nothing. It would have read as a strong causal finding. Recorded because a discarded test is evidence about the method, and because the fitting result above is correlational for exactly this reason: proving an outlier *caused* its nearby surface needs a re-reconstruction without it, which this does not do.",
     "why_it_is_in_the_record": "It would have read as a strong causal finding -- 91.5% of outliers generated the surface near them -- and the control says it separates nothing. This is the third instrument in this lane that a control caught before publication, after the axis-aligned ray parity and the report that declared its own band height. The pattern is worth the space.",
     "review_found_the_arms_were_not_comparable": {
-      "their_finding": "The two arms asked different questions. The outlier arm compared against the nearest retained point and the control arm against the second nearest, because the control needed to drop its own self-match. Rank-based exclusion only removes the self when the self is the nearest, and the tree is queried with the surface point, so a nearer retained point substituted a farther competitor and biased the control upward -- the direction that props up the discard.",
+      "raised_then_retracted": "Review raised the control arm's rank-based self-exclusion as an upward bias -- the direction that props up the discard -- and then retracted it four minutes later with a proof of equivalence, asking me not to implement the fix. The proof is exhaustive: when the origin is the nearest, both rules take the second nearest; when it is not, the origin sits at rank two or worse, so the second nearest is at or nearer than the origin and the boolean is False either way. The two rules do compute different distances and cannot compute different verdicts.",
       "premise_measured": "The originating point is not the nearest retained point to its own surface point in 363 of 6199 cases, 5.9%. So the substitution they describe is real and not rare.",
       "effect_on_the_conclusion": "Nil. At a fixed sample the rank rule and identity exclusion give the same rate to three decimals, because in every one of those cases the verdict is already False under both rules: if another point is nearer the surface than the origin is, the origin loses either way.",
-      "what_was_actually_asymmetric": "The sample. The published control ran on every seventh retained point while the outlier arm ran on all of them, and that is worth about 1.3 points where the exclusion rule is worth none. Both arms now run on their full sets.",
+      "what_i_changed_and_what_i_am_not_claiming": "The exclusion is now by identity, which is legibility and not a correctness fix. I am not claiming it fixed a defect: review proved it could not have been one, and my own measurement agreed before I read the proof. It stays because a reader should not have to reconstruct a two-case proof to see that the arms are comparable.",
+      "the_asymmetry_that_was_real": "The sample. The published control ran on every seventh retained point while the outlier arm ran on all of them, and that is worth about 1.3 points where the exclusion rule is worth none. Both arms now run on their full sets.",
       "my_near_miss": "My first corrected run changed the exclusion rule and the sample size together and came out higher, which I almost reported as the bias running opposite to review's prediction. It does not; the two changes had to be separated to see that one of them does nothing. Same lesson as the axis-pairing episode: vary one thing.",
       "outcome": "Yes, and now for a measured reason rather than an unexamined comparison. The corrected control is 0.941 against the outlier arm's 0.915.",
-      "why_this_was_the_right_place_for_them_to_look": "I pointed them at the discarded test and they found a defect in it that I had not, in the one direction that would have propped up my own conclusion. The code is corrected even though the number does not move, because nobody can tell a harmless asymmetry from a load-bearing one by reading it."
+      "why_pointing_them_here_was_still_right": "I pointed review at the discarded test first and they went at it hardest. One of the two asymmetries they found was provably nil and they retracted it themselves within minutes; the other, the sampling one, was real and stands. Net effect: the conclusion is unchanged and now rests on a comparison whose arms I can show are comparable."
     }
   },
   "detector_validation": {
@@ -55,11 +56,11 @@
     "harness_that_produced_this": [
       {
         "path": "harness/holes_and_outliers.py",
-        "sha256": "10df5682f11f472078bfae2c11ef3a262c9e32cff35b6544f5d7f2dbe380d84f"
+        "sha256": "9cfddeaec0acf89b2af71636e9c73e2c32fbb5689f121586ad8ad11e7a19019c"
       },
       {
         "path": "holes-and-outliers.json",
-        "sha256": "a68cad0de65dbad2758b59298dd0e33b2d60939304eb846c874d4723054feb89"
+        "sha256": "8edd796a8a728f126655447d240bfc4fd72ce738de9264a66f71393d3bbc9255"
       }
     ],
     "inputs": "The privately retained final bundle's fused cloud and both mesh variants, not committed. Bundle root comes from OPEN3D_BUNDLE so the same script runs in the Open3D image against /data/final-bundle and locally against the retained copy.",

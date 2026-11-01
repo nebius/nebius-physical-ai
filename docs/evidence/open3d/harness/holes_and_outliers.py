@@ -298,13 +298,18 @@ def a_test_i_discarded(
         """Both arms compare against the nearest competitor, with the self removed by index.
 
         The published version excluded the self by rank: the control arm took the second
-        nearest neighbour. Review found that rank-based exclusion only removes the self when
-        the self is actually the nearest, and the tree is queried with the *surface* point,
-        so whenever another retained point lies nearer that surface point, a genuine
-        competitor is discarded and a farther one substituted. Their premise holds in 5.9%
-        of cases here. Its effect on the rate is nil, which is measured rather than assumed,
-        and the code is corrected regardless because a reader cannot know it is harmless
-        without that figure.
+        nearest neighbour. Review raised that as an upward bias and then retracted it four
+        minutes later with a proof of equivalence, asking me not to implement the fix. The
+        proof is exhaustive: when the origin is the nearest, both rules take the second
+        nearest; when it is not, the origin sits at rank two or worse, so the second nearest
+        is at or nearer than the origin and the boolean is False either way. I had measured
+        the same thing before reading the retraction -- identical rates to three decimals.
+
+        So identity exclusion here is legibility, not a correctness fix, and it is not
+        claimed as one. The substantive change in the same edit is the sample: the control
+        arm ran on every seventh retained point while the outlier arm ran on all of them.
+        That asymmetry was real, review did not retract it, and it moves the rate about 1.3
+        points where the exclusion rule moves it none.
         """
         found = scene.compute_closest_points(o3d.core.Tensor(sample.astype(np.float32)))
         surface = found["points"].numpy()
@@ -348,13 +353,19 @@ def a_test_i_discarded(
         "reason: proving an outlier *caused* its nearby surface needs a re-reconstruction "
         "without it, which this does not do.",
         "an_asymmetry_review_found_in_this_discarded_test": {
-            "their_finding": "The two arms asked different questions. The outlier arm compared "
-            "against the nearest retained point and the control arm against the second "
-            "nearest, because the control needed to drop its own self-match. Rank-based "
-            "exclusion only removes the self when the self is the nearest, and the tree is "
-            "queried with the surface point, so a nearer retained point substituted a farther "
-            "competitor and biased the control upward -- the direction that props up the "
-            "discard.",
+            "their_finding_and_their_retraction_of_it": "Review raised the control arm's "
+            "rank-based self-exclusion as an upward bias -- the direction that props up the "
+            "discard -- and then retracted it four minutes later with a proof of equivalence, "
+            "asking me not to implement the fix. The proof is exhaustive: when the origin is "
+            "the nearest, both rules take the second nearest; when it is not, the origin sits "
+            "at rank two or worse, so the second nearest is at or nearer than the origin and "
+            "the boolean is False either way. The two rules do compute different distances and "
+            "cannot compute different verdicts.",
+            "what_i_changed_and_what_i_am_not_claiming": "The exclusion is now by identity, "
+            "which is legibility and not a correctness fix. I am not claiming it fixed a "
+            "defect: review proved it could not have been one, and my own measurement agreed "
+            "before I read the proof. It stays because a reader should not have to reconstruct "
+            "a two-case proof to see that the arms are comparable.",
             "their_premise_measured": f"The originating point is not the nearest retained "
             f"point to its own surface point in {not_nearest} of {len(retained_points)} cases, "
             f"{round(100 * not_nearest / len(retained_points), 1)}%. So the substitution they "
