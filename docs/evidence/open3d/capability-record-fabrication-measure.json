@@ -44,6 +44,7 @@
   "tests": {
     "file": "npa/tests/workbench/test_open3d_fabrication_measure.py",
     "count": 11,
+    "what_count_means": "collected test cases, not test functions",
     "note": "Pinned from the committed report, because the harness needs Open3D and the sample geometry and CI has neither. Conclusions pinned exactly, the four least-significant figures with tolerances, since Poisson is nondeterministic.",
     "mutations_applied": {
       "claim the leniency reproduces while the measure caught it": "3 failed",

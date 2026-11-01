@@ -38,7 +38,8 @@
   "scope": "Message and argument handling only. No measurement, threshold, or report field changed. The six harnesses keep their positional arguments in the same order, so every documented invocation still works.",
   "regression_tests": {
     "file": "npa/tests/workbench/test_open3d_harness_usage.py",
-    "count": 12,
+    "count": 17,
+    "what_count_means": "collected test cases, not test functions",
     "what_they_cover": [
       "Seven harnesses, each run with no arguments, must exit 2 with a usage message naming the missing argument and containing no IndexError, KeyError, ValueError or traceback.",
       "The fault injector must name INJECT_MODE, INJECT_LOG and the three valid modes, and must not raise KeyError.",
@@ -87,5 +88,12 @@
     "the_cause": "Sampling is unseeded. Open3D 0.20.0 exposes no seed parameter on either sample_points_uniformly or sample_points_poisson_disk, and only one of the six harnesses discloses that its sampling is unseeded.",
     "it_is_fixable_and_that_is_being_handled_separately": "o3d.utility.random.seed does control both samplers: with a seed, three separate processes produce byte-identical point sets; without one, all three differ; and a different seed gives a different result, so the seed is what controls it. Seeding changes the committed numbers, which are accepted bytes bound by hash in other records, so it is not a change to make inside a PR about usage messages.",
     "what_is_not_claimed_here": "That the committed values are wrong. They are one draw from a distribution whose width was never reported. Whether to reseed and regenerate accepted evidence is review's and root's call, not mine."
+  },
+  "a_stale_count_this_record_published": {
+    "the_claim": "regression_tests.count said 12.",
+    "what_pytest_collects": 17,
+    "why_it_was_neither_reading": "The file holds 11 test functions and collects 17 cases, because one is parametrized over the seven harnesses that needed an argument. Twelve is neither, so it was not an ambiguity about what to count -- it was stale, written when the suite was smaller and never revisited.",
+    "how_it_surfaced": "Review's audit showed every capability record on this branch was unguarded: one absorbed 88 corrupted fields unnoticed. Binding the counts to what they count, as review asked, made this one fail immediately. The figure had already drifted before anyone corrupted anything.",
+    "the_guard_that_now_holds_it": "npa/tests/workbench/test_open3d_capability_record_binding.py compares the published count against an AST expansion of parametrize, and that expander is itself compared against pytest's own collection on every file whose count this PR publishes."
   }
 }

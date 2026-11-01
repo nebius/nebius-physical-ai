@@ -50,6 +50,7 @@
   "tests": {
     "file": "npa/tests/workbench/test_open3d_reading_contract.py",
     "count": 10,
+    "what_count_means": "collected test cases, not test functions",
     "mutations_applied": {
       "all_four_harnesses_back_to_the_withdrawn_literal": "8 of 10 failed -- this is the actual historical defect, so the suite catches the thing that happened",
       "one_harness_reverted": "4 failed",
