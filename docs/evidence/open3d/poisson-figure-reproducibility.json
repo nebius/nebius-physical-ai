@@ -1,0 +1,103 @@
+{
+  "what_this_measures": "Whether the ray-cast occlusion figures in `audit-view-occlusion.json` are reproducible, and if not, to what precision they are.",
+  "why": "A reviewer flagged the ray-cast path as unverified and suspected it might share the one-pixel environment dependence they measured in the z-buffer footprint path. It does not. The z-buffer path reproduced exactly on this host; this one does not reproduce against itself.",
+  "environment": {
+    "open3d": "0.20.0",
+    "numpy": "2.5.4",
+    "python": "3.14.7",
+    "input": "Open3D's own EaglePointCloud, a fixed dataset with no sampling",
+    "input_points": 796825,
+    "poisson_depth": 9
+  },
+  "the_published_figures": {
+    "transcribed_from": "docs/evidence/open3d/audit-view-occlusion.json @ 04aacfcf89",
+    "values": {
+      "visible_with_retained_surface_shown": 0.3521503113541809,
+      "visible_with_only_its_own_self_occlusion": 0.7848810005123376
+    },
+    "one_rerun_gave": {
+      "visible_with_retained_surface_shown": 0.3521360294407621,
+      "visible_with_only_its_own_self_occlusion": 0.7848528993182663
+    },
+    "absolute_difference_on_the_headline": 2.810119407126166e-05
+  },
+  "cause": {
+    "claim": "`create_from_point_cloud_poisson` is not deterministic in Open3D 0.20.0.",
+    "how_it_was_established": "Identical input, one process, same depth, repeated. Vertex and triangle counts repeat exactly while the total surface area does not, so the topology is stable and the vertex positions are not.",
+    "conditions": {
+      "default": {
+        "repeats": 4,
+        "seeded_before_each_call": false,
+        "topology_is_stable": true,
+        "vertices": 563112,
+        "triangles": 1126072,
+        "surface_area": {
+          "values": [
+            157.34141061368348,
+            157.34143777245544,
+            157.34156241347827,
+            157.34145979481434
+          ],
+          "identical": false,
+          "absolute_spread": 0.00015179979479285066,
+          "relative_spread": 9.64779673709428e-07
+        },
+        "label": "default"
+      },
+      "seeded_before_each_call": {
+        "repeats": 4,
+        "seeded_before_each_call": true,
+        "topology_is_stable": true,
+        "vertices": 563112,
+        "triangles": 1126072,
+        "surface_area": {
+          "values": [
+            157.34152997940123,
+            157.34151129765053,
+            157.34145309600282,
+            157.34143847634692
+          ],
+          "identical": false,
+          "absolute_spread": 9.150305430694061e-05,
+          "relative_spread": 5.815572502262094e-07
+        },
+        "label": "seeded"
+      },
+      "single_threaded": {
+        "repeats": 4,
+        "seeded_before_each_call": false,
+        "topology_is_stable": true,
+        "vertices": 563112,
+        "triangles": 1126072,
+        "surface_area": {
+          "values": [
+            157.3414961062968,
+            157.34144041413956,
+            157.34147883493569,
+            157.34149079759732
+          ],
+          "identical": false,
+          "absolute_spread": 5.569215724676724e-05,
+          "relative_spread": 3.539573369875063e-07
+        },
+        "label": "single_threaded"
+      }
+    }
+  },
+  "what_the_remedies_do": {
+    "seeding": "Does not help. The `SAMPLING_SEED` already in `audit_view_occlusion.py` is real and does bind the armadillo's sampling -- but Poisson's variation is not drawn from Open3D's generator, so seeding before the call leaves the spread where it was. Measured, not reasoned: see `cause.conditions.seeded_before_each_call`.",
+    "single_threading": "Does not fix it. The spread goes from 9.65e-07 to 3.54e-07, a factor of 2.7, while the gap between the default and seeded conditions is 3.83e-07 -- the same order as the difference single-threading makes. So the conditions are not distinguishable at this number of repeats, and `OMP_NUM_THREADS=1` is not a reproducibility setting for this harness.",
+    "so_the_record_should": "State the precision the figures hold instead of publishing sixteen digits that do not survive a second run."
+  },
+  "does_this_change_any_conclusion": {
+    "no": "The record's conclusion is that the removed surface is visible from the shipped camera well above the 50% criterion. The margin is 0.2849 and the observed run-to-run difference is 2.81e-05, four orders of magnitude smaller.",
+    "margin_against_the_threshold": 0.28488100051233756,
+    "observed_difference": 2.810119407126166e-05,
+    "ratio": 10137.683110187754
+  },
+  "what_this_does_not_claim": [
+    "That the figures are wrong. They are reproducible to about five significant figures, which is far more precision than any conclusion here uses.",
+    "That Poisson is wrong. A non-deterministic surface reconstruction is a normal consequence of parallel floating-point accumulation; the defect is publishing sixteen digits of it without saying so.",
+    "That the z-buffer footprint path shares this. It reproduced exactly on this host, and the reviewer's one-pixel difference there came from a second environment, which is a different question this does not answer."
+  ]
+}
