@@ -159,17 +159,18 @@ class SnapshotError(RuntimeError):
 
 def _git_environment() -> dict[str, str]:
     """Build an environment without caller-controlled Git indirection."""
-    environment = {
-        key: value for key, value in os.environ.items() if not key.startswith("GIT_")
+    return {
+        "GIT_CONFIG_COUNT": "1",
+        "GIT_CONFIG_GLOBAL": os.devnull,
+        "GIT_CONFIG_KEY_0": "core.commitGraph",
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_CONFIG_VALUE_0": "false",
+        "GIT_NO_REPLACE_OBJECTS": "1",
+        "GIT_OPTIONAL_LOCKS": "0",
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "PATH": "/usr/bin:/bin",
     }
-    environment["GIT_CONFIG_GLOBAL"] = os.devnull
-    environment["GIT_CONFIG_NOSYSTEM"] = "1"
-    environment["GIT_CONFIG_COUNT"] = "1"
-    environment["GIT_CONFIG_KEY_0"] = "core.commitGraph"
-    environment["GIT_CONFIG_VALUE_0"] = "false"
-    environment["GIT_NO_REPLACE_OBJECTS"] = "1"
-    environment["GIT_OPTIONAL_LOCKS"] = "0"
-    return environment
 
 
 def _git_command(repo: Path, *arguments: str) -> list[str]:

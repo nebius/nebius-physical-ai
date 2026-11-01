@@ -957,6 +957,29 @@ def test_scan_environment_bounds_gitleaks_parallelism(
 
 @pytest.mark.parametrize(
     "variable",
+    [
+        "BASH_ENV",
+        "ENV",
+        "HOME",
+        "LD_LIBRARY_PATH",
+        "LD_PRELOAD",
+        "PYTHONPATH",
+        "TMPDIR",
+        "XDG_CONFIG_HOME",
+    ],
+)
+def test_git_environment_drops_process_injection_variables(
+    monkeypatch: pytest.MonkeyPatch,
+    variable: str,
+) -> None:
+    """Do not inherit process hooks into authenticated Git object reads."""
+    monkeypatch.setenv(variable, "/attacker-controlled")
+
+    assert variable not in materializer._git_environment()
+
+
+@pytest.mark.parametrize(
+    "variable",
     ["BASH_ENV", "ENV", "LD_LIBRARY_PATH", "LD_PRELOAD", "PYTHONPATH", "TMPDIR"],
 )
 def test_scan_environment_drops_process_injection_variables(
@@ -1097,6 +1120,78 @@ def _zip_member(name: str, content: bytes) -> bytes:
     ) as archive:
         archive.writestr(name, content)
     return encoded.getvalue()
+
+
+def _tar_member(name: str, content: bytes) -> bytes:
+    """Return one canonical uncompressed TAR containing the supplied member."""
+    encoded = io.BytesIO()
+    with tarfile.open(fileobj=encoded, mode="w") as archive:
+        metadata = tarfile.TarInfo(name)
+        metadata.size = len(content)
+        archive.addfile(metadata, io.BytesIO(content))
+    return encoded.getvalue()
+
+
+def _concatenated_tar_streams(
+    archive_suffix: str,
+    first_stream: bytes,
+    second_stream: bytes,
+) -> bytes:
+    """Return two raw or independently compressed TAR streams."""
+    if archive_suffix == ".tar":
+        return first_stream + second_stream
+    compressor = {
+        ".tar.bz2": bz2.compress,
+        ".tar.gz": gzip.compress,
+        ".tar.xz": lzma.compress,
+    }[archive_suffix]
+    return compressor(first_stream) + compressor(second_stream)
+
+
+def _legacy_tar_member(
+    name: str,
+    content: bytes,
+    *,
+    checksum_encoding: str = "nul",
+) -> bytes:
+    """Return one checksum-valid V7-style TAR without a ustar magic field."""
+    encoded = bytearray(_tar_member(name, content))
+    encoded[257:512] = b"\0" * (512 - 257)
+    if checksum_encoding == "negative-base256":
+        encoded[:100] = b"\x80" * 100
+    encoded[148:156] = b" " * 8
+    unsigned_checksum, signed_checksum = tarfile.calc_chksums(encoded[:512])
+    if checksum_encoding == "nul":
+        encoded[148:156] = f"{unsigned_checksum:07o}\0".encode("ascii")
+    elif checksum_encoding == "ascii":
+        encoded[148:156] = f"{unsigned_checksum:08o}".encode("ascii")
+    elif checksum_encoding == "whitespace":
+        encoded[148:156] = f"{unsigned_checksum:06o}\n ".encode("ascii")
+    elif checksum_encoding == "vertical-tab":
+        encoded[148:156] = b"\v" + f"{unsigned_checksum:06o}".encode("ascii") + b"\v"
+    elif checksum_encoding == "form-feed":
+        encoded[148:156] = b"\f" + f"{unsigned_checksum:06o}".encode("ascii") + b"\f"
+    elif checksum_encoding == "separator-whitespace":
+        encoded[148:156] = (
+            b"\x1c" + f"{unsigned_checksum:06o}".encode("ascii") + b"\x1f"
+        )
+    elif checksum_encoding == "underscored":
+        digits = f"{unsigned_checksum:07o}".encode("ascii")
+        encoded[148:156] = digits[:3] + b"_" + digits[3:]
+    elif checksum_encoding == "octal-prefix":
+        encoded[148:156] = f"0o{unsigned_checksum:06o}".encode("ascii")
+    elif checksum_encoding == "nul-arbitrary-tail":
+        encoded[148:156] = f"{unsigned_checksum:06o}\0".encode("ascii") + b"\xfe"
+    elif checksum_encoding == "signed":
+        encoded[148:156] = f"+{unsigned_checksum:06o}\0".encode("ascii")
+    elif checksum_encoding == "base256":
+        encoded[148:156] = b"\x80" + unsigned_checksum.to_bytes(7, "big")
+    elif checksum_encoding == "negative-base256":
+        assert signed_checksum < 0
+        encoded[148:156] = b"\xff" + (signed_checksum + (256**7)).to_bytes(7, "big")
+    else:
+        raise ValueError(f"unsupported checksum encoding: {checksum_encoding}")
+    return bytes(encoded)
 
 
 def _write_encoded_archive_carrier(
@@ -1319,7 +1414,7 @@ def _assert_carrier_failure(carrier: str, token: str, out: str, err: str) -> Non
     assert token not in out
     assert token not in err
     if carrier == "deep_zip":
-        assert "archive" in err
+        assert "archive" in err.lower()
     elif carrier in {
         "encoded_zip",
         "double_encoded_zip",
@@ -1328,11 +1423,12 @@ def _assert_carrier_failure(carrier: str, token: str, out: str, err: str) -> Non
         "percent_zip",
         "tar_trailing_gzip",
         "zip_comment",
+        "zip_directory_path",
         "zip_directory_payload",
         "zip_encoded_zip",
         "zip_prefixed_gzip",
     }:
-        assert "archive" in err
+        assert "archive" in err.lower()
     elif carrier in {"six_encoded", "tar_gz_six_encoded", "zip_six_encoded"}:
         assert "decodable segment" in err
         assert "decode-depth:5" in err
@@ -1728,8 +1824,8 @@ def test_runner_fails_closed_for_root_ignore_anchored_rule(
     assert "root .gitleaksignore exact path" in output.err
 
 
-def test_root_ignore_policy_check_rejects_unsupported_re2_path() -> None:
-    """Fail closed when Python cannot safely evaluate a valid RE2 path form."""
+def test_root_ignore_policy_check_conservatively_handles_re2_path() -> None:
+    """Avoid reevaluating trusted RE2 expressions with Python's regex engine."""
     policy = (
         b"[[rules]]\n"
         b'id = "root-ignore-posix-control"\n'
@@ -1737,8 +1833,28 @@ def test_root_ignore_policy_check_rejects_unsupported_re2_path() -> None:
         b"path = '''^[[:punct:]]gitleaksignore$'''\n"
     )
 
-    with pytest.raises(tree_scan._ScanError, match="unsupported custom rule path"):
-        tree_scan._policy_path_matches_root_ignore(policy)
+    assert tree_scan._policy_path_matches_root_ignore(policy)
+
+
+def test_custom_rule_path_association_never_compiles_with_python_re(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Treat every content-path rule conservatively, including backtracking forms."""
+    policy = (
+        b"[[rules]]\n"
+        b'id = "re2-complexity-control"\n'
+        b"regex = '''SAFE_[A-Z0-9]{24}'''\n"
+        b"path = '''(a+)+$'''\n"
+    )
+
+    def reject_compile(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("trusted RE2 path was compiled with Python re")
+
+    monkeypatch.setattr(tree_scan.re, "compile", reject_compile)
+    assert tree_scan._policy_has_custom_rule_paths(
+        policy,
+        content_rules_only=True,
+    )
 
 
 @pytest.mark.skipif(
@@ -1941,6 +2057,99 @@ def test_archive_member_wrapper_preserves_full_policy_path(
     assert token not in output.out
     assert token not in output.err
     assert "pem-only-control" in output.err
+
+
+@pytest.mark.skipif(
+    shutil.which("gitleaks") is None, reason="gitleaks is not installed"
+)
+@pytest.mark.parametrize(
+    "archive_suffix",
+    [".tar", ".tar.bz2", ".tar.gz", ".tar.xz"],
+)
+def test_concatenated_tar_preserves_second_stream_path_only_rule(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    archive_suffix: str,
+) -> None:
+    """Expose a later TAR stream to the pinned path-only PKCS#12 rule."""
+    repo = _repo(tmp_path)
+    (repo / ".gitleaks.toml").write_text(
+        "[extend]\nuseDefault = true\n",
+        encoding="utf-8",
+    )
+    (repo / "safe.txt").write_text("safe base\n", encoding="utf-8")
+    base = _commit(repo, "clean base")
+    first_stream = _tar_member("safe.txt", b"safe\n")
+    second_stream = _tar_member(
+        "keys/hidden.p12",
+        b"HARMLESS_PLACEHOLDER_BYTES\n",
+    )
+    concatenated = _concatenated_tar_streams(
+        archive_suffix,
+        first_stream,
+        second_stream,
+    )
+    (repo / f"credential{archive_suffix}").write_bytes(concatenated)
+    candidate = _commit(repo, "concatenated TAR path-only carrier")
+    scanner = shutil.which("gitleaks")
+    assert scanner is not None
+
+    assert tree_scan.main(_runner_arguments(repo, candidate, base, scanner)) == 1
+    output = capsys.readouterr()
+    assert "HARMLESS_PLACEHOLDER_BYTES" not in output.out
+    assert "HARMLESS_PLACEHOLDER_BYTES" not in output.err
+    assert "pkcs12-file" in output.err
+
+
+@pytest.mark.skipif(
+    shutil.which("gitleaks") is None, reason="gitleaks is not installed"
+)
+@pytest.mark.parametrize(
+    "archive_suffix",
+    [".tar", ".tar.bz2", ".tar.gz", ".tar.xz"],
+)
+def test_concatenated_tar_preserves_second_stream_member_path(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    archive_suffix: str,
+) -> None:
+    """Do not stop member coverage at the first TAR stream's zero records."""
+    repo = _repo(tmp_path)
+    archive_name = f"credential{archive_suffix}"
+    escaped_archive_name = archive_name.replace(".", "\\.")
+    (repo / ".gitleaks.toml").write_text(
+        "[extend]\n"
+        "useDefault = true\n\n"
+        "[[rules]]\n"
+        'id = "concatenated-tar-path-control"\n'
+        'description = "Concatenated TAR path control"\n'
+        "regex = '''NPA_CONCAT_TAR_[A-Z0-9]{24}'''\n"
+        f"path = '''^{escaped_archive_name}!keys/key\\.pem$'''\n",
+        encoding="utf-8",
+    )
+    (repo / "safe.txt").write_text("safe base\n", encoding="utf-8")
+    base = _commit(repo, "clean base")
+    token = "NPA_CONCAT_TAR_" + ("A1" * 12)
+    first_stream = _tar_member("safe.txt", b"safe\n")
+    second_stream = _tar_member(
+        "keys/key.pem",
+        token.encode(),
+    )
+    concatenated = _concatenated_tar_streams(
+        archive_suffix,
+        first_stream,
+        second_stream,
+    )
+    (repo / archive_name).write_bytes(concatenated)
+    candidate = _commit(repo, "concatenated TAR path-scoped secret")
+    scanner = shutil.which("gitleaks")
+    assert scanner is not None
+
+    assert tree_scan.main(_runner_arguments(repo, candidate, base, scanner)) == 1
+    output = capsys.readouterr()
+    assert token not in output.out
+    assert token not in output.err
+    assert "concatenated-tar-path-control" in output.err
 
 
 @pytest.mark.skipif(
@@ -2775,6 +2984,193 @@ def test_archive_validation_bounds_member_count(
         tree_scan._validate_archive_file(archive)
 
 
+@pytest.mark.parametrize("archive_suffix", [".zip", ".tar"])
+def test_archive_validation_rejects_empty_directory_members(
+    tmp_path: Path,
+    archive_suffix: str,
+) -> None:
+    """Fail closed when a directory's trailing-slash path cannot be scanned."""
+    archive_path = tmp_path / f"directory{archive_suffix}"
+    if archive_suffix == ".zip":
+        with zipfile.ZipFile(archive_path, "w") as archive:
+            archive.writestr("hidden.p12/", b"")
+    else:
+        with tarfile.open(archive_path, "w") as archive:
+            directory = tarfile.TarInfo("hidden.p12/")
+            directory.type = tarfile.DIRTYPE
+            archive.addfile(directory)
+
+    with pytest.raises(tree_scan._ScanError, match="directory member"):
+        tree_scan._validate_archive_file(archive_path)
+
+
+def test_archive_validation_rejects_regular_tar_name_with_trailing_slash(
+    tmp_path: Path,
+) -> None:
+    """Do not let a regular TAR entry imitate an unrepresentable directory path."""
+    archive_path = tmp_path / "regular-slash.tar"
+    with tarfile.open(archive_path, "w") as archive:
+        member = tarfile.TarInfo("hidden.p12/")
+        member.type = tarfile.REGTYPE
+        member.size = 4
+        archive.addfile(member, io.BytesIO(b"safe"))
+
+    with pytest.raises(tree_scan._ScanError, match="not canonical"):
+        tree_scan._validate_archive_file(archive_path)
+
+
+def test_archive_validation_rejects_disguised_legacy_tar(tmp_path: Path) -> None:
+    """Recognize checksum-valid V7 TAR bytes without relying on ustar magic."""
+    disguised = tmp_path / "legacy.bin"
+    content = _legacy_tar_member("payload.txt", b"safe\n")
+    disguised.write_bytes(content)
+    with tarfile.open(fileobj=io.BytesIO(content), mode="r:") as archive:
+        assert archive.getnames() == ["payload.txt"]
+
+    with pytest.raises(tree_scan._ScanError, match="Disguised tar"):
+        tree_scan._validate_archive_file(disguised)
+
+
+@pytest.mark.parametrize(
+    "checksum_encoding",
+    [
+        "nul",
+        "ascii",
+        "whitespace",
+        "vertical-tab",
+        "form-feed",
+        "separator-whitespace",
+        "underscored",
+        "octal-prefix",
+        "nul-arbitrary-tail",
+        "signed",
+        "base256",
+        "negative-base256",
+    ],
+)
+def test_archive_validation_rejects_prefixed_legacy_tar(
+    tmp_path: Path,
+    checksum_encoding: str,
+) -> None:
+    """Recognize a V7 TAR header hidden at a non-block-aligned offset."""
+    disguised = tmp_path / "prefixed-legacy.bin"
+    content = _legacy_tar_member(
+        "keys/hidden.p12",
+        b"safe\n",
+        checksum_encoding=checksum_encoding,
+    )
+    with tarfile.open(fileobj=io.BytesIO(content), mode="r:") as archive:
+        assert len(archive.getmembers()) == 1
+    disguised.write_bytes(b"opaque prefix\n" + content)
+
+    with pytest.raises(tree_scan._ScanError, match="Embedded archive"):
+        tree_scan._validate_archive_file(disguised)
+
+
+@pytest.mark.parametrize(
+    "delimiter",
+    [9, 10, 11, 12, 13, 28, 29, 30, 31, 32],
+    ids=lambda value: f"ascii-{value:02x}",
+)
+def test_embedded_tar_search_covers_python_ascii_strip_whitespace(
+    delimiter: int,
+) -> None:
+    """Search every ASCII whitespace byte accepted by Python's TAR parser."""
+    content = bytearray(_legacy_tar_member("keys/hidden.p12", b"safe\n"))
+    content[148:156] = b" " * 8
+    checksum, _ = tarfile.calc_chksums(content[:512])
+    content[148:156] = (
+        bytes([delimiter]) + f"{checksum:06o}".encode("ascii") + bytes([delimiter])
+    )
+
+    assert tarfile.nti(content[148:156]) == checksum
+    assert tree_scan._tar_header_checksum_valid(content)
+    assert tree_scan._contains_tar_header(b"non-aligned prefix" + content)
+
+
+@pytest.mark.skipif(
+    shutil.which("gitleaks") is None, reason="gitleaks is not installed"
+)
+def test_complete_tree_runner_rejects_parser_only_tar_checksum_spelling(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Fail closed on the exact vertical-tab checksum bypass found in review."""
+    repo = _repo(tmp_path)
+    (repo / ".gitleaks.toml").write_text(
+        "[extend]\nuseDefault = true\n",
+        encoding="utf-8",
+    )
+    (repo / "clean.txt").write_text("clean base\n", encoding="utf-8")
+    base = _commit(repo, "clean base")
+    content = _legacy_tar_member(
+        "keys/hidden.p12",
+        b"safe\n",
+        checksum_encoding="vertical-tab",
+    )
+    (repo / "carrier.bin").write_bytes(b"non-aligned prefix" + content)
+    candidate = _commit(repo, "parser-only checksum carrier")
+    scanner = shutil.which("gitleaks")
+    assert scanner is not None
+
+    assert tree_scan.main(_runner_arguments(repo, candidate, base, scanner)) == 1
+    output = capsys.readouterr()
+    assert "Embedded archive bytes" in output.err
+
+
+def test_embedded_tar_search_rejects_checksum_only_collision() -> None:
+    """A matching checksum is not enough to classify arbitrary bytes as TAR."""
+    collision = bytearray(b"A" * tree_scan._ARCHIVE_PREFIX_BYTES)
+    collision[148:156] = b" " * 8
+    checksum = sum(collision)
+    collision[148:156] = f"{checksum:06o}\0 ".encode("ascii")
+    expected = tarfile.nti(collision[148:156])
+    assert expected in set(tarfile.calc_chksums(collision))
+
+    assert not tree_scan._tar_header_checksum_valid(collision)
+    assert not tree_scan._contains_tar_header(collision)
+
+
+def test_embedded_tar_search_skips_impossible_checksum_runs_before_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Do not spend the candidate budget on media-like numeric byte runs."""
+    impossible = bytearray(b"A" * tree_scan._ARCHIVE_PREFIX_BYTES)
+    impossible[100:108] = b"0000644\0"
+    impossible[108:116] = b"0000000\0"
+    impossible[116:124] = b"0000000\0"
+    impossible[124:136] = b"00000000000\0"
+    impossible[136:148] = b"00000000000\0"
+    impossible[148:156] = b"0000000\0"
+    impossible[156:157] = b"Y"
+    monkeypatch.setattr(tree_scan, "_MAX_EMBEDDED_TAR_CHECKSUM_CANDIDATES", 0)
+
+    assert not tree_scan._contains_tar_header(impossible)
+
+
+def test_embedded_tar_checksum_search_fails_closed_at_work_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Bound checksum candidates without classifying a normal short run."""
+    numeric = b"0" * tree_scan._ARCHIVE_PREFIX_BYTES
+    assert not tree_scan._contains_tar_header(numeric)
+
+    monkeypatch.setattr(tree_scan, "_MAX_EMBEDDED_TAR_CHECKSUM_CANDIDATES", 0)
+    assert tree_scan._contains_tar_header(numeric)
+
+
+def test_embedded_tar_checksum_work_is_bounded_across_stream_chunks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Aggregate candidate work instead of resetting the limit per read."""
+    numeric = b"0" * tree_scan._ARCHIVE_PREFIX_BYTES
+    budget = tree_scan._ArchiveBudget()
+    monkeypatch.setattr(tree_scan, "_MAX_EMBEDDED_TAR_CHECKSUM_CANDIDATES", 1)
+
+    assert not tree_scan._contains_tar_header(numeric, budget)
+    assert tree_scan._contains_tar_header(numeric, budget)
+
+
 def test_archive_validation_bounds_member_and_aggregate_bytes(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -2991,7 +3387,7 @@ def test_decode_probe_reuses_hardlink_analysis_and_retains_path_association(
     receipt = tree_scan._prepare_decode_probe_source(
         source,
         tmp_path / "probe",
-        (tree_scan.re.compile(r"^carrier\.txt$"),),
+        preserve_exact_paths=True,
     )
 
     assert receipt["candidate_examined_matches"] == 1
@@ -3021,7 +3417,7 @@ def test_decode_probe_bounds_distinct_matches_across_independent_files(
     receipt = tree_scan._prepare_decode_probe_source(
         source,
         tmp_path / "probe",
-        (tree_scan.re.compile(r"^[ab]\.txt$"),),
+        preserve_exact_paths=True,
     )
 
     assert receipt["candidate_examined_matches"] == 1
@@ -3542,6 +3938,16 @@ def test_complete_tree_runner_accepts_clean_binary_blob(
     assert receipt["history_base"] == base
     assert receipt["history_commits"] == [candidate]
     assert receipt["history_findings"] == 0
+    assert receipt["native_history_input_bytes_per_scan"] > 0
+    assert receipt["native_history_input_bytes"] == (
+        receipt["native_history_input_bytes_per_scan"]
+        * receipt["native_history_scan_invocations"]
+    )
+    assert receipt["native_history_scan_invocations"] == 2
+    assert (
+        receipt["native_history_input_bytes"]
+        <= receipt["native_history_input_byte_limit"]
+    )
     assert 0 < receipt["gitleaks_report_bytes"]
     assert receipt["gitleaks_report_bytes"] < receipt["gitleaks_report_byte_limit"]
     assert receipt["historical_tree_findings"] == 0
@@ -3598,6 +4004,39 @@ def test_runner_uses_exact_history_and_committed_policy_when_head_is_redirected(
     assert token not in output.out
     assert token not in output.err
     assert "committed-history" in output.err
+
+
+def test_native_history_input_preflight_counts_and_bounds_replay(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Charge repeated native patch bytes before either Gitleaks invocation."""
+    repo = _repo(tmp_path)
+    (repo / "carrier.bin").write_bytes(b"A" * 65_536)
+    base = _commit(repo, "base")
+    for index in range(4):
+        (repo / "carrier.bin").write_bytes((b"B" if index % 2 == 0 else b"A") * 65_536)
+        candidate = _commit(repo, f"alternating payload {index}")
+    history_range = f"{base}..{candidate}"
+    source = tree_scan._isolated_history_source(repo, tmp_path / "history-source")
+
+    measured = tree_scan._measure_native_history_input(source, history_range)
+    assert measured > 4 * 65_536
+
+    monkeypatch.setattr(
+        tree_scan,
+        "_MAX_NATIVE_HISTORY_INPUT_BYTES",
+        2 * measured,
+    )
+    assert tree_scan._measure_native_history_input(source, history_range) == measured
+
+    monkeypatch.setattr(
+        tree_scan,
+        "_MAX_NATIVE_HISTORY_INPUT_BYTES",
+        2 * (measured - 1),
+    )
+    with pytest.raises(tree_scan._ScanError, match="bounded byte limit"):
+        tree_scan._measure_native_history_input(source, history_range)
 
 
 @pytest.mark.skipif(

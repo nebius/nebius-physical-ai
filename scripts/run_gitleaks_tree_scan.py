@@ -23,7 +23,6 @@ import sys
 import tarfile
 import tempfile
 import urllib.parse
-import warnings
 import zipfile
 import zlib
 from collections.abc import Callable, Iterator
@@ -70,6 +69,8 @@ _FRAGMENT_WINDOW_CONTEXT_BYTES = 45_000
 _MAX_GITLEAKS_REPORT_BYTES = 256 * 1024 * 1024
 _MAX_GITLEAKS_REPORT_TOTAL_BYTES = 512 * 1024 * 1024
 _MAX_GITLEAKS_DIAGNOSTIC_BYTES = 64 * 1024 * 1024
+_MAX_NATIVE_HISTORY_INPUT_BYTES = 2 * 1024 * 1024 * 1024
+_NATIVE_HISTORY_SCAN_INVOCATIONS = 2
 _MAX_POLICY_BLOB_BYTES = 16 * 1024 * 1024
 _DECODE_PROBE_PREFIX = "npa-decode-depth-probe-"
 _WRAPPER_SCAN_ROOTS = (
@@ -145,6 +146,7 @@ _ENCODED_ARCHIVE_MAX_CANDIDATES = 4096
 _ENCODED_ARCHIVE_MAX_BYTES = 16 * 1024 * 1024
 _ENCODED_ARCHIVE_PREFIX_BYTES = 8 * 1024
 _EMBEDDED_ARCHIVE_PROBE_CHUNK_BYTES = 16
+_MAX_EMBEDDED_TAR_CHECKSUM_CANDIDATES = 100_000
 _IMMEDIATE_EMBEDDED_ARCHIVE_SIGNATURES = (
     b"PK\x03\x04",
     b"PK\x05\x06",
@@ -157,6 +159,24 @@ _IMMEDIATE_EMBEDDED_ARCHIVE_SIGNATURES = (
     b"\x04\x22\x4d\x18",
     b"\x02\x21\x4c\x18",
 )
+# tarfile.nti() decodes through the first NUL and delegates text syntax to
+# int(..., 8), whose accepted ASCII forms include str.strip() whitespace,
+# signs, 0o prefixes, and underscores. Keep discovery a parser-complete
+# superset; _tar_header_layout_plausible() performs the exact parse.
+_TAR_TEXT_CHECKSUM_FIELD = re.compile(
+    rb"(?=([+\-0-7_oO\x09-\x0d\x1c-\x20]{8}))"
+    rb"(?=[+\-0-7_oO\x09-\x0d\x1c-\x20]{0,7}[0-7])"
+)
+_TAR_NUL_TERMINATED_CHECKSUM_FIELD = re.compile(
+    rb"(?=([+\-0-7_oO\x09-\x0d\x1c-\x20]{1,7}\x00))"
+    rb"(?=[+\-0-7_oO\x09-\x0d\x1c-\x20]{0,6}[0-7])"
+)
+_TAR_BASE256_CHECKSUM_MARKER = re.compile(rb"[\x80\xff]")
+_TAR_STRUCTURAL_TYPES = frozenset(tarfile.SUPPORTED_TYPES) | {
+    tarfile.SOLARIS_XHDTYPE,
+    tarfile.XGLTYPE,
+    tarfile.XHDTYPE,
+}
 _MAX_ENCODED_CANDIDATE_MATCHES = 1_000_000
 _MAX_ENCODED_CANDIDATE_FILES = 100_000
 _MAX_ENCODED_CANDIDATE_BYTES = 512 * 1024 * 1024
@@ -219,15 +239,16 @@ class _ReportBudget:
 
 
 class _ArchiveBudget:
-    """Bound archive members, parser-visible structure, and decompressed bytes."""
+    """Bound logical members, parser-visible structure, and decompressed bytes."""
 
     def __init__(self) -> None:
         self.members = 0
         self.total_bytes = 0
         self.structural_bytes = 0
+        self.tar_header_candidates = 0
 
     def start_member(self, declared_size: int | None = None) -> None:
-        """Reserve one member and reject an already oversized declaration."""
+        """Reserve one logical member and reject an oversized declaration."""
         self.members += 1
         if self.members > _MAX_ARCHIVE_MEMBERS:
             raise _ScanError("Archive exceeds the bounded member count")
@@ -251,6 +272,11 @@ class _ArchiveBudget:
         self.structural_bytes += chunk_bytes
         if self.structural_bytes > _MAX_ARCHIVE_TOTAL_BYTES:
             raise _ScanError("Archive exceeds the aggregate structural byte limit")
+
+    def examine_tar_header_candidate(self) -> bool:
+        """Return whether checksum-candidate work exceeded its aggregate limit."""
+        self.tar_header_candidates += 1
+        return self.tar_header_candidates > _MAX_EMBEDDED_TAR_CHECKSUM_CANDIDATES
 
 
 class _BoundedArchiveStream:
@@ -353,11 +379,12 @@ def _canonical_archive_member_parts(member: str) -> tuple[str, ...]:
     if (
         not member
         or member.startswith("/")
+        or member.endswith("/")
         or "\\" in member
         or any(ord(value) < 32 for value in member)
     ):
         raise _ScanError("Archive member path is not canonical")
-    normalized = member.removesuffix("/")
+    normalized = member
     parts = tuple(normalized.split("/"))
     if not normalized or any(part in {"", ".", ".."} for part in parts):
         raise _ScanError("Archive member path is not canonical")
@@ -443,9 +470,6 @@ class _ArchiveMemberProbeWriter:
             member if logical_scan_path is None else logical_scan_path
         )
         logical_path = Path(*logical_parts)
-        if member.endswith("/"):
-            logical_path /= ".npa-directory-metadata.txt"
-            logical_parts += (".npa-directory-metadata.txt",)
         self.wrapper_path = context_root / f"{identity}.txt"
         self.context_path = context_root / "path-context" / identity / logical_path
         self.exact_path_target = exact_path_target
@@ -734,10 +758,10 @@ class _CandidateProbeWriter:
     def __init__(
         self,
         destination: Path,
-        path_patterns: tuple[re.Pattern[str], ...] = (),
+        preserve_exact_paths: bool = False,
     ) -> None:
         self.destination = destination
-        self.path_patterns = path_patterns
+        self.preserve_exact_paths = preserve_exact_paths
         self.exact_paths = _ExactPathAllocator(
             destination / "npa-gitleaks-candidate-exact-paths"
         )
@@ -783,8 +807,7 @@ class _CandidateProbeWriter:
             self.max_candidate_bytes = max(self.max_candidate_bytes, len(candidate))
         if logical_parts is None:
             return
-        logical_path = "/".join(logical_parts)
-        if not any(pattern.search(logical_path) for pattern in self.path_patterns):
+        if not self.preserve_exact_paths:
             return
         association = (identity, logical_parts)
         if association in self.seen_associations:
@@ -881,8 +904,53 @@ def _archive_probe_names(path: Path) -> set[str]:
     return set()
 
 
+def _tar_header_checksum_valid(content: bytes) -> bool:
+    """Recognize one complete checksum-valid POSIX, GNU, or legacy TAR header."""
+    if len(content) < _ARCHIVE_PREFIX_BYTES:
+        return False
+    header = content[:_ARCHIVE_PREFIX_BYTES]
+    try:
+        expected = tarfile.nti(header[148:156])
+        unsigned, signed = tarfile.calc_chksums(header)
+    except (struct.error, tarfile.InvalidHeaderError):
+        return False
+    if expected not in {unsigned, signed}:
+        return False
+    try:
+        tarfile.TarInfo.frombuf(header, "utf-8", "surrogateescape")
+    except (tarfile.TarError, ValueError):
+        return False
+    return True
+
+
+def _tar_header_layout_plausible(
+    content: bytes | mmap.mmap,
+    header_start: int,
+) -> bool:
+    """Reject random checksum-like fields before charging candidate work."""
+    header = content[header_start : header_start + _ARCHIVE_PREFIX_BYTES]
+    if (
+        len(header) < _ARCHIVE_PREFIX_BYTES
+        or bytes(header[156:157]) not in _TAR_STRUCTURAL_TYPES
+    ):
+        return False
+    try:
+        for begin, end in (
+            (100, 108),
+            (108, 116),
+            (116, 124),
+            (124, 136),
+            (136, 148),
+            (148, 156),
+        ):
+            tarfile.nti(header[begin:end])
+    except (struct.error, tarfile.InvalidHeaderError):
+        return False
+    return True
+
+
 def _archive_kind(prefix: bytes) -> str | None:
-    """Identify archive formats with stable public magic bytes."""
+    """Identify archive formats with stable magic bytes or a verified header."""
     if prefix.startswith((b"PK\x03\x04", b"PK\x05\x06", b"PK\x07\x08")):
         return "zip"
     if (
@@ -903,17 +971,20 @@ def _archive_kind(prefix: bytes) -> str | None:
         return "zstd"
     if prefix.startswith((b"\x04\x22\x4d\x18", b"\x02\x21\x4c\x18")):
         return "lz4"
-    if len(prefix) >= 262 and prefix[257:262] == b"ustar":
+    if _tar_header_checksum_valid(prefix):
         return "tar"
     return None
 
 
-def _contains_archive_signature(content: bytes) -> bool:
+def _contains_archive_signature(
+    content: bytes,
+    budget: _ArchiveBudget | None = None,
+) -> bool:
     """Detect a supported or rejected archive hidden after decoded prefix bytes."""
     return (
         _archive_kind(content[:_ARCHIVE_PREFIX_BYTES]) is not None
         or _contains_non_tar_archive_signature(content)
-        or b"ustar" in content
+        or _contains_tar_header(content, budget)
     )
 
 
@@ -928,23 +999,47 @@ def _contains_non_tar_archive_signature(content: bytes) -> bool:
     )
 
 
-def _contains_tar_header(content: bytes) -> bool:
-    """Recognize a checksum-valid TAR header at any offset in one window."""
-    position = content.find(b"ustar")
-    while position >= 0:
-        start = position - 257
-        end = start + 512
-        if start >= 0 and end <= len(content):
-            header = content[start:end]
-            raw_checksum = header[148:156].strip(b"\0 ")
-            try:
-                expected = int(raw_checksum or b"0", 8)
-            except ValueError:
-                expected = -1
-            observed = sum(header[:148]) + (8 * ord(" ")) + sum(header[156:])
-            if expected == observed:
+def _contains_tar_header(
+    content: bytes | mmap.mmap,
+    budget: _ArchiveBudget | None = None,
+) -> bool:
+    """Recognize any checksum-valid TAR header at any offset in one window."""
+    seen: set[int] = set()
+    examined = 0
+
+    def check(checksum_start: int) -> bool:
+        nonlocal examined
+        header_start = checksum_start - 148
+        if (
+            header_start < 0
+            or header_start in seen
+            or header_start + _ARCHIVE_PREFIX_BYTES > len(content)
+        ):
+            return False
+        seen.add(header_start)
+        if not _tar_header_layout_plausible(content, header_start):
+            return False
+        if budget is not None:
+            exhausted = budget.examine_tar_header_candidate()
+        else:
+            examined += 1
+            exhausted = examined > _MAX_EMBEDDED_TAR_CHECKSUM_CANDIDATES
+        if exhausted:
+            return True
+        return _tar_header_checksum_valid(
+            content[header_start : header_start + _ARCHIVE_PREFIX_BYTES]
+        )
+
+    for pattern in (
+        _TAR_TEXT_CHECKSUM_FIELD,
+        _TAR_NUL_TERMINATED_CHECKSUM_FIELD,
+    ):
+        for match in pattern.finditer(content):
+            if check(match.start(1)):
                 return True
-        position = content.find(b"ustar", position + 1)
+    for match in _TAR_BASE256_CHECKSUM_MARKER.finditer(content):
+        if check(match.start()):
+            return True
     return False
 
 
@@ -1034,7 +1129,10 @@ def _inspect_archive_stream(
                 prefix.extend(chunk[:missing])
             window = overlap + chunk
             _reject_encoded_archives(window)
-            contains_archive = contains_archive or _contains_archive_signature(window)
+            contains_archive = contains_archive or _contains_archive_signature(
+                window,
+                budget,
+            )
             overlap = window[-_ENCODED_ARCHIVE_PREFIX_BYTES:]
         if member_writer is not None:
             member_writer.finish()
@@ -1320,19 +1418,18 @@ def _validate_zip_archive(
                     file_type != 0 and member.is_dir() != (file_type == stat.S_IFDIR)
                 ):
                     raise _ScanError("Special archive member cannot be scanned")
-                member_writer = (
-                    None if member_factory is None else member_factory(member.filename)
-                )
                 if member.is_dir():
                     if member.file_size:
-                        if member_writer is not None:
-                            member_writer.abort()
                         raise _ScanError(
                             "Non-empty archive directory member cannot be scanned"
                         )
-                    if member_writer is not None:
-                        member_writer.finish()
-                    continue
+                    raise _ScanError(
+                        "Archive directory member cannot preserve exact path coverage"
+                    )
+                _canonical_archive_member_parts(member.filename)
+                member_writer = (
+                    None if member_factory is None else member_factory(member.filename)
+                )
                 try:
                     with archive.open(member) as stream:
                         prefix, contains_archive = _inspect_archive_stream(
@@ -1390,25 +1487,25 @@ def _validate_tar_archive(
                 structure_writer,
             )
             with tarfile.open(fileobj=bounded_stream, mode="r|") as archive:
+                archive.ignore_zeros = True
                 names: set[str] = set()
                 for member in archive:
                     if member.name in names:
                         raise _ScanError("Archive contains a duplicate member path")
                     names.add(member.name)
                     budget.start_member(member.size)
-                    member_writer = (
-                        None if member_factory is None else member_factory(member.name)
-                    )
                     if member.isdir():
                         if member.size:
-                            if member_writer is not None:
-                                member_writer.abort()
                             raise _ScanError(
                                 "Non-empty archive directory member cannot be scanned"
                             )
-                        if member_writer is not None:
-                            member_writer.finish()
-                        continue
+                        raise _ScanError(
+                            "Archive directory member cannot preserve exact path coverage"
+                        )
+                    _canonical_archive_member_parts(member.name)
+                    member_writer = (
+                        None if member_factory is None else member_factory(member.name)
+                    )
                     if not member.isfile():
                         if member_writer is not None:
                             member_writer.abort()
@@ -1773,7 +1870,7 @@ def _link_probe_archives(
             logical_scan_path = f"{logical_relative}!{member}"
         exact_path_target = (
             None
-            if logical_scan_path is None or member.endswith("/")
+            if logical_scan_path is None
             else exact_paths.allocate(logical_scan_path)
         )
         return _ArchiveMemberProbeWriter(
@@ -1813,7 +1910,7 @@ def _link_probe_archives(
 def _prepare_decode_probe_source(
     source: Path,
     destination: Path,
-    path_patterns: tuple[re.Pattern[str], ...] = (),
+    preserve_exact_paths: bool = False,
 ) -> dict[str, int]:
     """Build a compact view of encoded spans, paths, Unicode, and archives."""
     destination.mkdir(mode=0o700)
@@ -1824,7 +1921,7 @@ def _prepare_decode_probe_source(
         destination / "npa-gitleaks-fragment-exact-paths"
     )
     historical_raw_paths = _historical_raw_logical_paths(source)
-    with _CandidateProbeWriter(destination, path_patterns) as candidates:
+    with _CandidateProbeWriter(destination, preserve_exact_paths) as candidates:
         for path in sorted(source.rglob("*")):
             if not path.is_file() or path.is_symlink():
                 continue
@@ -2142,6 +2239,49 @@ def _read_scanner_diagnostic(stream: BinaryIO, label: str) -> bytes:
     return stream.read()
 
 
+def _measure_native_history_input(source: Path, history_range: str) -> int:
+    """Bound the exact Git patch stream replayed by native history scans."""
+    per_scan_limit = _MAX_NATIVE_HISTORY_INPUT_BYTES // _NATIVE_HISTORY_SCAN_INVOCATIONS
+    arguments = materializer._git_command(
+        source,
+        "log",
+        "-p",
+        "-U0",
+        "--no-textconv",
+        "--no-ext-diff",
+        history_range,
+    )
+    with (
+        tempfile.TemporaryFile() as stdout_sink,
+        tempfile.TemporaryFile() as stderr_sink,
+    ):
+        result = subprocess.run(
+            arguments,
+            check=False,
+            stdout=stdout_sink,
+            stderr=stderr_sink,
+            env=_scan_environment(),
+            preexec_fn=partial(_limit_scanner_output_files, per_scan_limit),
+        )
+        output_bytes = os.fstat(stdout_sink.fileno()).st_size
+        diagnostic_bytes = os.fstat(stderr_sink.fileno()).st_size
+        if result.returncode != 0:
+            raise _ScanError(
+                "Native Git history input exceeds its bounded byte limit "
+                "or could not be verified"
+            )
+        if diagnostic_bytes:
+            if diagnostic_bytes > _MAX_GITLEAKS_DIAGNOSTIC_BYTES:
+                raise _ScanError(
+                    "Native Git history diagnostic exceeds the bounded byte limit"
+                )
+            raise _ScanError("Native Git history preflight emitted a diagnostic")
+    aggregate_bytes = output_bytes * _NATIVE_HISTORY_SCAN_INVOCATIONS
+    if aggregate_bytes > _MAX_NATIVE_HISTORY_INPUT_BYTES:
+        raise _ScanError("Native Git history input exceeds its bounded byte limit")
+    return output_bytes
+
+
 def _reject_scanner_diagnostics(
     result: subprocess.CompletedProcess[bytes],
     findings: list[dict[str, object]],
@@ -2434,17 +2574,17 @@ def _policy_commit_allowlists(content: bytes) -> set[str]:
     return commits
 
 
-def _custom_rule_path_patterns(
+def _policy_has_custom_rule_paths(
     content: bytes,
     *,
     content_rules_only: bool = False,
-) -> tuple[re.Pattern[str], ...]:
-    """Compile supported positive custom-rule paths from trusted policy bytes."""
+) -> bool:
+    """Report whether trusted custom rules require exact-path associations."""
     document = tomllib.loads(content.decode("utf-8"))
     rules = document.get("rules", [])
     if not isinstance(rules, list):
         raise _ScanError("Gitleaks policy has an invalid custom rule list")
-    patterns = []
+    has_path = False
     for rule in rules:
         if not isinstance(rule, dict):
             raise _ScanError("Gitleaks policy has an invalid custom rule")
@@ -2455,23 +2595,13 @@ def _custom_rule_path_patterns(
             raise _ScanError("Gitleaks policy has an invalid custom rule path")
         if content_rules_only and not isinstance(rule.get("regex"), str):
             continue
-        try:
-            with warnings.catch_warnings():
-                warnings.simplefilter("error", FutureWarning)
-                patterns.append(re.compile(pattern))
-        except (re.error, FutureWarning) as exc:
-            raise _ScanError(
-                "Cannot prove exact path coverage for an unsupported custom rule path"
-            ) from exc
-    return tuple(patterns)
+        has_path = True
+    return has_path
 
 
 def _policy_path_matches_root_ignore(content: bytes) -> bool:
-    """Report whether a committed custom rule selects root ``.gitleaksignore``."""
-    return any(
-        pattern.search(".gitleaksignore")
-        for pattern in _custom_rule_path_patterns(content)
-    )
+    """Conservatively report whether a custom rule could select the root ignore."""
+    return _policy_has_custom_rule_paths(content)
 
 
 def _verify_decode_depth(
@@ -2976,7 +3106,7 @@ def _prepare_probe_sources(
     sources: _MaterializedSources,
 ) -> _ProbeSources:
     """Build compact candidate and historical decode-probe views."""
-    path_patterns = _custom_rule_path_patterns(
+    preserve_exact_paths = _policy_has_custom_rule_paths(
         plan.config_content,
         content_rules_only=True,
     )
@@ -2984,7 +3114,7 @@ def _prepare_probe_sources(
     candidate_receipt = _prepare_decode_probe_source(
         sources.snapshot,
         candidate_view,
-        path_patterns,
+        preserve_exact_paths,
     )
     historical_view: Path | None = None
     historical_receipt = _empty_probe_receipt()
@@ -2993,13 +3123,13 @@ def _prepare_probe_sources(
         historical_receipt = _prepare_decode_probe_source(
             sources.historical_view,
             historical_view,
-            path_patterns,
+            preserve_exact_paths,
         )
     commit_metadata_view = root / "commit-metadata-decode-probe"
     commit_metadata_receipt = _prepare_decode_probe_source(
         sources.commit_metadata_view,
         commit_metadata_view,
-        path_patterns,
+        preserve_exact_paths,
     )
     archive_exact_path_views = []
     for probe_view in (
@@ -3519,6 +3649,7 @@ def _render_scan_receipt(
     sources: _MaterializedSources,
     probes: _ProbeSources,
     findings: _FindingSets,
+    native_history_input_bytes: int,
     config: Path,
     ignore: Path,
     report_budget: _ReportBudget,
@@ -3545,6 +3676,12 @@ def _render_scan_receipt(
         "history_range": plan.commit_range,
         "history_commits": plan.commits,
         "history_findings": len(findings.history),
+        "native_history_input_bytes_per_scan": native_history_input_bytes,
+        "native_history_input_bytes": (
+            native_history_input_bytes * _NATIVE_HISTORY_SCAN_INVOCATIONS
+        ),
+        "native_history_input_byte_limit": _MAX_NATIVE_HISTORY_INPUT_BYTES,
+        "native_history_scan_invocations": _NATIVE_HISTORY_SCAN_INVOCATIONS,
         "gitleaks_max_procs": _GITLEAKS_MAX_PROCS,
         "gitleaks_fragment_bytes": _GITLEAKS_FRAGMENT_BYTES,
         "gitleaks_report_bytes": report_budget.bytes,
@@ -3597,6 +3734,10 @@ def _scan_workspace(
     sources = _materialize_sources(repo, root, plan)
     probes = _prepare_probe_sources(root, plan, sources)
     _verify_root_ignore_exact_path_coverage(plan, sources, probes)
+    native_history_input_bytes = _measure_native_history_input(
+        sources.history_source,
+        plan.commit_range,
+    )
     _verify_probe_sources(
         executable,
         root,
@@ -3622,6 +3763,7 @@ def _scan_workspace(
         sources,
         probes,
         findings,
+        native_history_input_bytes,
         config,
         ignore,
         report_budget,

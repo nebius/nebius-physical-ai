@@ -567,7 +567,10 @@ policy blob is similarly limited to 16 MiB before allocation. Authenticated
 reachable-history traversal is limited to 100,000 distinct commits and 2 GiB of
 aggregate authenticated commit reads. Authenticated tree objects, aggregate
 tree metadata, expanded path count/path bytes, and generated scan-view bytes
-have separate ceilings before materialization.
+have separate ceilings before materialization. Before the two native Gitleaks
+history passes, the helper reproduces the pinned `git log -p -U0` input and
+requires each patch stream to fit 1 GiB, charging both invocations against a
+2-GiB aggregate native-history input ceiling.
 It also scans localized UTF-16/32 text, disables inline `gitleaks:allow`
 suppression, and runs private binary/archive/decode controls. Those controls
 pass only when findings identify all three distinct binary, archive-member, and
@@ -580,17 +583,30 @@ while generated member and exact-path views provide complete coverage without
 filename-driven redispatch. A separate private control still proves native
 Gitleaks archive traversal. The
 complete bounded decompressed TAR stream is wrapped too, so PAX/global headers
-and trailing structure stay visible. Archive nesting is deliberately restricted
-to verified, canonical ZIP, TAR, gzip, bzip2, and xz inputs. Alias, unsupported,
-disguised, encrypted, malformed, nested, non-empty directory, and encoded
-archives fail closed rather than relying on filename-sensitive extraction or
-ambiguous decoder/archive composition. Validation permits at most 10,000
-archive members, 256 MiB per member, and 512 MiB aggregate decompressed member
-bytes per scan source; decompressed TAR structure and ZIP central directories
-are bounded before Python parses or indexes them, and ZIP64/multi-disk metadata
-is rejected. ZIP local records must cover every byte before the central
-directory, and declared entry counts must agree, so self-extracting prefixes,
-concatenated archives, undeclared records, and metadata gaps fail closed.
+and trailing structure stay visible. Concatenated TAR streams are enumerated
+through every zero-record boundary, so later members retain their exact path
+instead of disappearing after the first stream. Checksum-valid legacy TAR
+headers are recognized at any offset across Python-parser-valid text and
+base-256 checksum forms, even without `ustar` magic. Text discovery includes
+all accepted ASCII strip whitespace, signs, octal prefixes and underscores,
+and NUL-terminated fields whose ignored tail bytes are arbitrary. Archive
+nesting is deliberately restricted to verified, canonical ZIP, TAR, gzip,
+bzip2, and xz inputs. Alias, unsupported, disguised, encrypted, malformed,
+nested, non-empty directory, and encoded archives fail closed rather than
+relying on filename-sensitive extraction or ambiguous decoder/archive
+composition.
+Validation permits at most 10,000 logical
+archive members, 256 MiB per logical member, and 512 MiB aggregate decompressed
+member bytes per scan source. Parser-only PAX/GNU TAR metadata records are not
+charged as logical members, but the complete decompressed TAR structure,
+including those records, and ZIP central directories are byte-bounded before
+Python parses or indexes them. Embedded-TAR checksum fields must first have a
+parseable numeric layout and supported TAR type; those structurally plausible
+candidates have one 100,000-candidate work limit across all streamed archive
+members, and exhausting it fails closed. ZIP64/multi-disk metadata is rejected.
+ZIP local records must cover every byte before the central directory, and
+declared entry counts must agree, so self-extracting prefixes, concatenated
+archives, undeclared records, and metadata gaps fail closed.
 Container signatures embedded in otherwise nonarchive files or commit bodies
 also fail closed. Because three-byte gzip and bzip2 markers occur incidentally
 in ordinary media, those two markers are confirmed with a bounded decoder:
@@ -610,15 +626,16 @@ remain in the real-policy content scans. Match
 cardinality is bounded by distinct codec-and-byte identity so repeated
 scan-view bytes retain every governed path without consuming the same work
 budget again; generated-file count and aggregate encoded-candidate output are
-bounded separately. The runner uses a fixed process environment, fixes Gitleaks
-parallelism at eight threads, requires exact Gitleaks 8.28.0, and compares the
-Linux x86-64 executable SHA-256 with the pinned official release byte digest
-before executing it. It rejects warning, error, or archive-coverage diagnostics
-even when the scanner returns success, applies a 256-MiB report-file ceiling in
-each child process and one 512-MiB aggregate report budget across controls and
-all sharded invocations, spools diagnostics to bounded files instead of memory,
-and revalidates both scanner bytes and the exact Git history plan after all
-long-running scans. Caller process hooks,
+bounded separately. The runner uses fixed process environments for authenticated
+Git object reads and Gitleaks, fixes Gitleaks parallelism at eight threads,
+requires exact Gitleaks 8.28.0, and compares the Linux x86-64 executable SHA-256
+with the pinned official release byte digest before executing it. It rejects
+warning, error, or archive-coverage diagnostics even when the scanner returns
+success, applies a 256-MiB report-file ceiling in each child process and one
+512-MiB aggregate report budget across controls and all sharded invocations,
+spools diagnostics to bounded files instead of memory, and revalidates both
+scanner bytes and the exact Git history plan after all long-running scans. Caller
+process hooks,
 an initially counterfeit scanner, scanner replacement, and concurrent
 shallow/graft changes therefore cannot silently change a passing verdict.
 
