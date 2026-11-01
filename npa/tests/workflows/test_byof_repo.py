@@ -427,7 +427,7 @@ def _robotwin_context(**updates: object) -> dict[str, object]:
         "source_revision": "96c1feab536306b50c26af200044fcdf126e8904",
         "curobo_revision": "d64c4b005459db10c5dd867d8b30a87d5bda9bdb",
         "asset_revision": "785feb15aa4a4f532395ad2b1d2be5f28cb561ad",
-        "runtime_lock_sha256": "af1440aa1a0b5d79a9dd1242415e4bae5a717915196a99ecddb49a29a83b457e",
+        "runtime_lock_sha256": "1cdfccaaeb1a87a659b2ad445fe5efdcad83268de62a9ba0b2f22b95c5ce64fe",
         "bootstrap_image": "registry.example/private-namespace-canary/npa-robotwin@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         "reservation": {
             "policy": "STRICT",

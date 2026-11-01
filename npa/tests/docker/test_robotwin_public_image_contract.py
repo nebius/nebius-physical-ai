@@ -323,6 +323,28 @@ def test_neutral_locks_are_complete_while_runtime_delivery_is_disabled() -> None
         == "only-after-customer-run-authorization"
     )
     assert len(lock["runtime_artifacts"]) == 474
+    assert [
+        artifact
+        for artifact in lock["runtime_artifacts"]
+        if artifact["name"] == "urllib3"
+    ] == [
+        {
+            "name": "urllib3",
+            "version": "2.8.0",
+            "filename": "urllib3-2.8.0-py3-none-any.whl",
+            "url": (
+                "https://files.pythonhosted.org/packages/92/9d/"
+                "c4e665119135114480843e7ab388fa94d8480650450e6f8e26b70d323a4c/"
+                "urllib3-2.8.0-py3-none-any.whl"
+            ),
+            "sha256": (
+                "0cf3cae568d36aa9576b28dfb35f11328f1cb974ca7647d9475ebb86c75ac6e3"
+            ),
+            "size_bytes": 135717,
+            "kind": "bdist_wheel",
+            "requires_python": ">=3.10",
+        }
+    ]
     assert lock["weights"] == []
     assert lock["access"]["status"] == "not-probed"
     assert lock["access"]["timing"] == "before-provisioning"
