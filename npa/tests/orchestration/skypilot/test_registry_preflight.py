@@ -2132,6 +2132,31 @@ def test_empty_pod_pull_secrets_bind_service_account_defaults(
     ]
 
 
+def test_null_service_account_pull_secrets_are_empty_defaults() -> None:
+    run, calls = _target_probe_runner(secret_names=())
+
+    def null_defaults(command, **kwargs):  # noqa: ANN001
+        result = run(command, **kwargs)
+        if "serviceaccount" in command and result.stdout.strip():
+            account = json.loads(result.stdout)
+            account["imagePullSecrets"] = None
+            result.stdout = json.dumps(account)
+        return result
+
+    check = verify_kubernetes_image_pull(
+        image=IMAGE,
+        secret_names=(),
+        namespace="target-namespace",
+        context="target-context",
+        timeout_seconds=30,
+        runner=null_defaults,
+        nonce_factory=lambda: "abc123",
+    )
+
+    assert check.ok
+    assert sum("create" in command for command in calls) == 1
+
+
 @pytest.mark.parametrize(
     "failure", ["forbidden", "namespace", "name", "references", "exception"]
 )

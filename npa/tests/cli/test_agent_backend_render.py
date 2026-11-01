@@ -66,8 +66,14 @@ def _clear_rendered_agent_backend_modules() -> None:
 
 
 @pytest.fixture(autouse=True)
-def _isolate_rendered_agent_backend_package():
+def _isolate_rendered_agent_backend_package(monkeypatch):
     """Prevent one rendered backend's temporary package leaking into another test."""
+    # These tests render/import the shipped backend through a mocked SSH client.
+    # Source inventory and archive security have dedicated tests; building an
+    # unused deployment archive here repeats hundreds of megabytes per render.
+    monkeypatch.setattr(
+        "npa.cli.agent._stage_agent_npa_source", lambda *_args, **_kwargs: None
+    )
     _clear_rendered_agent_backend_modules()
     yield
     _clear_rendered_agent_backend_modules()

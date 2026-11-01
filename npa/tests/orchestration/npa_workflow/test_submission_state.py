@@ -316,6 +316,81 @@ def test_submission_state_rejects_boolean_token_setting_outside_pod_spec(
         )
 
 
+@pytest.mark.parametrize("optional", [None, False, True])
+def test_submission_state_preserves_named_environment_secret_reference(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, optional: bool | None
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    reference: dict[str, object] = {"name": "operator-policy-auth", "key": "auth_token"}
+    if optional is not None:
+        reference["optional"] = optional
+    environment = {
+        "name": "NPA_OPENPI_SERVICE_AUTH_TOKEN",
+        "valueFrom": {"secretKeyRef": reference},
+    }
+    resources_profile = {
+        "kubernetes": {"pod_config": {"spec": {"containers": [{"env": [environment]}]}}}
+    }
+
+    payload = update_submission_state(
+        "demo",
+        "run-secret-reference",
+        {"workflow": {"resources_profile": resources_profile}},
+    )
+
+    assert payload["workflow"]["resources_profile"] == resources_profile
+    assert load_submission_state("demo", "run-secret-reference") == payload
+
+
+@pytest.mark.parametrize(
+    "reference",
+    [
+        None,
+        "inline-value",
+        {"name": "operator-auth"},
+        {"key": "auth_token"},
+        {"name": "", "key": "auth_token"},
+        {"name": "Operator-Auth", "key": "auth_token"},
+        {"name": "operator/auth", "key": "auth_token"},
+        {"name": "operator..auth", "key": "auth_token"},
+        {"name": "a" * 254, "key": "auth_token"},
+        {"name": "operator-auth", "key": ""},
+        {"name": "operator-auth", "key": "auth/token"},
+        {"name": "operator-auth", "key": "a" * 254},
+        {"name": "operator-auth", "key": "auth_token", "optional": "false"},
+        {"name": "operator-auth", "key": "auth_token", "optional": 0},
+        {"name": "operator-auth", "key": "auth_token", "password": "inline-value"},
+        {"name": "operator-auth", "key": "auth_token", "value": "inline-value"},
+    ],
+)
+def test_submission_state_rejects_malformed_environment_secret_reference(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, reference: object
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+    with pytest.raises(ValueError, match="must not contain credentials"):
+        update_submission_state(
+            "demo",
+            "run-malformed-secret-reference",
+            {"valueFrom": {"secretKeyRef": reference}},
+        )
+
+    assert not submission_state_path("demo", "run-malformed-secret-reference").exists()
+
+
+def test_submission_state_rejects_misplaced_secret_reference(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+    with pytest.raises(ValueError, match="must not contain credentials"):
+        update_submission_state(
+            "demo",
+            "run-misplaced-secret-reference",
+            {"secretKeyRef": {"name": "operator-auth", "key": "auth_token"}},
+        )
+
+
 def test_concurrent_updates_do_not_corrupt_state(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

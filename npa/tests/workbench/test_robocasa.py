@@ -583,7 +583,12 @@ async def _exercise_saturated_service(
     ) as client:
         tasks = _queue_service_requests(client, count, identity)
         try:
-            assert await asyncio.to_thread(started.wait, 2)
+            # Full coverage instrumentation can delay the first worker thread
+            # beyond the old two-second test-only startup bound. Match the
+            # executor's existing ten-second completion bound so this still
+            # fails closed if execution never starts without racing a healthy
+            # service under the serial source gate.
+            assert await asyncio.to_thread(started.wait, 10)
             await asyncio.wait_for(_wait_for_registry_size(registry, count), timeout=3)
             assert len(executed) == 1
             probe = await asyncio.wait_for(client.get("/system-info"), timeout=2)

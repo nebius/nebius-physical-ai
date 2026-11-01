@@ -13,7 +13,10 @@ import npa.workflows.sim2real_rerun_regen as regen
 from npa.workflows.sim2real.models import Sim2RealLoopConfig
 from npa.workflows.sim2real.workflow_io import build_component_record
 from npa.workflows.sim2real.component_authority import stage14_report_authority_sha256
-from npa.workflows.sim2real.regeneration_authority import authority_sha256
+from npa.workflows.sim2real.regeneration_authority import (
+    authority_sha256,
+    validate_writer,
+)
 from npa.workflows.sim2real_viz import Sim2RealVizResult
 
 pytestmark = pytest.mark.usefixtures("operator_sim2real_image_defaults")
@@ -23,6 +26,36 @@ REPLAY_JOB = "fixture-replay-job"
 SOURCE_SHA = "b" * 40
 ROOT = "s3://demo-bucket/sim2real-b/run-a"
 ORIGINAL_REPORT = f"{ROOT}/reports/generations/{'c' * 32}/sim2real-report.json"
+
+
+def test_regeneration_writer_preserves_distinct_baked_image_source() -> None:
+    writer = {
+        "source_sha": "e" * 40,
+        "image_source_sha": SOURCE_SHA,
+        "image": REPLAY_IMAGE,
+        "image_digest": REPLAY_IMAGE.split("@", 1)[1],
+        "workflow_job": REPLAY_JOB,
+        "execution_mode": "standard_npa_workflow_skypilot",
+    }
+
+    artifacts = validate_writer(writer)
+
+    assert artifacts["source_sha"] == "e" * 40
+    assert artifacts["image_source_sha"] == SOURCE_SHA
+
+
+def test_regeneration_writer_rejects_malformed_baked_image_source() -> None:
+    writer = {
+        "source_sha": SOURCE_SHA,
+        "image_source_sha": "not-a-source",
+        "image": REPLAY_IMAGE,
+        "image_digest": REPLAY_IMAGE.split("@", 1)[1],
+        "workflow_job": REPLAY_JOB,
+        "execution_mode": "standard_npa_workflow_skypilot",
+    }
+
+    with pytest.raises(ValueError, match="image source is invalid"):
+        validate_writer(writer)
 
 
 def _config() -> Sim2RealLoopConfig:

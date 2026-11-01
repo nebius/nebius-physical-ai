@@ -475,17 +475,18 @@ Also hard-gated in the same smoke:
 Four-mode live acceptance requires the canonical isolated B200 (`sm_100`) gate: build the
 pinned source, execute the declared editable-install and CUDA-compile commands,
 push it to the private project registry, resolve and pull the immutable digest,
-then run a separate invalid-terms workload that exits 64 before checkpoint/model
-loading. Only after that negative gate passes may accepted stages fetch the 27
-objects / 12,434,530,837 bytes at runtime. Direct and both cross-pod service
+then prove anonymous payload-byte access plus generation/checksum provenance for
+the authoritative public GCS checkpoint. Direct and both cross-pod service
 requests must be finite `float64[T>=5,8]`. Training and held-out evaluation must
 consume machine-verifiably disjoint samples, and evaluation must consume the
 exact independently read-back training checkpoint.
 
-This checkpoint contains Gemma-derived material. Require the exact run-scoped
-`NPA_OPENPI_ACCEPT_GEMMA_TERMS=YES` gate before build or download; forward it
-only through the secret channel and never bake/persist it. The image contains
-the pinned Apache-2.0 source and CUDA/JAX runtime, not checkpoint bytes. A tiny
+This checkpoint contains Gemma-derived material governed by upstream terms that
+bind through use. Do not add an NPA terms flag or HF token for public Polaris.
+For a different, genuinely gated HF artifact, use the operator's own token and
+the standard exact-revision payload-byte probe through the secret channel. The
+image contains the pinned Apache-2.0 source and CUDA/JAX runtime, not checkpoint
+bytes or credentials. A tiny
 deterministic compatible dataset is valid only for the real optimizer and
 held-out offline operational gate. It is not convergence evidence. Do not claim
 physical Franka success, external Ingress, or robot success from offline

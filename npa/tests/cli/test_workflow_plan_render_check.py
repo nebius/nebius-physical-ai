@@ -166,6 +166,38 @@ def test_plan_spec_waves_json_includes_render_check(tmp_path: Path) -> None:
     assert payload["render_check"]["tasks"] == 1
 
 
+def test_plan_spec_render_check_includes_failure_handler(
+    tmp_path: Path, monkeypatch
+) -> None:
+    workflow = _workflow(tmp_path, run_as_root=False)
+    monkeypatch.setenv("NPA_SRC_S3_URI", "s3://source/npa")
+    document = yaml.safe_load(workflow.read_text(encoding="utf-8"))
+    document["onFailure"] = "cleanup"
+    document["states"]["cleanup"] = {
+        "run": {"shell": "echo cleanup"},
+        "resources": "gpu",
+    }
+    workflow.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+
+    result = RUNNER.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "plan-spec",
+            str(workflow),
+            "--check-render",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    failure = json.loads(result.output)["render_check"]["failure_handler"]
+    assert failure["state"] == "cleanup"
+    assert failure["tasks"] == 1
+    assert len(failure["sha256"]) == 64
+
+
 def test_plan_spec_candidate_disclosure_failure_is_observational(
     tmp_path: Path,
     mocker,

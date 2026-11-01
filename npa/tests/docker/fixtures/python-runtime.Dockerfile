@@ -6,8 +6,17 @@ FROM ubuntu:22.04@sha256:281c5745f657873d78e5531fc5ba8575f46ab7769b94550ac99543f
 ENV DEBIAN_FRONTEND=noninteractive
 COPY --chmod=0755 docker/workbench/common/configure_ubuntu_snapshot.sh /usr/local/bin/configure-ubuntu-snapshot
 COPY --chmod=0755 docker/workbench/common/install_python312_jammy.sh /usr/local/bin/install-python312-jammy
+COPY --chmod=0755 docker/workbench/isaac-lab/apt-get /opt/npa/apt-retry-bin/apt-get
 RUN --mount=type=bind,from=bootstrap-ca,source=/etc/ssl/certs/ca-certificates.crt,target=/run/python-probe-ca.crt,ro \
-    configure-ubuntu-snapshot 20261018T000000Z \
+    printf '%s\n' \
+      'Acquire::Retries "10";' \
+      'Acquire::Queue-Mode "access";' \
+      'Acquire::http::Pipeline-Depth "0";' \
+      'Acquire::https::Pipeline-Depth "0";' \
+      'APT::Update::Error-Mode "any";' \
+      > /etc/apt/apt.conf.d/80-npa-ubuntu-snapshot-retries \
+    && export PATH="/opt/npa/apt-retry-bin:${PATH}" \
+    && configure-ubuntu-snapshot 20261018T000000Z \
     && apt-get -o Acquire::https::CaInfo=/run/python-probe-ca.crt update \
     && apt-get -o Acquire::https::CaInfo=/run/python-probe-ca.crt install -y --no-install-recommends ca-certificates curl \
     && install-python312-jammy \

@@ -1397,6 +1397,66 @@ def test_submit_keeps_launch_unknown_for_failure_after_preparation(
     assert caught.value.transaction is None
 
 
+def test_submit_keeps_isolated_api_control_config_separate_from_client_config(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    yaml_path = tmp_path / "workflow.yaml"
+    yaml_path.write_text(
+        "name: demo\nresources:\n  cloud: kubernetes\n", encoding="utf-8"
+    )
+    isolated = tmp_path / "sky-state"
+    persistent_config = tmp_path / "persistent-server-config.yaml"
+    persistent_config.write_text("kubernetes: {}\n", encoding="utf-8")
+    daemon_calls: list[dict[str, object]] = []
+    launch_calls: list[tuple[list[str], dict[str, object]]] = []
+
+    def ensure_daemon(*_args, **kwargs):
+        daemon_calls.append(kwargs)
+        return workflow_module.ApiDaemonCwdProbe(True, "cwd_live")
+
+    def daemon_control_environment(_isolated, environment):
+        selected = dict(environment)
+        selected["PYTHONPATH"] = "/daemon/source"
+        selected["SKYPILOT_GLOBAL_CONFIG"] = str(persistent_config)
+        return selected
+
+    def fake_run(command, **kwargs):
+        launch_calls.append((command, kwargs))
+        if _is_status_cmd(command):
+            return _healthy_status(command)
+        return subprocess.CompletedProcess(
+            command, 0, stdout="Job submitted, ID: 42\n", stderr=""
+        )
+
+    monkeypatch.setattr(
+        workflow_module, "_ensure_local_api_daemon_cwd_locked", ensure_daemon
+    )
+    monkeypatch.setattr(
+        workflow_module,
+        "isolated_api_control_environment",
+        daemon_control_environment,
+    )
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    result = submit_workflow(
+        yaml_path,
+        "run-isolated-config-separation",
+        isolated_config_dir=isolated,
+        config_path=persistent_config,
+        sky_bin=_fake_sky(tmp_path),
+        extra_env={"PYTHONPATH": "/client/source"},
+    )
+
+    assert len(daemon_calls) == 1
+    assert daemon_calls[0]["env"]["SKYPILOT_GLOBAL_CONFIG"] == str(persistent_config)
+    assert daemon_calls[0]["env"]["PYTHONPATH"] == "/daemon/source"
+    launch = next(call for call in launch_calls if call[0][1:3] == ["jobs", "launch"])
+    generated_config = result.log_paths["config"]
+    assert launch[1]["env"]["SKYPILOT_GLOBAL_CONFIG"] == generated_config
+    assert launch[1]["env"]["PYTHONPATH"] == "/client/source"
+    assert generated_config != str(persistent_config)
+
+
 def test_submit_workflow_strips_name_from_global_config(monkeypatch, tmp_path) -> None:
     yaml_path = tmp_path / "workflow.yaml"
     yaml_path.write_text(
@@ -4148,6 +4208,29 @@ def test_sky_environment_preserves_explicit_user_id(monkeypatch, tmp_path) -> No
     env = sky_environment(tmp_path / "isolated")
 
     assert env["SKYPILOT_USER_ID"] == "operator-selected"
+
+
+def test_sky_environment_keeps_repository_source_once_and_first(
+    monkeypatch, tmp_path
+) -> None:
+    from npa.orchestration.skypilot import cleanup
+
+    repository_source = Path(cleanup.__file__).resolve().parents[3]
+    other = tmp_path / "other-source"
+    monkeypatch.setenv(
+        "PYTHONPATH",
+        os.pathsep.join((str(repository_source), str(other), str(repository_source))),
+    )
+
+    isolated = tmp_path / "isolated"
+    first = cleanup.sky_environment(isolated)
+    second = cleanup.sky_environment(isolated, environment=first)
+
+    assert first["PYTHONPATH"].split(os.pathsep) == [
+        str(repository_source),
+        str(other),
+    ]
+    assert second["PYTHONPATH"] == first["PYTHONPATH"]
 
 
 def test_sky_environment_preserves_nebius_exec_auth_without_copying(

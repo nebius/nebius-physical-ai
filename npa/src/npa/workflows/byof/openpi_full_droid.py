@@ -322,13 +322,6 @@ class _TrainingTelemetryJournal:
         self._handle.close()
 
 
-def _require_terms() -> None:
-    if os.environ.get("NPA_OPENPI_ACCEPT_GEMMA_TERMS") != "YES":
-        raise OpenPIPipelineError(
-            "full-DROID pi0.5 fine-tuning requires exact run-scoped Gemma terms acceptance"
-        )
-
-
 def _run(
     command: Sequence[str], *, cwd: Path | None = None, stdout: object = None
 ) -> None:
@@ -977,7 +970,6 @@ def _compute_norm_stats(
 
 
 def _prepare(args: argparse.Namespace) -> int:
-    _require_terms()
     # Preparation is intentionally CPU-only.  The runtime image also carries
     # CUDA-enabled JAX for the later qualification/training stages, and JAX's
     # plugin discovery otherwise calls cuInit while normalization imports the
@@ -1027,7 +1019,11 @@ def _prepare(args: argparse.Namespace) -> int:
             "optimizer_steps": EXPECTED_STEPS,
             "normalization_max_frames": NORM_MAX_FRAMES,
         },
-        "terms": {"forwarded": True, "persisted": False},
+        "artifact_access": {
+            "public_sources_use_anonymous_access": True,
+            "npa_terms_attestation_required": False,
+            "credential_persisted": False,
+        },
         "timings_seconds": {"total": round(time.perf_counter() - started, 3)},
     }
     result["rerun"] = _publish_preparation_rrd(
@@ -2816,7 +2812,6 @@ def _upload_or_verify_checkpoint(
 
 
 def _fine_tune(args: argparse.Namespace) -> int:
-    _require_terms()
     work_root = Path(args.work_root)
     work_root.mkdir(parents=True, exist_ok=True)
     _configure_openpi_cache(work_root)
@@ -3001,7 +2996,11 @@ def _fine_tune(args: argparse.Namespace) -> int:
             milestone_publisher.published[key]
             for key in sorted(milestone_publisher.published)
         ],
-        "terms": {"forwarded": True, "persisted": False},
+        "artifact_access": {
+            "public_sources_use_anonymous_access": True,
+            "npa_terms_attestation_required": False,
+            "credential_persisted": False,
+        },
         "timings_seconds": {"total": round(time.perf_counter() - started, 3)},
         "limitations": [
             "offline_training_does_not_prove_physical_robot_success",

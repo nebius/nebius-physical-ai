@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# Retry APT commands against the same immutable Ubuntu snapshot.
+
+set -euo pipefail
+
+real_apt_get="${NPA_REAL_APT_GET:-/usr/bin/apt-get}"
+retry_sleep_seconds="${NPA_APT_RETRY_SLEEP_SECONDS:-30}"
+transaction_attempts=3
+
+[[ "$real_apt_get" = /* && -x "$real_apt_get" ]] || {
+  echo "NPA_REAL_APT_GET must be an absolute executable path" >&2
+  exit 2
+}
+[[ "$retry_sleep_seconds" =~ ^[0-9]+$ ]] || {
+  echo "NPA_APT_RETRY_SLEEP_SECONDS must be a non-negative integer" >&2
+  exit 2
+}
+
+for ((attempt = 1; attempt <= transaction_attempts; attempt++)); do
+  if "$real_apt_get" "$@"; then
+    exit 0
+  else
+    status=$?
+  fi
+
+  if ((attempt == transaction_attempts)); then
+    echo "APT transaction failed after ${transaction_attempts} attempts" >&2
+    exit "$status"
+  fi
+
+  echo "APT transaction attempt ${attempt} failed; retaining downloaded archives before retry" >&2
+  sleep "$retry_sleep_seconds"
+done

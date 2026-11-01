@@ -447,11 +447,11 @@ a remote policy uses its declared checkpoint or complies with every rule.
    checkpoint selection. Use development instances for iteration. A radio
    checkpoint does not establish performance on the other 99 tasks.
 
-NPA's OpenPI path requires a run-scoped Gemma terms opt-in before building or
-fetching Gemma-derived checkpoints; see the
-[third-party terms skill](../../skills/atomic/third-party-eula-preflight/SKILL.md).
-GR00T's gated dependencies require exact artifact access. Neither choice is
-authorized by the BEHAVIOR Data Bundle acceptance alone.
+NPA adds no duplicate OpenPI/Gemma opt-in. Upstream terms bind through use;
+public Polaris uses anonymous exact-GCS integrity checks, while an explicitly
+gated Hugging Face checkpoint requires the operator's own token and an exact
+revision payload probe. GR00T's gated dependencies use the same real-access
+principle. BEHAVIOR Data Bundle acceptance authorizes neither model source.
 
 `prepare_runtime` binds each workspace cache to one exact runtime manifest.
 Use a separate volume or workspace for a different manifest, with mount paths
@@ -555,10 +555,10 @@ command and set `--host 127.0.0.1`:
 | `--policy-checkpoint` | Extracted `pi05_turn_on_the_radio` directory |
 | `--policy-archive` | Original official `pi05TurningOnRadio.zip` download |
 
-Forward the OpenPI acceptance through `--secret-env NPA_OPENPI_ACCEPT_GEMMA_TERMS`
-after completing the run-scoped opt-in. The worker checks the recipe's archive
-SHA-256, compares every loaded checkpoint file with the archive, rejects extra
-files and an occupied policy endpoint, then starts the official server. It uses
+The worker checks the recipe's archive SHA-256, compares every loaded checkpoint
+file with the archive, rejects extra files and an occupied policy endpoint,
+then starts the official server. Supply the operator's own credential only when
+the exact selected upstream artifact is actually gated. It uses
 `--repo-id turning_on_radio`: the provided archive stores normalization under
 `assets/turning_on_radio`, rather than the demonstration repository name in the
 generic training example. No checkpoint or normalization data is rewritten.

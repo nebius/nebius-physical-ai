@@ -416,7 +416,6 @@ def test_verified_dataset_resume_revalidates_durable_identity(tmp_path: Path) ->
 def test_prepare_report_preserves_filter_dictionary_lineage(
     monkeypatch, tmp_path: Path
 ) -> None:
-    monkeypatch.setenv("NPA_OPENPI_ACCEPT_GEMMA_TERMS", "YES")
     monkeypatch.setattr(full_droid, "_validate_source", lambda *args: {})
     monkeypatch.setattr(
         full_droid,
@@ -1477,6 +1476,25 @@ def test_cuda_hardware_probe_requires_exact_runtime_evidence(
         openpi_pipeline._validated_cuda_probe_output(
             expected + "\ndevices=1 cc=0.0", expected_cc=compute_capability
         )
+    with pytest.raises(openpi_pipeline.OpenPIPipelineError, match="unexpected"):
+        openpi_pipeline._validated_cuda_probe_output(
+            expected + r"\n", expected_cc=compute_capability
+        )
+
+
+def test_compiled_cuda_probe_sources_emit_real_newlines() -> None:
+    dockerfile = (REPO_ROOT / "npa/docker/workbench/openpi/Dockerfile").read_text()
+    workflow = (REPO_ROOT / "workflows/testing/byof-openpi.yaml").read_text()
+    sm120 = next(
+        line for line in dockerfile.splitlines() if "devices=%d cc=12.0" in line
+    )
+    sm100 = next(line for line in workflow.splitlines() if "%s cc=%d.%d" in line)
+
+    assert r'cc=12.0\n",n)' in sm120
+    assert r'cc=12.0\\n",n)' not in sm120
+    assert r'%d.%d\n",p.name' in sm100
+    assert r'%d.%d\\n",p.name' not in sm100
+    assert 're.fullmatch(r"[^\\r\\n]+ cc=10\\.0", sm100_probe)' in workflow
 
 
 def test_milestone_manifest_hashes_rrd_and_journal() -> None:

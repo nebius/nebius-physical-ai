@@ -3,21 +3,17 @@
 from __future__ import annotations
 
 import argparse
-import base64
 import hashlib
 import json
 import math
-import os
 import re
 import shlex
+import textwrap
 import time
 from typing import Any, Callable, Mapping, Sequence
+import urllib.error
 import urllib.request
 
-from npa.workflows.byof.openpi import (
-    OPENPI_TERMS_ACCEPTED_VALUE,
-    OPENPI_TERMS_ENV,
-)
 from npa.workflows.byof.openpi_pipeline import (
     ACTION_DIM,
     DEFAULT_CHECKPOINT_URI,
@@ -27,9 +23,9 @@ from npa.workflows.byof.openpi_pipeline import (
     SOURCE_REF,
     _checkpoint_provenance,
     _redistribution_evidence,
-    _write_terms_refusal_diagnostic,
     _write_json_uri,
 )
+from npa.workflows.byof.openpi_service_diagnostics import standalone_program
 
 MANAGED_BY = "npa-openpi-four-mode"
 SERVER_PORT = 8000
@@ -62,6 +58,193 @@ class OpenPIServiceError(RuntimeError):
     """Raised when the cross-pod OpenPI service contract fails."""
 
 
+_PI05_NOISE_SERVER_PROGRAM = r"""
+        import argparse, hashlib, hmac, os, re
+        import numpy as np
+        from openpi.policies import policy_config
+        from openpi.serving import websocket_policy_server
+        from openpi.training import config as training_config
+
+        class ExplicitNoisePolicy:
+            def __init__(self, policy, model_config):
+                self.policy = policy
+                self.shape = (int(model_config.action_horizon), int(model_config.action_dim))
+                actual = (int(policy._model.action_horizon), int(policy._model.action_dim))
+                if actual != self.shape:
+                    raise RuntimeError(f"loaded policy/model noise shape mismatch: {actual} != {self.shape}")
+                self.metadata = dict(policy.metadata)
+                self.metadata["npa_explicit_noise_protocol"] = {
+                    "schema": "npa.openpi.pi05-explicit-noise.v1",
+                    "shape": list(self.shape), "dtype": "float32",
+                }
+
+            def infer(self, observation):
+                observation = dict(observation)
+                noise = observation.pop("npa/sampling_noise", None)
+                sequence = observation.pop("npa/sampling_sequence", None)
+                source_wrist = np.ascontiguousarray(observation["observation/wrist_image_left"])
+                transformed = self.policy._input_transform(dict(observation))
+                images, masks = transformed["image"], transformed["image_mask"]
+                left = np.ascontiguousarray(images["left_wrist_0_rgb"])
+                right = np.ascontiguousarray(images["right_wrist_0_rgb"])
+                left_mask = bool(np.asarray(masks["left_wrist_0_rgb"]).all())
+                right_mask = bool(np.asarray(masks["right_wrist_0_rgb"]).any())
+                if not left_mask or right_mask or not left.any() or right.any():
+                    raise RuntimeError("pinned policy transformed wrist mask/content contract failed")
+                transform_receipt = {
+                    "schema": "npa.openpi.pi05-live-wrist-transform.v1",
+                    "source_wrist_sha256": hashlib.sha256(source_wrist.tobytes()).hexdigest(),
+                    "left_wrist_0_rgb_sha256": hashlib.sha256(left.tobytes()).hexdigest(),
+                    "right_wrist_0_rgb_sha256": hashlib.sha256(right.tobytes()).hexdigest(),
+                    "left_wrist_mask": left_mask,
+                    "right_wrist_mask": right_mask,
+                }
+                if noise is None and sequence is None:
+                    result = self.policy.infer(observation)
+                    result["npa_wrist_transform_receipt"] = transform_receipt
+                    return result
+                if noise is None or not isinstance(sequence, str) or not re.fullmatch(r"[a-zA-Z0-9_.:-]{1,128}", sequence):
+                    raise ValueError("explicit noise and a valid sequence identity are required together")
+                noise = np.asarray(noise)
+                if noise.dtype != np.float32 or noise.shape != self.shape or not np.isfinite(noise).all():
+                    raise ValueError(f"noise must be finite float32{self.shape}, got {noise.dtype}{noise.shape}")
+                digest = hashlib.sha256(np.ascontiguousarray(noise).tobytes()).hexdigest()
+                result = self.policy.infer(observation, noise=noise)
+                result["npa_sampler_noise_sha256"] = digest
+                result["npa_sampler_noise_shape"] = list(noise.shape)
+                result["npa_sampling_sequence"] = sequence
+                result["npa_wrist_transform_receipt"] = transform_receipt
+                return result
+
+        class AuthenticatedNoiseServer(websocket_policy_server.WebsocketPolicyServer):
+            def __init__(self, *args, auth_token, **kwargs):
+                if not auth_token:
+                    raise RuntimeError("OpenPI service auth token is empty")
+                self._auth_token = auth_token
+                super().__init__(*args, **kwargs)
+
+            async def _handler(self, websocket):
+                supplied = websocket.request.headers.get("Authorization", "")
+                accepted = (
+                    f"Bearer {self._auth_token}",
+                    f"Api-Key {self._auth_token}",
+                )
+                if not any(hmac.compare_digest(supplied, value) for value in accepted):
+                    await websocket.close(code=1008, reason="authentication required")
+                    return
+                await super()._handler(websocket)
+
+        parser = argparse.ArgumentParser()
+        parser.add_argument("--config", required=True)
+        parser.add_argument("--checkpoint", required=True)
+        parser.add_argument("--port", type=int, required=True)
+        args = parser.parse_args()
+        auth_token = os.environ.get("NPA_OPENPI_SERVICE_AUTH_TOKEN", "")
+        if not auth_token:
+            raise RuntimeError("OpenPI service auth token is empty")
+        selected = training_config.get_config(args.config)
+        real_policy = policy_config.create_trained_policy(selected, args.checkpoint)
+        wrapped = ExplicitNoisePolicy(real_policy, selected.model)
+        AuthenticatedNoiseServer(
+            policy=wrapped, host="0.0.0.0", port=args.port,
+            metadata=wrapped.metadata, auth_token=auth_token,
+        ).serve_forever()
+        """
+
+_GENERIC_SERVER_PROGRAM = r"""
+        import argparse
+        from openpi.policies import policy_config
+        from openpi.serving import websocket_policy_server
+        from openpi.training import config as training_config
+
+        parser = argparse.ArgumentParser()
+        parser.add_argument("--config", required=True)
+        parser.add_argument("--checkpoint", required=True)
+        parser.add_argument("--port", type=int, required=True)
+        args = parser.parse_args()
+        selected = training_config.get_config(args.config)
+        policy = policy_config.create_trained_policy(selected, args.checkpoint)
+        websocket_policy_server.WebsocketPolicyServer(
+            policy=policy, host="0.0.0.0", port=args.port, metadata=policy.metadata,
+        ).serve_forever()
+        """
+
+
+def _pi05_noise_server_program(*, adapted: bool = False) -> str:
+    """Return the scoped wrapper that adds explicit-noise inference receipts."""
+
+    program = textwrap.dedent(_PI05_NOISE_SERVER_PROGRAM).strip()
+    if adapted:
+        original = (
+            "selected = training_config.get_config(args.config)\n"
+            "real_policy = policy_config.create_trained_policy(selected, args.checkpoint)"
+        )
+        replacement = (
+            "from npa.workflows.byof.openpi_selected_policy import load_selected_policy\n"
+            "real_policy, selected = load_selected_policy(args.checkpoint)"
+        )
+        if program.count(original) != 1:
+            raise OpenPIServiceError("adapted policy loader insertion contract changed")
+        program = program.replace(original, replacement)
+    return program
+
+
+def _generic_server_program() -> str:
+    """Return the unchanged unauthenticated upstream-compatible server path."""
+
+    return textwrap.dedent(_GENERIC_SERVER_PROGRAM).strip()
+
+
+def _public_checkpoint_verify_program(provenance: Mapping[str, object]) -> str:
+    """Build an in-pod full-byte verifier for a generation-bound GCS manifest."""
+
+    records = provenance.get("objects")
+    if not isinstance(records, list) or not records:
+        raise OpenPIServiceError("public checkpoint provenance lacks object records")
+    encoded = json.dumps(records, sort_keys=True, separators=(",", ":"))
+    return f"""import base64,hashlib,json,os,pathlib
+root=pathlib.Path(os.environ['NPA_RESOLVED_CHECKPOINT_DIR'])
+expected=json.loads({encoded!r})
+actual=[]
+for path in sorted(item for item in root.rglob('*') if item.is_file()):
+    md5=hashlib.md5(usedforsecurity=False)
+    with path.open('rb') as stream:
+        for chunk in iter(lambda:stream.read(8*1024*1024),b''): md5.update(chunk)
+    actual.append({{'path':path.relative_to(root).as_posix(),'size':path.stat().st_size,
+                   'md5Hash':base64.b64encode(md5.digest()).decode('ascii')}})
+comparable=[{{'path':row['path'],'size':row['size'],'md5Hash':row['md5Hash']}} for row in expected]
+assert actual==comparable,'downloaded checkpoint differs from generation-bound GCS manifest'
+"""
+
+
+def _inject_public_checkpoint_binding(
+    manifests: dict[str, dict[str, Any]], provenance: Mapping[str, object]
+) -> None:
+    container = manifests["deployment"]["spec"]["template"]["spec"]["containers"][0]
+    manifest_sha256 = provenance.get("sha256")
+    if not isinstance(manifest_sha256, str) or not re.fullmatch(
+        r"[0-9a-f]{64}", manifest_sha256
+    ):
+        raise OpenPIServiceError(
+            "public checkpoint provenance lacks a generation-manifest digest"
+        )
+    container["env"].append(
+        {
+            "name": "NPA_OPENPI_PUBLIC_CHECKPOINT_MANIFEST_SHA256",
+            "value": manifest_sha256,
+        }
+    )
+    shell = container["command"][2]
+    marker = "exec /opt/venv/bin/python -c "
+    if marker not in shell:
+        raise OpenPIServiceError("unexpected OpenPI server exec contract")
+    verifier = "/opt/venv/bin/python -c " + shlex.quote(
+        _public_checkpoint_verify_program(provenance)
+    )
+    prefix = 'export NPA_RESOLVED_CHECKPOINT_DIR="$checkpoint_dir"; '
+    container["command"][2] = shell.replace(marker, f"{prefix}{verifier}; {marker}", 1)
+
+
 def _safe_name(run_id: str) -> str:
     digest = hashlib.sha256(run_id.encode("utf-8")).hexdigest()[:12]
     return f"npa-openpi-{digest}"
@@ -78,7 +261,8 @@ def service_resource_names(run_id: str) -> dict[str, str]:
 
     base_name = _safe_name(run_id)
     return {
-        "secret": f"{base_name}-terms",
+        "secret": f"{base_name}-runtime",
+        "legacy_terms_secret": f"{base_name}-terms",
         "service": f"{base_name}-policy",
         "deployment": base_name,
         "client_job": f"{base_name}-client",
@@ -141,7 +325,10 @@ def build_controller_rbac_manifests(
         {
             "apiGroups": [""],
             "resources": ["secrets"],
-            "resourceNames": [resource_names["secret"]],
+            "resourceNames": [
+                resource_names["secret"],
+                resource_names["legacy_terms_secret"],
+            ],
             "verbs": ["get", "delete"],
         },
         {
@@ -238,7 +425,10 @@ observation = {
 opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 with opener.open(f"http://{host}:{port}/healthz") as response:
     health = response.read().decode("utf-8").strip()
-client = websocket_client_policy.WebsocketClientPolicy(host, port)
+token = os.environ.get("NPA_OPENPI_SERVICE_AUTH_TOKEN", "")
+client = websocket_client_policy.WebsocketClientPolicy(
+    host, port, api_key=token or None
+)
 requests = []
 for index in range(2):
     started = time.perf_counter()
@@ -278,7 +468,10 @@ print("NPA_OPENPI_CLIENT_RESULT=" + encoded, flush=True)
 def _server_hardware_program() -> str:
     """Self-contained GPU proof for a server image that does not embed NPA."""
 
-    return r"""
+    return (
+        standalone_program()
+        + "\n"
+        + r"""
 import importlib.metadata
 import json
 import os
@@ -358,16 +551,17 @@ result = {
     "sm100_probe": sm100_probe,
 }
 encoded = json.dumps(result, sort_keys=True, separators=(",", ":"))
-with open("/tmp/npa-openpi-server-hardware.json", "w", encoding="utf-8") as stream:
+with diagnostic_path("npa-openpi-server-hardware.json").open("w", encoding="utf-8") as stream:
     stream.write(encoded)
 print("NPA_OPENPI_SERVER_HARDWARE=" + encoded, flush=True)
 """.strip()
+    )
 
 
 def _redirect_policy_cache_to_durable_storage(deployment: dict[str, Any]) -> None:
     """Send the policy checkpoint to the operator's weight cache when there is one.
 
-    `OPENPI_DATA_HOME` is where the gated Gemma-derived checkpoint lands, and it was
+    `OPENPI_DATA_HOME` is where the runtime-fetched checkpoint lands, and it was
     backed by an ``emptyDir``: a Deployment replaces its pod on every rollout, image
     change and node drain, so the download was paid again each time on a GPU that is
     already running. With a claim configured it moves to the shared cache like every
@@ -414,6 +608,246 @@ def _redirect_policy_cache_to_durable_storage(deployment: dict[str, Any]) -> Non
         container["env"] = env
 
 
+def _validate_manifest_inputs(
+    runtime_image: str, auth_secret: str, gpu_count: int
+) -> None:
+    if not RUNTIME_IMAGE_RE.fullmatch(runtime_image):
+        raise OpenPIServiceError("service runtime image must be digest-pinned")
+    valid_secret = re.fullmatch(r"[a-z0-9](?:[-a-z0-9]*[a-z0-9])?", auth_secret)
+    if auth_secret and (len(auth_secret) > 63 or not valid_secret):
+        raise OpenPIServiceError(
+            f"auth secret must be a Kubernetes DNS label: {auth_secret!r}"
+        )
+    if gpu_count < 1:
+        raise OpenPIServiceError("OpenPI policy server requires at least one GPU")
+
+
+def _policy_server_shell(config_name: str, auth_secret: str) -> str:
+    hardware_probe = "/opt/venv/bin/python -c " + shlex.quote(
+        _server_hardware_program()
+    )
+    program = _pi05_noise_server_program() if auth_secret else _generic_server_program()
+    diagnostics_probe = "/opt/venv/bin/python -c " + shlex.quote(
+        standalone_program() + "\nprint(diagnostics_directory())"
+    )
+    return (
+        "set -euo pipefail; "
+        f"diagnostics_dir=$({diagnostics_probe}); "
+        f"{hardware_probe}; "
+        f"/opt/venv/bin/python -m http.server {SERVER_DIAGNOSTICS_PORT} "
+        '--bind 0.0.0.0 --directory "$diagnostics_dir" >/dev/null 2>&1 & '
+        "checkpoint_dir=$(/opt/venv/bin/python -c 'import os; "
+        "from openpi.shared import download; "
+        'print(download.maybe_download(os.environ["OPENPI_CHECKPOINT_URI"], token="anon"))\'); '
+        "exec /opt/venv/bin/python -c "
+        f"{shlex.quote(program)} --port={SERVER_PORT} "
+        f'--config={shlex.quote(config_name)} --checkpoint="$checkpoint_dir"'
+    )
+
+
+def _policy_container(options: Mapping[str, Any], server_shell: str) -> dict[str, Any]:
+    return {
+        "name": "openpi-policy",
+        "image": options["runtime_image"],
+        "imagePullPolicy": "IfNotPresent",
+        "command": ["/bin/bash", "-lc", server_shell],
+        "ports": [
+            {"name": "websocket", "containerPort": SERVER_PORT},
+            {"name": "diagnostics", "containerPort": SERVER_DIAGNOSTICS_PORT},
+        ],
+        "env": _policy_environment(options),
+        "resources": _policy_resources(options),
+        "volumeMounts": [
+            {"name": "openpi-cache", "mountPath": "/workspace/openpi-server-cache"}
+        ],
+        "readinessProbe": {
+            "httpGet": {"path": "/healthz", "port": SERVER_PORT},
+            "periodSeconds": 5,
+            "failureThreshold": 240,
+        },
+        "livenessProbe": {
+            "httpGet": {"path": "/healthz", "port": SERVER_PORT},
+            "initialDelaySeconds": options["liveness_delay"],
+            "periodSeconds": 30,
+            "failureThreshold": 6,
+        },
+    }
+
+
+def _policy_environment(options: Mapping[str, Any]) -> list[dict[str, str]]:
+    return [
+        {"name": "OPENPI_DATA_HOME", "value": "/workspace/openpi-server-cache"},
+        {"name": "OPENPI_CHECKPOINT_URI", "value": options["checkpoint_uri"]},
+        {"name": "OPENPI_EXPECTED_GPU_TYPE", "value": options["expected_gpu_type"]},
+        {"name": "OPENPI_EXPECTED_GPU_COUNT", "value": str(options["gpu_count"])},
+        {
+            "name": "OPENPI_EXPECTED_COMPUTE_CAPABILITY",
+            "value": options["expected_compute_capability"],
+        },
+    ]
+
+
+def _policy_resources(options: Mapping[str, Any]) -> dict[str, Any]:
+    gpu_count = str(options["gpu_count"])
+    return {
+        "requests": {
+            "cpu": options["server_cpu"],
+            "memory": options["server_memory"],
+            "nvidia.com/gpu": gpu_count,
+        },
+        "limits": {"nvidia.com/gpu": gpu_count},
+    }
+
+
+def _deployment_manifest(options: Mapping[str, Any]) -> dict[str, Any]:
+    labels, selector = options["labels"], options["selector"]
+    pod_spec = {
+        "restartPolicy": "Always",
+        "imagePullSecrets": options["pull_secrets"],
+        "nodeSelector": options["node_selector"],
+        "containers": [_policy_container(options, options["server_shell"])],
+        "volumes": [
+            {"name": "openpi-cache", "emptyDir": {"sizeLimit": options["cache_size"]}}
+        ],
+    }
+    return {
+        "apiVersion": "apps/v1",
+        "kind": "Deployment",
+        "metadata": {
+            "name": options["name"],
+            "namespace": options["namespace"],
+            "labels": labels,
+        },
+        "spec": {
+            "replicas": 1,
+            "progressDeadlineSeconds": math.ceil(options["server_timeout"]),
+            "selector": {"matchLabels": selector},
+            "template": {
+                "metadata": {"labels": {**labels, **selector}},
+                "spec": pod_spec,
+            },
+        },
+    }
+
+
+def _service_manifest(options: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "apiVersion": "v1",
+        "kind": "Service",
+        "metadata": {
+            "name": options["service_name"],
+            "namespace": options["namespace"],
+            "labels": options["labels"],
+        },
+        "spec": {
+            "type": "ClusterIP",
+            "selector": options["selector"],
+            "ports": [
+                {"name": "websocket", "port": SERVER_PORT, "targetPort": SERVER_PORT},
+                {
+                    "name": "diagnostics",
+                    "port": SERVER_DIAGNOSTICS_PORT,
+                    "targetPort": SERVER_DIAGNOSTICS_PORT,
+                },
+            ],
+        },
+    }
+
+
+def _client_manifest(options: Mapping[str, Any]) -> dict[str, Any]:
+    container = _client_container(options)
+    pod_spec = {
+        "restartPolicy": "Never",
+        "imagePullSecrets": options["pull_secrets"],
+        "containers": [container],
+    }
+    return {
+        "apiVersion": "batch/v1",
+        "kind": "Job",
+        "metadata": {
+            "name": options["client_name"],
+            "namespace": options["namespace"],
+            "labels": options["labels"],
+        },
+        "spec": {
+            "backoffLimit": 0,
+            "activeDeadlineSeconds": math.ceil(options["client_timeout"]),
+            "template": {
+                "metadata": {
+                    "labels": {**options["labels"], "app": options["client_name"]}
+                },
+                "spec": pod_spec,
+            },
+        },
+    }
+
+
+def _client_container(options: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "name": "openpi-client",
+        "image": options["runtime_image"],
+        "imagePullPolicy": "IfNotPresent",
+        "command": ["/opt/venv/bin/python", "-c", _client_program()],
+        "env": [
+            {"name": "OPENPI_SERVICE_HOST", "value": options["service_name"]},
+            {"name": "OPENPI_SERVICE_PORT", "value": str(SERVER_PORT)},
+        ],
+        "resources": {
+            "requests": {
+                "cpu": options["client_cpu"],
+                "memory": options["client_memory"],
+            }
+        },
+    }
+
+
+def _manifest_options(
+    values: Mapping[str, Any], names: Mapping[str, str]
+) -> dict[str, Any]:
+    name = names["deployment"]
+    labels = _run_labels(str(values["run_id"]), name)
+    key, value = values["gpu_node_selector_key"], values["gpu_node_selector_value"]
+    return dict(values) | {
+        "name": name,
+        "service_name": names["service"],
+        "client_name": names["client_job"],
+        "labels": labels,
+        "selector": {"npa.nebius.ai/cleanup-owner": name, "app": name},
+        "pull_secrets": [{"name": values["pull_secret"]}]
+        if values["pull_secret"]
+        else [],
+        "node_selector": {key: value} if key and value else {},
+        "liveness_delay": values["liveness_initial_delay_seconds"],
+        "server_shell": _policy_server_shell(
+            str(values["config_name"]), str(values["auth_secret"])
+        ),
+    }
+
+
+def _assembled_manifests(
+    options: Mapping[str, Any], auth_secret: str
+) -> dict[str, dict[str, Any]]:
+    deployment = _deployment_manifest(options)
+    service = _service_manifest(options)
+    client_job = _client_manifest(options)
+    _inject_auth_reference(deployment, auth_secret)
+    _inject_auth_reference(client_job, auth_secret)
+    _redirect_policy_cache_to_durable_storage(deployment)
+    return {"deployment": deployment, "service": service, "client_job": client_job}
+
+
+def _inject_auth_reference(manifest: dict[str, Any], auth_secret: str) -> None:
+    if not auth_secret:
+        return
+    container = manifest["spec"]["template"]["spec"]["containers"][0]
+    container["env"].append(
+        {
+            "name": "NPA_OPENPI_SERVICE_AUTH_TOKEN",
+            "valueFrom": {"secretKeyRef": {"name": auth_secret, "key": "auth_token"}},
+        }
+    )
+
+
 def build_manifests(
     *,
     run_id: str,
@@ -433,220 +867,24 @@ def build_manifests(
     gpu_node_selector_key: str,
     gpu_node_selector_value: str,
     cache_size: str,
+    auth_secret: str = "",
     server_ready_timeout_seconds: float = DEFAULT_SERVER_READY_TIMEOUT_SECONDS,
     client_timeout_seconds: float = DEFAULT_CLIENT_TIMEOUT_SECONDS,
 ) -> dict[str, dict[str, Any]]:
-    """Build the exact Secret/Deployment/ClusterIP/Job objects as testable data."""
-
-    if not RUNTIME_IMAGE_RE.fullmatch(runtime_image):
-        raise OpenPIServiceError("service runtime image must be digest-pinned")
-    if gpu_count < 1:
-        raise OpenPIServiceError("OpenPI policy server requires at least one GPU")
-    server_ready_timeout_seconds = _validated_positive_seconds(
+    """Build the exact Deployment/ClusterIP/Job objects as testable data."""
+    _validate_manifest_inputs(runtime_image, auth_secret, gpu_count)
+    server_timeout = _validated_positive_seconds(
         server_ready_timeout_seconds, "server ready timeout"
     )
-    client_timeout_seconds = _validated_positive_seconds(
+    client_timeout = _validated_positive_seconds(
         client_timeout_seconds, "client timeout"
     )
     names = service_resource_names(run_id)
-    name = names["deployment"]
-    labels = _run_labels(run_id, name)
-    selector = {"npa.nebius.ai/cleanup-owner": name, "app": name}
-    pod_labels = {**labels, **selector}
-    secret_name = names["secret"]
-    service_name = names["service"]
-    client_name = names["client_job"]
-    pull_secrets = [{"name": pull_secret}] if pull_secret else []
-    hardware_probe = "/opt/venv/bin/python -c " + shlex.quote(
-        _server_hardware_program()
+    options = _manifest_options(
+        locals() | {"server_timeout": server_timeout, "client_timeout": client_timeout},
+        names,
     )
-    server_shell = (
-        'set -euo pipefail; test "$NPA_OPENPI_ACCEPT_GEMMA_TERMS" = "YES" || exit 64; '
-        f"{hardware_probe}; "
-        f"/opt/venv/bin/python -m http.server {SERVER_DIAGNOSTICS_PORT} "
-        "--bind 0.0.0.0 --directory /tmp >/tmp/npa-openpi-diagnostics.log 2>&1 & "
-        "checkpoint_dir=$(/opt/venv/bin/python -c 'import os; "
-        "from openpi.shared import download; "
-        'print(download.maybe_download(os.environ["OPENPI_CHECKPOINT_URI"], token="anon"))\'); '
-        "exec /opt/venv/bin/python /opt/byof/scripts/serve_policy.py "
-        f"--port={SERVER_PORT} policy:checkpoint "
-        f'--policy.config={config_name} --policy.dir="$checkpoint_dir"'
-    )
-    secret = {
-        "apiVersion": "v1",
-        "kind": "Secret",
-        "metadata": {"name": secret_name, "namespace": namespace, "labels": labels},
-        "type": "Opaque",
-        "data": {
-            OPENPI_TERMS_ENV: base64.b64encode(
-                OPENPI_TERMS_ACCEPTED_VALUE.encode("utf-8")
-            ).decode("ascii")
-        },
-    }
-    deployment = {
-        "apiVersion": "apps/v1",
-        "kind": "Deployment",
-        "metadata": {"name": name, "namespace": namespace, "labels": labels},
-        "spec": {
-            "replicas": 1,
-            "progressDeadlineSeconds": max(1, math.ceil(server_ready_timeout_seconds)),
-            "selector": {"matchLabels": selector},
-            "template": {
-                "metadata": {"labels": pod_labels},
-                "spec": {
-                    "restartPolicy": "Always",
-                    "imagePullSecrets": pull_secrets,
-                    "nodeSelector": (
-                        {gpu_node_selector_key: gpu_node_selector_value}
-                        if gpu_node_selector_key and gpu_node_selector_value
-                        else {}
-                    ),
-                    "containers": [
-                        {
-                            "name": "openpi-policy",
-                            "image": runtime_image,
-                            "imagePullPolicy": "IfNotPresent",
-                            "command": ["/bin/bash", "-lc", server_shell],
-                            "ports": [
-                                {"name": "websocket", "containerPort": SERVER_PORT},
-                                {
-                                    "name": "diagnostics",
-                                    "containerPort": SERVER_DIAGNOSTICS_PORT,
-                                },
-                            ],
-                            "env": [
-                                {
-                                    "name": OPENPI_TERMS_ENV,
-                                    "valueFrom": {
-                                        "secretKeyRef": {
-                                            "name": secret_name,
-                                            "key": OPENPI_TERMS_ENV,
-                                        }
-                                    },
-                                },
-                                {
-                                    "name": "OPENPI_DATA_HOME",
-                                    "value": "/workspace/openpi-server-cache",
-                                },
-                                {
-                                    "name": "OPENPI_CHECKPOINT_URI",
-                                    "value": checkpoint_uri,
-                                },
-                                {
-                                    "name": "OPENPI_EXPECTED_GPU_TYPE",
-                                    "value": expected_gpu_type,
-                                },
-                                {
-                                    "name": "OPENPI_EXPECTED_GPU_COUNT",
-                                    "value": str(gpu_count),
-                                },
-                                {
-                                    "name": "OPENPI_EXPECTED_COMPUTE_CAPABILITY",
-                                    "value": expected_compute_capability,
-                                },
-                            ],
-                            "resources": {
-                                "requests": {
-                                    "cpu": server_cpu,
-                                    "memory": server_memory,
-                                    "nvidia.com/gpu": str(gpu_count),
-                                },
-                                "limits": {"nvidia.com/gpu": str(gpu_count)},
-                            },
-                            "volumeMounts": [
-                                {
-                                    "name": "openpi-cache",
-                                    "mountPath": "/workspace/openpi-server-cache",
-                                }
-                            ],
-                            "readinessProbe": {
-                                "httpGet": {"path": "/healthz", "port": SERVER_PORT},
-                                "periodSeconds": 5,
-                                "failureThreshold": 240,
-                            },
-                            "livenessProbe": {
-                                "httpGet": {"path": "/healthz", "port": SERVER_PORT},
-                                "initialDelaySeconds": liveness_initial_delay_seconds,
-                                "periodSeconds": 30,
-                                "failureThreshold": 6,
-                            },
-                        }
-                    ],
-                    "volumes": [
-                        {
-                            "name": "openpi-cache",
-                            "emptyDir": {"sizeLimit": cache_size},
-                        }
-                    ],
-                },
-            },
-        },
-    }
-    _redirect_policy_cache_to_durable_storage(deployment)
-    service = {
-        "apiVersion": "v1",
-        "kind": "Service",
-        "metadata": {"name": service_name, "namespace": namespace, "labels": labels},
-        "spec": {
-            "type": "ClusterIP",
-            "selector": selector,
-            "ports": [
-                {"name": "websocket", "port": SERVER_PORT, "targetPort": SERVER_PORT},
-                {
-                    "name": "diagnostics",
-                    "port": SERVER_DIAGNOSTICS_PORT,
-                    "targetPort": SERVER_DIAGNOSTICS_PORT,
-                },
-            ],
-        },
-    }
-    client_job = {
-        "apiVersion": "batch/v1",
-        "kind": "Job",
-        "metadata": {"name": client_name, "namespace": namespace, "labels": labels},
-        "spec": {
-            "backoffLimit": 0,
-            "activeDeadlineSeconds": max(1, math.ceil(client_timeout_seconds)),
-            "template": {
-                "metadata": {"labels": {**labels, "app": client_name}},
-                "spec": {
-                    "restartPolicy": "Never",
-                    "imagePullSecrets": pull_secrets,
-                    "containers": [
-                        {
-                            "name": "openpi-client",
-                            "image": runtime_image,
-                            "imagePullPolicy": "IfNotPresent",
-                            "command": [
-                                "/opt/venv/bin/python",
-                                "-c",
-                                _client_program(),
-                            ],
-                            "env": [
-                                {"name": "OPENPI_SERVICE_HOST", "value": service_name},
-                                {
-                                    "name": "OPENPI_SERVICE_PORT",
-                                    "value": str(SERVER_PORT),
-                                },
-                            ],
-                            "resources": {
-                                "requests": {
-                                    "cpu": client_cpu,
-                                    "memory": client_memory,
-                                },
-                            },
-                        }
-                    ],
-                },
-            },
-        },
-    }
-    return {
-        "secret": secret,
-        "deployment": deployment,
-        "service": service,
-        "client_job": client_job,
-    }
+    return _assembled_manifests(options, auth_secret)
 
 
 def _api_exception_status(exc: Exception) -> int | None:
@@ -754,16 +992,17 @@ def _create_server_objects(
     request_timeout: float = DEFAULT_API_TIMEOUT_SECONDS,
 ) -> None:
     tracker = created if created is not None else set()
-    namespace = manifests["secret"]["metadata"]["namespace"]
-    _create_exact_object(
-        api.create_namespaced_secret,
-        api.read_namespaced_secret,
-        namespace=namespace,
-        manifest=manifests["secret"],
-        kind="secret",
-        tracker=tracker,
-        request_timeout=request_timeout,
-    )
+    namespace = manifests["deployment"]["metadata"]["namespace"]
+    if "secret" in manifests:
+        _create_exact_object(
+            api.create_namespaced_secret,
+            api.read_namespaced_secret,
+            namespace=namespace,
+            manifest=manifests["secret"],
+            kind="secret",
+            tracker=tracker,
+            request_timeout=request_timeout,
+        )
     _create_exact_object(
         apps.create_namespaced_deployment,
         apps.read_namespaced_deployment,
@@ -820,8 +1059,11 @@ def _assert_targets_absent(
         ("deployment", apps.read_namespaced_deployment),
         ("service", api.read_namespaced_service),
         ("secret", api.read_namespaced_secret),
+        ("legacy_terms_secret", api.read_namespaced_secret),
     )
     for key, reader in readers:
+        if key not in names:
+            continue
         try:
             _api_call(
                 reader,
@@ -935,6 +1177,76 @@ def _deployment_state(deployment: Any, pods: Sequence[Any]) -> dict[str, object]
     }
 
 
+def _read_server_state(
+    api: Any, apps: Any, namespace: str, name: str, request_timeout: float
+) -> tuple[Any, Sequence[Any], dict[str, object]]:
+    deployment = _api_call(
+        apps.read_namespaced_deployment,
+        name,
+        namespace,
+        request_timeout=request_timeout,
+    )
+    pods = _api_call(
+        api.list_namespaced_pod,
+        namespace,
+        label_selector=f"npa.nebius.ai/cleanup-owner={name},app={name}",
+        request_timeout=request_timeout,
+    ).items
+    return deployment, pods, _deployment_state(deployment, pods)
+
+
+def _ready_server_pod(
+    deployment: Any, pods: Sequence[Any], state: Mapping[str, object]
+) -> Any | None:
+    if int(deployment.status.available_replicas or 0) < 1:
+        return None
+    ready = [
+        pod
+        for pod in pods
+        if pod.status.phase == "Running"
+        and any(
+            condition.type == "Ready" and condition.status == "True"
+            for condition in pod.status.conditions or []
+        )
+    ]
+    if len(ready) > 1:
+        raise OpenPIServiceError(f"server Deployment has multiple ready pods: {state}")
+    return ready[0] if ready else None
+
+
+def _validate_server_progress(state: Mapping[str, object], pods: Sequence[Any]) -> None:
+    for condition in state.get("conditions", []):
+        if (
+            condition.get("reason") == "ProgressDeadlineExceeded"
+            and condition.get("status") == "False"
+        ):
+            raise OpenPIServiceError(
+                "server Deployment exceeded its progress deadline: "
+                f"{json.dumps(state, sort_keys=True)}"
+            )
+    for pod in pods:
+        problem = _terminal_pod_problem(pod)
+        if problem:
+            raise OpenPIServiceError(f"server {problem}")
+
+
+def _service_endpoint_ready(service_dns: str, http_timeout: float) -> bool:
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    try:
+        with opener.open(
+            f"http://{service_dns}:{SERVER_PORT}/healthz", timeout=http_timeout
+        ) as response:
+            health = response.read().decode("utf-8").strip()
+    except urllib.error.URLError as error:
+        # Pod readiness can precede the Service backend's routing update.
+        if isinstance(error.reason, ConnectionRefusedError):
+            return False
+        raise
+    if health != "OK":
+        raise OpenPIServiceError(f"unexpected service health response {health!r}")
+    return True
+
+
 def _wait_server_ready(
     api: Any,
     apps: Any,
@@ -944,57 +1256,25 @@ def _wait_server_ready(
     timeout: float = DEFAULT_SERVER_READY_TIMEOUT_SECONDS,
     poll_interval: float = DEFAULT_POLL_INTERVAL_SECONDS,
     request_timeout: float = DEFAULT_API_TIMEOUT_SECONDS,
+    health_check: Callable[[], bool] | None = None,
     clock: Callable[[], float] = time.monotonic,
     sleep: Callable[[float], None] = time.sleep,
 ) -> Any:
     timeout = _validated_positive_seconds(timeout, "server ready timeout")
     poll_interval = _validated_positive_seconds(poll_interval, "poll interval")
     deadline = clock() + timeout
-    selector = f"npa.nebius.ai/cleanup-owner={name},app={name}"
     last_state: dict[str, object] = {}
     while clock() < deadline:
-        deployment = _api_call(
-            apps.read_namespaced_deployment,
-            name,
-            namespace,
-            request_timeout=request_timeout,
+        deployment, pods, last_state = _read_server_state(
+            api, apps, namespace, name, request_timeout
         )
-        pods = _api_call(
-            api.list_namespaced_pod,
-            namespace,
-            label_selector=selector,
-            request_timeout=request_timeout,
-        ).items
-        last_state = _deployment_state(deployment, pods)
-        if int(deployment.status.available_replicas or 0) >= 1:
-            ready = [
-                pod
-                for pod in pods
-                if pod.status.phase == "Running"
-                and any(
-                    condition.type == "Ready" and condition.status == "True"
-                    for condition in pod.status.conditions or []
-                )
-            ]
-            if len(ready) == 1:
-                return ready[0]
-            if len(ready) > 1:
-                raise OpenPIServiceError(
-                    f"server Deployment has multiple ready pods: {last_state}"
-                )
-        for condition in last_state.get("conditions", []):
-            if (
-                condition.get("reason") == "ProgressDeadlineExceeded"
-                and condition.get("status") == "False"
-            ):
-                raise OpenPIServiceError(
-                    "server Deployment exceeded its progress deadline: "
-                    f"{json.dumps(last_state, sort_keys=True)}"
-                )
-        for pod in pods:
-            problem = _terminal_pod_problem(pod)
-            if problem:
-                raise OpenPIServiceError(f"server {problem}")
+        server = _ready_server_pod(deployment, pods, last_state)
+        if server is not None:
+            endpoint_ready = health_check is None or health_check()
+            if endpoint_ready:
+                return server
+            last_state["service_endpoint_ready"] = False
+        _validate_server_progress(last_state, pods)
         sleep(min(poll_interval, max(0.0, deadline - clock())))
     raise OpenPIServiceError(
         f"server readiness timed out after {timeout:g}s; last_state="
@@ -1160,11 +1440,15 @@ def _delete_and_verify(
         "kind": "DeleteOptions",
         "propagationPolicy": "Foreground",
     }
-    operations = (
-        ("client_job", batch.delete_namespaced_job, names["client_job"]),
-        ("deployment", apps.delete_namespaced_deployment, names["deployment"]),
-        ("service", api.delete_namespaced_service, names["service"]),
-        ("secret", api.delete_namespaced_secret, names["secret"]),
+    operation_types = (
+        ("client_job", batch.delete_namespaced_job),
+        ("deployment", apps.delete_namespaced_deployment),
+        ("service", api.delete_namespaced_service),
+        ("secret", api.delete_namespaced_secret),
+        ("legacy_terms_secret", api.delete_namespaced_secret),
+    )
+    operations = tuple(
+        (key, function, names[key]) for key, function in operation_types if key in names
     )
     issues: list[str] = []
     readers_by_key = {
@@ -1172,6 +1456,7 @@ def _delete_and_verify(
         "deployment": apps.read_namespaced_deployment,
         "service": api.read_namespaced_service,
         "secret": api.read_namespaced_secret,
+        "legacy_terms_secret": api.read_namespaced_secret,
     }
     deletable_keys = set(created_keys)
     if manifests is not None:
@@ -1215,9 +1500,12 @@ def _delete_and_verify(
         ("deployment", apps.read_namespaced_deployment),
         ("service", api.read_namespaced_service),
         ("secret", api.read_namespaced_secret),
+        ("legacy_terms_secret", api.read_namespaced_secret),
     )
     verified: dict[str, bool] = {}
     for key, reader in readers:
+        if key not in names:
+            continue
         if key not in created_keys:
             try:
                 _api_call(
@@ -1308,47 +1596,25 @@ def _delete_and_verify(
     return verified
 
 
-def _run(args: argparse.Namespace) -> int:
-    if os.environ.get(OPENPI_TERMS_ENV) != OPENPI_TERMS_ACCEPTED_VALUE:
-        _diagnostic_uri, refusal = _write_terms_refusal_diagnostic(
-            args.output_uri,
-            diagnostic_root_uri=args.terms_diagnostic_root_uri,
-            stage="serve",
-        )
-        print(json.dumps(refusal, sort_keys=True), flush=True)
-        return 64
-    if not RUNTIME_IMAGE_RE.fullmatch(args.runtime_image):
-        raise OpenPIServiceError("service runtime image must be digest-pinned")
-    if args.cleanup_output_uri == args.output_uri:
-        raise OpenPIServiceError(
-            "service success and cleanup evidence must use distinct output URIs"
-        )
-    server_ready_timeout = _validated_positive_seconds(
-        args.server_ready_timeout_seconds, "server ready timeout"
-    )
-    client_timeout = _validated_positive_seconds(
-        args.client_timeout_seconds, "client timeout"
-    )
-    cleanup_timeout = _validated_positive_seconds(
-        args.cleanup_timeout_seconds, "cleanup timeout"
-    )
-    poll_interval = _validated_positive_seconds(
-        args.poll_interval_seconds, "poll interval"
-    )
-    api_timeout = _validated_positive_seconds(
-        args.api_timeout_seconds, "Kubernetes API timeout"
-    )
-    http_timeout = _validated_positive_seconds(
-        args.http_timeout_seconds, "HTTP timeout"
-    )
+def _service_timeouts(args: argparse.Namespace) -> dict[str, float]:
+    fields = {
+        "server": (args.server_ready_timeout_seconds, "server ready timeout"),
+        "client": (args.client_timeout_seconds, "client timeout"),
+        "cleanup": (args.cleanup_timeout_seconds, "cleanup timeout"),
+        "poll": (args.poll_interval_seconds, "poll interval"),
+        "api": (args.api_timeout_seconds, "Kubernetes API timeout"),
+        "http": (args.http_timeout_seconds, "HTTP timeout"),
+    }
+    return {
+        name: _validated_positive_seconds(value, label)
+        for name, (value, label) in fields.items()
+    }
 
-    from kubernetes import client, config
 
-    config.load_incluster_config()
-    api = client.CoreV1Api()
-    apps = client.AppsV1Api()
-    batch = client.BatchV1Api()
-    manifests = build_manifests(
+def _service_manifests(
+    args: argparse.Namespace, timeouts: Mapping[str, float]
+) -> dict[str, dict[str, Any]]:
+    return build_manifests(
         run_id=args.run_id,
         namespace=args.namespace,
         runtime_image=args.runtime_image,
@@ -1366,16 +1632,291 @@ def _run(args: argparse.Namespace) -> int:
         gpu_node_selector_key=args.gpu_node_selector_key,
         gpu_node_selector_value=args.gpu_node_selector_value,
         cache_size=args.service_cache_size,
-        server_ready_timeout_seconds=server_ready_timeout,
-        client_timeout_seconds=client_timeout,
+        server_ready_timeout_seconds=timeouts["server"],
+        client_timeout_seconds=timeouts["client"],
     )
-    checkpoint_provenance = _checkpoint_provenance(args.checkpoint_uri)
-    names = {key: str(value["metadata"]["name"]) for key, value in manifests.items()}
-    cleanup_verified: dict[str, bool] = {}
+
+
+def _validate_served_requests(client_result: Mapping[str, Any]) -> None:
+    if (
+        client_result.get("status") != "passed"
+        or client_result.get("request_count") != 2
+    ):
+        raise OpenPIServiceError(
+            f"cross-pod client evidence is invalid: {client_result}"
+        )
+    requests = client_result.get("requests")
+    if not isinstance(requests, list) or len(requests) != 2:
+        raise OpenPIServiceError("cross-pod client did not return exactly two requests")
+    for request in requests:
+        shape = list(request.get("shape", []))
+        valid = (
+            request.get("dtype") == "float64"
+            and request.get("finite") is True
+            and shape[1:] == [ACTION_DIM]
+            and bool(shape)
+            and int(shape[0]) >= 5
+        )
+        if not valid:
+            raise OpenPIServiceError(f"invalid served request evidence: {request}")
+
+
+def _service_health(
+    service_dns: str, http_timeout: float
+) -> tuple[str, dict[str, Any]]:
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    with opener.open(
+        f"http://{service_dns}:{SERVER_PORT}/healthz", timeout=http_timeout
+    ) as response:
+        health = response.read().decode("utf-8").strip()
+    if health != "OK":
+        raise OpenPIServiceError(f"unexpected service health response {health!r}")
+    url = f"http://{service_dns}:{SERVER_DIAGNOSTICS_PORT}/npa-openpi-server-hardware.json"
+    with opener.open(url, timeout=http_timeout) as response:
+        hardware = json.loads(response.read().decode("utf-8"))
+    if not isinstance(hardware, dict):
+        raise OpenPIServiceError("server hardware endpoint returned a non-object")
+    return health, hardware
+
+
+def _service_result(
+    args: argparse.Namespace, evidence: Mapping[str, Any]
+) -> dict[str, object]:
+    names, timeouts = evidence["names"], evidence["timeouts"]
+    return {
+        "schema": "npa.workbench.openpi.pi05-cross-pod-service.v1",
+        "status": "passed",
+        "mode": "serve",
+        "source": _service_source_evidence(),
+        "redistribution": _redistribution_evidence(),
+        "runtime_image": args.runtime_image,
+        "hardware": evidence["hardware"],
+        "checkpoint": {
+            "uri": args.checkpoint_uri,
+            "provenance": evidence["provenance"],
+            "weights_baked": False,
+        },
+        "topology": _service_topology_evidence(args, names, evidence),
+        "probes": {
+            "readiness": {"path": "/healthz", "passed": True},
+            "liveness": {"path": "/healthz", "configured": True},
+            "clusterip_health": evidence["health"],
+        },
+        "failure_recovery_deadlines_seconds": _service_deadlines(timeouts),
+        "client": evidence["client_result"],
+        "request_count": 2,
+        "all_trajectories_float64_finite_t_ge_5_x_8": True,
+        "service_seconds_before_cleanup": round(
+            time.perf_counter() - evidence["started"], 3
+        ),
+        "artifact_access": _public_service_access(),
+        "cleanup_identity": _cleanup_identity(args, names),
+        "limitations": [
+            "clusterip_only_no_external_ingress_tested",
+            "no_physical_franka_task_success_claim",
+        ],
+    }
+
+
+def _public_service_access() -> dict[str, object]:
+    return {
+        "checkpoint_source": "public_anonymous_gcs",
+        "npa_terms_attestation_required": False,
+        "credential_persisted_after_cleanup": False,
+    }
+
+
+def _service_deadlines(timeouts: Mapping[str, float]) -> dict[str, float | int]:
+    return {
+        "server_ready": timeouts["server"],
+        "client": timeouts["client"],
+        "client_job_active_deadline": math.ceil(timeouts["client"]),
+        "cleanup": timeouts["cleanup"],
+        "kubernetes_api_request": timeouts["api"],
+        "http_request": timeouts["http"],
+        "poll_interval": timeouts["poll"],
+    }
+
+
+def _service_source_evidence() -> dict[str, str]:
+    return {
+        "repository": "https://github.com/Physical-Intelligence/openpi",
+        "ref": SOURCE_REF,
+        "license": SOURCE_LICENSE,
+        "server_entrypoint": "upstream_openpi_websocket_policy_server",
+        "transport": "upstream_openpi_websocket",
+    }
+
+
+def _service_topology_evidence(
+    args: argparse.Namespace, names: Mapping[str, str], evidence: Mapping[str, Any]
+) -> dict[str, Any]:
+    return {
+        "deployment": names["deployment"],
+        "service": names["service"],
+        "service_type": "ClusterIP",
+        "public_ingress": False,
+        "server_pod_uid": evidence["server_uid"],
+        "client_pod_uid": evidence["client_uid"],
+        "separate_pods": True,
+        "server_gpu_request": args.gpu_count,
+        "client_gpu_request": 0,
+        "client_created_after_clusterip_health": True,
+        "controller_service_account": args.controller_service_account,
+    }
+
+
+def _cleanup_identity(
+    args: argparse.Namespace, names: Mapping[str, str]
+) -> dict[str, Any]:
+    return {
+        "managed_by": MANAGED_BY,
+        "exact_names": names,
+        "pod_selector": f"npa.nebius.ai/cleanup-owner={names['deployment']}",
+        "controller_service_account": args.controller_service_account,
+        "controller_rbac_lifecycle": "external_exact_owner_apply_delete",
+    }
+
+
+def _operate_service(
+    args: argparse.Namespace,
+    clients: tuple[Any, Any, Any],
+    manifests: Mapping[str, Any],
+    names: Mapping[str, str],
+    timeouts: Mapping[str, float],
+    provenance: Mapping[str, Any],
+    created: set[str],
+    started: float,
+) -> dict[str, object]:
+    server, client, health, hardware = _run_service_pods(
+        args, clients, manifests, names, timeouts, created
+    )
+    client_result = _client_result_from_termination(client)
+    _validate_served_requests(client_result)
+    server_uid, client_uid = str(server.metadata.uid), str(client.metadata.uid)
+    if not server_uid or not client_uid or server_uid == client_uid:
+        raise OpenPIServiceError("server and client were not distinct Kubernetes pods")
+    evidence = {
+        "names": names,
+        "timeouts": timeouts,
+        "hardware": hardware,
+        "provenance": provenance,
+        "health": health,
+        "client_result": client_result,
+        "server_uid": server_uid,
+        "client_uid": client_uid,
+        "started": started,
+    }
+    return _service_result(args, evidence)
+
+
+def _run_service_pods(
+    args: argparse.Namespace,
+    clients: tuple[Any, Any, Any],
+    manifests: Mapping[str, Any],
+    names: Mapping[str, str],
+    timeouts: Mapping[str, float],
+    created: set[str],
+) -> tuple[Any, Any, str, dict[str, Any]]:
+    api, apps, batch = clients
+    _create_server_objects(
+        api, apps, manifests, created=created, request_timeout=timeouts["api"]
+    )
+    dns = f"{names['service']}.{args.namespace}.svc.cluster.local"
+    server = _wait_server_ready(
+        api,
+        apps,
+        args.namespace,
+        names["deployment"],
+        timeout=timeouts["server"],
+        poll_interval=timeouts["poll"],
+        request_timeout=timeouts["api"],
+        health_check=lambda: _service_endpoint_ready(dns, timeouts["http"]),
+    )
+    health, hardware = _service_health(dns, timeouts["http"])
+    _create_client_job(
+        batch, manifests, created=created, request_timeout=timeouts["api"]
+    )
+    client = _wait_client(
+        api,
+        batch,
+        args.namespace,
+        names["client_job"],
+        timeout=timeouts["client"],
+        poll_interval=timeouts["poll"],
+        request_timeout=timeouts["api"],
+    )
+    return server, client, health, hardware
+
+
+def _cleanup_service_run(
+    clients: tuple[Any, Any, Any],
+    args: argparse.Namespace,
+    names: Mapping[str, str],
+    created: set[str],
+    manifests: Mapping[str, Any],
+    timeouts: Mapping[str, float],
+) -> dict[str, bool]:
+    if not created:
+        return {}
+    api, apps, batch = clients
+    return _delete_and_verify(
+        api,
+        apps,
+        batch,
+        namespace=args.namespace,
+        names=names,
+        created=created,
+        manifests=manifests,
+        timeout=timeouts["cleanup"],
+        poll_interval=timeouts["poll"],
+        request_timeout=timeouts["api"],
+    )
+
+
+def _publish_service_result(
+    args: argparse.Namespace, result: dict[str, Any], cleanup: Mapping[str, bool]
+) -> int:
+    result["cleanup"] = {"all_exact_resources_absent": True, "verified": cleanup}
+    cleanup_artifact = {
+        "schema": "npa.workbench.openpi.service-cleanup.v1",
+        "service_artifact_uri": args.output_uri,
+        "all_exact_resources_absent": True,
+        "verified": cleanup,
+    }
+    _write_json_uri(args.cleanup_output_uri, cleanup_artifact)
+    result["cleanup_artifact_uri"] = args.cleanup_output_uri
+    _write_json_uri(args.output_uri, result)
+    print(json.dumps(result, sort_keys=True), flush=True)
+    return 0
+
+
+def _service_execution_context(args: argparse.Namespace) -> dict[str, Any]:
+    from kubernetes import client, config
+
+    config.load_incluster_config()
+    timeouts = _service_timeouts(args)
+    clients = (client.CoreV1Api(), client.AppsV1Api(), client.BatchV1Api())
+    manifests = _service_manifests(args, timeouts)
+    provenance = _checkpoint_provenance(args.checkpoint_uri)
+    if args.checkpoint_uri.startswith("gs://"):
+        _inject_public_checkpoint_binding(manifests, provenance)
+    return {
+        "timeouts": timeouts,
+        "clients": clients,
+        "manifests": manifests,
+        "provenance": provenance,
+        "names": service_resource_names(args.run_id),
+    }
+
+
+def _execute_owned_service(
+    args: argparse.Namespace, context: Mapping[str, Any]
+) -> tuple[dict[str, object], dict[str, bool]]:
+    clients, names = context["clients"], context["names"]
+    api, apps, batch = clients
     created: set[str] = set()
-    preflight_passed = False
     result: dict[str, object] | None = None
-    started = time.perf_counter()
     run_error: Exception | None = None
     try:
         _assert_targets_absent(
@@ -1384,204 +1925,66 @@ def _run(args: argparse.Namespace) -> int:
             batch,
             namespace=args.namespace,
             names=names,
-            request_timeout=api_timeout,
+            request_timeout=context["timeouts"]["api"],
         )
-        preflight_passed = True
-        _create_server_objects(
-            api,
-            apps,
-            manifests,
-            created=created,
-            request_timeout=api_timeout,
+        result = _operate_service(
+            args,
+            clients,
+            context["manifests"],
+            names,
+            context["timeouts"],
+            context["provenance"],
+            created,
+            time.perf_counter(),
         )
-        server_pod = _wait_server_ready(
-            api,
-            apps,
-            args.namespace,
-            names["deployment"],
-            timeout=server_ready_timeout,
-            poll_interval=poll_interval,
-            request_timeout=api_timeout,
-        )
-        service_dns = f"{names['service']}.{args.namespace}.svc.cluster.local"
-        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-        with opener.open(
-            f"http://{service_dns}:{SERVER_PORT}/healthz", timeout=http_timeout
-        ) as response:
-            health = response.read().decode("utf-8").strip()
-        if health != "OK":
-            raise OpenPIServiceError(f"unexpected service health response {health!r}")
-        with opener.open(
-            (
-                f"http://{service_dns}:{SERVER_DIAGNOSTICS_PORT}/"
-                "npa-openpi-server-hardware.json"
-            ),
-            timeout=http_timeout,
-        ) as response:
-            server_hardware = json.loads(response.read().decode("utf-8"))
-        if not isinstance(server_hardware, dict):
-            raise OpenPIServiceError("server hardware endpoint returned a non-object")
-        # A Kubernetes Job starts as soon as it is created. Create the independent
-        # client only after readiness and an in-cluster ClusterIP health request,
-        # otherwise a clean cold-start can consume backoffLimit=0 before the
-        # 12 GB checkpoint has loaded.
-        _create_client_job(
-            batch,
-            manifests,
-            created=created,
-            request_timeout=api_timeout,
-        )
-        client_pod = _wait_client(
-            api,
-            batch,
-            args.namespace,
-            names["client_job"],
-            timeout=client_timeout,
-            poll_interval=poll_interval,
-            request_timeout=api_timeout,
-        )
-        client_result = _client_result_from_termination(client_pod)
-        if (
-            client_result.get("status") != "passed"
-            or client_result.get("request_count") != 2
-        ):
-            raise OpenPIServiceError(
-                f"cross-pod client evidence is invalid: {client_result}"
-            )
-        requests = client_result.get("requests")
-        if not isinstance(requests, list) or len(requests) != 2:
-            raise OpenPIServiceError(
-                "cross-pod client did not return exactly two requests"
-            )
-        for request in requests:
-            if (
-                request.get("dtype") != "float64"
-                or request.get("finite") is not True
-                or list(request.get("shape", []))[1:] != [ACTION_DIM]
-                or int(list(request.get("shape", [0]))[0]) < 5
-            ):
-                raise OpenPIServiceError(f"invalid served request evidence: {request}")
-        server_uid = str(server_pod.metadata.uid)
-        client_uid = str(client_pod.metadata.uid)
-        if not server_uid or not client_uid or server_uid == client_uid:
-            raise OpenPIServiceError(
-                "server and client were not distinct Kubernetes pods"
-            )
-        result = {
-            "schema": "npa.workbench.openpi.pi05-cross-pod-service.v1",
-            "status": "passed",
-            "mode": "serve",
-            "source": {
-                "repository": "https://github.com/Physical-Intelligence/openpi",
-                "ref": SOURCE_REF,
-                "license": SOURCE_LICENSE,
-                "server_entrypoint": "/opt/byof/scripts/serve_policy.py",
-                "transport": "upstream_openpi_websocket",
-            },
-            "redistribution": _redistribution_evidence(),
-            "runtime_image": args.runtime_image,
-            "hardware": server_hardware,
-            "checkpoint": {
-                "uri": args.checkpoint_uri,
-                "provenance": checkpoint_provenance,
-                "weights_baked": False,
-            },
-            "topology": {
-                "deployment": names["deployment"],
-                "service": names["service"],
-                "service_type": "ClusterIP",
-                "public_ingress": False,
-                "server_pod_uid": server_uid,
-                "client_pod_uid": client_uid,
-                "separate_pods": True,
-                "server_gpu_request": args.gpu_count,
-                "client_gpu_request": 0,
-                "client_created_after_clusterip_health": True,
-                "controller_service_account": args.controller_service_account,
-            },
-            "probes": {
-                "readiness": {"path": "/healthz", "passed": True},
-                "liveness": {"path": "/healthz", "configured": True},
-                "clusterip_health": health,
-            },
-            "failure_recovery_deadlines_seconds": {
-                "server_ready": server_ready_timeout,
-                "client": client_timeout,
-                "client_job_active_deadline": math.ceil(client_timeout),
-                "cleanup": cleanup_timeout,
-                "kubernetes_api_request": api_timeout,
-                "http_request": http_timeout,
-                "poll_interval": poll_interval,
-            },
-            "client": client_result,
-            "request_count": 2,
-            "all_trajectories_float64_finite_t_ge_5_x_8": True,
-            "service_seconds_before_cleanup": round(time.perf_counter() - started, 3),
-            "terms": {
-                "forwarded_via_ephemeral_secret": True,
-                "persisted_after_cleanup": False,
-            },
-            "cleanup_identity": {
-                "managed_by": MANAGED_BY,
-                "exact_names": names,
-                "pod_selector": (f"npa.nebius.ai/cleanup-owner={names['deployment']}"),
-                "controller_service_account": args.controller_service_account,
-                "controller_rbac_lifecycle": "external_exact_owner_apply_delete",
-            },
-            "limitations": [
-                "clusterip_only_no_external_ingress_tested",
-                "no_physical_franka_task_success_claim",
-            ],
-        }
-    except Exception as exc:
-        run_error = exc
-    finally:
-        if preflight_passed:
-            try:
-                cleanup_verified = _delete_and_verify(
-                    api,
-                    apps,
-                    batch,
-                    namespace=args.namespace,
-                    names=names,
-                    created=created,
-                    manifests=manifests,
-                    timeout=cleanup_timeout,
-                    poll_interval=poll_interval,
-                    request_timeout=api_timeout,
-                )
-            except Exception as cleanup_exc:
-                if run_error is not None:
-                    raise OpenPIServiceError(
-                        f"service failed ({run_error}); cleanup also failed "
-                        f"({cleanup_exc})"
-                    ) from run_error
-                raise
+    except Exception as error:
+        run_error = error
+    cleanup = _finish_owned_service(args, context, created, run_error)
     if run_error is not None:
         raise run_error
     if result is None:
         raise OpenPIServiceError("service run did not produce evidence")
+    return result, cleanup
+
+
+def _finish_owned_service(
+    args: argparse.Namespace,
+    context: Mapping[str, Any],
+    created: set[str],
+    run_error: Exception | None,
+) -> dict[str, bool]:
+    try:
+        return _cleanup_service_run(
+            context["clients"],
+            args,
+            context["names"],
+            created,
+            context["manifests"],
+            context["timeouts"],
+        )
+    except Exception as cleanup_error:
+        if run_error is not None:
+            raise OpenPIServiceError(
+                f"service failed ({run_error}); cleanup also failed ({cleanup_error})"
+            ) from run_error
+        raise
+
+
+def _run(args: argparse.Namespace) -> int:
+    if not RUNTIME_IMAGE_RE.fullmatch(args.runtime_image):
+        raise OpenPIServiceError("service runtime image must be digest-pinned")
+    if args.cleanup_output_uri == args.output_uri:
+        raise OpenPIServiceError(
+            "service success and cleanup evidence must use distinct output URIs"
+        )
+    result, cleanup_verified = _execute_owned_service(
+        args, _service_execution_context(args)
+    )
     if not cleanup_verified or not all(cleanup_verified.values()):
         raise OpenPIServiceError(
             "service resources were not independently verified absent"
         )
-    result["cleanup"] = {
-        "all_exact_resources_absent": True,
-        "verified": cleanup_verified,
-    }
-    _write_json_uri(
-        args.cleanup_output_uri,
-        {
-            "schema": "npa.workbench.openpi.service-cleanup.v1",
-            "service_artifact_uri": args.output_uri,
-            "all_exact_resources_absent": True,
-            "verified": cleanup_verified,
-        },
-    )
-    result["cleanup_artifact_uri"] = args.cleanup_output_uri
-    _write_json_uri(args.output_uri, result)
-    print(json.dumps(result, sort_keys=True), flush=True)
-    return 0
+    return _publish_service_result(args, result, cleanup_verified)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -1589,7 +1992,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--output-uri", required=True)
     parser.add_argument("--cleanup-output-uri", required=True)
-    parser.add_argument("--terms-diagnostic-root-uri", default="")
     parser.add_argument("--runtime-image", required=True)
     parser.add_argument("--namespace", default="default")
     parser.add_argument("--checkpoint-uri", default=DEFAULT_CHECKPOINT_URI)

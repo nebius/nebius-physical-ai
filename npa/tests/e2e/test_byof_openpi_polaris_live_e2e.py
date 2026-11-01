@@ -2,7 +2,7 @@
 
 The live test builds and pushes the pinned source through the canonical BYOF
 runner, resolves the result to a registry digest, verifies the built bytes, then
-pulls that digest for separate negative-terms and positive-inference workloads.
+pulls that digest for anonymous artifact preflight and positive-inference workloads.
 The same digest then runs the connected direct, cross-pod serve, real optimizer,
 and held-out evaluation graph through the top-level npa.workflow controller.
 """
@@ -472,8 +472,6 @@ def _run_four_mode_workflow(
         "--var",
         f"service_account={service_account}",
         "--secret-env",
-        "NPA_OPENPI_ACCEPT_GEMMA_TERMS",
-        "--secret-env",
         "AWS_ACCESS_KEY_ID",
         "--secret-env",
         "AWS_SECRET_ACCESS_KEY",
@@ -829,9 +827,7 @@ def _inspect_built_image(tag: str, *, build_command: str) -> dict[str, object]:
     )
     assert image_config["Env"] and "HOME=/home/ubuntu" in image_config["Env"]
     assert not any(
-        value.startswith("NPA_OPENPI_ACCEPT_GEMMA_TERMS=")
-        or value.startswith("OPENPI_DATA_HOME=")
-        for value in image_config.get("Env") or []
+        value.startswith("OPENPI_DATA_HOME=") for value in image_config.get("Env") or []
     )
 
     probe_code = r"""
@@ -998,12 +994,12 @@ def test_openpi_polaris_spec_plans_real_b200_serving() -> None:
     assert "pi05_droid_jointpos_polaris" in rendered
     assert "WebsocketPolicyServer" in rendered
     assert "B200:1" in OPENPI_SPEC.read_text(encoding="utf-8")
-    assert secret_env_hints_for_plan(plan.steps) == ("NPA_OPENPI_ACCEPT_GEMMA_TERMS",)
+    assert secret_env_hints_for_plan(plan.steps) == ()
     profile = resolve_byof_profile_path(str(config["resource_profile_yaml"]))
     profile_text = profile.read_text(encoding="utf-8")
     assert "accelerators: B200:1" in profile_text
     assert 'NVIDIA_DRIVER_CAPABILITIES: "compute,utility"' in profile_text
-    assert "NPA_OPENPI_ACCEPT_GEMMA_TERMS" not in profile_text
+    assert "HF_TOKEN" not in profile_text
 
 
 def test_openpi_split_live_env_uses_one_project_storage_identity(
@@ -1303,9 +1299,6 @@ def test_openpi_artifact_wait_keeps_live_gpu_until_object_exists(
 def test_openpi_polaris_live_b200_all_four_modes(
     e2e_project: str | None,
 ) -> None:
-    assert os.environ.get("NPA_OPENPI_ACCEPT_GEMMA_TERMS") == "YES", (
-        "scoped Gemma terms acceptance must be forwarded for this OpenPI run"
-    )
     assert not os.environ.get("NPA_BYOF_OPENPI_REUSE_IMAGE", "").strip(), (
         "the canonical gate must build and push; use the runner manually for reuse debugging"
     )
@@ -1318,7 +1311,6 @@ def test_openpi_polaris_live_b200_all_four_modes(
 
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     build_run_id = f"byof-openpi-polaris-build-{stamp}"
-    negative_run_id = f"byof-openpi-polaris-terms-{stamp}"
     positive_run_id = f"byof-openpi-polaris-e2e-{stamp}"
     planned = _planned_args(positive_run_id)
     bucket = live_bucket(e2e_project)
@@ -1378,89 +1370,12 @@ def test_openpi_polaris_live_b200_all_four_modes(
     )
     print(json.dumps({"openpi_build_evidence": build_byte_evidence}, sort_keys=True))
 
-    negative_env = dict(env)
-    negative_env.pop("NPA_OPENPI_ACCEPT_GEMMA_TERMS", None)
-    negative_proc = _run_byof(
-        _smoke_command(
-            planned=planned,
-            project=e2e_project,
-            image=image,
-            run_id=negative_run_id,
-            output_root=output_root,
-        ),
-        env=negative_env,
-    )
-    _release_split_run(run_id=negative_run_id, env=negative_env)
     s3 = _s3_client(e2e_project)
-    negative_prefix = f"oss-solutions/openpi/{negative_run_id}/"
-    try:
-        negative_summary = _read_json(
-            s3, bucket, negative_prefix + "npa_byof_summary.json"
-        )
-        negative_gate = _read_json(
-            s3, bucket, negative_prefix + "openpi_terms_gate.json"
-        )
-    except Exception as exc:
-        combined = negative_proc.stdout + "\n" + negative_proc.stderr
-        raise AssertionError(
-            "negative OpenPI workload did not publish its required gate evidence:\n"
-            + combined[-16000:]
-        ) from exc
-    assert negative_proc.returncode != 0
-    assert negative_summary["status"] == "failed"
-    assert negative_summary["smoke_exit_code"] == 64
-    assert negative_summary["image"] == image
-    assert negative_gate == {
-        "schema": "npa.workbench.openpi.terms-gate.v1",
-        "status": "refused",
-        "exit_code": 64,
-        "checkpoint_fetch_started": False,
-        "model_import_started": False,
-    }
-    negative_objects = s3.list_objects_v2(Bucket=bucket, Prefix=negative_prefix).get(
-        "Contents", []
-    )
-    negative_keys = {str(item["Key"]) for item in negative_objects}
-    assert (
-        negative_prefix + "openpi_pi05_droid_jointpos_polaris_inference.json"
-        not in negative_keys
-    )
-    negative_stderr = (
-        s3.get_object(Bucket=bucket, Key=negative_prefix + "solution_smoke_stderr.log")[
-            "Body"
-        ]
-        .read()
-        .decode()
-    )
-    assert "requires scoped Gemma terms acceptance" in negative_stderr
-    negative_gpu = (
-        s3.get_object(Bucket=bucket, Key=negative_prefix + "nvidia_smi_list.txt")[
-            "Body"
-        ]
-        .read()
-        .decode()
-        .strip()
-        .splitlines()
-    )
-    assert len(negative_gpu) == 1 and "B200" in negative_gpu[0].upper()
-    print(
-        json.dumps(
-            {
-                "openpi_negative_gate_evidence": {
-                    **negative_gate,
-                    "gpu_product": "B200",
-                }
-            },
-            sort_keys=True,
-        )
-    )
-
     # The connected graph is the acceptance surface for all four modes. It
     # deliberately reuses only the immutable digest returned by this fresh
     # builder; model/data/checkpoint bytes remain runtime-only.
     four_mode_run_id = f"openpi-pi05-four-mode-{stamp}"
     four_mode_env = dict(env)
-    four_mode_env["NPA_OPENPI_ACCEPT_GEMMA_TERMS"] = "YES"
     four_mode_proc = _run_four_mode_workflow(
         run_id=four_mode_run_id,
         image=image,
@@ -1487,7 +1402,7 @@ def test_openpi_polaris_live_b200_all_four_modes(
     )
 
     four_prefix = f"oss-solutions/openpi/{four_mode_run_id}/"
-    negative = _read_json(s3, bucket, four_prefix + "reports/negative-terms-gate.json")
+    preflight = _read_json(s3, bucket, four_prefix + "reports/artifact-preflight.json")
     dataset_manifest = _read_json(s3, bucket, four_prefix + "data/manifest.json")
     direct = _read_json(s3, bucket, four_prefix + "reports/direct-inference.json")
     serve = _read_json(
@@ -1502,23 +1417,11 @@ def test_openpi_polaris_live_b200_all_four_modes(
     )
     evaluation = _read_json(s3, bucket, four_prefix + "reports/heldout-evaluation.json")
 
-    assert negative["schema"] == "npa.workbench.openpi.live-negative-terms-gate.v1"
-    assert negative["status"] == "passed"
-    assert negative["tested_child_status"] == "refused"
-    assert negative["tested_child_exit_code"] == 64
-    assert negative["runtime_image"] == image
-    child_refusal = negative["tested_child_refusal"]
-    assert child_refusal["schema"] == "npa.workbench.openpi.terms-gate.v1"
-    assert child_refusal["status"] == "refused"
-    assert child_refusal["declared_success_output_uri_untouched"] is True
-    assert child_refusal["diagnostic_persistence"] == ("separate_attempt_scoped_uri")
-    diagnostic_prefix = f"s3://{bucket}/{four_prefix}diagnostics/terms-refusals/"
-    assert child_refusal["diagnostic_uri"].startswith(diagnostic_prefix)
-    diagnostic_key = child_refusal["diagnostic_uri"].split(f"s3://{bucket}/", 1)[1]
-    persisted_refusal = _read_json(s3, bucket, diagnostic_key)
-    assert persisted_refusal["attempt_id"] == child_refusal["attempt_id"]
-    assert child_refusal["checkpoint_fetch_started"] is False
-    assert child_refusal["model_import_started"] is False
+    assert preflight["schema"] == "npa.workbench.openpi.public-artifact-preflight.v1"
+    assert preflight["status"] == "passed"
+    assert preflight["runtime_image"] == image
+    assert preflight["checkpoint"]["access"] == "public_anonymous_gcs"
+    assert preflight["credential_required"] is False
     assert dataset_manifest["schema"] == ("npa.workbench.openpi.mini-franka-dataset.v1")
     assert dataset_manifest["split_isolation"] == {
         "sample_id_intersection": [],
@@ -1740,7 +1643,6 @@ def test_openpi_polaris_live_b200_all_four_modes(
     )
 
     positive_env = dict(env)
-    positive_env["NPA_OPENPI_ACCEPT_GEMMA_TERMS"] = "YES"
     positive_proc = _run_byof(
         _smoke_command(
             planned=planned,
@@ -1792,11 +1694,9 @@ def test_openpi_polaris_live_b200_all_four_modes(
     assert artifact["checkpoint"]["weights_baked"] is False
     assert artifact["checkpoint"]["provenance"]["object_count"] > 0
     assert artifact["checkpoint"]["provenance"]["total_size_bytes"] > 1_000_000_000
-    assert artifact["terms"] == {
-        "forwarded": True,
-        "scope": "this_openpi_workload_only",
-        "persisted": False,
-    }
+    assert artifact["access"]["source"] == "authoritative_public_gcs"
+    assert artifact["access"]["authentication"] == "anonymous"
+    assert artifact["access"]["npa_terms_attestation_required"] is False
     assert artifact["runtime"]["visible_device_count"] == 1
     assert "B200" in artifact["runtime"]["device_kind"].upper()
     assert artifact["runtime"]["compute_capability"] == "10.0"

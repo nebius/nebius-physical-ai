@@ -402,7 +402,6 @@ def build_live_manifests(
         },
     }
     return {
-        "terms_secret": finite["secret"],
         "deployment": deployment,
         "service": service,
         "network_policy": network_policy,
@@ -642,10 +641,6 @@ def deploy_live(args: argparse.Namespace) -> dict[str, Any]:
 
     from kubernetes import client, config
 
-    if os.environ.get("NPA_OPENPI_ACCEPT_GEMMA_TERMS") != "YES":
-        raise OpenPIServiceError(
-            "NPA_OPENPI_ACCEPT_GEMMA_TERMS=YES is required before live deployment"
-        )
     config.load_kube_config(config_file=args.kubeconfig or None)
     core = client.CoreV1Api()
     apps = client.AppsV1Api()
@@ -803,16 +798,6 @@ def deploy_live(args: argparse.Namespace) -> dict[str, Any]:
             body=body,
             run_id=args.run_id,
         )
-    terms = manifests["terms_secret"]
-    _apply_owned(
-        read=core.read_namespaced_secret,
-        create=core.create_namespaced_secret,
-        patch=core.patch_namespaced_secret,
-        name=terms["metadata"]["name"],
-        namespace=args.namespace,
-        body=terms,
-        run_id=args.run_id,
-    )
     deployment = manifests["deployment"]
     deployment["spec"]["template"]["metadata"].setdefault("annotations", {})[
         "npa.nebius.ai/tls-material-sha256"

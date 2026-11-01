@@ -146,11 +146,39 @@ def test_060_image_build_and_smoke_cover_real_diffusion_construction() -> None:
     )
     for dependency in ("diffusers==", "transformers==", "accelerate==", "num2words=="):
         assert dependency in lock
-    assert "python -m npa.smoke.test_lerobot_env" in dockerfile
+    assert '"$NPA_BAKED_PYTHON" -m npa.smoke.test_lerobot_env' in dockerfile
     assert "DiffusionPolicy(config)" in smoke
     assert "NPA_LEROBOT_SMOKE_REQUIRE_CUDA" in smoke
     assert 'policy.to("cuda")' in smoke
     assert "lerobot[training,evaluation,pusht,libero,diffusion,smolvla]" in cloud_init
+
+
+def test_lerobot_images_hash_lock_service_lifecycle_dependencies() -> None:
+    root = Path(__file__).resolve().parents[2]
+    dockerfile = (root / "npa/docker/workbench/lerobot/Dockerfile").read_text(
+        encoding="utf-8"
+    )
+    required = (
+        "defusedxml==0.7.1",
+        "durationpy==0.11",
+        "kubernetes==36.0.3",
+        "oauthlib==4.0.0",
+        "requests-oauthlib==2.0.0",
+        "websocket-client==1.9.2",
+    )
+    for name in ("requirements-051.lock", "requirements-060.lock"):
+        lock = (root / "npa/docker/workbench/lerobot" / name).read_text(
+            encoding="utf-8"
+        )
+        for dependency in required:
+            assert dependency in lock
+    lifecycle_import = "from kubernetes import client, config"
+    assert dockerfile.count(lifecycle_import) == 3
+    assert dockerfile.index("ENV PATH=/usr/bin:$PATH") < dockerfile.rindex(
+        lifecycle_import
+    )
+    assert "import npa.workflows.sim2real.smolvla_service_lifecycle" in dockerfile
+    assert dockerfile.count("import npa.workflows.sim2real.interchange_stage") == 2
 
 
 def test_unsupported_version_raises(monkeypatch: pytest.MonkeyPatch) -> None:

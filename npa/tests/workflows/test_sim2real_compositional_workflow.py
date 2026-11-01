@@ -1962,6 +1962,7 @@ def test_baked_setup_executes_and_records_the_declared_interpreter(
         "NPA_BAKED_PYTHON": sys.executable,
         "NPA_IMAGE_SOURCE_SHA": source_sha,
         "NPA_SIM2REAL_SOURCE_SHA": source_sha,
+        "NPA_EXPECTED_IMAGE_SOURCE_SHA": source_sha,
     }
 
     subprocess.run(["bash", "-c", setup], check=True, env=environment)
@@ -1973,6 +1974,29 @@ def test_baked_setup_executes_and_records_the_declared_interpreter(
     )
     assert failed.returncode == 68
     assert b"must be an absolute path" in failed.stderr
+
+
+def test_baked_setup_separates_consumer_and_image_source_attestations(
+    tmp_path: Path,
+) -> None:
+    record = tmp_path / "npa-python"
+    rendered_probe = Path("/").joinpath("tmp", "npa-python").as_posix()
+    setup = render_setup_for_tool(
+        "run.shell",
+        config={"require_baked_npa": "1"},
+        options=SkypilotRenderOptions(),
+    ).replace(rendered_probe, str(record))
+    environment = {
+        "PATH": "/usr/bin:/bin",
+        "NPA_BAKED_PYTHON": sys.executable,
+        "NPA_IMAGE_SOURCE_SHA": "b" * 40,
+        "NPA_SIM2REAL_SOURCE_SHA": "a" * 40,
+        "NPA_EXPECTED_IMAGE_SOURCE_SHA": "b" * 40,
+    }
+
+    subprocess.run(["bash", "-c", setup], check=True, env=environment)
+
+    assert record.read_text(encoding="utf-8").strip() == sys.executable
 
 
 def test_baked_setup_rejects_an_unsafe_import_module() -> None:
@@ -2056,6 +2080,7 @@ def test_compute_capacity_preserves_isaac_rendering(accelerator: str) -> None:
 def test_exact_source_and_per_state_immutable_images_reach_rendered_tasks() -> None:
     spec = load_spec(SPEC)
     source_sha = "a" * 40
+    image_source_sha = "c" * 40
     image = "cr.example/npa/runtime@sha256:" + "b" * 64
     spec.config.update(
         {
@@ -2068,6 +2093,7 @@ def test_exact_source_and_per_state_immutable_images_reach_rendered_tasks() -> N
             "isaac_image": image,
             "viewer_image": image,
             "isaac_cache_pvc": "isaac-cache",
+            "baked_image_source_sha_by_image": {image: image_source_sha},
         }
     )
     plan = build_plan(spec, run_id="render-1x1", assume_decision="loop_back")
@@ -2085,6 +2111,7 @@ def test_exact_source_and_per_state_immutable_images_reach_rendered_tasks() -> N
     assert tasks
     for task in tasks:
         assert task["envs"]["NPA_SIM2REAL_SOURCE_SHA"] == source_sha
+        assert task["envs"]["NPA_EXPECTED_IMAGE_SOURCE_SHA"] == image_source_sha
         assert task["envs"]["NPA_TASK_IMAGE"] == image
         assert "immutable baked NPA runtime verified" in task["setup"]
         assert "baked Sim2Real evaluator verified" in task["setup"]

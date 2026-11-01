@@ -1807,6 +1807,76 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         ),
     ),
     SubmitLiveCase(
+        "sim2real-pi05.yaml",
+        "multi",
+        secret_envs=(
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+        ),
+        plan_only=True,
+        plan_only_justification=(
+            "Execution requires immutable private OpenPI and Isaac images, "
+            "scoped service RBAC, exact public Polaris artifact preflight, a "
+            "prewarmed Isaac cache, and simultaneously healthy B200 and RTX capacity."
+        ),
+        runtime=True,
+        notes=(
+            "Released-surface Franka expert collection, dense OpenPI/LeRobot export, "
+            "base and adapted pi0.5 closed-loop gold evaluation, and factual MP4/RRD."
+        ),
+    ),
+    SubmitLiveCase(
+        "sim2real-policy-interchange-smolvla.yaml",
+        "multi",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "HF_TOKEN"),
+        plan_only=True,
+        plan_only_justification=(
+            "Execution requires qualified immutable LeRobot and Isaac images, an "
+            "exact operator-authorized SmolVLA revision, and live acceptance of the "
+            "workflow-owned cache, authentication, scoped RBAC and resume lifecycle."
+        ),
+        runtime=True,
+        notes=(
+            "Model-neutral Franka surface-placement graph with native SmolVLA "
+            "training, exact reload, private serving, matched gold trials, and a "
+            "workflow-owned terminal failure cleanup that removes both services "
+            "before releasing run-scoped prerequisites."
+        ),
+    ),
+    SubmitLiveCase(
+        "sim2real-policy-interchange-object-eval.yaml",
+        "multi",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        plan_only=True,
+        plan_only_justification=(
+            "Execution requires qualified immutable LeRobot and Isaac images, a "
+            "previously qualified native SmolVLA checkpoint, a split-disjoint rigid "
+            "object profile, and live workflow-owned cache, authentication and RBAC."
+        ),
+        runtime=True,
+        notes=(
+            "Evaluation-only Franka offset-spool workflow that keeps the checkpoint, "
+            "controller, calibrated cameras, placement task and scorer fixed while "
+            "measuring a zero-shot rigid-object swap and exact-owned cleanup."
+        ),
+    ),
+    SubmitLiveCase(
+        "sim2real-policy-interchange-non-franka.yaml",
+        "multi",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        plan_only=True,
+        plan_only_justification=(
+            "Execution requires an operator-prepared immutable non-Franka robot/object "
+            "bundle, task-compatible native checkpoint, qualified runtime images, scoped "
+            "service RBAC, and pre-provisioned durable policy and Isaac cache PVCs."
+        ),
+        runtime=True,
+        notes=(
+            "Bounded six-axis non-Franka, non-cube rigid-object native SmolVLA "
+            "execution acceptance; execution validity remains separate from task success."
+        ),
+    ),
+    SubmitLiveCase(
         "byof.yaml",
         "multi",
         plan_only=True,
@@ -1922,7 +1992,6 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
     SubmitLiveCase(
         "byof-openpi.yaml",
         "multi",
-        secret_envs=("NPA_OPENPI_ACCEPT_GEMMA_TERMS",),
         plan_only=True,
         plan_only_justification="delegated BYOF execution is covered by its dedicated live onboarding tier",
         notes="OpenPI Polaris B200 inference; covered by test_byof_openpi_polaris_live_e2e.py.",
@@ -1933,7 +2002,6 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         secret_envs=(
             "AWS_ACCESS_KEY_ID",
             "AWS_SECRET_ACCESS_KEY",
-            "NPA_OPENPI_ACCEPT_GEMMA_TERMS",
         ),
         plan_only=True,
         plan_only_justification=(
@@ -1950,7 +2018,6 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         secret_envs=(
             "AWS_ACCESS_KEY_ID",
             "AWS_SECRET_ACCESS_KEY",
-            "NPA_OPENPI_ACCEPT_GEMMA_TERMS",
         ),
         plan_only=True,
         plan_only_justification=(

@@ -1582,45 +1582,16 @@ def test_authorized_subprocess_environment_does_not_inherit_runtime_controls(
     )
 
 
-def test_openpi_terms_fail_before_registry_or_build(monkeypatch, capsys) -> None:
-    module = _load_module()
+def test_openpi_neutral_build_has_no_npa_model_use_gate(monkeypatch) -> None:
+    from npa.workflows.byof.openpi import is_openpi_request
+
     monkeypatch.delenv("NPA_OPENPI_ACCEPT_GEMMA_TERMS", raising=False)
-
-    monkeypatch.setattr(
-        module,
-        "resolve_container_registry",
-        lambda *_args, **_kwargs: pytest.fail("registry resolution must not run"),
+    assert is_openpi_request(
+        repo_url="https://github.com/Physical-Intelligence/openpi.git",
+        solution_name="openpi",
     )
-
-    rc = module.main(
-        [
-            "--repo-url",
-            "https://github.com/Physical-Intelligence/openpi.git",
-            "--solution-name",
-            "openpi",
-            "--skip-run",
-        ]
-    )
-    assert rc == 1
-    output = json.loads(capsys.readouterr().out)
-    assert output["status"] == "failed"
-    assert "OpenPI pi0.5 requires scoped" in output["error"]
-
-
-@pytest.mark.parametrize("value", ["yes", "TRUE", "1", "YES "])
-def test_openpi_terms_gate_requires_exact_yes(monkeypatch, value) -> None:
-    from npa.workflows.byof.openpi import require_openpi_terms
-
-    monkeypatch.setenv("NPA_OPENPI_ACCEPT_GEMMA_TERMS", value)
-    with pytest.raises(ValueError, match="OpenPI pi0.5 requires scoped"):
-        require_openpi_terms()
-
-
-def test_openpi_terms_gate_accepts_scoped_yes(monkeypatch) -> None:
-    from npa.workflows.byof.openpi import require_openpi_terms
-
-    monkeypatch.setenv("NPA_OPENPI_ACCEPT_GEMMA_TERMS", "YES")
-    require_openpi_terms()
+    source = Path(_load_module().__file__).read_text(encoding="utf-8")
+    assert "NPA_OPENPI_ACCEPT_GEMMA_TERMS" not in source
 
 
 def test_run_sanitizes_stale_nebius_tokens(monkeypatch) -> None:

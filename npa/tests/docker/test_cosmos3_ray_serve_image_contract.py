@@ -167,6 +167,9 @@ def test_security_upgrades_requirements_file_has_hash_pinned_cves() -> None:
     assert "ray[serve]==2.58.0" in req_file.with_suffix(".in").read_text()
     assert not re.search(r"^nltk==", content, re.M)
     assert "ray-haproxy==2.8.25" in content
+    assert "filelock==4.2.4" in content
+    assert "setuptools==84.2.1" in content
+    assert "virtualenv==21.14.13" in content
     assert "pillow==13.0.0" in content
     assert "gradio==6.16.0+npa.pillow13.1" in content
     assert (

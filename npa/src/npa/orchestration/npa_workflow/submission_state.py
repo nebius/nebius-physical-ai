@@ -35,6 +35,11 @@ _SAFE_REFERENCE_KEYS = frozenset({"imagePullSecrets", "secret_safe"})
 # credential-key heuristic through its ``Token`` suffix. The parent/key pair
 # keeps the exemption tied to the rendered Kubernetes structure.
 _SAFE_BOOLEAN_FIELDS = frozenset({("spec", "automountServiceAccountToken")})
+_SECRET_REFERENCE_NAME = re.compile(
+    r"[a-z0-9](?:[-a-z0-9]*[a-z0-9])?"
+    r"(?:\.[a-z0-9](?:[-a-z0-9]*[a-z0-9])?)*"
+)
+_SECRET_REFERENCE_KEY = re.compile(r"[-._A-Za-z0-9]{1,253}")
 
 
 @dataclass(frozen=True)
@@ -183,12 +188,34 @@ def audit_project_submissions(project: str) -> ProjectSubmissionAudit:
     return ProjectSubmissionAudit("launch_evidence", len(ledgers))
 
 
+def _is_secret_key_reference(value: object) -> bool:
+    """Accept only a named Kubernetes Secret selector, never embedded data."""
+    if not isinstance(value, Mapping):
+        return False
+    if not {"name", "key"} <= value.keys() <= {"name", "key", "optional"}:
+        return False
+    name, key = value["name"], value["key"]
+    return (
+        isinstance(name, str)
+        and len(name) <= 253
+        and _SECRET_REFERENCE_NAME.fullmatch(name) is not None
+        and isinstance(key, str)
+        and _SECRET_REFERENCE_KEY.fullmatch(key) is not None
+        and ("optional" not in value or type(value["optional"]) is bool)
+    )
+
+
 def _contains_secret(value: object, *, parent: str = "") -> bool:
     if isinstance(value, Mapping):
         for key, child in value.items():
             name = str(key)
             if _SECRET_KEY.search(name):
                 if (parent, name) in _SAFE_BOOLEAN_FIELDS and type(child) is bool:
+                    continue
+                if (parent, name) == (
+                    "valueFrom",
+                    "secretKeyRef",
+                ) and _is_secret_key_reference(child):
                     continue
                 if name not in _SAFE_REFERENCE_KEYS:
                     return True

@@ -146,7 +146,6 @@ def prepared(tmp_path, monkeypatch):
         "cases": [{"policy_port": None}],
     }
     monkeypatch.setattr(policy, "_verify_source", lambda root: None)
-    monkeypatch.setenv("NPA_OPENPI_ACCEPT_GEMMA_TERMS", "YES")
     return args, plan, tmp_path
 
 
@@ -176,18 +175,6 @@ def test_checkpoint_verification_rejects_wrong_archive(prepared):
     args, _, _ = prepared
     with pytest.raises(ValueError, match="archive differs"):
         policy._verify_checkpoint(args.policy_archive, args.policy_checkpoint, "0" * 64)
-
-
-@pytest.mark.parametrize("value", ["", "NO", "yes"])
-def test_terms_refuse_before_checkpoint_access(prepared, monkeypatch, value):
-    args, plan, output = prepared
-    monkeypatch.setenv("NPA_OPENPI_ACCEPT_GEMMA_TERMS", value)
-    monkeypatch.setattr(
-        policy, "_verify_checkpoint", lambda *a: pytest.fail("checkpoint access")
-    )
-    with pytest.raises(ValueError, match="scoped operator acceptance"):
-        with policy.managed_policy(args, plan, output):
-            pytest.fail("must refuse")
 
 
 def test_radio_checkpoint_cannot_be_used_for_other_tasks(prepared):

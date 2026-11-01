@@ -327,3 +327,11 @@ def test_isaac_runtime_uses_system_ffmpeg_without_wheel_bundled_binary() -> None
     assert "IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg" in dockerfile
     assert "rm -rf /opt/nvidia/nsight-compute" in dockerfile
     assert "test ! -e /opt/nvidia/nsight-compute" in dockerfile
+
+
+def test_isaac_runtime_installer_uses_pip_with_fixed_vendored_certifi() -> None:
+    installer = (WORKBENCH / "common/install_isaac_runtime_base.sh").read_text(
+        encoding="utf-8"
+    )
+    assert '"pip==26.2.2"' in installer
+    assert '"pip==26.2.1"' not in installer

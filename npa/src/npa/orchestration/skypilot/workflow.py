@@ -69,6 +69,7 @@ from npa.orchestration.skypilot.launch_transaction import (
     run_launch_transaction,
     wait_for_api_stability,
 )
+from npa.orchestration.skypilot.local_api import isolated_api_control_environment
 from npa.orchestration.skypilot.workflow_state import redact_text
 
 
@@ -1759,6 +1760,10 @@ def submit_workflow(
             sky_executable = prepared.sky_executable
             global_config = prepared.global_config
             control_env = env
+            if runtime_config.isolated_config_dir is not None:
+                control_env = isolated_api_control_environment(
+                    runtime_config.isolated_config_dir, env
+                )
             owned_submission_dir = (
                 submission_dir if runtime_config.isolated_config_dir is None else None
             )
@@ -1874,6 +1879,13 @@ def submit_workflow(
                     robotwin_submit_context.private_environment
                 )["NPA_SRC_S3_URI"]
             control_env = env
+            if (
+                runtime_config.isolated_config_dir is not None
+                and robotwin_authorization is None
+            ):
+                control_env = isolated_api_control_environment(
+                    runtime_config.isolated_config_dir, env
+                )
             if robotwin_authorization is not None:
                 from npa.orchestration.npa_workflow.robotwin_preflight import (
                     CONTEXT_ENV_NAMES,

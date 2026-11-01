@@ -106,14 +106,15 @@ workflow. Keep restricted weights out of image layers regardless of access.
 
 OpenPI's public Polaris checkpoint is fetched anonymously from GCS, but it
 contains Gemma-derived material governed by the Gemma Terms of Use and Gemma
-Prohibited Use Policy. NPA's OpenPI product policy is explicit opt-in: require
-the exact run-scoped `NPA_OPENPI_ACCEPT_GEMMA_TERMS=YES` value before an OpenPI
-image build or checkpoint fetch. This is not a Hugging Face credential proxy or
-an Isaac default. Forward it only as a runtime secret, never render it into YAML
-or persist it in an image, repository file, credential store, checkpoint, or
-dataset. A separate invalid-value workload must exit before importing the model
-or starting checkpoint access, and must run before any accepted checkpoint
-fetch. Acceptance covers only the two named Gemma policies.
+Prohibited Use Policy. The agreement binds through use, so NPA does not add a
+second checkbox, boolean, secret, or attestation. The operator is responsible
+for use under those upstream terms. Fetch Polaris only from the authoritative
+public GCS URI with anonymous access, immutable object-generation metadata,
+checksums, and payload-byte verification; do not require an HF token or switch
+to a mirror. If a different OpenPI configuration selects a genuinely gated HF
+artifact, require the operator's own token and the standard exact-revision
+payload-byte `model_access` probe. Keep weights, credentials, and populated
+caches out of image layers and logs.
 
 ## Antioch Runtime Reference
 
@@ -162,7 +163,8 @@ that would turn an explicit empty opt-out back into acceptance.
 ## Guardrails
 
 - Keep explicit opt-out refusal strict and early.
-- Keep the OpenPI pi0.5 exact-value negative gate strict and runtime-only.
+- Keep public Polaris free of duplicate NPA acceptance and HF-token gates while
+  enforcing authoritative GCS generation/checksum/payload integrity.
 - For gated runtime weights, test every required upstream access probe before
   provisioning and test that no bypass or duplicate consent flag exists.
 - Test both paths: unset acceptance defaults to `Y`, and explicit opt-out refuses

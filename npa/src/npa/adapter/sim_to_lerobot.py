@@ -7,6 +7,7 @@ each with:
     obs_wrist.npy      (T, H, W, 3) uint8
     state.npy          (T, n_joints) float32
     actions.npy        (T, n_actions) float32
+    timestamps.npy     (T,) float64, optional source capture times
 
 The output is a valid LeRobotDataset v3.0 directory that can be loaded
 with ``LeRobotDataset("path/to/output")``.
@@ -292,11 +293,24 @@ def _load_episode_arrays(
         name: _load_episode_array(ep_dir, ep_idx, name, mmap_mode=mmap_mode)
         for name in ("obs_workspace", "obs_wrist", "state", "actions")
     }
+    timestamps_path = ep_dir / "timestamps.npy"
+    if timestamps_path.is_file():
+        arrays["timestamps"] = _load_episode_array(
+            ep_dir, ep_idx, "timestamps", mmap_mode=mmap_mode
+        )
     ep_len = int(arrays["state"].shape[0]) if arrays["state"].ndim == 2 else -1
     _validate_numeric_stream("state", arrays["state"], ep_len, ep_idx)
     _validate_numeric_stream("actions", arrays["actions"], ep_len, ep_idx)
     for name in ("obs_workspace", "obs_wrist"):
         _validate_camera_stream(name, arrays[name], ep_len, ep_idx)
+    if "timestamps" in arrays:
+        timestamps = arrays["timestamps"]
+        valid = timestamps.shape == (ep_len,) and np.isfinite(timestamps).all()
+        valid = valid and bool(np.all(np.diff(timestamps) > 0.0))
+        if not valid:
+            raise AdapterError(
+                f"Episode {ep_idx}: timestamps require finite strictly increasing (T,)"
+            )
     return arrays
 
 
@@ -307,6 +321,7 @@ def _episode_shape_reference(arrays: dict[str, np.ndarray]) -> dict[str, int]:
         "n_actions": arrays["actions"].shape[1],
         "img_h": arrays["obs_workspace"].shape[1],
         "img_w": arrays["obs_workspace"].shape[2],
+        "has_timestamps": int("timestamps" in arrays),
     }
 
 
@@ -325,6 +340,10 @@ def _check_episode_matches_reference(
     arrays: dict[str, np.ndarray], ep_idx: int, reference: dict[str, int]
 ) -> None:
     """Reject episodes whose widths or camera resolutions drift from episode 0."""
+    if int("timestamps" in arrays) != reference["has_timestamps"]:
+        raise AdapterError(
+            "source timestamps must be present for every episode or none"
+        )
     for name, key in (
         ("obs_workspace", "img_h"),
         ("obs_wrist", "img_h"),
@@ -379,6 +398,15 @@ def _preflight_episodes(episodes: list[Path]) -> dict[str, int]:
         )
         del arrays
     return reference
+
+
+def _episode_timestamps(arrays: dict[str, np.ndarray], fps: int) -> np.ndarray:
+    """Return episode-relative source times, or the legacy fixed-FPS timeline."""
+
+    if "timestamps" not in arrays:
+        return np.arange(arrays["state"].shape[0], dtype=np.float32) / fps
+    values = np.asarray(arrays["timestamps"], dtype=np.float64)
+    return (values - values[0]).astype(np.float32)
 
 
 def _merge_feature_stats(previous: dict | None, current: dict) -> dict:
@@ -496,6 +524,7 @@ def convert(
         obs_wrist = arrays["obs_wrist"]
         state = arrays["state"]
         actions = arrays["actions"]
+        timestamps = _episode_timestamps(arrays, fps)
 
         ep_len = state.shape[0]
         # ── Encode videos ───────────────────────────────────────────
@@ -519,7 +548,7 @@ def convert(
                 "action": actions[frame_idx].tolist(),
                 "episode_index": ep_idx,
                 "frame_index": frame_idx,
-                "timestamp": frame_idx / fps,
+                "timestamp": float(timestamps[frame_idx]),
                 "index": global_index,
                 "task_index": episode_task_index,
             }
@@ -535,7 +564,7 @@ def convert(
             "observation.images.wrist": obs_wrist,
             "observation.state": state,
             "action": actions,
-            "timestamp": np.arange(ep_len, dtype=np.float32) / fps,
+            "timestamp": timestamps,
             "frame_index": np.arange(ep_len, dtype=np.int64),
             "episode_index": np.full(ep_len, ep_idx, dtype=np.int64),
             "index": np.arange(dataset_from_index, dataset_to_index, dtype=np.int64),
@@ -630,6 +659,9 @@ def convert(
         "robot_type": robot_type,
         "total_episodes": n_episodes,
         "total_frames": total_frames,
+        "timestamp_source": (
+            "input_episode_relative" if reference["has_timestamps"] else "fixed_fps"
+        ),
         "total_tasks": len(tasks),
         "chunks_size": DEFAULT_CHUNK_SIZE,
         "fps": fps,

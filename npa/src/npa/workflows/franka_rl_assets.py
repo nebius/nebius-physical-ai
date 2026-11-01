@@ -146,6 +146,15 @@ def write_assets(output: Path, target: str) -> dict:
         "license": "Apache-2.0",
         "units": "metres",
         "nominal_mass_kg": 0.08,
+        "physics": {
+            "collision": "declared",
+            "mass_kg": 0.08,
+            "material": {
+                "static_friction": 0.8,
+                "dynamic_friction": 0.6,
+                "restitution": 0.0,
+            },
+        },
         "fixture_position_m": [0.72, 0.34, 0.0],
         "distractor_positions_m": _distractor_positions(target),
         "files": {
@@ -175,12 +184,19 @@ def configure_assets(config, manifest: dict, root: Path) -> None:
         if file_sha256(root / relative) != digest:
             raise ValueError("Franka simulation asset bytes changed after preparation")
     target = manifest["target"]
+    physics = manifest["physics"]
+    material = physics["material"]
     # Asset geometry must not discard the task's contact solver configuration.
     rigid_props = deepcopy(config.scene.object.spawn.rigid_props)
     config.scene.object.spawn = sim.UsdFileCfg(
         usd_path=str(root / f"assets/{target}.usda"),
         rigid_props=rigid_props,
-        mass_props=sim.MassPropertiesCfg(mass=manifest["nominal_mass_kg"]),
+        mass_props=sim.MassPropertiesCfg(mass=physics["mass_kg"]),
+        physics_material=sim.RigidBodyMaterialCfg(
+            static_friction=material["static_friction"],
+            dynamic_friction=material["dynamic_friction"],
+            restitution=material["restitution"],
+        ),
     )
     config.scene.object.init_state.pos = (0.5, 0.0, 0.06)
     config.scene.npa_fixture = AssetBaseCfg(

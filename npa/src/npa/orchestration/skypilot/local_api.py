@@ -42,6 +42,38 @@ _RUNTIME_SETTINGS = {
     "provider_profile": "NEBIUS_PROFILE",
     "aws_profile": "AWS_PROFILE",
 }
+_EXECUTING_IDENTITY_ENV_NAMES = (
+    "HOME",
+    "SKYPILOT_USER_ID",
+    "KUBECONFIG",
+    "NEBIUS_CONFIG_DIR",
+    "NEBIUS_PROFILE",
+    "NPA_NEBIUS_CREDENTIAL_SOURCE",
+    "AWS_ACCESS_KEY_ID",
+    "AWS_SECRET_ACCESS_KEY",
+    "AWS_SESSION_TOKEN",
+    "AWS_ENDPOINT_URL",
+    "AWS_ENDPOINT_URL_S3",
+    "AWS_REGION",
+    "AWS_DEFAULT_REGION",
+    "AWS_PROFILE",
+    "AWS_CONFIG_FILE",
+    "AWS_SHARED_CREDENTIALS_FILE",
+    "S3_ENDPOINT_URL",
+    "NEBIUS_S3_ENDPOINT",
+    "NPA_STORAGE_ENDPOINT",
+    "NPA_CONFIG_DIR",
+    "NPA_SKYPILOT_PROJECT",
+    "NEBIUS_IAM_TOKEN",
+    "NEBIUS_IAM_TOKEN_FILE",
+    "NPA_NEBIUS_IAM_TOKEN",
+    "NPA_NEBIUS_IAM_TOKEN_FILE",
+    "SKYPILOT_GLOBAL_CONFIG",
+    "SKYPILOT_SERVER_PLUGINS_CONFIG",
+    "PYTHONPATH",
+    _ENDPOINT,
+    _MARKER,
+)
 
 
 class IsolatedApiError(ValueError):
@@ -1413,41 +1445,9 @@ def ensure_isolated_api(
         # Artifact destination varies for each workflow, while this daemon is
         # the shared control plane for all of them. Binding it to a run prefix
         # would reject a valid later workflow before it can submit.
-        identity_keys = (
-            "HOME",
-            "SKYPILOT_USER_ID",
-            "KUBECONFIG",
-            "NEBIUS_CONFIG_DIR",
-            "NEBIUS_PROFILE",
-            "NPA_NEBIUS_CREDENTIAL_SOURCE",
-            "AWS_ACCESS_KEY_ID",
-            "AWS_SECRET_ACCESS_KEY",
-            "AWS_SESSION_TOKEN",
-            "AWS_ENDPOINT_URL",
-            "AWS_ENDPOINT_URL_S3",
-            "AWS_REGION",
-            "AWS_DEFAULT_REGION",
-            "AWS_PROFILE",
-            "AWS_CONFIG_FILE",
-            "AWS_SHARED_CREDENTIALS_FILE",
-            "S3_ENDPOINT_URL",
-            "NEBIUS_S3_ENDPOINT",
-            "NPA_STORAGE_ENDPOINT",
-            "NPA_CONFIG_DIR",
-            "NPA_SKYPILOT_PROJECT",
-            "NEBIUS_IAM_TOKEN",
-            "NEBIUS_IAM_TOKEN_FILE",
-            "NPA_NEBIUS_IAM_TOKEN",
-            "NPA_NEBIUS_IAM_TOKEN_FILE",
-            "SKYPILOT_GLOBAL_CONFIG",
-            "SKYPILOT_SERVER_PLUGINS_CONFIG",
-            "PYTHONPATH",
-            _ENDPOINT,
-            _MARKER,
-        )
         binding = {
             key: hashlib.sha256(daemon_env.get(key, "").encode()).hexdigest()
-            for key in identity_keys
+            for key in _EXECUTING_IDENTITY_ENV_NAMES
         }
         files = _identity_files(daemon_env, config=parsed_config)
         spawned = None
@@ -1654,6 +1654,38 @@ def owned_daemon_environment(isolated_dir: Path) -> dict[str, str]:
                 "controller transaction source API changed during inspection"
             )
         return environment
+
+
+def isolated_api_control_environment(
+    isolated_dir: Path, request_environment: Mapping[str, str]
+) -> dict[str, str]:
+    """Keep daemon-control identity separate from per-submit client settings.
+
+    Args:
+        isolated_dir: Task-owned SkyPilot state directory.
+        request_environment: Environment prepared for the current submission.
+
+    Returns:
+        The request environment with executing-identity fields restored from a
+        live owned daemon, or an unchanged copy before the first daemon starts.
+
+    Raises:
+        IsolatedApiError: The recorded daemon exists but cannot be verified.
+    """
+    root = _isolated_api_root(isolated_dir)
+    with _locked(root):
+        record = _read(root)
+        has_recorded_daemon = bool(record and record.get("interpreter"))
+    if not has_recorded_daemon:
+        return dict(request_environment)
+    daemon_environment = owned_daemon_environment(isolated_dir)
+    control_environment = dict(request_environment)
+    for name in _EXECUTING_IDENTITY_ENV_NAMES:
+        if name in daemon_environment:
+            control_environment[name] = daemon_environment[name]
+        else:
+            control_environment.pop(name, None)
+    return control_environment
 
 
 def stop_isolated_api(isolated_dir: Path) -> None:
