@@ -176,6 +176,8 @@
         "sha256": "305ddc353f63c06b55a94c875d38013b34a5d7c3142c5cf0d6cb89f19b5d173d"
       }
     ],
+    "one_of_these_pins_goes_stale_when_a_sibling_lands": "harness/frame_edge_audit.py is edited by the evidence-binding branch (PR 982), which makes it record the sha256 of each file it measures. That digest is correct for the bytes on this branch and stops being correct the moment 982 merges. Whichever of the two lands second must re-read it. Written down rather than left for a reader to discover, because a stale pin and a tampered one look the same.",
+    "why_this_gate_pins_that_harness_at_all": "The zoom sweep's framing columns are the audit harness's own measurements, taken through the same code path, so the sweep's numbers are only reproducible against the version of it recorded here.",
     "the_two_hashes_this_change_leaves_unbound": "LABEL_SHA256 appears twice -- once in the gate report's thresholds and once in what_is_gated above -- and the evidence guard counts both as hashes that name no file. That is correct: it digests a pixel rectangle inside a frame, not a file, so no file-binding guard can check it. It first appeared 20 times, once per frame as well, which was 18 identical hashes of pure noise; the per-frame record is now a boolean and the expected value is stated once. The extended guard on the evidence-binding branch cross-checks hashes that two records state side by side, which is the check that will cover these two."
   },
   "a_claim_i_withdrew": {
