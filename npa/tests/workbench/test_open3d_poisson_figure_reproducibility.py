@@ -156,20 +156,44 @@ NON_REPRODUCIBLE_LITERALS = ("0.7848810005123376", "0.3521503113541809")
 
 
 def _scanned_files() -> list[Path]:
-    """Every test module in the repository, plus the harnesses that hold these figures.
+    """Every Python file in the repository.
 
-    The first version walked `npa/tests` only. A reviewer counted 36 `test_*.py` files
-    outside it, including `npa/src/npa/smoke/`, which is not a stray directory -- those
-    are the golden-eval modules that run inside containers.
+    This went through three scopes, each widened by a reviewer finding a pin outside it.
+    `npa/tests` missed the 36 `test_*.py` files elsewhere, including `npa/src/npa/smoke/`,
+    which holds the golden-eval modules that run in containers. `test_*.py` repo-wide plus
+    the harness directory still missed a pin in any file not named that way, which they
+    demonstrated.
+
+    So the scope is now every `.py` file, which is the only scope with no boundary to
+    evade. It costs about a second: discovery is 3700 paths, and a file is parsed only if
+    it contains one of the figures, which two do.
     """
-    seen: dict[Path, None] = {}
-    for path in REPO.rglob("test_*.py"):
-        if any(part in {".venv", "node_modules", ".git"} for part in path.parts):
-            continue
-        seen[path] = None
-    for path in (REPO / "docs" / "evidence" / "open3d" / "harness").glob("*.py"):
-        seen[path] = None
-    return list(seen)
+    return [
+        path
+        for path in REPO.rglob("*.py")
+        if not any(
+            part in {".venv", "node_modules", ".git", "__pycache__"}
+            for part in path.parts
+        )
+    ]
+
+
+def _tolerance_floor() -> float:
+    """The deviation below which a tolerance is exact equality with extra steps.
+
+    A reviewer showed the first version rejected exactly one value: `abs=0`. `abs=1e-300`
+    is the same pin spelled differently, and so is any tolerance smaller than the movement
+    the figure actually has.
+
+    They suggested the default condition's `absolute_spread`, and that figure is in the
+    record -- but it is a spread of surface *area*, around 157 units, while these figures
+    are fractions near 0.78. Using it would have compared a fraction's tolerance against
+    an area's spread. The right quantity is the movement observed in the published
+    figures themselves, which is also in the record, and it keeps the disclosed honest
+    example (`abs=1e-4`) on the correct side.
+    """
+    record = json.loads(RECORD.read_text())
+    return record["the_published_figures"]["absolute_difference_on_the_headline"]
 
 
 def _exact_pins(tree: ast.AST, literals: tuple[str, ...]) -> list[tuple[int, str]]:
@@ -187,13 +211,30 @@ def _exact_pins(tree: ast.AST, literals: tuple[str, ...]) -> list[tuple[int, str
     wearing the word that buys the exemption.
     """
     values = {float(literal) for literal in literals}
+    floor = _tolerance_floor()
     bound: set[str] = set()
     for node in ast.walk(tree):
-        if isinstance(node, ast.Assign) and isinstance(node.value, ast.Constant):
-            if isinstance(node.value.value, float) and node.value.value in values:
-                bound.update(
-                    target.id for target in node.targets if isinstance(target, ast.Name)
-                )
+        if not isinstance(node, ast.Assign):
+            continue
+        holds_a_figure = False
+        if isinstance(node.value, ast.Constant):
+            holds_a_figure = (
+                isinstance(node.value.value, float) and node.value.value in values
+            )
+        elif isinstance(node.value, (ast.Tuple, ast.List, ast.Set)):
+            # A name bound to a container holding a figure is the nearest neighbour of
+            # the extract-a-constant refactor, and a reviewer supplied this case with
+            # both halves of the fix after their first attempt at it did not work.
+            holds_a_figure = any(
+                isinstance(element, ast.Constant)
+                and isinstance(element.value, float)
+                and element.value in values
+                for element in node.value.elts
+            )
+        if holds_a_figure:
+            bound.update(
+                target.id for target in node.targets if isinstance(target, ast.Name)
+            )
 
     def names_a_figure(node: ast.expr) -> bool:
         if isinstance(node, ast.Constant):
@@ -218,8 +259,13 @@ def _exact_pins(tree: ast.AST, literals: tuple[str, ...]) -> list[tuple[int, str
                 if isinstance(operand, (ast.Tuple, ast.List, ast.Set))
                 for element in operand.elts
             ]
-            if member and any(names_a_figure(element) for element in containers):
-                found.append((node.lineno, "membership in a literal container"))
+            # Both halves are needed: binding the name is not enough unless membership
+            # also looks at bare names, not only at literal containers.
+            if member and (
+                any(names_a_figure(element) for element in containers)
+                or any(names_a_figure(operand) for operand in node.comparators)
+            ):
+                found.append((node.lineno, "membership in a container of figures"))
         if isinstance(node, ast.Call):
             callee = node.func
             name = (
@@ -230,12 +276,24 @@ def _exact_pins(tree: ast.AST, literals: tuple[str, ...]) -> list[tuple[int, str
             if name != "approx" or not any(names_a_figure(arg) for arg in node.args):
                 continue
             for keyword in node.keywords:
-                if (
-                    keyword.arg in {"abs", "rel"}
-                    and isinstance(keyword.value, ast.Constant)
-                    and keyword.value.value == 0
+                if keyword.arg not in {"abs", "rel"} or not isinstance(
+                    keyword.value, ast.Constant
                 ):
-                    found.append((node.lineno, "approx with a zero tolerance"))
+                    continue
+                tolerance = keyword.value.value
+                if not isinstance(tolerance, (int, float)) or isinstance(
+                    tolerance, bool
+                ):
+                    continue
+                reference = floor if keyword.arg == "abs" else floor / max(values)
+                if tolerance < reference:
+                    found.append(
+                        (
+                            node.lineno,
+                            f"approx with {keyword.arg}={tolerance!r}, below the "
+                            f"{reference:.3e} these figures actually move",
+                        )
+                    )
     return found
 
 
@@ -247,11 +305,16 @@ def test_the_published_figures_are_never_pinned_by_exact_equality() -> None:
     tightening rather than a mistake, the likely repair is regenerating the record to
     match -- which buries the finding this PR exists to record.
 
-    A reviewer attacked the first version and found six ways through. Three are closed
-    here: the extract-a-constant refactor, `approx(..., abs=0)`, and test modules outside
-    `npa/tests`. The ones still open are stated rather than implied -- a pin in a file
-    matching neither `test_*.py` nor the Open3D harness directory is not scanned, and
-    neither is a figure reached through a container or an attribute.
+    A reviewer attacked the first version and found six ways through. All six are closed:
+    the extract-a-constant refactor, `approx(..., abs=0)`, membership in a literal
+    container, test modules outside `npa/tests`, the harness directory, and -- the last
+    one, which was still open at the previous head -- a pin in a file not named
+    `test_*.py`. Two classes they raised afterwards are closed too: a name bound to a
+    container of figures, and a tolerance that is tiny rather than zero.
+
+    What is still not reached: a figure arrived at through an attribute, a dict value, or
+    a function return. Only direct literals, names bound to them, and names bound to
+    containers of them are resolved.
     """
     offenders: list[str] = []
     for path in _scanned_files():

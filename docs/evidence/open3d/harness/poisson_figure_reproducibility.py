@@ -292,51 +292,89 @@ def main() -> int:
             "observed_difference": published_spread,
             "ratio": margin / published_spread if published_spread else None,
         },
-        "the_guard_was_attacked_and_six_holes_found": {
-            "raised_by": "review lane, who called the guard the longest-lived thing in "
-            "this PR and then probed it rather than leaving the compliment",
-            "what_it_already_caught": (
-                "A pin split across lines by the formatter, and a string comparison "
-                "against the figure. The reviewer predicted the formatter case would "
-                "evade and it did not."
+        "the_guard_was_attacked_and_every_hole_found_is_now_closed": {
+            "raised_by": (
+                "review lane, who called the guard the longest-lived thing in this PR "
+                "and then probed it rather than leaving the compliment, across three "
+                "messages"
             ),
-            "closed_here": [
+            "why_this_field_was_renamed": (
+                "It was headed `..._six_holes_found` and ended 'All six caught', while "
+                "the field below it listed an open hole. The sentence was true of what "
+                "it counted -- six probes I ran, all six caught -- and false against the "
+                "heading's noun, because one of the reviewer's six was not among them. "
+                "Three artifacts then carried three different counts. The reviewer was "
+                "right that this needed reconciling, and the honest fix was to close the "
+                "last hole so there is one number."
+            ),
+            "it_already_caught_without_changes": [
                 (
-                    "Extracting the literal to a named constant and comparing against "
-                    "the name. The most ordinary refactor there is, and it removed a "
-                    "line-based guard without touching its logic. Now an AST pass "
-                    "resolves names bound to the figure first."
+                    "a pin split across lines by the formatter, which the reviewer "
+                    "predicted would evade and did not"
                 ),
-                (
-                    "`approx(..., abs=0)` and `rel=0`, which is exact equality wearing "
-                    "the word that bought the exemption in the first version."
-                ),
-                (
-                    "Membership in a literal container, `assert x in (figure,)`, which "
-                    "is exact equality spelled differently."
-                ),
-                (
-                    "Test modules outside `npa/tests`. The reviewer counted 36, "
-                    "including `npa/src/npa/smoke/`, which holds the golden-eval "
-                    "modules that run in containers. The walk is now repository-wide."
-                ),
+                "a string comparison against the figure",
             ],
-            "still_open_and_not_implied_otherwise": [
+            "the_six_holes_they_found_all_closed": [
                 (
-                    "A pin in a file matching neither `test_*.py` nor the Open3D "
-                    "harness directory is not scanned."
+                    "a literal extracted to a named constant, then compared. The most "
+                    "ordinary refactor there is, and it defeated a line-based scan "
+                    "without touching its logic. An AST pass now resolves bound names "
+                    "before examining comparisons."
                 ),
                 (
-                    "A figure reached through an attribute, a dict, or a function "
-                    "return is not resolved; only direct literals and names bound to "
-                    "them are."
+                    "`approx(figure, abs=0)`, exact equality wearing the word that "
+                    "bought the exemption"
+                ),
+                "`assert x in (figure,)`, exact equality spelled differently",
+                (
+                    "a pin in a test module outside `npa/tests`, of which they counted "
+                    "36, including the golden-eval modules in `npa/src/npa/smoke/` that "
+                    "run in containers"
+                ),
+                (
+                    "a pin in a file named neither `test_*.py` nor anything else the "
+                    "scan reached. This is the one that was still open at the previous "
+                    "head: the scope is now every `.py` file in the repository, which is "
+                    "the only scope with no boundary left to evade. It costs about a "
+                    "second -- 3700 paths discovered, and a file parsed only if it holds "
+                    "one of the figures, which two do."
+                ),
+                "a pin in the Open3D harness directory",
+            ],
+            "two_further_classes_they_raised_after_that": [
+                (
+                    "a name bound to a *container* holding the figure, which is the "
+                    "nearest neighbour of the refactor already closed. They supplied "
+                    "this with both halves of the fix after reporting that their first "
+                    "attempt at it did not work: binding the name is not enough unless "
+                    "the membership branch also looks at bare names and not only at "
+                    "literal containers."
+                ),
+                (
+                    "a tolerance that is tiny rather than zero. The check asked whether "
+                    "the tolerance *is* zero, so `abs=1e-300` walked straight back "
+                    "through it. It now compares the tolerance against the movement "
+                    "these figures actually have. The reviewer pointed at the default "
+                    "condition's `absolute_spread` for that number, which is a spread of "
+                    "surface area around 157 units, while these figures are fractions "
+                    "near 0.78; the quantity used is the observed difference in the "
+                    "published figures themselves, which keeps their disclosed honest "
+                    "example on the correct side of it."
                 ),
             ],
             "verified_by": (
-                "Each evasion written to a probe module, the guard run against it, and "
-                "the probe deleted. All six caught. An honest `approx(..., abs=1e-4)` "
-                "and a tuple that merely holds the figure are both left unflagged, so "
-                "the guard is not simply failing on the literal's presence."
+                "Each case written to a probe file at the path it belongs to, the guard "
+                "run against it, and the probe deleted. Eleven pins caught, including "
+                "the one that evaded at the previous head. Four honest patterns left "
+                "unflagged: `approx(..., abs=1e-4)`, a tuple that merely holds a figure, "
+                "an unrelated container, and membership in a container of other numbers. "
+                "Those matter as much as the pins -- a guard that fires on a figure's "
+                "mere presence is one annoyed person away from deletion."
+            ),
+            "what_is_still_not_reached": (
+                "A figure reached through an attribute, a dict value, or a function "
+                "return. Only direct literals, names bound to them, and names bound to "
+                "containers of them are resolved."
             ),
         },
         "what_this_does_not_claim": [

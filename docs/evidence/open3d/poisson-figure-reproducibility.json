@@ -39,14 +39,14 @@
         "triangles": 1126072,
         "surface_area": {
           "values": [
-            157.34143798282776,
-            157.3415087880117,
-            157.34148490167027,
-            157.34136541167442
+            157.34137894006582,
+            157.3414767143922,
+            157.34141493887165,
+            157.3415047200707
           ],
           "identical": false,
-          "absolute_spread": 0.0001433763372915564,
-          "relative_spread": 9.112437591756031e-07
+          "absolute_spread": 0.00012578000487906138,
+          "relative_spread": 7.994083039463717e-07
         },
         "label": "default"
       },
@@ -58,14 +58,14 @@
         "triangles": 1126072,
         "surface_area": {
           "values": [
-            157.34150341249298,
-            157.34151601730684,
-            157.34144288409715,
-            157.34147205775295
+            157.3414246254681,
+            157.34146476933836,
+            157.34140779684384,
+            157.34149554152557
           ],
           "identical": false,
-          "absolute_spread": 7.313320969615233e-05,
-          "relative_spread": 4.6480576481063957e-07
+          "absolute_spread": 8.77446817355576e-05,
+          "relative_spread": 5.576706282484254e-07
         },
         "label": "seeded"
       },
@@ -77,14 +77,14 @@
         "triangles": 1126072,
         "surface_area": {
           "values": [
-            157.34152686750252,
-            157.34143175597893,
-            157.34152109741092,
-            157.34152196844678
+            157.3413839419504,
+            157.34144426893604,
+            157.34148304653908,
+            157.3414821540104
           ],
           "identical": false,
-          "absolute_spread": 9.511152359209518e-05,
-          "relative_spread": 6.044912807174895e-07
+          "absolute_spread": 9.910458868489513e-05,
+          "relative_spread": 6.298698168401698e-07
         },
         "label": "thread_limited",
         "max_threads_before": 16,
@@ -95,7 +95,7 @@
   },
   "what_the_remedies_do": {
     "seeding": "Does not help. The `SAMPLING_SEED` already in `audit_view_occlusion.py` is real and does bind the armadillo's sampling -- but Poisson's variation is not drawn from Open3D's generator, so seeding before the call leaves the spread where it was. Measured, not reasoned: see `cause.conditions.seeded_before_each_call`.",
-    "limiting_threads": "Does not fix it. The spread goes from 9.11e-07 to 6.04e-07, a factor of 1.5 -- smaller with threads limited, and a reviewer saw it come out larger in one of their pairings too, which is what two runs cannot tell you. And -- the part that decides it -- every condition still produced 4 distinct areas out of 4. A setting that made this deterministic would produce one. The knob is recorded as engaged (16 threads to 1), because the experiment this replaces set `OMP_NUM_THREADS=1` in a build with no OpenMP linked and therefore measured nothing.",
+    "limiting_threads": "Does not fix it. The spread goes from 7.99e-07 to 6.30e-07, a factor of 1.3 -- smaller with threads limited, and a reviewer saw it come out larger in one of their pairings too, which is what two runs cannot tell you. And -- the part that decides it -- every condition still produced 4 distinct areas out of 4. A setting that made this deterministic would produce one. The knob is recorded as engaged (16 threads to 1), because the experiment this replaces set `OMP_NUM_THREADS=1` in a build with no OpenMP linked and therefore measured nothing.",
     "so_the_record_should": "State the precision the figures hold instead of publishing sixteen digits that do not survive a second run."
   },
   "does_this_change_any_conclusion": {
@@ -104,20 +104,27 @@
     "observed_difference": 2.810119407126166e-05,
     "ratio": 10137.683110187754
   },
-  "the_guard_was_attacked_and_six_holes_found": {
-    "raised_by": "review lane, who called the guard the longest-lived thing in this PR and then probed it rather than leaving the compliment",
-    "what_it_already_caught": "A pin split across lines by the formatter, and a string comparison against the figure. The reviewer predicted the formatter case would evade and it did not.",
-    "closed_here": [
-      "Extracting the literal to a named constant and comparing against the name. The most ordinary refactor there is, and it removed a line-based guard without touching its logic. Now an AST pass resolves names bound to the figure first.",
-      "`approx(..., abs=0)` and `rel=0`, which is exact equality wearing the word that bought the exemption in the first version.",
-      "Membership in a literal container, `assert x in (figure,)`, which is exact equality spelled differently.",
-      "Test modules outside `npa/tests`. The reviewer counted 36, including `npa/src/npa/smoke/`, which holds the golden-eval modules that run in containers. The walk is now repository-wide."
+  "the_guard_was_attacked_and_every_hole_found_is_now_closed": {
+    "raised_by": "review lane, who called the guard the longest-lived thing in this PR and then probed it rather than leaving the compliment, across three messages",
+    "why_this_field_was_renamed": "It was headed `..._six_holes_found` and ended 'All six caught', while the field below it listed an open hole. The sentence was true of what it counted -- six probes I ran, all six caught -- and false against the heading's noun, because one of the reviewer's six was not among them. Three artifacts then carried three different counts. The reviewer was right that this needed reconciling, and the honest fix was to close the last hole so there is one number.",
+    "it_already_caught_without_changes": [
+      "a pin split across lines by the formatter, which the reviewer predicted would evade and did not",
+      "a string comparison against the figure"
     ],
-    "still_open_and_not_implied_otherwise": [
-      "A pin in a file matching neither `test_*.py` nor the Open3D harness directory is not scanned.",
-      "A figure reached through an attribute, a dict, or a function return is not resolved; only direct literals and names bound to them are."
+    "the_six_holes_they_found_all_closed": [
+      "a literal extracted to a named constant, then compared. The most ordinary refactor there is, and it defeated a line-based scan without touching its logic. An AST pass now resolves bound names before examining comparisons.",
+      "`approx(figure, abs=0)`, exact equality wearing the word that bought the exemption",
+      "`assert x in (figure,)`, exact equality spelled differently",
+      "a pin in a test module outside `npa/tests`, of which they counted 36, including the golden-eval modules in `npa/src/npa/smoke/` that run in containers",
+      "a pin in a file named neither `test_*.py` nor anything else the scan reached. This is the one that was still open at the previous head: the scope is now every `.py` file in the repository, which is the only scope with no boundary left to evade. It costs about a second -- 3700 paths discovered, and a file parsed only if it holds one of the figures, which two do.",
+      "a pin in the Open3D harness directory"
     ],
-    "verified_by": "Each evasion written to a probe module, the guard run against it, and the probe deleted. All six caught. An honest `approx(..., abs=1e-4)` and a tuple that merely holds the figure are both left unflagged, so the guard is not simply failing on the literal's presence."
+    "two_further_classes_they_raised_after_that": [
+      "a name bound to a *container* holding the figure, which is the nearest neighbour of the refactor already closed. They supplied this with both halves of the fix after reporting that their first attempt at it did not work: binding the name is not enough unless the membership branch also looks at bare names and not only at literal containers.",
+      "a tolerance that is tiny rather than zero. The check asked whether the tolerance *is* zero, so `abs=1e-300` walked straight back through it. It now compares the tolerance against the movement these figures actually have. The reviewer pointed at the default condition's `absolute_spread` for that number, which is a spread of surface area around 157 units, while these figures are fractions near 0.78; the quantity used is the observed difference in the published figures themselves, which keeps their disclosed honest example on the correct side of it."
+    ],
+    "verified_by": "Each case written to a probe file at the path it belongs to, the guard run against it, and the probe deleted. Eleven pins caught, including the one that evaded at the previous head. Four honest patterns left unflagged: `approx(..., abs=1e-4)`, a tuple that merely holds a figure, an unrelated container, and membership in a container of other numbers. Those matter as much as the pins -- a guard that fires on a figure's mere presence is one annoyed person away from deletion.",
+    "what_is_still_not_reached": "A figure reached through an attribute, a dict value, or a function return. Only direct literals, names bound to them, and names bound to containers of them are resolved."
   },
   "what_this_does_not_claim": [
     "That the figures are wrong. They are reproducible to about five significant figures, which is far more precision than any conclusion here uses.",
