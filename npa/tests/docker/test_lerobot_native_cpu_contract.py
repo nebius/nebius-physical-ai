@@ -147,7 +147,10 @@ def test_build_gate_uses_native_default_decoder():
     assert 'RUN if [ "${LEROBOT_VERSION}" = "0.5.1" ]; then' in recipe
     assert "/opt/lerobot/venv/bin/python /opt/lerobot/smoke-native-cpu.py" in recipe
     source = (RECIPE / "smoke_native_cpu.py").read_text()
-    assert 'subprocess.run([sys.executable, "-m", "pip", "check"], check=True)' not in source
+    assert (
+        'subprocess.run([sys.executable, "-m", "pip", "check"], check=True)'
+        not in source
+    )
     tree = ast.parse(source)
     dataset_calls = [
         call
