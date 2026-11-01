@@ -295,7 +295,6 @@ RUN /opt/isaac-lab/venv/bin/python -m pip install --no-deps --upgrade \
       "mcap==1.5.0" \
       "msgpack>=1.2.1" \
       "onnx>=1.21.0" \
-      "pillow==13.0.0" \
       "python-multipart>=0.0.30" \
       "starlette>=1.3.1" \
       "tornado>=6.5.6" \

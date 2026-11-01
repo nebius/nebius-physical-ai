@@ -1,0 +1,5 @@
+# Exact PyPI wheels qualified for the Python 3.11 linux/amd64 Isaac closure.
+moviepy==2.2.1 \
+    --hash=sha256:6b56803fec2ac54b557404126ac1160e65448e03798fa282bd23e8fab3795060
+pillow==13.0.0 \
+    --hash=sha256:a625df9a2a5597fa5e5266e01aefc82604bb85d291e3547981e863560d75da6c

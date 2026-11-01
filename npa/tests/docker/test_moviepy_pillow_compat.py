@@ -77,7 +77,10 @@ def test_unknown_moviepy_version_is_rejected(compat, monkeypatch):
         compat.main()
 
 
-@pytest.mark.parametrize("pillow_version", ["11.3.0", "12.3.0", "13.0.1", "14.0.0"])
+@pytest.mark.parametrize(
+    "pillow_version",
+    ["11.3.0", "12.3.0", "13", "13.0", "13.0.0.0", "13.0.1", "14.0.0"],
+)
 def test_unqualified_pillow_version_is_rejected(compat, monkeypatch, pillow_version):
     monkeypatch.setattr(
         compat.metadata, "distribution", lambda _: SimpleNamespace(version="2.2.1")
@@ -181,21 +184,22 @@ def test_shared_installer_repairs_only_closures_that_include_moviepy(tmp_path, c
         ["bash", "-eu", "-c", hooks],
         env={
             **os.environ,
+            "MOVIEPY_PILLOW_QUALIFIED": ("1" if closure == "isaac" else "0"),
             "ISAAC_PYTHON_MINOR": python_minor,
             "ISAAC_VENV": str(interpreter.parent.parent),
             "OSS_DEPS_FILE": str(selected),
             "COMMON_DIR": str(common),
             "SKIP_TORCH": "1",
             "REPAIR_CALL": str(calls),
-            "REPAIR_EXIT": "23" if closure == "unreviewed-moviepy" else "0",
+            "REPAIR_EXIT": "0",
         },
         capture_output=True,
         text=True,
         check=False,
     )
-    assert result.returncode == (23 if closure == "unreviewed-moviepy" else 0)
+    assert result.returncode == 0
     moviepy_repair = str(common / "moviepy_pillow_compat.py")
-    if closure in {"isaac3", "leisaac"}:
+    if closure in {"isaac3", "leisaac", "unreviewed-moviepy"}:
         assert (
             not calls.exists() or moviepy_repair not in calls.read_text().splitlines()
         )
@@ -203,19 +207,68 @@ def test_shared_installer_repairs_only_closures_that_include_moviepy(tmp_path, c
         assert calls.read_text().splitlines() == [moviepy_repair]
 
 
+def test_moviepy_pillow_wheels_are_exactly_hash_locked():
+    common = Path(__file__).resolve().parents[2] / "docker/workbench/common"
+    lock = (common / "moviepy-pillow311.lock").read_text()
+    assert lock == (
+        "# Exact PyPI wheels qualified for the Python 3.11 linux/amd64 Isaac closure.\n"
+        "moviepy==2.2.1 \\\n"
+        "    --hash=sha256:"
+        "6b56803fec2ac54b557404126ac1160e65448e03798fa282bd23e8fab3795060\n"
+        "pillow==13.0.0 \\\n"
+        "    --hash=sha256:"
+        "a625df9a2a5597fa5e5266e01aefc82604bb85d291e3547981e863560d75da6c\n"
+    )
+
+    installer = (common / "install_isaac_runtime_base.sh").read_text()
+    assert "/^(imageio-ffmpeg|moviepy|pillow)==/d" in installer
+    assert "--only-binary=:all:" in installer
+    assert "--require-hashes" in installer
+    assert '-r "${COMMON_DIR}/moviepy-pillow311.lock"' in installer
+
+
+def test_unknown_moviepy_closure_fails_before_install(tmp_path):
+    common = Path(__file__).resolve().parents[2] / "docker/workbench/common"
+    installer = (common / "install_isaac_runtime_base.sh").read_text()
+    selection = installer.split("MOVIEPY_PILLOW_QUALIFIED=0\n", 1)[1]
+    selection = selection.split(
+        '"$ISAAC_VENV/bin/python" -m pip install',
+        1,
+    )[0]
+    output = tmp_path / "selected.txt"
+    selection = selection.replace("/tmp/npa-isaac-oss-deps.txt", str(output))
+    requirements = tmp_path / "requirements.txt"
+    requirements.write_text("moviepy==2.2.2\npillow==13.0.0\n")
+
+    result = subprocess.run(
+        ["bash", "-eu", "-c", "MOVIEPY_PILLOW_QUALIFIED=0\n" + selection],
+        env={
+            **os.environ,
+            "ISAAC_PYTHON_MINOR": "3.11",
+            "OSS_DEPS_FILE": str(requirements),
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert not output.exists()
+
+
 def _assert_groot_keeps_qualified_moviepy_pillow_state(text):
     assert '"pillow>=13.0.0,<14.0"' not in text
-    assert text.count('"pillow==13.0.0"') == 2
+    assert text.count('"pillow==13.0.0"') == 1
     overlay = text[text.index("RUN /opt/isaac-lab/venv/bin/python -m pip install") :]
     repair = "/opt/npa/docker/workbench/common/moviepy_pillow_compat.py"
     final_check = "/opt/isaac-lab/venv/bin/python -m pip check"
+    assert '"pillow==13.0.0"' not in overlay
     assert repair in overlay
     assert final_check in overlay
-    assert overlay.index('"pillow==13.0.0"') < overlay.index(repair)
     assert overlay.index(repair) < overlay.index(final_check)
 
 
-def test_groot_revalidates_moviepy_after_its_pillow_overlay():
+def test_groot_revalidates_moviepy_without_replacing_locked_pillow():
     dockerfile = (
         Path(__file__).resolve().parents[2] / "docker/workbench/groot/Dockerfile"
     ).read_text()
@@ -228,6 +281,11 @@ def test_groot_moviepy_post_overlay_contract_rejects_mutations():
     ).read_text()
     mutations = (
         dockerfile.replace('"pillow==13.0.0"', '"pillow>=13.0.0,<14.0"', 1),
+        dockerfile.replace(
+            '      "python-multipart>=0.0.30" \\\n',
+            '      "pillow==13.0.0" \\\n      "python-multipart>=0.0.30" \\\n',
+            1,
+        ),
         dockerfile.replace(
             "/opt/npa/docker/workbench/common/moviepy_pillow_compat.py",
             "/opt/npa/docker/workbench/common/omitted_moviepy_repair.py",
