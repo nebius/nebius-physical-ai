@@ -43,6 +43,9 @@ _PLACEMENT_FIELDS = frozenset(
         "pod_spec",
     }
 )
+_REQUIRED_PLACEMENT_FIELDS = frozenset(
+    {"accelerator", "cpus", "memory", "allowed_nodes", "pod_spec"}
+)
 
 
 def _pod_spec(kubernetes):
@@ -226,13 +229,24 @@ def _validated_placements(placements):
     for placement in placements:
         if not isinstance(placement, Mapping):
             raise ValueError("effective Isaac stage placement is malformed")
-        accelerator = placement.get("accelerator")
-        pod_spec = placement.get("pod_spec")
+        fields = set(placement)
+        if fields - _PLACEMENT_FIELDS or _REQUIRED_PLACEMENT_FIELDS - fields:
+            raise ValueError("effective Isaac stage placement is malformed")
+        accelerator = placement["accelerator"]
+        pod_spec = placement["pod_spec"]
+        allowed_nodes = placement["allowed_nodes"]
+        if not isinstance(accelerator, str) or not accelerator.strip():
+            raise ValueError("effective Isaac stage placement is malformed")
+        if not isinstance(pod_spec, Mapping):
+            raise ValueError("effective Isaac stage placement is malformed")
+        if allowed_nodes is not None and (
+            not isinstance(allowed_nodes, (list, tuple))
+            or not all(isinstance(name, str) and name.strip() for name in allowed_nodes)
+        ):
+            raise ValueError("effective Isaac stage placement is malformed")
         if (
-            set(placement) - _PLACEMENT_FIELDS
-            or not isinstance(accelerator, str)
-            or not accelerator.strip()
-            or not isinstance(pod_spec, Mapping)
+            cpu_millicores(placement["cpus"]) <= 0
+            or memory_bytes(placement["memory"]) <= 0
         ):
             raise ValueError("effective Isaac stage placement is malformed")
     return tuple(placements)

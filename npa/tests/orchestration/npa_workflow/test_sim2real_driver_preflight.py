@@ -214,17 +214,72 @@ def test_every_effective_placement_is_validated_before_a_node_match():
         node_can_host_isaac(_node(), placements)
 
 
-def test_every_effective_placement_shape_is_evaluated_after_a_node_match():
+def test_every_effective_placement_shape_is_validated_after_a_node_match():
     placements = _placements()
     placements.append({**placements[0], "cpus": "invalid"})
 
-    with pytest.raises(RuntimeError, match="invalid Kubernetes CPU quantity"):
+    with pytest.raises(ValueError, match="effective Isaac stage placement"):
         node_can_host_isaac(_node(), placements)
 
 
 def test_unexpected_effective_placement_fields_are_rejected():
     placements = _placements()
     placements[0]["unexpected"] = True
+
+    with pytest.raises(ValueError, match="effective Isaac stage placement"):
+        node_can_host_isaac(_node(), placements)
+
+
+@pytest.mark.parametrize("missing", ["cpus", "memory", "allowed_nodes"])
+def test_required_effective_placement_fields_cannot_be_omitted(missing):
+    placements = _placements()
+    del placements[0][missing]
+
+    with pytest.raises(ValueError, match="effective Isaac stage placement"):
+        node_can_host_isaac(_node(), placements)
+
+
+@pytest.mark.parametrize(
+    "allowed_nodes",
+    [
+        7,
+        "managed-pool",
+        {"managed-pool": True},
+        ("managed-pool", 7),
+        ("",),
+    ],
+    ids=["integer", "string", "mapping", "non-string-member", "blank-member"],
+)
+def test_malformed_effective_allowed_nodes_are_rejected(allowed_nodes):
+    placements = _placements()
+    placements[0]["allowed_nodes"] = allowed_nodes
+
+    with pytest.raises(ValueError, match="effective Isaac stage placement"):
+        node_can_host_isaac(_node(), placements)
+
+
+def test_explicit_unrestricted_allowed_nodes_is_accepted():
+    placements = _placements()
+    for placement in placements:
+        placement["allowed_nodes"] = None
+
+    assert node_can_host_isaac(_node(), placements)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("cpus", None),
+        ("cpus", 0),
+        ("cpus", -1),
+        ("memory", None),
+        ("memory", 0),
+        ("memory", ""),
+    ],
+)
+def test_nonpositive_effective_capacity_is_rejected(field, value):
+    placements = _placements()
+    placements[0][field] = value
 
     with pytest.raises(ValueError, match="effective Isaac stage placement"):
         node_can_host_isaac(_node(), placements)

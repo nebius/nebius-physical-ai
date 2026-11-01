@@ -555,7 +555,14 @@ def test_kubernetes_preflight_surfaces_managed_driver_isaac_nodes():
 
 
 @pytest.mark.parametrize(
-    "malformed", ["trailing-entry", "invalid-cpu", "unexpected-key"]
+    "malformed",
+    [
+        "trailing-entry",
+        "invalid-cpu",
+        "unexpected-key",
+        "invalid-allowed-nodes",
+        "missing-memory",
+    ],
 )
 def test_kubernetes_preflight_aggregates_malformed_placement_authority(malformed):
     def run(args):
@@ -570,8 +577,12 @@ def test_kubernetes_preflight_aggregates_malformed_placement_authority(malformed
         placements.append({})
     elif malformed == "invalid-cpu":
         placements.append({**placements[0], "cpus": "invalid"})
-    else:
+    elif malformed == "unexpected-key":
         placements[0]["unexpected"] = True
+    elif malformed == "invalid-allowed-nodes":
+        placements[0]["allowed_nodes"] = 7
+    else:
+        del placements[0]["memory"]
 
     issues = kubernetes_prerequisites(
         _config(), runner=run, isaac_placements=placements
