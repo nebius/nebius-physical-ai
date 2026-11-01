@@ -32,7 +32,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from harness_io import output_path
+from harness_io import FAR_READING, output_path, seed_sampling
 
 import numpy as np
 import open3d as o3d
@@ -94,6 +94,7 @@ def centroids(mesh) -> np.ndarray:
 
 
 def main() -> int:
+    seed = seed_sampling()
     report: dict = {
         "construction": (
             "The review lane's: score a mesh against samples drawn from itself, then delete "
@@ -161,14 +162,14 @@ def main() -> int:
                             "unsupported_area_beyond_3_voxels"
                         ],
                         "share_beyond_3_voxels": share,
-                        "reads_as_extrapolated_shell": reading[
+                        "reads_as_far_from_any_observation": reading[
                             "removed_surface_reads_as"
                         ]
-                        == "extrapolated shell",
+                        == FAR_READING,
                     }
                 )
 
-            fired = [r for r in rows if r["reads_as_extrapolated_shell"]]
+            fired = [r for r in rows if r["reads_as_far_from_any_observation"]]
             shares = [r["share_beyond_3_voxels"] for r in rows]
             invented = [r["invented_area_fraction"] for r in rows]
             report["cases"][f"{gname}__{scheme}"] = {
@@ -183,7 +184,7 @@ def main() -> int:
                     np.all(np.diff(np.array(shares)[np.argsort(invented)]) >= -1e-9)
                 ),
                 "zero_error_unsupported_fraction": rows[0]["unsupported_area_fraction"],
-                "zero_error_reads_as_shell": rows[0]["reads_as_extrapolated_shell"],
+                "zero_error_reads_as_far": rows[0]["reads_as_far_from_any_observation"],
             }
 
     floors = {
@@ -200,12 +201,13 @@ def main() -> int:
             v["monotone_in_invented_fraction"] for v in report["cases"].values()
         ),
         "no_false_positive_on_the_perfect_case": all(
-            not v["zero_error_reads_as_shell"] for v in report["cases"].values()
+            not v["zero_error_reads_as_far"] for v in report["cases"].values()
         ),
         "zero_error_unsupported_fraction_spread": {
             k: v["zero_error_unsupported_fraction"] for k, v in report["cases"].items()
         },
     }
+    report["sampling_seed"] = seed
     OUT.write_text(json.dumps(report, indent=2, sort_keys=True))
 
     for case, block in report["cases"].items():
@@ -219,7 +221,7 @@ def main() -> int:
                 f"{row['unsupported_area_fraction']:8.4f} "
                 f"{row['unsupported_area_beyond_3_voxels']:8.4f} "
                 f"{row['share_beyond_3_voxels']:8.4f}  "
-                f"{'shell' if row['reads_as_extrapolated_shell'] else 'near-threshold'}"
+                f"{'shell' if row['reads_as_far_from_any_observation'] else 'near-threshold'}"
             )
         print(
             f"floor {block['floor_invented_area_fraction']}, monotone "

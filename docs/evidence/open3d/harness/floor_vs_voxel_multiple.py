@@ -28,7 +28,7 @@ import itertools
 import json
 from pathlib import Path
 
-from harness_io import output_path
+from harness_io import output_path, seed_sampling
 
 import numpy as np
 import open3d as o3d
@@ -79,6 +79,7 @@ def median_edge(mesh) -> float:
 
 
 def main() -> int:
+    seed = seed_sampling()
     report: dict = {
         "question": (
             "Resolution did not explain the gap between my floor near 0.017 and the review "
@@ -215,6 +216,7 @@ def main() -> int:
             "to 22.467."
         ),
     }
+    report["sampling_seed"] = seed
     OUT.write_text(json.dumps(report, indent=2, sort_keys=True))
 
     print(

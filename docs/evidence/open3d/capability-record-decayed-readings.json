@@ -1,0 +1,57 @@
+{
+  "capability": "Open3D evidence readings that decayed when the product withdrew a claim",
+  "lane": "geometry",
+  "recorded_at": "2026-11-01T09:10:00Z",
+  "base_commit": "8a812a608c90c40ce146409fd3ad7a9af404fed9",
+  "what_this_is": "Four evidence harnesses stopped detecting the thing they exist to detect, and kept publishing the clean result that absence produced. This restores the reading, renames the report keys that reasserted a withdrawn claim, and adds a contract test so the next rename breaks a test instead of a measurement.",
+  "how_it_was_found": "Not by reading the code. #1002 gave the harnesses a writable output path, which let their reports be compared against the committed evidence for the first time. Roughly half the values differed, which I first attributed to unseeded sampling. That was wrong for the part that mattered: a whole boolean column had collapsed, and six rows flipping the same direction is not sampling noise.",
+  "the_defect": {
+    "mechanism": "Commit a828e58fd3, 'Stop the support reading claiming it can detect fabrication', renamed the reading from 'extrapolated shell' to 'far from any observation'. The diff is a pure rename on the same branch of the same condition: the trigger, share >= FAR_BAND_AREA_SHARE, is untouched. That product change was correct -- the old name claimed the reading could tell an invented surface from sparse coverage of a real one, and it cannot.",
+    "why_nothing_caught_it": "The runner's own tests pin the new literal, so the product was covered. The four consumers were evidence harnesses, and nothing covered them at all. The failure was silent and one-directional: a detector that cannot fire reports no defects, which reads exactly like a clean result.",
+    "measured_against_the_committed_evidence": {
+      "floor-across-geometry-and-sampling": "27 of 32 readings true when committed, 0 now",
+      "band-validity-sweep": "6 of 8 true when committed, 0 now",
+      "poisson-procedure-and-overcall-audit": "reading took the other branch, 'near-threshold surface', in all 12 cells both before and after, so there is no current effect here -- but the detector can no longer fire, so a future far reading would be missed",
+      "band-false-negative-sweep": "all five readings were already false when committed, so same latent shape and no visible change"
+    },
+    "what_the_clean_results_were_worth": "band-validity-sweep still reported 'no false positive anywhere in this sweep' and floor-across still reported no_false_positive_on_the_perfect_case true. Both were real negatives when committed, with the detector firing 6 and 27 times and ground truth agreeing. Both are now vacuous."
+  },
+  "the_fix_and_how_the_mapping_was_established": {
+    "not_inferred_from_the_names": "The rename was read off the commit diff, where '- reads_as = \"extrapolated shell\"' and '+ reads_as = \"far from any observation\"' sit on the same branch.",
+    "confirmed_against_the_oracle": "Restoring the mapping and rerunning floor_across_geometry_and_sampling reproduces the committed detector column exactly: identical sequence across all 32 positions, 27 true and 5 false. The committed evidence, produced while the reading was live, is the oracle for its own repair.",
+    "a_second_thing_that_measurement_shows": "That column is identical despite the sampling being unseeded, which is independent evidence that the collapse was the rename and not the nondeterminism I first blamed.",
+    "the_literal_is_no_longer_duplicated": "harness_io.FAR_READING names it once. The duplication across four files is what let it drift, so the contract test holds that constant against the reads_as assignments in the runner source -- a source-level check, so it runs in CI without Open3D.",
+    "keys_renamed_because_they_reasserted_the_withdrawn_claim": "reads_as_extrapolated_shell -> reads_as_far_from_any_observation, and zero_error_reads_as_shell -> zero_error_reads_as_far. Comparing against the right string but writing the old key back into the report would put the fabrication claim back into the evidence, which is the thing a828e58fd3 removed."
+  },
+  "the_second_and_smaller_cause": {
+    "what_it_is": "Sampling is unseeded. Open3D 0.20.0 exposes no seed parameter on either sample_points_uniformly or sample_points_poisson_disk; o3d.utility.random.seed is the only control, and it works: seeded, three separate processes produce byte-identical point sets; unseeded, all three differ; a different seed differs again.",
+    "measured_over_three_unseeded_repeats_of_each_harness": {
+      "band-validity-sweep": "30 of 84 leaves identical",
+      "floor-across-geometry-and-sampling": "132 of 229 identical, 2 booleans moved",
+      "floor-vs-resolution": "167 of 325 identical",
+      "floor-vs-voxel-multiple": "141 of 276 identical",
+      "poisson-procedure-and-overcall-audit": "45 of 85 identical"
+    },
+    "the_two_findings_that_matter_more_than_the_spread": {
+      "a_summary_conclusion_flips": "floor-across's /summary/monotone_everywhere read [False, False, True] over three runs. One run in three would have published the opposite headline.",
+      "three_readings_straddle_the_decision_boundary": "share_beyond_3_voxels is the quantity the 0.1 reading boundary is compared against. Three of them cross it between runs, the widest being [0.1659, 0.1359, 0.0875] -- two runs above the boundary, one below. So for rows near the threshold the restored detector's verdict is itself seed-dependent."
+    },
+    "what_seeding_does_and_does_not_do": "It makes a run repeatable. It does not make a knife-edge reading stable, and pinning a seed on one would disguise the instability rather than remove it -- the same mistake as quoting a ratio that sits on a one-pixel hinge without its interval. The seed is recorded in every report, and OPEN3D_SEED lets a reviewer ask whether a result is seed-specific. The three straddling rows are published above so they are on record as unstable rather than discovered later.",
+    "the_hundred_percent_figure_is_not_what_it_looks_like": "One leaf showed 100% relative spread. Absolutely it moved between 0.000186 and 0.0, so it is a near-zero value and the relative figure is an artifact of the denominator. Reported this way rather than as the headline it would have made."
+  },
+  "what_this_does_not_claim": "That the committed evidence is wrong, or that it should be regenerated. Those are accepted bytes bound by hash in other records, and regenerating them under the restored reading would also destroy the oracle that made this diagnosis possible -- so the firing counts are pinned in the contract test. Whether band_validity_sweep's false-positive conclusion survives the weakened reading at all is a question this raises and does not settle: the runner now says a far reading cannot distinguish sparse coverage of correct geometry from invented surface, which is most of what that conclusion rested on. Review's and root's call.",
+  "tests": {
+    "file": "npa/tests/workbench/test_open3d_reading_contract.py",
+    "count": 10,
+    "mutations_applied": {
+      "all_four_harnesses_back_to_the_withdrawn_literal": "8 of 10 failed -- this is the actual historical defect, so the suite catches the thing that happened",
+      "one_harness_reverted": "4 failed",
+      "the_runner_renames_the_reading_again": "1 failed",
+      "committed_evidence_regenerated_under_the_broken_comparison": "1 failed"
+    }
+  },
+  "visual_evaluation": {
+    "status": "not_applicable",
+    "reason": "No renderable artifact and no pixels. The change restores a string comparison in four JSON-producing harnesses and adds source-level tests. The evidence that it works is the reproduced detector column, which is a sequence of 32 booleans, not an image."
+  }
+}

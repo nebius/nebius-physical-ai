@@ -28,7 +28,7 @@ import itertools
 import json
 from pathlib import Path
 
-from harness_io import output_path
+from harness_io import output_path, seed_sampling
 
 import numpy as np
 import open3d as o3d
@@ -74,6 +74,7 @@ def median_edge(mesh) -> float:
 
 
 def main() -> int:
+    seed = seed_sampling()
     report: dict = {
         "question": (
             "My floor grid held resolution at spacing/voxel 0.5 in every cell and measured "
@@ -191,6 +192,7 @@ def main() -> int:
             if x in floors and y in floors
         ),
     }
+    report["sampling_seed"] = seed
     OUT.write_text(json.dumps(report, indent=2, sort_keys=True))
 
     print(
