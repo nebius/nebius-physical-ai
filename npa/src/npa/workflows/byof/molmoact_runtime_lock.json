@@ -1,0 +1,607 @@
+{
+  "schema": "npa.molmoact.runtime-lock.v2",
+  "transformers_version": "4.52.3",
+  "forbidden_distributions": [
+    "kernels"
+  ],
+  "model_snapshot": {
+    "repository": "allenai/MolmoAct-7B-O-0812",
+    "revision": "b614d9041b68b1e79bd1337a0308ad74bd5df8ae",
+    "files": [
+      {
+        "path": "added_tokens.json",
+        "role": "tokenizer",
+        "size": 18676,
+        "identity_kind": "git_blob_sha1",
+        "identity": "5f257ca6212da09bb31660b2689066c5864f622b"
+      },
+      {
+        "path": "chat_template.jinja",
+        "role": "prompt template",
+        "size": 676,
+        "identity_kind": "git_blob_sha1",
+        "identity": "90161ea1b72db2c989222c796471ace0698185c8"
+      },
+      {
+        "path": "config.json",
+        "role": "model config",
+        "size": 3755,
+        "identity_kind": "git_blob_sha1",
+        "identity": "ff31225cd6fecf4ebd321d1d755a81c8e9c1bc40"
+      },
+      {
+        "path": "configuration_molmoact.py",
+        "role": "executable remote code",
+        "size": 12658,
+        "identity_kind": "git_blob_sha1",
+        "identity": "35fc692604160ce1a526ce033d7df7989d99c2d2"
+      },
+      {
+        "path": "generation_config.json",
+        "role": "generation config",
+        "size": 117,
+        "identity_kind": "git_blob_sha1",
+        "identity": "9f7adfa7d7f3bdc2fc54f884e44535b6066b5bcb"
+      },
+      {
+        "path": "image_processing_molmoact.py",
+        "role": "executable remote code",
+        "size": 36696,
+        "identity_kind": "git_blob_sha1",
+        "identity": "b9d63d0f441483d4a0e624797b85e722601fc2ea"
+      },
+      {
+        "path": "merges.txt",
+        "role": "processor tokenizer",
+        "size": 916646,
+        "identity_kind": "git_blob_sha1",
+        "identity": "354558edcdbd64ca7abd407b8be3d5d09d39d781"
+      },
+      {
+        "path": "model-00001-of-00007.safetensors",
+        "role": "weights",
+        "size": 4892921912,
+        "identity_kind": "lfs_sha256",
+        "identity": "22b149604bdd0e6d5a1eab6a7764e9bc001ba2eaefd1f6506761746069027893"
+      },
+      {
+        "path": "model-00002-of-00007.safetensors",
+        "role": "weights",
+        "size": 4857403152,
+        "identity_kind": "lfs_sha256",
+        "identity": "4308afe5a8c8c3e9e17cae20b9a4ef5ec81bf9f959511047855b2e9ae617784a"
+      },
+      {
+        "path": "model-00003-of-00007.safetensors",
+        "role": "weights",
+        "size": 4857403200,
+        "identity_kind": "lfs_sha256",
+        "identity": "6564f9fdaaa424eaadfb33cf7e1a10ad9c6c7a0af1b90085fe8aae833ed52792"
+      },
+      {
+        "path": "model-00004-of-00007.safetensors",
+        "role": "weights",
+        "size": 4857403200,
+        "identity_kind": "lfs_sha256",
+        "identity": "734aa8101f1689d7e41f8cbfaff539248712aa879d21a03578d37839b6107c9d"
+      },
+      {
+        "path": "model-00005-of-00007.safetensors",
+        "role": "weights",
+        "size": 4857403200,
+        "identity_kind": "lfs_sha256",
+        "identity": "5b024919352d9a1adddfe53bf0accf25a86ceb4168fd9c95d5ff434df4c4bad5"
+      },
+      {
+        "path": "model-00006-of-00007.safetensors",
+        "role": "weights",
+        "size": 4651517480,
+        "identity_kind": "lfs_sha256",
+        "identity": "90ae62928101ae357c6c7eb3c89bf9c9919dc9e5056a4f8b4be9aa16b343f051"
+      },
+      {
+        "path": "model-00007-of-00007.safetensors",
+        "role": "weights",
+        "size": 1652555904,
+        "identity_kind": "lfs_sha256",
+        "identity": "1656295cc35ed895cb50a7557fc13c5619718f01c1df02f32e80a4625011bf9e"
+      },
+      {
+        "path": "model.safetensors.index.json",
+        "role": "weight index",
+        "size": 67306,
+        "identity_kind": "git_blob_sha1",
+        "identity": "1df0691a8bc4af92f69bdc069be528a2dd2a57d8"
+      },
+      {
+        "path": "model.yaml",
+        "role": "upstream model metadata",
+        "size": 4790,
+        "identity_kind": "git_blob_sha1",
+        "identity": "a0ded64e732b7145f031e199334056cfd6a07d45"
+      },
+      {
+        "path": "modeling_molmoact.py",
+        "role": "executable remote code and parsers",
+        "size": 93310,
+        "identity_kind": "git_blob_sha1",
+        "identity": "4a4b0f9d69bfa90b4982773d925776fe5ca6260d"
+      },
+      {
+        "path": "preprocessor_config.json",
+        "role": "processor config",
+        "size": 633,
+        "identity_kind": "git_blob_sha1",
+        "identity": "b53930c9b1d5e93b99b8850db83823f5f70abb07"
+      },
+      {
+        "path": "processing_molmoact.py",
+        "role": "executable remote code",
+        "size": 17773,
+        "identity_kind": "git_blob_sha1",
+        "identity": "5b6b5facb473d5d2fa488d997b619935e1f7e600"
+      },
+      {
+        "path": "processor_config.json",
+        "role": "processor config",
+        "size": 369,
+        "identity_kind": "git_blob_sha1",
+        "identity": "ae98dd64c6df616f9d29a3938141f320f318a4a5"
+      },
+      {
+        "path": "special_tokens_map.json",
+        "role": "processor tokenizer",
+        "size": 71589,
+        "identity_kind": "git_blob_sha1",
+        "identity": "0b2daf0d484cd7fe3a3e2d8d0e33516d0bdcccf7"
+      },
+      {
+        "path": "tokenizer.json",
+        "role": "processor tokenizer",
+        "size": 7252346,
+        "identity_kind": "git_blob_sha1",
+        "identity": "b760f50efb9df0d99a9ceacaf03bea46210cd3bc"
+      },
+      {
+        "path": "tokenizer_config.json",
+        "role": "processor tokenizer",
+        "size": 126514,
+        "identity_kind": "git_blob_sha1",
+        "identity": "06da6dffe7393c7200020b670c2be7f19e70adf4"
+      },
+      {
+        "path": "vocab.json",
+        "role": "processor tokenizer",
+        "size": 1611056,
+        "identity_kind": "git_blob_sha1",
+        "identity": "51135344eec01a62fc4deaca39c72ac08f5b9709"
+      }
+    ]
+  },
+  "qwen_snapshot": {
+    "repository": "Qwen/Qwen2-7B",
+    "revision": "453ed1575b739b5b03ce3758b23befdb0967f40e",
+    "files": [
+      {
+        "path": "LICENSE",
+        "role": "retained_notice",
+        "size": 11343,
+        "identity_kind": "git_blob_sha1",
+        "identity": "6634c8cc3133b3848ec74b9f275acaaa1ea618ab"
+      },
+      {
+        "path": "merges.txt",
+        "role": "tokenizer_merges",
+        "size": 1671839,
+        "identity_kind": "git_blob_sha1",
+        "identity": "20024bfe7c83998e9aeaf98a0cd6a2ce6306c2f0"
+      },
+      {
+        "path": "tokenizer_config.json",
+        "role": "tokenizer_init_metadata",
+        "size": 1289,
+        "identity_kind": "git_blob_sha1",
+        "identity": "f4b55f917af273d0dc98b67ec249f6445dd385f5"
+      },
+      {
+        "path": "vocab.json",
+        "role": "tokenizer_vocabulary",
+        "size": 2776833,
+        "identity_kind": "git_blob_sha1",
+        "identity": "4783fe10ac3adce15ac8f358ef5462739852c569"
+      }
+    ]
+  },
+  "input_snapshot": {
+    "repository": "allenai/MolmoAct-7B-D-0812",
+    "revision": "936bcc40a2d9bda45cab41d11a06fbe2782ae360",
+    "files": [
+      {
+        "path": "example_1.png",
+        "role": "side view, first image",
+        "size": 352341,
+        "identity_kind": "lfs_sha256",
+        "identity": "19253fd1d5286ac6b1e72fa4c71c8918b318c2a8c9358909ed793107e90a70d2"
+      },
+      {
+        "path": "example_2.png",
+        "role": "wrist view, second image",
+        "size": 377478,
+        "identity_kind": "lfs_sha256",
+        "identity": "95ddc7159ec1657f667709e805ebec28ad22e42bd10e3efcf7186b9999434d8b"
+      }
+    ]
+  },
+  "operation": {
+    "instruction": "close the box",
+    "prompt": "The task is close the box. What is the action that the robot should take. To figure out the action that the robot should take to close the box, let's think through it step by step. First, what is the depth map for the first image? Second, what is the trajectory of the end effector in the first image? Based on the depth map of the first image and the trajectory of the end effector in the first image, along with other images from different camera views as additional information, what is the action that the robot should take?",
+    "prompt_sha256": "29a1cc6b4d29bf5c3cb6e9654d2ca5dac99ca91126325f3ae8f6a31966a346f8",
+    "operation_canonical_json": "{\"input_files\":[{\"path\":\"example_1.png\",\"sha256\":\"19253fd1d5286ac6b1e72fa4c71c8918b318c2a8c9358909ed793107e90a70d2\"},{\"path\":\"example_2.png\",\"sha256\":\"95ddc7159ec1657f667709e805ebec28ad22e42bd10e3efcf7186b9999434d8b\"}],\"input_repository\":\"allenai/MolmoAct-7B-D-0812\",\"input_revision\":\"936bcc40a2d9bda45cab41d11a06fbe2782ae360\",\"instruction\":\"close the box\",\"model_repository\":\"allenai/MolmoAct-7B-O-0812\",\"model_revision\":\"b614d9041b68b1e79bd1337a0308ad74bd5df8ae\",\"operation\":\"one_shot_offline_inference\",\"prompt_sha256\":\"29a1cc6b4d29bf5c3cb6e9654d2ca5dac99ca91126325f3ae8f6a31966a346f8\",\"qwen_repository\":\"Qwen/Qwen2-7B\",\"qwen_revision\":\"453ed1575b739b5b03ce3758b23befdb0967f40e\"}",
+    "operation_sha256": "3a016011b6dc3448c0ef41c4e1246502f6557415210ab160a45078a2148696c6",
+    "qwen_closure_canonical_json": "{\"files\":[{\"identity\":\"6634c8cc3133b3848ec74b9f275acaaa1ea618ab\",\"identity_kind\":\"git_blob_sha1\",\"path\":\"LICENSE\",\"role\":\"retained_notice\",\"size\":11343},{\"identity\":\"20024bfe7c83998e9aeaf98a0cd6a2ce6306c2f0\",\"identity_kind\":\"git_blob_sha1\",\"path\":\"merges.txt\",\"role\":\"tokenizer_merges\",\"size\":1671839},{\"identity\":\"f4b55f917af273d0dc98b67ec249f6445dd385f5\",\"identity_kind\":\"git_blob_sha1\",\"path\":\"tokenizer_config.json\",\"role\":\"tokenizer_init_metadata\",\"size\":1289},{\"identity\":\"4783fe10ac3adce15ac8f358ef5462739852c569\",\"identity_kind\":\"git_blob_sha1\",\"path\":\"vocab.json\",\"role\":\"tokenizer_vocabulary\",\"size\":2776833}],\"repository\":\"Qwen/Qwen2-7B\",\"revision\":\"453ed1575b739b5b03ce3758b23befdb0967f40e\"}",
+    "qwen_closure_sha256": "beb6a0e21024812e339920bae9513d3ed6b6f4656327eec5b66b16d9e9f4732e",
+    "action_unnorm_key": "molmoact",
+    "expected_action_dim": 7,
+    "depth_tokens": {
+      "count": 100,
+      "minimum": 1,
+      "maximum": 128
+    },
+    "generation": {
+      "max_new_tokens": 256,
+      "do_sample": false,
+      "num_beams": 1,
+      "num_return_sequences": 1,
+      "use_cache": true
+    }
+  },
+  "consumer_view_layout": {
+    "schema": "npa.molmoact.consumer-view-manifest.v1",
+    "manifest_domain": "npa.molmoact.consumer-view-manifest.v1\u0000",
+    "manifest_sha256": "83508fd23ba77c29b9df1d48c56c18eb80aa7f47869434f2d3acc93443f0c3b9",
+    "directories": [
+      ".",
+      "hf_modules",
+      "hf_modules/transformers_modules",
+      "hf_modules/transformers_modules/molmoact_model",
+      "inputs",
+      "molmoact_model",
+      "qwen_tokenizer"
+    ],
+    "files": [
+      {
+        "identity": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "identity_kind": "sha256",
+        "kind": "generated_empty",
+        "path": "hf_modules/__init__.py",
+        "role": "dynamic_cache_init",
+        "size": 0,
+        "source_path": "generated:empty"
+      },
+      {
+        "identity": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "identity_kind": "sha256",
+        "kind": "generated_empty",
+        "path": "hf_modules/transformers_modules/__init__.py",
+        "role": "dynamic_cache_init",
+        "size": 0,
+        "source_path": "generated:empty"
+      },
+      {
+        "identity": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "identity_kind": "sha256",
+        "kind": "generated_empty",
+        "path": "hf_modules/transformers_modules/molmoact_model/__init__.py",
+        "role": "dynamic_cache_init",
+        "size": 0,
+        "source_path": "generated:empty"
+      },
+      {
+        "identity": "35fc692604160ce1a526ce033d7df7989d99c2d2",
+        "identity_kind": "git_blob_sha1",
+        "kind": "cache_copy",
+        "path": "hf_modules/transformers_modules/molmoact_model/configuration_molmoact.py",
+        "role": "dynamic_cache_copy",
+        "size": 12658,
+        "source_path": "molmoact_model/configuration_molmoact.py"
+      },
+      {
+        "identity": "b9d63d0f441483d4a0e624797b85e722601fc2ea",
+        "identity_kind": "git_blob_sha1",
+        "kind": "cache_copy",
+        "path": "hf_modules/transformers_modules/molmoact_model/image_processing_molmoact.py",
+        "role": "dynamic_cache_copy",
+        "size": 36696,
+        "source_path": "molmoact_model/image_processing_molmoact.py"
+      },
+      {
+        "identity": "4a4b0f9d69bfa90b4982773d925776fe5ca6260d",
+        "identity_kind": "git_blob_sha1",
+        "kind": "cache_copy",
+        "path": "hf_modules/transformers_modules/molmoact_model/modeling_molmoact.py",
+        "role": "dynamic_cache_copy",
+        "size": 93310,
+        "source_path": "molmoact_model/modeling_molmoact.py"
+      },
+      {
+        "identity": "5b6b5facb473d5d2fa488d997b619935e1f7e600",
+        "identity_kind": "git_blob_sha1",
+        "kind": "cache_copy",
+        "path": "hf_modules/transformers_modules/molmoact_model/processing_molmoact.py",
+        "role": "dynamic_cache_copy",
+        "size": 17773,
+        "source_path": "molmoact_model/processing_molmoact.py"
+      },
+      {
+        "identity": "19253fd1d5286ac6b1e72fa4c71c8918b318c2a8c9358909ed793107e90a70d2",
+        "identity_kind": "lfs_sha256",
+        "kind": "payload",
+        "path": "inputs/example_1.png",
+        "role": "side view, first image",
+        "size": 352341,
+        "source_path": "inputs/example_1.png"
+      },
+      {
+        "identity": "95ddc7159ec1657f667709e805ebec28ad22e42bd10e3efcf7186b9999434d8b",
+        "identity_kind": "lfs_sha256",
+        "kind": "payload",
+        "path": "inputs/example_2.png",
+        "role": "wrist view, second image",
+        "size": 377478,
+        "source_path": "inputs/example_2.png"
+      },
+      {
+        "identity": "5f257ca6212da09bb31660b2689066c5864f622b",
+        "identity_kind": "git_blob_sha1",
+        "kind": "payload",
+        "path": "molmoact_model/added_tokens.json",
+        "role": "tokenizer",
+        "size": 18676,
+        "source_path": "molmoact_model/added_tokens.json"
+      },
+      {
+        "identity": "90161ea1b72db2c989222c796471ace0698185c8",
+        "identity_kind": "git_blob_sha1",
+        "kind": "payload",
+        "path": "molmoact_model/chat_template.jinja",
+        "role": "prompt template",
+        "size": 676,
+        "source_path": "molmoact_model/chat_template.jinja"
+      },
+      {
+        "identity": "ff31225cd6fecf4ebd321d1d755a81c8e9c1bc40",
+        "identity_kind": "git_blob_sha1",
+        "kind": "payload",
+        "path": "molmoact_model/config.json",
+        "role": "model config",
+        "size": 3755,
+        "source_path": "molmoact_model/config.json"
+      },
+      {
+        "identity": "35fc692604160ce1a526ce033d7df7989d99c2d2",
+        "identity_kind": "git_blob_sha1",
+        "kind": "payload",
+        "path": "molmoact_model/configuration_molmoact.py",
+        "role": "executable remote code",
+        "size": 12658,
+        "source_path": "molmoact_model/configuration_molmoact.py"
+      },
+      {
+        "identity": "9f7adfa7d7f3bdc2fc54f884e44535b6066b5bcb",
+        "identity_kind": "git_blob_sha1",
+        "kind": "payload",
+        "path": "molmoact_model/generation_config.json",
+        "role": "generation config",
+        "size": 117,
+        "source_path": "molmoact_model/generation_config.json"
+      },
+      {
+        "identity": "b9d63d0f441483d4a0e624797b85e722601fc2ea",
+        "identity_kind": "git_blob_sha1",
+        "kind": "payload",
+        "path": "molmoact_model/image_processing_molmoact.py",
+        "role": "executable remote code",
+        "size": 36696,
+        "source_path": "molmoact_model/image_processing_molmoact.py"
+      },
+      {
+        "identity": "354558edcdbd64ca7abd407b8be3d5d09d39d781",
+        "identity_kind": "git_blob_sha1",
+        "kind": "payload",
+        "path": "molmoact_model/merges.txt",
+        "role": "processor tokenizer",
+        "size": 916646,
+        "source_path": "molmoact_model/merges.txt"
+      },
+      {
+        "identity": "22b149604bdd0e6d5a1eab6a7764e9bc001ba2eaefd1f6506761746069027893",
+        "identity_kind": "lfs_sha256",
+        "kind": "payload",
+        "path": "molmoact_model/model-00001-of-00007.safetensors",
+        "role": "weights",
+        "size": 4892921912,
+        "source_path": "molmoact_model/model-00001-of-00007.safetensors"
+      },
+      {
+        "identity": "4308afe5a8c8c3e9e17cae20b9a4ef5ec81bf9f959511047855b2e9ae617784a",
+        "identity_kind": "lfs_sha256",
+        "kind": "payload",
+        "path": "molmoact_model/model-00002-of-00007.safetensors",
+        "role": "weights",
+        "size": 4857403152,
+        "source_path": "molmoact_model/model-00002-of-00007.safetensors"
+      },
+      {
+        "identity": "6564f9fdaaa424eaadfb33cf7e1a10ad9c6c7a0af1b90085fe8aae833ed52792",
+        "identity_kind": "lfs_sha256",
+        "kind": "payload",
+        "path": "molmoact_model/model-00003-of-00007.safetensors",
+        "role": "weights",
+        "size": 4857403200,
+        "source_path": "molmoact_model/model-00003-of-00007.safetensors"
+      },
+      {
+        "identity": "734aa8101f1689d7e41f8cbfaff539248712aa879d21a03578d37839b6107c9d",
+        "identity_kind": "lfs_sha256",
+        "kind": "payload",
+        "path": "molmoact_model/model-00004-of-00007.safetensors",
+        "role": "weights",
+        "size": 4857403200,
+        "source_path": "molmoact_model/model-00004-of-00007.safetensors"
+      },
+      {
+        "identity": "5b024919352d9a1adddfe53bf0accf25a86ceb4168fd9c95d5ff434df4c4bad5",
+        "identity_kind": "lfs_sha256",
+        "kind": "payload",
+        "path": "molmoact_model/model-00005-of-00007.safetensors",
+        "role": "weights",
+        "size": 4857403200,
+        "source_path": "molmoact_model/model-00005-of-00007.safetensors"
+      },
+      {
+        "identity": "90ae62928101ae357c6c7eb3c89bf9c9919dc9e5056a4f8b4be9aa16b343f051",
+        "identity_kind": "lfs_sha256",
+        "kind": "payload",
+        "path": "molmoact_model/model-00006-of-00007.safetensors",
+        "role": "weights",
+        "size": 4651517480,
+        "source_path": "molmoact_model/model-00006-of-00007.safetensors"
+      },
+      {
+        "identity": "1656295cc35ed895cb50a7557fc13c5619718f01c1df02f32e80a4625011bf9e",
+        "identity_kind": "lfs_sha256",
+        "kind": "payload",
+        "path": "molmoact_model/model-00007-of-00007.safetensors",
+        "role": "weights",
+        "size": 1652555904,
+        "source_path": "molmoact_model/model-00007-of-00007.safetensors"
+      },
+      {
+        "identity": "1df0691a8bc4af92f69bdc069be528a2dd2a57d8",
+        "identity_kind": "git_blob_sha1",
+        "kind": "payload",
+        "path": "molmoact_model/model.safetensors.index.json",
+        "role": "weight index",
+        "size": 67306,
+        "source_path": "molmoact_model/model.safetensors.index.json"
+      },
+      {
+        "identity": "a0ded64e732b7145f031e199334056cfd6a07d45",
+        "identity_kind": "git_blob_sha1",
+        "kind": "payload",
+        "path": "molmoact_model/model.yaml",
+        "role": "upstream model metadata",
+        "size": 4790,
+        "source_path": "molmoact_model/model.yaml"
+      },
+      {
+        "identity": "4a4b0f9d69bfa90b4982773d925776fe5ca6260d",
+        "identity_kind": "git_blob_sha1",
+        "kind": "payload",
+        "path": "molmoact_model/modeling_molmoact.py",
+        "role": "executable remote code and parsers",
+        "size": 93310,
+        "source_path": "molmoact_model/modeling_molmoact.py"
+      },
+      {
+        "identity": "b53930c9b1d5e93b99b8850db83823f5f70abb07",
+        "identity_kind": "git_blob_sha1",
+        "kind": "payload",
+        "path": "molmoact_model/preprocessor_config.json",
+        "role": "processor config",
+        "size": 633,
+        "source_path": "molmoact_model/preprocessor_config.json"
+      },
+      {
+        "identity": "5b6b5facb473d5d2fa488d997b619935e1f7e600",
+        "identity_kind": "git_blob_sha1",
+        "kind": "payload",
+        "path": "molmoact_model/processing_molmoact.py",
+        "role": "executable remote code",
+        "size": 17773,
+        "source_path": "molmoact_model/processing_molmoact.py"
+      },
+      {
+        "identity": "ae98dd64c6df616f9d29a3938141f320f318a4a5",
+        "identity_kind": "git_blob_sha1",
+        "kind": "payload",
+        "path": "molmoact_model/processor_config.json",
+        "role": "processor config",
+        "size": 369,
+        "source_path": "molmoact_model/processor_config.json"
+      },
+      {
+        "identity": "0b2daf0d484cd7fe3a3e2d8d0e33516d0bdcccf7",
+        "identity_kind": "git_blob_sha1",
+        "kind": "payload",
+        "path": "molmoact_model/special_tokens_map.json",
+        "role": "processor tokenizer",
+        "size": 71589,
+        "source_path": "molmoact_model/special_tokens_map.json"
+      },
+      {
+        "identity": "b760f50efb9df0d99a9ceacaf03bea46210cd3bc",
+        "identity_kind": "git_blob_sha1",
+        "kind": "payload",
+        "path": "molmoact_model/tokenizer.json",
+        "role": "processor tokenizer",
+        "size": 7252346,
+        "source_path": "molmoact_model/tokenizer.json"
+      },
+      {
+        "identity": "06da6dffe7393c7200020b670c2be7f19e70adf4",
+        "identity_kind": "git_blob_sha1",
+        "kind": "payload",
+        "path": "molmoact_model/tokenizer_config.json",
+        "role": "processor tokenizer",
+        "size": 126514,
+        "source_path": "molmoact_model/tokenizer_config.json"
+      },
+      {
+        "identity": "51135344eec01a62fc4deaca39c72ac08f5b9709",
+        "identity_kind": "git_blob_sha1",
+        "kind": "payload",
+        "path": "molmoact_model/vocab.json",
+        "role": "processor tokenizer",
+        "size": 1611056,
+        "source_path": "molmoact_model/vocab.json"
+      },
+      {
+        "identity": "6634c8cc3133b3848ec74b9f275acaaa1ea618ab",
+        "identity_kind": "git_blob_sha1",
+        "kind": "payload",
+        "path": "qwen_tokenizer/LICENSE",
+        "role": "retained_notice",
+        "size": 11343,
+        "source_path": "qwen_tokenizer/LICENSE"
+      },
+      {
+        "identity": "20024bfe7c83998e9aeaf98a0cd6a2ce6306c2f0",
+        "identity_kind": "git_blob_sha1",
+        "kind": "payload",
+        "path": "qwen_tokenizer/merges.txt",
+        "role": "tokenizer_merges",
+        "size": 1671839,
+        "source_path": "qwen_tokenizer/merges.txt"
+      },
+      {
+        "identity": "f4b55f917af273d0dc98b67ec249f6445dd385f5",
+        "identity_kind": "git_blob_sha1",
+        "kind": "payload",
+        "path": "qwen_tokenizer/tokenizer_config.json",
+        "role": "tokenizer_init_metadata",
+        "size": 1289,
+        "source_path": "qwen_tokenizer/tokenizer_config.json"
+      },
+      {
+        "identity": "4783fe10ac3adce15ac8f358ef5462739852c569",
+        "identity_kind": "git_blob_sha1",
+        "kind": "payload",
+        "path": "qwen_tokenizer/vocab.json",
+        "role": "tokenizer_vocabulary",
+        "size": 2776833,
+        "source_path": "qwen_tokenizer/vocab.json"
+      }
+    ]
+  }
+}
