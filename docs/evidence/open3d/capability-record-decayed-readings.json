@@ -60,5 +60,31 @@
   "visual_evaluation": {
     "status": "not_applicable",
     "reason": "No renderable artifact and no pixels. The change restores a string comparison in four JSON-producing harnesses and adds source-level tests. The evidence that it works is the reproduced detector column, which is a sequence of 32 booleans, not an image."
+  },
+  "the_claim_review_could_not_check_is_now_checkable_without_open3d": {
+    "what_they_could_not_check": "Review verified the premise, the scope, the counts and the guard by execution, and said so. The one thing they could not run was the central claim: that restoring the comparison reproduces the committed detector sequences. The harnesses import Open3D at module scope and no environment on that host has it.",
+    "it_does_not_need_open3d": "The runner's reading is unsupported_area_beyond_3_voxels / unsupported_area_fraction compared against FAR_BAND_AREA_SHARE, and every row of the committed evidence already records both operands. So the boolean column can be recomputed from the committed bytes and compared against the recorded column with nothing but Python.",
+    "result": "45 of 45 rows recompute to exactly the recorded value, across all three reports.",
+    "per_file": {
+      "band-validity-sweep.json": "8 rows, 0 mismatch, 6 recorded true",
+      "floor-across-geometry-and-sampling.json": "32 rows, 0 mismatch, 27 recorded true",
+      "band-false-negative-sweep.json": "5 rows, 0 mismatch, 0 recorded true"
+    },
+    "why_this_is_stronger_than_publishing_my_sequences": "Publishing my own run's sequences would have asked a reviewer to trust that I ran the harness. This shows the column could not have depended on the renamed string at all: it is a function of two numbers the rename did not touch. The 27/6/0 counts review extracted independently fall out of the same recomputation.",
+    "the_published_share_was_cross_checked_too": "Each row also publishes share_beyond_3_voxels. It equals the ratio to within 1e-9 on every row that carries it, so the recomputation is reading the quantity it claims to.",
+    "the_threshold_is_read_from_source_not_pinned": "Writing 0.1 into the test would recreate, in the test that closes this defect, the duplicated literal that caused it. It is parsed out of the runner instead, which also keeps the file runnable without the package like every other test in it.",
+    "mutations_caught": [
+      "runner threshold 0.1 -> 0.2 (two rows cross it): fails",
+      "runner threshold 0.1 -> 0.05 (one row crosses it): fails",
+      "constant renamed away entirely: fails",
+      "one recorded boolean flipped, leaving the row count intact: fails two tests",
+      "one published share corrupted to 0.5: fails"
+    ]
+  },
+  "a_near_miss_in_my_own_validation": {
+    "what_happened": "My first run of the threshold mutation left every test green, which I read as a hole in the test. It was a hole in the harness around it. `import npa...` resolved to a different worktree's source, so `sed` edited a file the test never read.",
+    "how_widespread": "Five of eight worktree venvs in this lane resolve the package to another worktree: collision and holes to frame-gate, determinism and signed to reproducibility.",
+    "what_it_did_not_affect": "No published result. None of the eight branches modifies npa/src at all, and the whole product tree is byte-identical across all four cross-linked pairs (4f46f0d45ade). The only casualty was that one mutation attempt, and reading the threshold from source rather than importing it removes the dependence entirely.",
+    "the_general_lesson": "A mutation that fails to fire is evidence about the harness before it is evidence about the test. I had the same correction earlier in this lane from the other direction, when a construction that failed to exercise an effect was not evidence the effect was absent."
   }
 }
