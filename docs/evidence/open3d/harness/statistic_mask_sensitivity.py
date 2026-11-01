@@ -16,7 +16,7 @@ answer stops changing once the exclusion box is wide enough -- goes flat at 160p
 flat to 440px, and that flatness is **necessary but not sufficient** for "this box contains
 only annotation". The extent stops responding once the annotation no longer pins the bounding
 box, and then keeps not responding while a wider box eats interior subject pixels that were
-never on the boundary. The matched-pair diff does notice: it is exactly zero through 260px and
+never on the boundary. The matched-pair diff does notice: it is exactly zero through 290px and
 nonzero from 320px, because two reconstructions of one view differ wherever real geometry sits.
 
 So the two controls disagree about the wide end, and the pair diff is right. One figure in the
@@ -385,9 +385,12 @@ def build() -> dict[str, object]:
             "what_it_does_not_show": "That the box contains only annotation. The extent stays "
             "flat while a wider box removes interior subject pixels that were never on the "
             "boundary.",
-            "what_the_pair_diff_shows_instead": "Exactly zero differing pixels through 260px and "
-            "thousands from 320px, because two reconstructions of one view differ wherever real "
-            "geometry sits. The two controls disagree above 260px and the pair diff is right.",
+            "what_the_pair_diff_shows_instead": "Exactly zero differing pixels through 290px and "
+            "360 at 320px rising to thousands by 440px, because two reconstructions of one view "
+            "differ wherever real geometry sits. The two controls disagree above 290px and the "
+            "pair diff is right. An earlier version of this sentence said 260px, which "
+            "understated the certified range by one step of the sweep while the table beside it "
+            "and widest_certified_overlay_only both read 290.",
             "consequence": "The pair diff is the load-bearing control. The plateau is corroboration.",
         },
         "a_figure_this_corrects": why_the_old_figure_was_wrong(),

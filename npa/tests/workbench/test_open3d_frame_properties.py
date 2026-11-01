@@ -704,6 +704,32 @@ def test_both_the_masked_and_unmasked_margins_are_recorded() -> None:
     assert margin["weakest_masked_over_floor"] <= margin["weakest_unmasked_over_floor"]
 
 
+def test_the_certified_width_in_prose_matches_the_table_beside_it() -> None:
+    """A sentence said 260px where the table and the field both said 290px.
+
+    Review caught it. It understated my own result by one step of the sweep and changed no
+    conclusion, which is exactly why nothing else would have caught it. Pinned as an
+    agreement between the prose and the measurement rather than as a literal, so a re-run
+    cannot leave the sentence behind.
+    """
+    report = json.loads((EVIDENCE / "statistic-mask-sensitivity.json").read_text())
+    box = report["which_box_is_actually_overlay_only"]
+    certified = box["widest_certified_overlay_only"]
+
+    zero = [
+        reading["exclusion_width"]
+        for reading in box["readings"]
+        if reading["max_pixels_differing_inside_the_band"] == 0
+    ]
+    assert max(zero) == certified, (zero, certified)
+
+    prose = report["the_plateau_is_necessary_but_not_sufficient"][
+        "what_the_pair_diff_shows_instead"
+    ]
+    assert f"through {certified}px" in prose, prose
+    assert f"above {certified}px" in prose, prose
+
+
 def test_every_ratio_names_both_of_its_axes() -> None:
     """Quoting one axis is what let a cross-measurement disagreement run for three exchanges.
 
