@@ -1097,14 +1097,30 @@ def test_base_installer_proves_the_refusal_at_build_time() -> None:
     assert "-ne 78" in text, "the build must require the documented EX_CONFIG exit code"
 
 
+def _assert_cpython_source_contract(text: str) -> None:
+    source = "https://www.python.org/ftp/python"
+    digest = "53cdee63ac4bf12387b7b33a53d3b1f8f4941cad73807a7b4fe91bb001ef004a"
+    assert source in text
+    assert digest in text
+    assert "Python-${PYTHON_VERSION}.tgz" in text
+    assert "sha256sum --check --strict" in text
+    assert text.index(digest) < text.index("sha256sum --check --strict")
+    assert text.index("sha256sum --check --strict") < text.index(
+        "tar --extract --gzip"
+    )
+    assert "make altinstall" in text
+    assert "ppa.launchpadcontent.net/deadsnakes" not in text
+    assert "launchpad.net/~deadsnakes" not in text
+
+
 def test_base_installer_uses_immutable_system_and_bootstrap_inputs() -> None:
     """The GPU image build must not resolve Python or packaging from moving indexes."""
     text = BASE_INSTALLER.read_text(encoding="utf-8")
     assert "NPA_UBUNTU_SNAPSHOT:-20261018T000000Z" in text
     assert "https://snapshot.ubuntu.com/ubuntu/${UBUNTU_SNAPSHOT}/" in text
     assert "add-apt-repository" not in text
-    assert "sha256sum --check --strict" in text
-    assert text.count("3.11.17-1+jammy1") >= 9
+    _assert_cpython_source_contract(text)
+    assert "NPA_ISAAC_PYTHON_VERSION:-3.11.17" in text
     for requirement in (
         "pip==26.2.2",
         "setuptools==84.1.0",
@@ -1132,3 +1148,23 @@ def test_base_installer_uses_immutable_system_and_bootstrap_inputs() -> None:
         assert all(line.count("==") == 1 for line in lines)
         assert not any(line.lower().startswith("wheel==") for line in lines)
     assert "packaging==23.2" in OSS_DEPS.read_text(encoding="utf-8").splitlines()
+
+
+def test_cpython_source_contract_rejects_mutated_source_or_digest() -> None:
+    text = BASE_INSTALLER.read_text(encoding="utf-8")
+    mutations = (
+        text.replace(
+            "https://www.python.org/ftp/python",
+            "https://ppa.launchpadcontent.net/deadsnakes/ppa/ubuntu/pool",
+            1,
+        ),
+        text.replace(
+            "53cdee63ac4bf12387b7b33a53d3b1f8f4941cad73807a7b4fe91bb001ef004a",
+            "0" * 64,
+            1,
+        ),
+        text.replace("sha256sum --check --strict", "true # skipped digest", 1),
+    )
+    for mutation in mutations:
+        with pytest.raises(AssertionError):
+            _assert_cpython_source_contract(mutation)
