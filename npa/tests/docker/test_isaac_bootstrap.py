@@ -1097,20 +1097,26 @@ def test_base_installer_proves_the_refusal_at_build_time() -> None:
 
 def _assert_cpython_source_contract(text: str) -> None:
     source = "https://www.python.org/ftp/python"
-    digest = "53cdee63ac4bf12387b7b33a53d3b1f8f4941cad73807a7b4fe91bb001ef004a"
+    digest = "5f62711b12470fd435f83f1451c1b1ef4a179aebc715c716874b0967567d814e"
     required_build_contract = (
         'CFLAGS="$(dpkg-buildflags --get CFLAGS)"',
         'CPPFLAGS="$(dpkg-buildflags --get CPPFLAGS)"',
         'LDFLAGS="$(dpkg-buildflags --get LDFLAGS)"',
-        "NPA_ISAAC_PYTHON_SOURCE_EPOCH:-1790815728",
+        "NPA_ISAAC_PYTHON_SOURCE_EPOCH:-1792957289",
         'export SOURCE_DATE_EPOCH="$PYTHON_SOURCE_EPOCH"',
         "CPython build timestamp is not release-bound",
         "--enable-optimizations",
         "--with-lto",
         "--with-ensurepip=no",
-        "--with-system-expat",
         "--without-static-libpython",
+        "./python -m test --fail-env-changed",
+        "test_pyexpat test_sax test_xml_etree test_xml_etree_c",
+        "pyexpat.EXPAT_VERSION",
+        "expat_2.9.0",
+        "CPython pyexpat unexpectedly links the snapshot system Expat",
         "install -m 0444 LICENSE /usr/share/doc/cpython3.11/LICENSE",
+        "install -m 0444 Modules/expat/COPYING",
+        "test -s /usr/share/doc/cpython3.11/EXPAT-LICENSE",
         "rm -rf /usr/local/lib/python3.11/ensurepip/_bundled",
     )
     assert source in text
@@ -1122,9 +1128,14 @@ def _assert_cpython_source_contract(text: str) -> None:
     for token in required_build_contract:
         assert token in text
     assert "make altinstall" in text
+    assert text.index("./python -m test --fail-env-changed") < text.index(
+        "make altinstall"
+    )
     assert 'from importlib import metadata; print(metadata.version("pip"))' in text
     assert ')" = 26.2.2' in text
     assert "tk-dev" not in text
+    assert "libexpat1-dev" not in text
+    assert "--with-system-expat" not in text
     assert "import bz2, ctypes, ensurepip, lzma, readline, sqlite3, ssl, zlib" in text
     assert "test -s /usr/share/doc/cpython3.11/LICENSE" in text
     assert text.index("make altinstall") < text.index(
@@ -1144,7 +1155,7 @@ def test_base_installer_uses_immutable_system_and_bootstrap_inputs() -> None:
     assert "https://snapshot.ubuntu.com/ubuntu/${UBUNTU_SNAPSHOT}/" in text
     assert "add-apt-repository" not in text
     _assert_cpython_source_contract(text)
-    assert "NPA_ISAAC_PYTHON_VERSION:-3.11.17" in text
+    assert "NPA_ISAAC_PYTHON_VERSION:-3.11.18" in text
     for requirement in (
         "pip==26.2.2",
         "setuptools==84.1.0",
@@ -1183,7 +1194,7 @@ def test_cpython_source_contract_rejects_mutated_source_or_digest() -> None:
             1,
         ),
         text.replace(
-            "53cdee63ac4bf12387b7b33a53d3b1f8f4941cad73807a7b4fe91bb001ef004a",
+            "5f62711b12470fd435f83f1451c1b1ef4a179aebc715c716874b0967567d814e",
             "0" * 64,
             1,
         ),
@@ -1193,15 +1204,21 @@ def test_cpython_source_contract_rejects_mutated_source_or_digest() -> None:
         'CFLAGS="$(dpkg-buildflags --get CFLAGS)"',
         'CPPFLAGS="$(dpkg-buildflags --get CPPFLAGS)"',
         'LDFLAGS="$(dpkg-buildflags --get LDFLAGS)"',
-        "NPA_ISAAC_PYTHON_SOURCE_EPOCH:-1790815728",
+        "NPA_ISAAC_PYTHON_SOURCE_EPOCH:-1792957289",
         'export SOURCE_DATE_EPOCH="$PYTHON_SOURCE_EPOCH"',
         "CPython build timestamp is not release-bound",
         "--enable-optimizations",
         "--with-lto",
         "--with-ensurepip=no",
-        "--with-system-expat",
         "--without-static-libpython",
+        "./python -m test --fail-env-changed",
+        "test_pyexpat test_sax test_xml_etree test_xml_etree_c",
+        "pyexpat.EXPAT_VERSION",
+        "expat_2.9.0",
+        "CPython pyexpat unexpectedly links the snapshot system Expat",
         "install -m 0444 LICENSE /usr/share/doc/cpython3.11/LICENSE",
+        "install -m 0444 Modules/expat/COPYING",
+        "test -s /usr/share/doc/cpython3.11/EXPAT-LICENSE",
         "rm -rf /usr/local/lib/python3.11/ensurepip/_bundled",
     ):
         mutations.append(text.replace(token, "OMITTED_CPYTHON_BUILD_CONTRACT", 1))
