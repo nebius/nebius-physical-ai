@@ -119,6 +119,14 @@
     "so": "No zoom satisfies both while ruining the framing, and the label check admits only 1.00."
   },
   "honest_note_on_the_thresholds": "Regression ratchets, not quality claims, and set with the current measurements in hand, so they are not a blind pre-registration. Zero border pixels is the exception and is not a tuned number. The rest sit far from observed values on purpose: a gate that trips on ordinary re-render variation gets deleted, and then it protects nothing. What makes them mean anything is that each is shown to fire on the defect it names.",
+  "why_i_did_not_use_the_repos_existing_freeze_machinery": {
+    "the_pointer": "A review lane noted that acceptance_visual_review_binding already expresses a frozen control committed before a result, as hashes an acceptance script verifies, and suggested ten minutes on it before hand-rolling anything.",
+    "what_that_design_leans_on": "Not the hashes. vlm_evidence.py's _attempt_marker commits freeze_sha256 and request_sha256 to object storage with if_none_match=True before the hosted call, reads the object back, and compares body and etag; an existing object aborts with 'retry is prohibited'. Priority is enforced by a third party that refuses to let the author overwrite their own history, around a one-shot external call that cannot be silently retried.",
+    "why_it_does_not_transfer": "This gate is a local deterministic function of committed bytes. There is no external call to witness, no attempt to make unrepeatable, and nothing that refuses a second run. Freezing these thresholds into a hashed file would reproduce the visible half of that design and none of its enforcement.",
+    "so_i_declined": "The result would be a record that reads as pre-registered without being it -- the same shape as every finding closed on the sibling branch. A plain disclosure is worth more than a credible-looking imitation of a guarantee I cannot make. The note above stands unchanged.",
+    "what_constrains_the_thresholds_instead": "The framing pair brackets from both sides: zoom out and the spread floor fails, zoom in and the border check fails. The pass band is closed on 9 of 9 frames by measurement. Neither threshold can be loosened to admit a bad frame without the other firing, which is a property of the gate's shape rather than of when the numbers were chosen.",
+    "where_that_is_still_weaker": "The band's width is a choice made after seeing the frames. A closed band does not make its edges correct, and a reviewer who considers 0.06 too generous should propose a value; it is cheap to measure."
+  },
   "negative_controls": [
     "content pasted into the border band -> clipped, and only clipped",
     "geometry replaced by a 16x16 speck with the annotation left in place -> stranded, while the extent reading it replaces still passes 0.40",
