@@ -236,10 +236,14 @@ def test_pipeline_serve_and_eval():
         molmoact_pipeline.run("bogus", {})
 
 
+def _reject_json_constant(value: str):
+    raise ValueError(f"non-standard JSON constant: {value}")
+
+
 def _invoke_pipeline_main(argv: list[str], capsys: pytest.CaptureFixture[str]) -> dict:
     assert molmoact_pipeline.main(argv) == 0
     captured = capsys.readouterr()
-    manifest = json.loads(captured.out)
+    manifest = json.loads(captured.out, parse_constant=_reject_json_constant)
     assert captured.err == ""
     assert captured.out == json.dumps(manifest, indent=2, sort_keys=True) + "\n"
     return manifest
@@ -299,6 +303,45 @@ def test_pipeline_main_selected_option_defaults_match_manifest_defaults(
 
     serve_manifest = _invoke_pipeline_main(["serve"], capsys)
     assert serve_manifest["host"] == "127.0.0.1"
+
+
+@pytest.mark.parametrize("value", ["nan", "inf", "-inf", "1e309"])
+def test_pipeline_main_rejects_nonfinite_learning_rate_before_stdout(
+    value: str,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with pytest.raises(MolmoActPipelineError, match=r"learning_rate must be finite"):
+        molmoact_pipeline.main(
+            [
+                "finetune",
+                "--model-id",
+                DEFAULT_MODEL_ID,
+                "--dataset-uri",
+                "s3://bucket/demos",
+                "--output-s3-uri",
+                "s3://bucket/checkpoints",
+                f"--learning-rate={value}",
+            ]
+        )
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == ""
+
+
+def test_pipeline_main_json_serializer_rejects_nonfinite_manifest(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(
+        molmoact_pipeline,
+        "run",
+        lambda command, config: {"learning_rate": float("nan")},
+    )
+    with pytest.raises(ValueError, match="Out of range float values"):
+        molmoact_pipeline.main(["serve"])
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == ""
 
 
 @pytest.mark.parametrize(
@@ -372,6 +415,31 @@ def test_toolref_argv_invokes_pipeline_with_json(
         assert argv[:3] == ["python3", "-m", "npa.workflows.byof.molmoact_pipeline"]
         manifest = _invoke_pipeline_main(argv[3:], capsys)
         assert manifest["command"] == command
+
+
+def test_toolref_checkpoint_and_serve_model_boundaries_are_exact() -> None:
+    serve_argv = _toolref_stage_argv("workbench.molmoact.serve")
+    assert serve_argv[3:] == [
+        "serve",
+        "--checkpoint",
+        "s3://bucket/checkpoint",
+        "--port",
+        "8000",
+    ]
+    assert "--model-id" not in serve_argv
+
+    eval_argv = _toolref_stage_argv("workbench.molmoact.eval")
+    assert eval_argv[3:] == [
+        "eval",
+        "--model-id",
+        DEFAULT_MODEL_ID,
+        "--checkpoint",
+        "s3://bucket/checkpoint",
+        "--dataset-uri",
+        "s3://bucket/dataset",
+        "--output-s3-uri",
+        "s3://bucket/evaluation",
+    ]
 
 
 def test_toolref_descriptions_state_planning_only() -> None:

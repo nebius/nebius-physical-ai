@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 from typing import Any, Mapping, Sequence
 
 
@@ -58,6 +59,11 @@ def finetune(config: Mapping[str, Any]) -> dict[str, Any]:
     )
     max_steps = _positive(int(config.get("max_steps", 5000)), "max_steps")
     batch_size = _positive(int(config.get("batch_size", 32)), "batch_size")
+    learning_rate = float(config.get("learning_rate", 1e-5))
+    if not math.isfinite(learning_rate):
+        raise MolmoActPipelineError(
+            f"learning_rate must be finite, got {learning_rate!r}"
+        )
     num_gpus = _positive(int(config.get("num_gpus", 1)), "num_gpus")
     return {
         "command": "finetune",
@@ -67,7 +73,7 @@ def finetune(config: Mapping[str, Any]) -> dict[str, Any]:
         "output_s3_uri": output_s3_uri,
         "max_steps": max_steps,
         "batch_size": batch_size,
-        "learning_rate": float(config.get("learning_rate", 1e-5)),
+        "learning_rate": learning_rate,
         "num_gpus": num_gpus,
         "run_name": str(config.get("run_name", "molmoact-finetune")),
         "source_repository": SOURCE_REPOSITORY,
@@ -163,7 +169,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     config = {k: v for k, v in vars(args).items() if k != "command"}
     manifest = run(args.command, config)
-    print(json.dumps(manifest, indent=2, sort_keys=True))
+    print(json.dumps(manifest, indent=2, sort_keys=True, allow_nan=False))
     return 0
 
 
