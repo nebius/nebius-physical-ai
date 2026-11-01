@@ -2292,14 +2292,18 @@ def _network_denied(*args: Any, **kwargs: Any) -> Any:
 
 @contextmanager
 def network_tripwire() -> Iterator[None]:
-    """Deny Python socket resolution and connection operations in this process.
+    """Block guarded stdlib lookup and TCP-connect entry points.
+
+    This catches accidental network access by the local-only model client. It
+    is not a process-wide egress sandbox: datagram sends, inherited descriptors,
+    subprocesses, and unlisted resolver functions remain outside this guard.
 
     Args:
         None.
     Returns:
         A context manager that restores the original stdlib functions.
     Raises:
-        MolmoActInferenceError: A guarded network operation is attempted.
+        MolmoActInferenceError: A guarded lookup or TCP connection is attempted.
     """
 
     module_names = (
