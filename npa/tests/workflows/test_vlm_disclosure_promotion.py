@@ -107,6 +107,7 @@ def _synthetic_provider_post(calls):
                                     "provider_observable_support": [
                                         "Frame 1 visibly contains a green image.",
                                         "Frame 1 contains no visible red region.",
+                                        "Frame 1 contains no visible red region.",
                                     ],
                                 }
                             )
@@ -163,6 +164,7 @@ def test_canonical_provider_call_preserves_disclosures_and_strict_gate(called_re
     assert report["provider_observable_support"] == [
         "Frame 1 visibly contains a green image.",
         "Frame 1 contains no visible red region.",
+        "Frame 1 contains no visible red region.",
     ]
     sampling = report["evidence"]["request"]["request_manifest"]["sampling"]
     assert sampling["max_frames"] == 4
@@ -218,6 +220,42 @@ def test_promotion_rejects_rebound_provider_support(called_report, mutation):
         "reason": "vlm_provider_evidence_invalid",
         "evidence_reason": "result_mismatch",
     }
+
+
+def test_promotion_rejects_deduplicated_serialized_support(called_report):
+    report, output = called_report
+    provider = report["evidence"]["provider"]
+    raw_response = provider["raw_response"]
+    raw_response_sha256 = provider["raw_response_sha256"]
+    raw = json.loads(raw_response)
+    raw_support = json.loads(raw["choices"][0]["message"]["content"])[
+        "provider_observable_support"
+    ]
+    assert raw_support == [
+        "Frame 1 visibly contains a green image.",
+        "Frame 1 contains no visible red region.",
+        "Frame 1 contains no visible red region.",
+    ]
+
+    report["provider_observable_support"] = list(
+        dict.fromkeys(report["provider_observable_support"])
+    )
+    assert report["provider_observable_support"] == [
+        "Frame 1 visibly contains a green image.",
+        "Frame 1 contains no visible red region.",
+    ]
+    assert provider["raw_response"] == raw_response
+    assert provider["raw_response_sha256"] == raw_response_sha256
+    assert vlm_grade_block_details(report) == {
+        "reason": "vlm_provider_evidence_invalid",
+        "evidence_reason": "result_mismatch",
+    }
+
+    (output / vlm_eval.RESULT_FILENAME).write_text(json.dumps(report))
+    assert (
+        data_factory_stages.grade_gate(str(output), str(output / "decision.json"))
+        == "loop_back"
+    )
 
 
 def test_promotion_classifies_old_three_field_parser_before_reparse(called_report):

@@ -14,6 +14,7 @@ _MISSING = object()
 _VALID_SUPPORT = (
     " Frame 1 visibly shows a red square on the left. ",
     "Frame 2 visibly shows the same red square on the right — café.",
+    "Frame 2 visibly shows the same red square on the right — café.",
 )
 
 
