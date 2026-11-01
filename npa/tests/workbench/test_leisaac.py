@@ -794,6 +794,10 @@ def test_container_never_bakes_eula_client_or_assets() -> None:
         encoding="utf-8"
     )
     pyproject = (ROOT / "npa/pyproject.toml").read_text(encoding="utf-8")
+    assert "CPython 3.11.18" in notices
+    assert "/usr/share/doc/cpython3.11/LICENSE" in notices
+    assert "Expat 2.9.0" in notices
+    assert "/usr/share/doc/cpython3.11/EXPAT-LICENSE" in notices
     assert "imageio-ffmpeg 0.6.0" in notices and "FFmpeg" in notices
     assert "pygame 2.6.1" in notices and "LGPL-2.1" in notices
     assert "leisaac = [" in pyproject and '"imageio-ffmpeg==0.6.0"' in pyproject
