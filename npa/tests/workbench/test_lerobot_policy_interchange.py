@@ -222,6 +222,28 @@ def test_writer_binds_complete_adapter_to_weight_bytes(tmp_path: Path) -> None:
     assert payload["action"]["names"][-1] == "gripper"
 
 
+def test_writer_rejects_checkpoint_that_differs_from_sealed_adapter(
+    tmp_path: Path,
+) -> None:
+    checkpoint, digest = _checkpoint(tmp_path)
+    normalization, _ = _processor_identity(checkpoint)
+    manifest = _manifest(digest, normalization)
+
+    with pytest.raises(PolicyContainerError, match="declared checkpoint identity"):
+        write_smolvla_interchange_manifest(
+            checkpoint,
+            policy_identity=manifest["policy_identity"],
+            robot_identity=manifest["robot_identity"],
+            task_identity=manifest["task_identity"],
+            expected_checkpoint_sha256="0" * 64,
+            normalization_identity=manifest["normalization_identity"],
+            measured_state_names=manifest["measured_state_names"],
+            measured_state_units=manifest["measured_state_units"],
+            cameras=manifest["cameras"],
+            action=manifest["action"],
+        )
+
+
 def test_writer_derives_normalization_identity_from_native_processors(
     tmp_path: Path,
 ) -> None:

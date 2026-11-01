@@ -2867,6 +2867,27 @@ def _checkpoint_provenance(receipt: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
+def _assert_smolvla_service_matches_preparation(
+    loaded: dict[str, Any], policy_profile: Any, robot_profile: Any
+) -> None:
+    """Require the live service to retain every sealed preparation identity."""
+
+    if (
+        policy_profile.backend != "lerobot_smolvla"
+        or loaded.get("policy_identity") != policy_profile.identity
+        or loaded.get("robot_identity") != robot_profile.identity
+        or loaded.get("task_identity") != policy_profile.task_identity
+        or loaded.get("checkpoint_sha256") != policy_profile.checkpoint_sha256
+        or loaded.get("normalization_identity") != policy_profile.normalization_identity
+        or loaded.get("action") != policy_profile.action.to_dict()
+        or loaded.get("measured_state_names")
+        != list(policy_profile.measured_state_names)
+        or [row.get("key") for row in loaded.get("cameras") or []]
+        != list(policy_profile.camera_keys)
+    ):
+        raise RuntimeError("SmolVLA service differs from prepared policy")
+
+
 def _result(
     args: argparse.Namespace,
     episodes: list[dict[str, Any]],
@@ -3846,18 +3867,9 @@ def _run_from_receipt(
         robot_profile = robot_sensor_profile_from_dict(preparation.get("robot") or {})
         policy_profile = policy_profile_from_dict(preparation.get("policy") or {})
         loaded = receipt.get("interchange") or {}
-        if (
-            policy_profile.backend != "lerobot_smolvla"
-            or loaded.get("policy_identity") != policy_profile.identity
-            or loaded.get("robot_identity") != robot_profile.identity
-            or loaded.get("task_identity") != policy_profile.task_identity
-            or loaded.get("action") != policy_profile.action.to_dict()
-            or loaded.get("measured_state_names")
-            != list(policy_profile.measured_state_names)
-            or [row.get("key") for row in loaded.get("cameras") or []]
-            != list(policy_profile.camera_keys)
-        ):
-            raise RuntimeError("SmolVLA service differs from prepared policy")
+        _assert_smolvla_service_matches_preparation(
+            loaded, policy_profile, robot_profile
+        )
         policy_profile = replace(
             policy_profile,
             checkpoint_sha256=str(loaded.get("checkpoint_sha256") or ""),

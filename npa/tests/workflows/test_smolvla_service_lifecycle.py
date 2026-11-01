@@ -10,6 +10,9 @@ from npa.workflows.sim2real.smolvla_service_lifecycle import (
     build_manifests,
     resource_names,
 )
+from npa.workflows.sim2real.pi05_closed_loop import (
+    _assert_smolvla_service_matches_preparation,
+)
 
 
 def _args(**updates):
@@ -158,3 +161,61 @@ def test_start_receipt_binds_loaded_checkpoint_and_private_auth(
     assert receipt["checkpoint"]["tensor_count"] == 123
     assert receipt["interchange"]["manifest_sha256"] == "e" * 64
     assert receipt["policy_cache_pvc_sha256"]
+
+
+def test_start_preserves_readiness_failure_when_owned_cleanup_also_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _credentials(monkeypatch)
+    import npa.workflows.sim2real.smolvla_service_lifecycle as lifecycle
+
+    monkeypatch.setattr(lifecycle, "_assert_absent", lambda *_: None)
+    monkeypatch.setattr(
+        lifecycle, "_create", lambda *_args, created: created.add("deployment")
+    )
+
+    def fail_readiness(*_args):
+        raise SmolVLAServiceError("original readiness failure")
+
+    def fail_cleanup(*_args, **_kwargs):
+        raise SmolVLAServiceError("cleanup API failure")
+
+    monkeypatch.setattr(lifecycle, "_ready", fail_readiness)
+    monkeypatch.setattr(lifecycle, "_cleanup", fail_cleanup)
+
+    with pytest.raises(SmolVLAServiceError, match="original readiness failure") as exc:
+        lifecycle._start(_args(), object(), object(), build_manifests(_args()))
+
+    assert exc.value.__notes__ == [
+        "owned service cleanup also failed: SmolVLAServiceError: cleanup API failure"
+    ]
+
+
+def test_evaluator_rejects_service_checkpoint_drift_from_sealed_preparation() -> None:
+    action = SimpleNamespace(to_dict=lambda: {"representation": "absolute_joint"})
+    policy = SimpleNamespace(
+        backend="lerobot_smolvla",
+        identity="smolvla-policy",
+        task_identity="surface-placement",
+        checkpoint_sha256="a" * 64,
+        normalization_identity="b" * 64,
+        action=action,
+        measured_state_names=("joint", "gripper"),
+        camera_keys=("workspace", "wrist"),
+    )
+    robot = SimpleNamespace(identity="franka")
+    loaded = {
+        "policy_identity": policy.identity,
+        "robot_identity": robot.identity,
+        "task_identity": policy.task_identity,
+        "checkpoint_sha256": policy.checkpoint_sha256,
+        "normalization_identity": policy.normalization_identity,
+        "action": action.to_dict(),
+        "measured_state_names": list(policy.measured_state_names),
+        "cameras": [{"key": key} for key in policy.camera_keys],
+    }
+
+    _assert_smolvla_service_matches_preparation(loaded, policy, robot)
+    loaded["checkpoint_sha256"] = "c" * 64
+    with pytest.raises(RuntimeError, match="differs from prepared policy"):
+        _assert_smolvla_service_matches_preparation(loaded, policy, robot)

@@ -22,15 +22,20 @@ npa workbench workflow plan-spec workflows/testing/sim2real-smolvla-franka-cube-
   --var gold_collection_uri='<sealed-gold-uri>' \
   --var adapted_checkpoint_uri='<selected-checkpoint-uri>' \
   --var adapted_policy_adapter_uri='<checkpoint-adapter-uri>' \
+  --var service_namespace='<target-workload-namespace>' \
   --var runtime_storage_class='<target-storage-class>' \
   --var service_gpu_node_selector_key='<target-gpu-label-key>' \
   --var service_gpu_node_selector_value='<target-gpu-label-value>'
 ```
 
-Select a storage class and GPU label key/value available on the target cluster.
-The service and evaluator each require one compatible GPU during evaluation.
-Supply these target settings to both planning and submission; the YAML defaults
-are not automatically discovered from a selected cluster.
+Select the workload namespace from the kubeconfig context together with a
+storage class and GPU label key/value available on the target cluster. The
+workflow creates its ServiceAccounts, Secrets, PVCs, and policy Service in that
+namespace, and SkyPilot places task pods in the context's effective namespace;
+those namespaces must match. The service and evaluator each require one
+compatible GPU during evaluation. Supply these target settings to both planning
+and submission; the YAML defaults are not automatically discovered from a
+selected cluster.
 
 After the plan and normal health/access preflights pass, submit through the same
 standard CLI with the same qualified inputs:
@@ -49,6 +54,7 @@ npa workbench workflow submit workflows/testing/sim2real-smolvla-franka-cube-eva
   --var gold_collection_uri='<sealed-gold-uri>' \
   --var adapted_checkpoint_uri='<selected-checkpoint-uri>' \
   --var adapted_policy_adapter_uri='<checkpoint-adapter-uri>' \
+  --var service_namespace='<target-workload-namespace>' \
   --var runtime_storage_class='<target-storage-class>' \
   --var service_gpu_node_selector_key='<target-gpu-label-key>' \
   --var service_gpu_node_selector_value='<target-gpu-label-value>'

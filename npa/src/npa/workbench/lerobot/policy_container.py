@@ -645,6 +645,7 @@ def write_smolvla_interchange_manifest(
     policy_identity: str,
     robot_identity: str,
     task_identity: str,
+    expected_checkpoint_sha256: str = "",
     normalization_identity: str = "",
     measured_state_names: list[str],
     measured_state_units: list[str],
@@ -660,6 +661,14 @@ def write_smolvla_interchange_manifest(
     weight = _find_weight_file(target)
     if weight is None:
         raise PolicyContainerError("cannot bind interchange manifest without weights")
+    actual_checkpoint_sha256 = _sha256_path(weight)
+    if (
+        expected_checkpoint_sha256
+        and expected_checkpoint_sha256 != actual_checkpoint_sha256
+    ):
+        raise PolicyContainerError(
+            "declared checkpoint identity differs from checkpoint weights"
+        )
     actual_normalization, normalization_files = _processor_identity(target)
     if normalization_identity and normalization_identity != actual_normalization:
         raise PolicyContainerError(
@@ -673,7 +682,7 @@ def write_smolvla_interchange_manifest(
         "task_identity": task_identity,
         "normalization_identity": actual_normalization,
         "normalization_files": normalization_files,
-        "checkpoint_sha256": _sha256_path(weight),
+        "checkpoint_sha256": actual_checkpoint_sha256,
         "measured_state_names": measured_state_names,
         "measured_state_units": measured_state_units,
         "state_feature_key": state_feature_key,
@@ -2797,6 +2806,7 @@ def main(argv: list[str] | None = None) -> int:
             policy_identity=str(spec.get("policy_identity") or ""),
             robot_identity=str(spec.get("robot_identity") or ""),
             task_identity=str(spec.get("task_identity") or ""),
+            expected_checkpoint_sha256=str(spec.get("checkpoint_sha256") or ""),
             normalization_identity=str(spec.get("normalization_identity") or ""),
             measured_state_names=list(spec.get("measured_state_names") or ()),
             measured_state_units=list(spec.get("measured_state_units") or ()),

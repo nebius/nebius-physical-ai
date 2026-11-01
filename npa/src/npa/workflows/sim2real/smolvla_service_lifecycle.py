@@ -547,8 +547,14 @@ def _start(
     try:
         _create(api, apps, manifests, created=created)
         host, health = _ready(api, apps, manifests, args.ready_timeout_seconds)
-    except Exception:
-        _cleanup(api, apps, manifests, created=created)
+    except Exception as error:
+        try:
+            _cleanup(api, apps, manifests, created=created)
+        except Exception as cleanup_error:
+            error.add_note(
+                "owned service cleanup also failed: "
+                f"{type(cleanup_error).__name__}: {cleanup_error}"
+            )
         raise
     return {
         "schema": "npa.sim2real.smolvla_service_start.v1",

@@ -216,6 +216,7 @@ def test_smolvla_franka_cube_guide_submits_all_target_settings() -> None:
         "--project",
         "--infra 'k8s/",
         "--durable-s3",
+        "--var service_namespace=",
         "--var runtime_storage_class=",
         "--var service_gpu_node_selector_key=",
         "--var service_gpu_node_selector_value=",
