@@ -16,7 +16,7 @@ of mine was already wrong when it was published.
 So this harness consults what the remote actually advertises rather than what the local clone
 has fetched, and it closes the two holes that made the earlier answer unsound:
 
-1. **Unfetched refs.** `git ls-remote` is the ground truth for what exists remotely. Every
+1. **Unfetched refs.** `git ls-remote` is the ground truth for what exists remotely.
    Every advertised ref -- `refs/pull/*/head`, `refs/pull/*/merge` and
    `refs/tags/*` -- is fetched into a namespace of its own before any reachability question is
    asked. Merge refs were skipped at first, on the argument that a merge ref is GitHub's

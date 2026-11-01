@@ -146,7 +146,7 @@
       },
       {
         "path": "harness/audit_commit_reachability.py",
-        "sha256": "fadc96927c6c175f74bdaccc84e97aa728eb44c70f3cf61941d76e35a0a21250"
+        "sha256": "414bebeaf533cd4a659e8d83c868c545ff5e8e04c3952d992673cebd65959e51"
       },
       {
         "path": "commit-reachability-audit.json",
