@@ -37,6 +37,35 @@ def patched_metadata(source: bytes) -> bytes:
     return result
 
 
+def patched_record(source: bytes, relative: str, content: bytes) -> bytes:
+    """Update only the target RECORD row, preserving every other byte."""
+    try:
+        text = source.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise RuntimeError("MoviePy RECORD is not valid UTF-8") from exc
+    lines = text.splitlines(keepends=True)
+    matches: list[tuple[int, list[str], str]] = []
+    for index, line in enumerate(lines):
+        body = line.rstrip("\r\n")
+        ending = line[len(body) :]
+        rows = list(csv.reader([body]))
+        if len(rows) != 1:
+            raise RuntimeError("MoviePy RECORD contains an invalid CSV row")
+        if rows[0] and rows[0][0] == relative:
+            matches.append((index, rows[0], ending))
+    if len(matches) != 1:
+        raise RuntimeError("MoviePy RECORD must contain exactly one METADATA entry")
+    index, row, ending = matches[0]
+    digest = (
+        base64.urlsafe_b64encode(hashlib.sha256(content).digest()).rstrip(b"=").decode()
+    )
+    row[1:] = ["sha256=" + digest, str(len(content))]
+    output = io.StringIO(newline="")
+    csv.writer(output, lineterminator=ending or "\n").writerow(row)
+    lines[index] = output.getvalue()
+    return "".join(lines).encode("utf-8")
+
+
 def main() -> None:
     """Record the compatibility patch only when patched Pillow is installed."""
     distribution = metadata.distribution("moviepy")
@@ -49,20 +78,9 @@ def main() -> None:
     target = root / relative
     content = patched_metadata(target.read_bytes())
     record = root / "moviepy-2.2.1.dist-info/RECORD"
-    rows = list(csv.reader(io.StringIO(record.read_text())))
-    if sum(row[0] == relative for row in rows) != 1:
-        raise RuntimeError("MoviePy RECORD must contain exactly one METADATA entry")
-    digest = (
-        base64.urlsafe_b64encode(hashlib.sha256(content).digest()).rstrip(b"=").decode()
-    )
-    rows = [
-        [relative, "sha256=" + digest, str(len(content))] if row[0] == relative else row
-        for row in rows
-    ]
-    output = io.StringIO(newline="")
-    csv.writer(output).writerows(rows)
+    record_content = patched_record(record.read_bytes(), relative, content)
     target.write_bytes(content)
-    record.write_text(output.getvalue())
+    record.write_bytes(record_content)
 
 
 if __name__ == "__main__":
