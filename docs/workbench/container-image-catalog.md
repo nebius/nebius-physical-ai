@@ -154,6 +154,13 @@ regression checks pass. Isaac's vendor version constraints still need
 reconciliation and GPU qualification. These source repairs require fresh image
 builds and complete artifact scans; they do not repair existing release digests.
 
+The shared Jammy Isaac source candidate removes its superseded Deadsnakes PPA
+dependency and builds exact CPython 3.11.17 from the hash-checked python.org
+release archive, with compiler and library inputs from the fixed Ubuntu
+snapshot. This changes source recipes for GR00T, SONIC, OpenArm, and LeIsaac;
+it does not change any accepted image digest or establish a replacement
+release.
+
 The subsequent [checkpoint-loader source repair](../../npa/docker/workbench/common/README.md)
 rejects malicious shard paths and named pipes in the exact Accelerate 1.12–1.15
 sources used by Wan, Cosmos, Cosmos3 Reason/Serving and RoboCasa. Both real
