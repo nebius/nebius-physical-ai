@@ -1759,6 +1759,14 @@ def submit_workflow(
             sky_executable = prepared.sky_executable
             global_config = prepared.global_config
             control_env = env
+            if (
+                runtime_config.isolated_config_dir is not None
+                and runtime_config.global_config_path is not None
+            ):
+                control_env = dict(env)
+                control_env["SKYPILOT_GLOBAL_CONFIG"] = str(
+                    runtime_config.global_config_path
+                )
             owned_submission_dir = (
                 submission_dir if runtime_config.isolated_config_dir is None else None
             )
@@ -1860,6 +1868,14 @@ def submit_workflow(
                 env = sky_environment(
                     runtime_config.isolated_config_dir, environment=environment
                 )
+            # An owned isolated API is identity-bound to its verified persistent
+            # server config.  The generated config below belongs to this client
+            # request only and must not replace that daemon-control identity.
+            daemon_control_config = (
+                str(runtime_config.global_config_path)
+                if runtime_config.global_config_path is not None
+                else env.get("SKYPILOT_GLOBAL_CONFIG")
+            )
             for key, value in (extra_env or {}).items():
                 if value or key in {"NPA_S3_BUCKET", "NPA_S3_PREFIX"}:
                     env[key] = value
@@ -1874,6 +1890,10 @@ def submit_workflow(
                     robotwin_submit_context.private_environment
                 )["NPA_SRC_S3_URI"]
             control_env = env
+            if runtime_config.isolated_config_dir is not None:
+                control_env = dict(env)
+                if daemon_control_config:
+                    control_env["SKYPILOT_GLOBAL_CONFIG"] = daemon_control_config
             if robotwin_authorization is not None:
                 from npa.orchestration.npa_workflow.robotwin_preflight import (
                     CONTEXT_ENV_NAMES,
