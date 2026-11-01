@@ -1,0 +1,1020 @@
+{
+  "what_this_found": "21 fixtures in this tree call importorskip, which makes the skip as broad as the widest dependency of anything in their file rather than what the tests beneath them use. Of the 23 fixture-and-module pairs this environment can decide, 3 switch off tests that provably never touch the module, 61 tests in total.",
+  "what_it_costs_today": "0 of those 3 are costing coverage in CI now. CI installs the modules the others are gated on, so those tests run today and go quiet the moment one of those dependencies moves.",
+  "where_this_came_from": "A review lane found two tests switched off everywhere by this pattern in PR 1011: the fixture they shared asked for Open3D to satisfy a module-scope import that only the harness's main() needed, and CI installs no Open3D. One of the two was the test validating that change's own headline reading. Blocking the import the way real absence does, that file went from 20 passed and 2 skipped to 23 passed. That site is fixed in its own branch; this measures how far the shape reaches.",
+  "what_this_does_not_establish": "Not that the tests are good, only that they run. Not that a module is unused by the file -- several of these fixtures sit beside tests that do need the dependency, which is why the measurement is per test rather than per file. And not a complete census: a pair this environment cannot decide is reported as undecided, not as clean.",
+  "what_this_measures": "Whether a test skipped for a missing module actually uses that module. A test that skips when the module is absent and passes when the module is importable but unusable never touched it, so the skip was switching off a test that had nothing to do with the dependency.",
+  "why_a_pass_under_poison_is_the_only_evidence_counted": "Poisoning a module that other libraries import during collection can break collection for reasons unrelated to the test, so a failure is not evidence of need. Only a pass is counted, which makes every number here a lower bound.",
+  "fixtures_with_an_importorskip": 21,
+  "fixture_and_module_pairs": 28,
+  "pairs_measurable_in_this_environment": 23,
+  "pairs_with_tests_switched_off_unnecessarily": 3,
+  "of_those_live_in_ci": 0,
+  "tests_switched_off_in_ci_now": 0,
+  "how_live_was_determined": {
+    "oracle": "ci-observed-packages.json",
+    "which_is": "the uv install list of a named real CI job, not an inference from pyproject extras and not this environment's contents",
+    "job": {
+      "workflow": ".github/workflows/test.yml",
+      "job": "test-gate / pytest-3.12-shard-1",
+      "run_id": "41311249484",
+      "job_id": "124862009958",
+      "of_branch": "cursor/open3d-consumer-error-structure-20261101",
+      "retrieved_utc": "2026-11-01T14:05:00Z",
+      "read_from": "the uv install lines of that job's log, '+ <name>==<version>'"
+    },
+    "why_not_inferred": "Inference said CI had no torch, because torch appears in no extra CI installs. CI has torch 2.14.0+cpu transitively. Publishing the inference would have called a latent finding live."
+  },
+  "tests_switched_off_unnecessarily": 61,
+  "ownership": "Every row below is in another lane's tree. This change measures and reports them and edits none of them. The one site that was costing coverage in CI was in my own branch and is fixed there, not here.",
+  "rows": [
+    {
+      "file": "npa/tests/agent_eval/test_specialist_robot_acceptance.py",
+      "fixture": "acceptance",
+      "module": "av",
+      "module_present_in_this_environment": true,
+      "ci_installs_it": true,
+      "verdict": "tests_switched_off_unnecessarily",
+      "live_or_latent": "latent: CI installs this module, so nothing is skipped today and these tests go quiet the moment the dependency is dropped",
+      "tests_that_pass_without_it": 40,
+      "absent": {
+        "passed": 0,
+        "failed": 0,
+        "skipped": 40,
+        "error": 0,
+        "skipped_locations": [
+          "npa/tests/agent_eval/test_specialist_robot_acceptance.py:109",
+          "npa/tests/agent_eval/test_specialist_robot_acceptance.py:133",
+          "npa/tests/agent_eval/test_specialist_robot_acceptance.py:160",
+          "npa/tests/agent_eval/test_specialist_robot_acceptance.py:175",
+          "npa/tests/agent_eval/test_specialist_robot_acceptance.py:32",
+          "npa/tests/agent_eval/test_specialist_robot_acceptance.py:59",
+          "npa/tests/agent_eval/test_specialist_robot_acceptance.py:69"
+        ],
+        "parent_unavailable": false
+      },
+      "poisoned": {
+        "passed": 40,
+        "failed": 0,
+        "skipped": 0,
+        "error": 0,
+        "skipped_locations": [],
+        "parent_unavailable": false
+      }
+    },
+    {
+      "file": "npa/tests/agent_eval/test_specialist_robot_workflow.py",
+      "fixture": "modules",
+      "module": "av",
+      "module_present_in_this_environment": true,
+      "ci_installs_it": true,
+      "verdict": "tests_switched_off_unnecessarily",
+      "live_or_latent": "latent: CI installs this module, so nothing is skipped today and these tests go quiet the moment the dependency is dropped",
+      "tests_that_pass_without_it": 20,
+      "absent": {
+        "passed": 0,
+        "failed": 0,
+        "skipped": 21,
+        "error": 0,
+        "skipped_locations": [
+          "npa/tests/agent_eval/test_specialist_robot_workflow.py:109",
+          "npa/tests/agent_eval/test_specialist_robot_workflow.py:131",
+          "npa/tests/agent_eval/test_specialist_robot_workflow.py:150",
+          "npa/tests/agent_eval/test_specialist_robot_workflow.py:166",
+          "npa/tests/agent_eval/test_specialist_robot_workflow.py:196",
+          "npa/tests/agent_eval/test_specialist_robot_workflow.py:203",
+          "npa/tests/agent_eval/test_specialist_robot_workflow.py:231",
+          "npa/tests/agent_eval/test_specialist_robot_workflow.py:29",
+          "npa/tests/agent_eval/test_specialist_robot_workflow.py:39",
+          "npa/tests/agent_eval/test_specialist_robot_workflow.py:68",
+          "npa/tests/agent_eval/test_specialist_robot_workflow.py:82",
+          "npa/tests/agent_eval/test_specialist_robot_workflow.py:99"
+        ],
+        "parent_unavailable": false
+      },
+      "poisoned": {
+        "passed": 20,
+        "failed": 1,
+        "skipped": 0,
+        "error": 0,
+        "skipped_locations": [],
+        "parent_unavailable": false
+      }
+    },
+    {
+      "file": "npa/tests/test_adapter.py",
+      "fixture": "lerobot_dataset_module",
+      "module": "lerobot.datasets.lerobot_dataset",
+      "module_present_in_this_environment": false,
+      "ci_installs_it": false,
+      "verdict": "not_measurable_here",
+      "why": "the parent package is not installed, so the leaf cannot be made importable-but-unusable without stubbing the parent, which perturbs unrelated fixtures in the same file",
+      "absent": {
+        "passed": 26,
+        "failed": 0,
+        "skipped": 4,
+        "error": 0,
+        "skipped_locations": [
+          "npa/tests/test_adapter.py:292",
+          "npa/tests/test_adapter.py:538",
+          "npa/tests/test_adapter.py:551",
+          "npa/tests/test_adapter.py:574"
+        ],
+        "parent_unavailable": false
+      }
+    },
+    {
+      "file": "npa/tests/workbench/test_alpamayo_ray_sweep.py",
+      "fixture": "local_ray",
+      "module": "ray",
+      "module_present_in_this_environment": false,
+      "ci_installs_it": false,
+      "verdict": "skip_is_justified",
+      "live_or_latent": "live: CI does not install this module, so these tests are being skipped in CI now",
+      "tests_that_pass_without_it": 0,
+      "absent": {
+        "passed": 15,
+        "failed": 0,
+        "skipped": 2,
+        "error": 0,
+        "skipped_locations": [
+          "npa/tests/workbench/test_alpamayo_ray_sweep.py:223",
+          "npa/tests/workbench/test_alpamayo_ray_sweep.py:238"
+        ],
+        "parent_unavailable": false
+      },
+      "poisoned": {
+        "passed": 15,
+        "failed": 0,
+        "skipped": 0,
+        "error": 2,
+        "skipped_locations": [],
+        "parent_unavailable": false
+      }
+    },
+    {
+      "file": "npa/tests/workbench/test_flex_pi_training_graphs.py",
+      "fixture": "compiled_model",
+      "module": "torch",
+      "module_present_in_this_environment": false,
+      "ci_installs_it": true,
+      "verdict": "tests_switched_off_unnecessarily",
+      "live_or_latent": "latent: CI installs this module, so nothing is skipped today and these tests go quiet the moment the dependency is dropped",
+      "tests_that_pass_without_it": 1,
+      "absent": {
+        "passed": 24,
+        "failed": 1,
+        "skipped": 17,
+        "error": 0,
+        "skipped_locations": [
+          "npa/tests/workbench/test_flex_pi_training_graphs.py:102",
+          "npa/tests/workbench/test_flex_pi_training_graphs.py:117",
+          "npa/tests/workbench/test_flex_pi_training_graphs.py:150",
+          "npa/tests/workbench/test_flex_pi_training_graphs.py:161",
+          "npa/tests/workbench/test_flex_pi_training_graphs.py:179",
+          "npa/tests/workbench/test_flex_pi_training_graphs.py:230",
+          "npa/tests/workbench/test_flex_pi_training_graphs.py:278",
+          "npa/tests/workbench/test_flex_pi_training_graphs.py:342",
+          "npa/tests/workbench/test_flex_pi_training_graphs.py:431",
+          "npa/tests/workbench/test_flex_pi_training_graphs.py:550",
+          "npa/tests/workbench/test_flex_pi_training_graphs.py:61",
+          "npa/tests/workbench/test_flex_pi_training_graphs.py:628",
+          "npa/tests/workbench/test_flex_pi_training_graphs.py:654",
+          "npa/tests/workbench/test_flex_pi_training_graphs.py:88"
+        ],
+        "parent_unavailable": false
+      },
+      "poisoned": {
+        "passed": 25,
+        "failed": 12,
+        "skipped": 0,
+        "error": 5,
+        "skipped_locations": [],
+        "parent_unavailable": false
+      }
+    },
+    {
+      "file": "npa/tests/workbench/test_flex_pi_training_loss_sync.py",
+      "fixture": "engine",
+      "module": "torch",
+      "module_present_in_this_environment": false,
+      "ci_installs_it": true,
+      "verdict": "skip_is_justified",
+      "live_or_latent": "latent: CI installs this module, so nothing is skipped today and these tests go quiet the moment the dependency is dropped",
+      "tests_that_pass_without_it": 0,
+      "absent": {
+        "passed": 0,
+        "failed": 0,
+        "skipped": 16,
+        "error": 0,
+        "skipped_locations": [
+          "npa/tests/workbench/test_flex_pi_training_loss_sync.py:100",
+          "npa/tests/workbench/test_flex_pi_training_loss_sync.py:157",
+          "npa/tests/workbench/test_flex_pi_training_loss_sync.py:181",
+          "npa/tests/workbench/test_flex_pi_training_loss_sync.py:211",
+          "npa/tests/workbench/test_flex_pi_training_loss_sync.py:243"
+        ],
+        "parent_unavailable": false
+      },
+      "poisoned": {
+        "passed": 0,
+        "failed": 0,
+        "skipped": 0,
+        "error": 16,
+        "skipped_locations": [],
+        "parent_unavailable": false
+      }
+    },
+    {
+      "file": "npa/tests/workflows/navigation/test_baseline_anchor.py",
+      "fixture": "native",
+      "module": "torch",
+      "module_present_in_this_environment": false,
+      "ci_installs_it": true,
+      "verdict": "skip_is_justified",
+      "live_or_latent": "latent: CI installs this module, so nothing is skipped today and these tests go quiet the moment the dependency is dropped",
+      "tests_that_pass_without_it": 0,
+      "absent": {
+        "passed": 0,
+        "failed": 0,
+        "skipped": 29,
+        "error": 0,
+        "skipped_locations": [
+          "npa/tests/workflows/navigation/test_baseline_anchor.py:124",
+          "npa/tests/workflows/navigation/test_baseline_anchor.py:162",
+          "npa/tests/workflows/navigation/test_baseline_anchor.py:179",
+          "npa/tests/workflows/navigation/test_baseline_anchor.py:205",
+          "npa/tests/workflows/navigation/test_baseline_anchor.py:249",
+          "npa/tests/workflows/navigation/test_baseline_anchor.py:274",
+          "npa/tests/workflows/navigation/test_baseline_anchor.py:300",
+          "npa/tests/workflows/navigation/test_baseline_anchor.py:352",
+          "npa/tests/workflows/navigation/test_baseline_anchor.py:400",
+          "npa/tests/workflows/navigation/test_baseline_anchor.py:411",
+          "npa/tests/workflows/navigation/test_baseline_anchor.py:430",
+          "npa/tests/workflows/navigation/test_baseline_anchor.py:442",
+          "npa/tests/workflows/navigation/test_baseline_anchor.py:456",
+          "npa/tests/workflows/navigation/test_baseline_anchor.py:467",
+          "npa/tests/workflows/navigation/test_baseline_anchor.py:474",
+          "npa/tests/workflows/navigation/test_baseline_anchor.py:488"
+        ],
+        "parent_unavailable": false
+      },
+      "poisoned": {
+        "passed": 0,
+        "failed": 0,
+        "skipped": 29,
+        "error": 0,
+        "skipped_locations": [
+          "npa/tests/workflows/navigation/test_baseline_anchor.py:124",
+          "npa/tests/workflows/navigation/test_baseline_anchor.py:162",
+          "npa/tests/workflows/navigation/test_baseline_anchor.py:179",
+          "npa/tests/workflows/navigation/test_baseline_anchor.py:205",
+          "npa/tests/workflows/navigation/test_baseline_anchor.py:249",
+          "npa/tests/workflows/navigation/test_baseline_anchor.py:274",
+          "npa/tests/workflows/navigation/test_baseline_anchor.py:300",
+          "npa/tests/workflows/navigation/test_baseline_anchor.py:352",
+          "npa/tests/workflows/navigation/test_baseline_anchor.py:400",
+          "npa/tests/workflows/navigation/test_baseline_anchor.py:411",
+          "npa/tests/workflows/navigation/test_baseline_anchor.py:430",
+          "npa/tests/workflows/navigation/test_baseline_anchor.py:442",
+          "npa/tests/workflows/navigation/test_baseline_anchor.py:456",
+          "npa/tests/workflows/navigation/test_baseline_anchor.py:467",
+          "npa/tests/workflows/navigation/test_baseline_anchor.py:474",
+          "npa/tests/workflows/navigation/test_baseline_anchor.py:488"
+        ],
+        "parent_unavailable": false
+      }
+    },
+    {
+      "file": "npa/tests/workflows/navigation/test_baseline_anchor.py",
+      "fixture": "native",
+      "module": "rsl_rl",
+      "module_present_in_this_environment": false,
+      "ci_installs_it": false,
+      "verdict": "skip_is_justified",
+      "live_or_latent": "live: CI does not install this module, so these tests are being skipped in CI now",
+      "tests_that_pass_without_it": 0,
+      "absent": {
+        "passed": 0,
+        "failed": 0,
+        "skipped": 29,
+        "error": 0,
+        "skipped_locations": [
+          "npa/tests/workflows/navigation/test_baseline_anchor.py:124",
+          "npa/tests/workflows/navigation/test_baseline_anchor.py:162",
+          "npa/tests/workflows/navigation/test_baseline_anchor.py:179",
+          "npa/tests/workflows/navigation/test_baseline_anchor.py:205",
+          "npa/tests/workflows/navigation/test_baseline_anchor.py:249",
+          "npa/tests/workflows/navigation/test_baseline_anchor.py:274",
+          "npa/tests/workflows/navigation/test_baseline_anchor.py:300",
+          "npa/tests/workflows/navigation/test_baseline_anchor.py:352",
+          "npa/tests/workflows/navigation/test_baseline_anchor.py:400",
+          "npa/tests/workflows/navigation/test_baseline_anchor.py:411",
+          "npa/tests/workflows/navigation/test_baseline_anchor.py:430",
+          "npa/tests/workflows/navigation/test_baseline_anchor.py:442",
+          "npa/tests/workflows/navigation/test_baseline_anchor.py:456",
+          "npa/tests/workflows/navigation/test_baseline_anchor.py:467",
+          "npa/tests/workflows/navigation/test_baseline_anchor.py:474",
+          "npa/tests/workflows/navigation/test_baseline_anchor.py:488"
+        ],
+        "parent_unavailable": false
+      },
+      "poisoned": {
+        "passed": 0,
+        "failed": 0,
+        "skipped": 29,
+        "error": 0,
+        "skipped_locations": [
+          "npa/tests/workflows/navigation/test_baseline_anchor.py:124",
+          "npa/tests/workflows/navigation/test_baseline_anchor.py:162",
+          "npa/tests/workflows/navigation/test_baseline_anchor.py:179",
+          "npa/tests/workflows/navigation/test_baseline_anchor.py:205",
+          "npa/tests/workflows/navigation/test_baseline_anchor.py:249",
+          "npa/tests/workflows/navigation/test_baseline_anchor.py:274",
+          "npa/tests/workflows/navigation/test_baseline_anchor.py:300",
+          "npa/tests/workflows/navigation/test_baseline_anchor.py:352",
+          "npa/tests/workflows/navigation/test_baseline_anchor.py:400",
+          "npa/tests/workflows/navigation/test_baseline_anchor.py:411",
+          "npa/tests/workflows/navigation/test_baseline_anchor.py:430",
+          "npa/tests/workflows/navigation/test_baseline_anchor.py:442",
+          "npa/tests/workflows/navigation/test_baseline_anchor.py:456",
+          "npa/tests/workflows/navigation/test_baseline_anchor.py:467",
+          "npa/tests/workflows/navigation/test_baseline_anchor.py:474",
+          "npa/tests/workflows/navigation/test_baseline_anchor.py:488"
+        ],
+        "parent_unavailable": false
+      }
+    },
+    {
+      "file": "npa/tests/workflows/navigation/test_contact_evidence.py",
+      "fixture": "native",
+      "module": "torch",
+      "module_present_in_this_environment": false,
+      "ci_installs_it": true,
+      "verdict": "skip_is_justified",
+      "live_or_latent": "latent: CI installs this module, so nothing is skipped today and these tests go quiet the moment the dependency is dropped",
+      "tests_that_pass_without_it": 0,
+      "absent": {
+        "passed": 1,
+        "failed": 0,
+        "skipped": 8,
+        "error": 0,
+        "skipped_locations": [
+          "npa/tests/workflows/navigation/test_contact_evidence.py:111",
+          "npa/tests/workflows/navigation/test_contact_evidence.py:146",
+          "npa/tests/workflows/navigation/test_contact_evidence.py:153",
+          "npa/tests/workflows/navigation/test_contact_evidence.py:164",
+          "npa/tests/workflows/navigation/test_contact_evidence.py:197",
+          "npa/tests/workflows/navigation/test_contact_evidence.py:205",
+          "npa/tests/workflows/navigation/test_contact_evidence.py:239",
+          "npa/tests/workflows/navigation/test_contact_evidence.py:86"
+        ],
+        "parent_unavailable": false
+      },
+      "poisoned": {
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0,
+        "error": 8,
+        "skipped_locations": [],
+        "parent_unavailable": false
+      }
+    },
+    {
+      "file": "npa/tests/workflows/navigation/test_reference_arrival.py",
+      "fixture": "arrival_task",
+      "module": "torch",
+      "module_present_in_this_environment": false,
+      "ci_installs_it": true,
+      "verdict": "skip_is_justified",
+      "live_or_latent": "latent: CI installs this module, so nothing is skipped today and these tests go quiet the moment the dependency is dropped",
+      "tests_that_pass_without_it": 0,
+      "absent": {
+        "passed": 0,
+        "failed": 0,
+        "skipped": 4,
+        "error": 0,
+        "skipped_locations": [
+          "npa/tests/workflows/navigation/test_reference_arrival.py:49",
+          "npa/tests/workflows/navigation/test_reference_arrival.py:55",
+          "npa/tests/workflows/navigation/test_reference_arrival.py:65"
+        ],
+        "parent_unavailable": false
+      },
+      "poisoned": {
+        "passed": 0,
+        "failed": 0,
+        "skipped": 0,
+        "error": 4,
+        "skipped_locations": [],
+        "parent_unavailable": false
+      }
+    },
+    {
+      "file": "npa/tests/workflows/navigation/test_reset_evidence.py",
+      "fixture": "native",
+      "module": "pxr",
+      "module_present_in_this_environment": true,
+      "ci_installs_it": true,
+      "verdict": "skip_is_justified",
+      "live_or_latent": "latent: CI installs this module, so nothing is skipped today and these tests go quiet the moment the dependency is dropped",
+      "tests_that_pass_without_it": 0,
+      "absent": {
+        "passed": 0,
+        "failed": 0,
+        "skipped": 2,
+        "error": 0,
+        "skipped_locations": [
+          "npa/tests/workflows/navigation/test_reset_evidence.py:13"
+        ],
+        "parent_unavailable": false
+      },
+      "poisoned": {
+        "passed": 0,
+        "failed": 0,
+        "skipped": 2,
+        "error": 0,
+        "skipped_locations": [
+          "npa/tests/workflows/navigation/test_reset_evidence.py:13"
+        ],
+        "parent_unavailable": false
+      }
+    },
+    {
+      "file": "npa/tests/workflows/test_franka_rl_assets.py",
+      "fixture": "test_actual_usd_parser_reads_asset_and_collision_shapes",
+      "module": "pxr.Usd",
+      "module_present_in_this_environment": true,
+      "ci_installs_it": true,
+      "verdict": "skip_is_justified",
+      "live_or_latent": "latent: CI installs this module, so nothing is skipped today and these tests go quiet the moment the dependency is dropped",
+      "tests_that_pass_without_it": 0,
+      "absent": {
+        "passed": 4,
+        "failed": 0,
+        "skipped": 7,
+        "error": 0,
+        "skipped_locations": [
+          "npa/tests/workflows/test_franka_rl_assets.py:27",
+          "npa/tests/workflows/test_franka_rl_assets.py:99"
+        ],
+        "parent_unavailable": false
+      },
+      "poisoned": {
+        "passed": 4,
+        "failed": 7,
+        "skipped": 0,
+        "error": 0,
+        "skipped_locations": [],
+        "parent_unavailable": false
+      }
+    },
+    {
+      "file": "npa/tests/workflows/test_franka_rl_assets.py",
+      "fixture": "test_actual_usd_parser_reads_asset_and_collision_shapes",
+      "module": "pxr.UsdPhysics",
+      "module_present_in_this_environment": true,
+      "ci_installs_it": true,
+      "verdict": "skip_is_justified",
+      "live_or_latent": "latent: CI installs this module, so nothing is skipped today and these tests go quiet the moment the dependency is dropped",
+      "tests_that_pass_without_it": 0,
+      "absent": {
+        "passed": 7,
+        "failed": 0,
+        "skipped": 4,
+        "error": 0,
+        "skipped_locations": [
+          "npa/tests/workflows/test_franka_rl_assets.py:28"
+        ],
+        "parent_unavailable": false
+      },
+      "poisoned": {
+        "passed": 7,
+        "failed": 4,
+        "skipped": 0,
+        "error": 0,
+        "skipped_locations": [],
+        "parent_unavailable": false
+      }
+    },
+    {
+      "file": "npa/tests/workflows/test_franka_rl_distribution.py",
+      "fixture": "native",
+      "module": "torch",
+      "module_present_in_this_environment": false,
+      "ci_installs_it": true,
+      "verdict": "skip_is_justified",
+      "live_or_latent": "latent: CI installs this module, so nothing is skipped today and these tests go quiet the moment the dependency is dropped",
+      "tests_that_pass_without_it": 0,
+      "absent": {
+        "passed": 2,
+        "failed": 0,
+        "skipped": 18,
+        "error": 0,
+        "skipped_locations": [
+          "npa/tests/workflows/test_franka_rl_distribution.py:122",
+          "npa/tests/workflows/test_franka_rl_distribution.py:140",
+          "npa/tests/workflows/test_franka_rl_distribution.py:166",
+          "npa/tests/workflows/test_franka_rl_distribution.py:184",
+          "npa/tests/workflows/test_franka_rl_distribution.py:261",
+          "npa/tests/workflows/test_franka_rl_distribution.py:299",
+          "npa/tests/workflows/test_franka_rl_distribution.py:70",
+          "npa/tests/workflows/test_franka_rl_distribution.py:91"
+        ],
+        "parent_unavailable": false
+      },
+      "poisoned": {
+        "passed": 2,
+        "failed": 0,
+        "skipped": 18,
+        "error": 0,
+        "skipped_locations": [
+          "npa/tests/workflows/test_franka_rl_distribution.py:122",
+          "npa/tests/workflows/test_franka_rl_distribution.py:140",
+          "npa/tests/workflows/test_franka_rl_distribution.py:166",
+          "npa/tests/workflows/test_franka_rl_distribution.py:184",
+          "npa/tests/workflows/test_franka_rl_distribution.py:261",
+          "npa/tests/workflows/test_franka_rl_distribution.py:299",
+          "npa/tests/workflows/test_franka_rl_distribution.py:70",
+          "npa/tests/workflows/test_franka_rl_distribution.py:91"
+        ],
+        "parent_unavailable": false
+      }
+    },
+    {
+      "file": "npa/tests/workflows/test_franka_rl_distribution.py",
+      "fixture": "native",
+      "module": "rsl_rl.modules.distribution",
+      "module_present_in_this_environment": false,
+      "ci_installs_it": false,
+      "verdict": "not_measurable_here",
+      "why": "the parent package is not installed, so the leaf cannot be made importable-but-unusable without stubbing the parent, which perturbs unrelated fixtures in the same file",
+      "absent": {
+        "passed": 2,
+        "failed": 0,
+        "skipped": 18,
+        "error": 0,
+        "skipped_locations": [
+          "npa/tests/workflows/test_franka_rl_distribution.py:122",
+          "npa/tests/workflows/test_franka_rl_distribution.py:140",
+          "npa/tests/workflows/test_franka_rl_distribution.py:166",
+          "npa/tests/workflows/test_franka_rl_distribution.py:184",
+          "npa/tests/workflows/test_franka_rl_distribution.py:261",
+          "npa/tests/workflows/test_franka_rl_distribution.py:299",
+          "npa/tests/workflows/test_franka_rl_distribution.py:70",
+          "npa/tests/workflows/test_franka_rl_distribution.py:91"
+        ],
+        "parent_unavailable": false
+      }
+    },
+    {
+      "file": "npa/tests/workflows/test_franka_rl_learning.py",
+      "fixture": "servo",
+      "module": "torch",
+      "module_present_in_this_environment": false,
+      "ci_installs_it": true,
+      "verdict": "skip_is_justified",
+      "live_or_latent": "latent: CI installs this module, so nothing is skipped today and these tests go quiet the moment the dependency is dropped",
+      "tests_that_pass_without_it": 0,
+      "absent": {
+        "passed": 10,
+        "failed": 0,
+        "skipped": 18,
+        "error": 0,
+        "skipped_locations": [
+          "npa/tests/workflows/test_franka_rl_learning.py:136",
+          "npa/tests/workflows/test_franka_rl_learning.py:156",
+          "npa/tests/workflows/test_franka_rl_learning.py:178",
+          "npa/tests/workflows/test_franka_rl_learning.py:197",
+          "npa/tests/workflows/test_franka_rl_learning.py:209",
+          "npa/tests/workflows/test_franka_rl_learning.py:217",
+          "npa/tests/workflows/test_franka_rl_learning.py:301",
+          "npa/tests/workflows/test_franka_rl_learning.py:321",
+          "npa/tests/workflows/test_franka_rl_learning.py:332",
+          "npa/tests/workflows/test_franka_rl_learning.py:373",
+          "npa/tests/workflows/test_franka_rl_learning.py:459"
+        ],
+        "parent_unavailable": false
+      },
+      "poisoned": {
+        "passed": 10,
+        "failed": 1,
+        "skipped": 0,
+        "error": 17,
+        "skipped_locations": [],
+        "parent_unavailable": false
+      }
+    },
+    {
+      "file": "npa/tests/workflows/test_franka_rl_learning.py",
+      "fixture": "reward",
+      "module": "torch",
+      "module_present_in_this_environment": false,
+      "ci_installs_it": true,
+      "verdict": "skip_is_justified",
+      "live_or_latent": "latent: CI installs this module, so nothing is skipped today and these tests go quiet the moment the dependency is dropped",
+      "tests_that_pass_without_it": 0,
+      "absent": {
+        "passed": 10,
+        "failed": 0,
+        "skipped": 18,
+        "error": 0,
+        "skipped_locations": [
+          "npa/tests/workflows/test_franka_rl_learning.py:136",
+          "npa/tests/workflows/test_franka_rl_learning.py:156",
+          "npa/tests/workflows/test_franka_rl_learning.py:178",
+          "npa/tests/workflows/test_franka_rl_learning.py:197",
+          "npa/tests/workflows/test_franka_rl_learning.py:209",
+          "npa/tests/workflows/test_franka_rl_learning.py:217",
+          "npa/tests/workflows/test_franka_rl_learning.py:301",
+          "npa/tests/workflows/test_franka_rl_learning.py:321",
+          "npa/tests/workflows/test_franka_rl_learning.py:332",
+          "npa/tests/workflows/test_franka_rl_learning.py:373",
+          "npa/tests/workflows/test_franka_rl_learning.py:459"
+        ],
+        "parent_unavailable": false
+      },
+      "poisoned": {
+        "passed": 10,
+        "failed": 1,
+        "skipped": 0,
+        "error": 17,
+        "skipped_locations": [],
+        "parent_unavailable": false
+      }
+    },
+    {
+      "file": "npa/tests/workflows/test_franka_rl_physics.py",
+      "fixture": "stage",
+      "module": "pxr.Usd",
+      "module_present_in_this_environment": true,
+      "ci_installs_it": true,
+      "verdict": "skip_is_justified",
+      "live_or_latent": "latent: CI installs this module, so nothing is skipped today and these tests go quiet the moment the dependency is dropped",
+      "tests_that_pass_without_it": 0,
+      "absent": {
+        "passed": 16,
+        "failed": 0,
+        "skipped": 10,
+        "error": 0,
+        "skipped_locations": [
+          "npa/tests/workflows/test_franka_rl_physics.py:265",
+          "npa/tests/workflows/test_franka_rl_physics.py:274",
+          "npa/tests/workflows/test_franka_rl_physics.py:326"
+        ],
+        "parent_unavailable": false
+      },
+      "poisoned": {
+        "passed": 16,
+        "failed": 0,
+        "skipped": 0,
+        "error": 10,
+        "skipped_locations": [],
+        "parent_unavailable": false
+      }
+    },
+    {
+      "file": "npa/tests/workflows/test_franka_rl_physics.py",
+      "fixture": "stage",
+      "module": "pxr.Sdf",
+      "module_present_in_this_environment": true,
+      "ci_installs_it": true,
+      "verdict": "not_measurable_here",
+      "why": "nothing skips for this module in this environment",
+      "absent": {
+        "passed": 16,
+        "failed": 0,
+        "skipped": 0,
+        "error": 10,
+        "skipped_locations": [],
+        "parent_unavailable": false
+      }
+    },
+    {
+      "file": "npa/tests/workflows/test_franka_rl_validity.py",
+      "fixture": "torch",
+      "module": "torch",
+      "module_present_in_this_environment": false,
+      "ci_installs_it": true,
+      "verdict": "skip_is_justified",
+      "live_or_latent": "latent: CI installs this module, so nothing is skipped today and these tests go quiet the moment the dependency is dropped",
+      "tests_that_pass_without_it": 0,
+      "absent": {
+        "passed": 9,
+        "failed": 0,
+        "skipped": 80,
+        "error": 0,
+        "skipped_locations": [
+          "npa/tests/workflows/test_franka_rl_validity.py:160",
+          "npa/tests/workflows/test_franka_rl_validity.py:177",
+          "npa/tests/workflows/test_franka_rl_validity.py:196",
+          "npa/tests/workflows/test_franka_rl_validity.py:214",
+          "npa/tests/workflows/test_franka_rl_validity.py:255",
+          "npa/tests/workflows/test_franka_rl_validity.py:271",
+          "npa/tests/workflows/test_franka_rl_validity.py:287",
+          "npa/tests/workflows/test_franka_rl_validity.py:302",
+          "npa/tests/workflows/test_franka_rl_validity.py:326",
+          "npa/tests/workflows/test_franka_rl_validity.py:400",
+          "npa/tests/workflows/test_franka_rl_validity.py:412",
+          "npa/tests/workflows/test_franka_rl_validity.py:429",
+          "npa/tests/workflows/test_franka_rl_validity.py:476",
+          "npa/tests/workflows/test_franka_rl_validity.py:488",
+          "npa/tests/workflows/test_franka_rl_validity.py:509",
+          "npa/tests/workflows/test_franka_rl_validity.py:516",
+          "npa/tests/workflows/test_franka_rl_validity.py:544",
+          "npa/tests/workflows/test_franka_rl_validity.py:557"
+        ],
+        "parent_unavailable": false
+      },
+      "poisoned": {
+        "passed": 9,
+        "failed": 0,
+        "skipped": 0,
+        "error": 80,
+        "skipped_locations": [],
+        "parent_unavailable": false
+      }
+    },
+    {
+      "file": "npa/tests/workflows/test_groot_visualization.py",
+      "fixture": "source_bundle",
+      "module": "PIL",
+      "module_present_in_this_environment": true,
+      "ci_installs_it": true,
+      "verdict": "skip_is_justified",
+      "live_or_latent": "latent: CI installs this module, so nothing is skipped today and these tests go quiet the moment the dependency is dropped",
+      "tests_that_pass_without_it": 0,
+      "absent": {
+        "passed": 4,
+        "failed": 0,
+        "skipped": 3,
+        "error": 0,
+        "skipped_locations": [
+          "npa/tests/workflows/test_groot_visualization.py:180",
+          "npa/tests/workflows/test_groot_visualization.py:196",
+          "npa/tests/workflows/test_groot_visualization.py:262"
+        ],
+        "parent_unavailable": false
+      },
+      "poisoned": {
+        "passed": 4,
+        "failed": 0,
+        "skipped": 0,
+        "error": 3,
+        "skipped_locations": [],
+        "parent_unavailable": false
+      }
+    },
+    {
+      "file": "npa/tests/workflows/test_isaac_franka_bootstrap.py",
+      "fixture": "native_runtime",
+      "module": "torch",
+      "module_present_in_this_environment": false,
+      "ci_installs_it": true,
+      "verdict": "skip_is_justified",
+      "live_or_latent": "latent: CI installs this module, so nothing is skipped today and these tests go quiet the moment the dependency is dropped",
+      "tests_that_pass_without_it": 0,
+      "absent": {
+        "passed": 129,
+        "failed": 0,
+        "skipped": 9,
+        "error": 0,
+        "skipped_locations": [
+          "npa/tests/workflows/test_isaac_franka_bootstrap.py:1016",
+          "npa/tests/workflows/test_isaac_franka_bootstrap.py:165",
+          "npa/tests/workflows/test_isaac_franka_bootstrap.py:203",
+          "npa/tests/workflows/test_isaac_franka_bootstrap.py:239",
+          "npa/tests/workflows/test_isaac_franka_bootstrap.py:300",
+          "npa/tests/workflows/test_isaac_franka_bootstrap.py:902",
+          "npa/tests/workflows/test_isaac_franka_bootstrap.py:912",
+          "npa/tests/workflows/test_isaac_franka_bootstrap.py:988"
+        ],
+        "parent_unavailable": false
+      },
+      "poisoned": {
+        "passed": 129,
+        "failed": 3,
+        "skipped": 6,
+        "error": 0,
+        "skipped_locations": [
+          "npa/tests/workflows/test_isaac_franka_bootstrap.py:1017",
+          "npa/tests/workflows/test_isaac_franka_bootstrap.py:165",
+          "npa/tests/workflows/test_isaac_franka_bootstrap.py:203",
+          "npa/tests/workflows/test_isaac_franka_bootstrap.py:239",
+          "npa/tests/workflows/test_isaac_franka_bootstrap.py:300"
+        ],
+        "parent_unavailable": false
+      }
+    },
+    {
+      "file": "npa/tests/workflows/test_isaac_franka_bootstrap.py",
+      "fixture": "native_runtime",
+      "module": "rsl_rl",
+      "module_present_in_this_environment": false,
+      "ci_installs_it": false,
+      "verdict": "skip_is_justified",
+      "live_or_latent": "live: CI does not install this module, so these tests are being skipped in CI now",
+      "tests_that_pass_without_it": 0,
+      "absent": {
+        "passed": 129,
+        "failed": 0,
+        "skipped": 9,
+        "error": 0,
+        "skipped_locations": [
+          "npa/tests/workflows/test_isaac_franka_bootstrap.py:1016",
+          "npa/tests/workflows/test_isaac_franka_bootstrap.py:165",
+          "npa/tests/workflows/test_isaac_franka_bootstrap.py:203",
+          "npa/tests/workflows/test_isaac_franka_bootstrap.py:239",
+          "npa/tests/workflows/test_isaac_franka_bootstrap.py:300",
+          "npa/tests/workflows/test_isaac_franka_bootstrap.py:902",
+          "npa/tests/workflows/test_isaac_franka_bootstrap.py:912",
+          "npa/tests/workflows/test_isaac_franka_bootstrap.py:988"
+        ],
+        "parent_unavailable": false
+      },
+      "poisoned": {
+        "passed": 129,
+        "failed": 0,
+        "skipped": 9,
+        "error": 0,
+        "skipped_locations": [
+          "npa/tests/workflows/test_isaac_franka_bootstrap.py:1016",
+          "npa/tests/workflows/test_isaac_franka_bootstrap.py:165",
+          "npa/tests/workflows/test_isaac_franka_bootstrap.py:203",
+          "npa/tests/workflows/test_isaac_franka_bootstrap.py:239",
+          "npa/tests/workflows/test_isaac_franka_bootstrap.py:300",
+          "npa/tests/workflows/test_isaac_franka_bootstrap.py:902",
+          "npa/tests/workflows/test_isaac_franka_bootstrap.py:912",
+          "npa/tests/workflows/test_isaac_franka_bootstrap.py:988"
+        ],
+        "parent_unavailable": false
+      }
+    },
+    {
+      "file": "npa/tests/workflows/test_isaac_franka_bootstrap.py",
+      "fixture": "native_runtime",
+      "module": "tensordict",
+      "module_present_in_this_environment": false,
+      "ci_installs_it": true,
+      "verdict": "skip_is_justified",
+      "live_or_latent": "latent: CI installs this module, so nothing is skipped today and these tests go quiet the moment the dependency is dropped",
+      "tests_that_pass_without_it": 0,
+      "absent": {
+        "passed": 129,
+        "failed": 0,
+        "skipped": 9,
+        "error": 0,
+        "skipped_locations": [
+          "npa/tests/workflows/test_isaac_franka_bootstrap.py:1016",
+          "npa/tests/workflows/test_isaac_franka_bootstrap.py:165",
+          "npa/tests/workflows/test_isaac_franka_bootstrap.py:203",
+          "npa/tests/workflows/test_isaac_franka_bootstrap.py:239",
+          "npa/tests/workflows/test_isaac_franka_bootstrap.py:300",
+          "npa/tests/workflows/test_isaac_franka_bootstrap.py:902",
+          "npa/tests/workflows/test_isaac_franka_bootstrap.py:912",
+          "npa/tests/workflows/test_isaac_franka_bootstrap.py:988"
+        ],
+        "parent_unavailable": false
+      },
+      "poisoned": {
+        "passed": 129,
+        "failed": 0,
+        "skipped": 9,
+        "error": 0,
+        "skipped_locations": [
+          "npa/tests/workflows/test_isaac_franka_bootstrap.py:1016",
+          "npa/tests/workflows/test_isaac_franka_bootstrap.py:165",
+          "npa/tests/workflows/test_isaac_franka_bootstrap.py:203",
+          "npa/tests/workflows/test_isaac_franka_bootstrap.py:239",
+          "npa/tests/workflows/test_isaac_franka_bootstrap.py:300",
+          "npa/tests/workflows/test_isaac_franka_bootstrap.py:902",
+          "npa/tests/workflows/test_isaac_franka_bootstrap.py:912",
+          "npa/tests/workflows/test_isaac_franka_bootstrap.py:988"
+        ],
+        "parent_unavailable": false
+      }
+    },
+    {
+      "file": "npa/tests/workflows/test_isaac_franka_normalization.py",
+      "fixture": "native_statistics",
+      "module": "torch",
+      "module_present_in_this_environment": false,
+      "ci_installs_it": true,
+      "verdict": "skip_is_justified",
+      "live_or_latent": "latent: CI installs this module, so nothing is skipped today and these tests go quiet the moment the dependency is dropped",
+      "tests_that_pass_without_it": 0,
+      "absent": {
+        "passed": 0,
+        "failed": 0,
+        "skipped": 16,
+        "error": 0,
+        "skipped_locations": [
+          "npa/tests/workflows/test_isaac_franka_normalization.py:106",
+          "npa/tests/workflows/test_isaac_franka_normalization.py:122",
+          "npa/tests/workflows/test_isaac_franka_normalization.py:25",
+          "npa/tests/workflows/test_isaac_franka_normalization.py:43",
+          "npa/tests/workflows/test_isaac_franka_normalization.py:61",
+          "npa/tests/workflows/test_isaac_franka_normalization.py:91"
+        ],
+        "parent_unavailable": false
+      },
+      "poisoned": {
+        "passed": 0,
+        "failed": 0,
+        "skipped": 16,
+        "error": 0,
+        "skipped_locations": [
+          "npa/tests/workflows/test_isaac_franka_normalization.py:106",
+          "npa/tests/workflows/test_isaac_franka_normalization.py:122",
+          "npa/tests/workflows/test_isaac_franka_normalization.py:25",
+          "npa/tests/workflows/test_isaac_franka_normalization.py:43",
+          "npa/tests/workflows/test_isaac_franka_normalization.py:61",
+          "npa/tests/workflows/test_isaac_franka_normalization.py:91"
+        ],
+        "parent_unavailable": false
+      }
+    },
+    {
+      "file": "npa/tests/workflows/test_isaac_franka_normalization.py",
+      "fixture": "native_statistics",
+      "module": "rsl_rl.modules",
+      "module_present_in_this_environment": false,
+      "ci_installs_it": false,
+      "verdict": "not_measurable_here",
+      "why": "the parent package is not installed, so the leaf cannot be made importable-but-unusable without stubbing the parent, which perturbs unrelated fixtures in the same file",
+      "absent": {
+        "passed": 0,
+        "failed": 0,
+        "skipped": 16,
+        "error": 0,
+        "skipped_locations": [
+          "npa/tests/workflows/test_isaac_franka_normalization.py:106",
+          "npa/tests/workflows/test_isaac_franka_normalization.py:122",
+          "npa/tests/workflows/test_isaac_franka_normalization.py:25",
+          "npa/tests/workflows/test_isaac_franka_normalization.py:43",
+          "npa/tests/workflows/test_isaac_franka_normalization.py:61",
+          "npa/tests/workflows/test_isaac_franka_normalization.py:91"
+        ],
+        "parent_unavailable": false
+      }
+    },
+    {
+      "file": "npa/tests/workflows/test_isaac_franka_terminal_replay.py",
+      "fixture": "torch",
+      "module": "torch",
+      "module_present_in_this_environment": false,
+      "ci_installs_it": true,
+      "verdict": "skip_is_justified",
+      "live_or_latent": "latent: CI installs this module, so nothing is skipped today and these tests go quiet the moment the dependency is dropped",
+      "tests_that_pass_without_it": 0,
+      "absent": {
+        "passed": 0,
+        "failed": 0,
+        "skipped": 15,
+        "error": 0,
+        "skipped_locations": [
+          "npa/tests/workflows/test_isaac_franka_terminal_replay.py:100",
+          "npa/tests/workflows/test_isaac_franka_terminal_replay.py:114",
+          "npa/tests/workflows/test_isaac_franka_terminal_replay.py:128",
+          "npa/tests/workflows/test_isaac_franka_terminal_replay.py:139",
+          "npa/tests/workflows/test_isaac_franka_terminal_replay.py:218",
+          "npa/tests/workflows/test_isaac_franka_terminal_replay.py:247",
+          "npa/tests/workflows/test_isaac_franka_terminal_replay.py:265",
+          "npa/tests/workflows/test_isaac_franka_terminal_replay.py:287",
+          "npa/tests/workflows/test_isaac_franka_terminal_replay.py:41",
+          "npa/tests/workflows/test_isaac_franka_terminal_replay.py:64",
+          "npa/tests/workflows/test_isaac_franka_terminal_replay.py:80",
+          "npa/tests/workflows/test_isaac_franka_terminal_replay.py:88"
+        ],
+        "parent_unavailable": false
+      },
+      "poisoned": {
+        "passed": 0,
+        "failed": 1,
+        "skipped": 3,
+        "error": 11,
+        "skipped_locations": [
+          "npa/tests/workflows/test_isaac_franka_terminal_replay.py:235"
+        ],
+        "parent_unavailable": false
+      }
+    },
+    {
+      "file": "npa/tests/workflows/navigation/conftest.py",
+      "fixture": "usd_environment",
+      "module": "pxr",
+      "module_present_in_this_environment": true,
+      "ci_installs_it": true,
+      "verdict": "not_measurable_here",
+      "why": "nothing skips for this module in this environment",
+      "absent": {
+        "passed": 0,
+        "failed": 0,
+        "skipped": 0,
+        "error": 0,
+        "skipped_locations": [],
+        "parent_unavailable": false
+      }
+    }
+  ]
+}

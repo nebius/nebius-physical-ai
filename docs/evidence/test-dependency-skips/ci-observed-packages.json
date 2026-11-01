@@ -1,0 +1,42 @@
+{
+  "why_this_file_exists": "Whether a skipped test costs coverage depends on one fact: does CI have the module. Three sources in this repository answer that differently, and two of them are wrong. npa/ci/requirements.txt pins both av and torch, which reads as though CI installs them, but it is passed to uv with -c and constrains versions without installing anything. The extras CI installs -- dev, adapter, encord -- carry av and not torch, which reads as though CI has no torch. A real CI job has torch 2.14.0+cpu. It arrives transitively, and no amount of reading pyproject.toml would have said so. So this records what a job actually installed, with the job named.",
+  "the_error_this_file_prevented": "An earlier version of the sweep inferred CI's contents from pyproject extras and was about to publish that the torch finding was costing coverage in CI today. It is not: CI has torch. The claim would have been wrong in the direction of making the finding sound worse.",
+  "source": {
+    "workflow": ".github/workflows/test.yml",
+    "job": "test-gate / pytest-3.12-shard-1",
+    "run_id": "41311249484",
+    "job_id": "124862009958",
+    "of_branch": "cursor/open3d-consumer-error-structure-20261101",
+    "retrieved_utc": "2026-11-01T14:05:00Z",
+    "read_from": "the uv install lines of that job's log, '+ <name>==<version>'"
+  },
+  "staleness": "A snapshot, not a derivation. It is correct for the job named and should be re-read when the dependency set moves. The sweep records which snapshot it used rather than assuming this one is current.",
+  "import_name_to_distribution": {
+    "pxr": "usd-core",
+    "PIL": "pillow",
+    "rsl_rl": "rsl-rl",
+    "lerobot": "lerobot",
+    "av": "av",
+    "torch": "torch",
+    "scipy": "scipy",
+    "ray": "ray",
+    "tensordict": "tensordict",
+    "open3d": "open3d",
+    "numpy": "numpy"
+  },
+  "observed_installed": {
+    "av": "17.1.0",
+    "torch": "2.14.0+cpu",
+    "scipy": "1.18.1",
+    "usd-core": "26.8",
+    "pillow": "13.0.0",
+    "tensordict": "0.14.2",
+    "numpy": "2.5.3"
+  },
+  "observed_absent": [
+    "lerobot",
+    "ray",
+    "rsl-rl",
+    "open3d"
+  ]
+}
