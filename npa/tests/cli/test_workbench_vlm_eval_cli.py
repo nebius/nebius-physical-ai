@@ -48,11 +48,11 @@ _BENCHMARK_FIXTURE_LIMITATIONS = [
     ),
 ]
 _SAMPLE_DATASET_LIMITATIONS = [
-    "These synthetic fixtures include four 2x2 color-swatch rollouts and a "
-    "tiny truncated-progress sequence; they do not validate the stated "
-    "physical tasks.",
-    "The first four caller labels are color-correlated; the additional "
-    "omitted-terminal label is also a wiring-only fixture.",
+    "These synthetic fixtures include four single-frame 2x2 color-swatch "
+    "rollouts and one separate three-frame 4x2 truncated-progress sequence; "
+    "they do not validate the stated physical tasks.",
+    "The four single-frame caller labels are color-correlated; the "
+    "omitted-terminal sequence label is also a wiring-only fixture.",
     "Its metrics exercise benchmark wiring and are not task-validation or "
     "operational error-rate evidence.",
 ]
