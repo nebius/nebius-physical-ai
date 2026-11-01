@@ -1,12 +1,18 @@
 """Where does the pane fit start clipping as the real window shape moves?"""
-import json, numpy as np, open3d as o3d
+import json
+
+import numpy as np
+from harness_io import read_cloud, read_mesh
 from npa.workbench.open3d.runner import (
-    _camera, CAMERA_FOV_DEGREES, CAMERA_WINDOW_ASPECT,
-    CAMERA_SCENE_SHARE, CAMERA_TAB_SHARE,
+    CAMERA_FOV_DEGREES,
+    CAMERA_SCENE_SHARE,
+    CAMERA_TAB_SHARE,
+    CAMERA_WINDOW_ASPECT,
+    _camera,
 )
 
-fused = np.asarray(o3d.io.read_point_cloud("/a/fused.ply").points)
-mesh = o3d.io.read_triangle_mesh("/a/mesh.ply")
+fused = np.asarray(read_cloud("/a/fused.ply").points)
+mesh = read_mesh("/a/mesh.ply")
 verts = np.asarray(mesh.vertices)
 scene = np.vstack([fused, verts])
 UP = [0.0, 0.0, 1.0]

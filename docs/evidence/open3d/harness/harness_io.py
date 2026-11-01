@@ -42,3 +42,58 @@ def output_path(default: str) -> Path:
     if not os.access(parent, os.W_OK):
         raise SystemExit(f"Cannot write {resolved}: {parent} is not writable.")
     return resolved
+
+
+def _read(kind: str, path: str | Path, count) -> object:
+    """Read a geometry and refuse an empty one, because Open3D will not.
+
+    `o3d.io.read_point_cloud` and `read_triangle_mesh` do not raise on a missing or
+    unreadable file. They log a warning to stderr and return an *empty* geometry, so the
+    failure surfaces much later and somewhere else: `band_profile_across_scenes` died in a
+    numpy reduction with `zero-size array to reduction operation maximum`, and
+    `consumer_occupancy` inside Open3D's C++ with `IndexError: _Map_base::at`. Neither names
+    a file.
+
+    Emptiness is checked rather than existence alone, because a file that exists and does not
+    parse reads the same way.
+    """
+    resolved = Path(path)
+
+    # Before importing Open3D, so a missing input is still named on a machine without it.
+    if not resolved.exists():
+        staged = (
+            " That path is under /data, a volume mounted into the container rather than part "
+            "of the repository, so outside the container it has to be staged there."
+            if resolved.is_absolute() and resolved.parts[:2] == ("/", "data")
+            else ""
+        )
+        raise SystemExit(
+            f"No {kind} at {resolved}.{staged} Open3D would have returned an empty {kind} "
+            f"here and failed later somewhere unrelated."
+        )
+
+    import open3d as o3d
+
+    reader = {
+        "point cloud": o3d.io.read_point_cloud,
+        "mesh": o3d.io.read_triangle_mesh,
+    }[kind]
+
+    geometry = reader(str(resolved))
+    if count(geometry) == 0:
+        raise SystemExit(
+            f"The {kind} at {resolved} is empty. The file exists, so this is a parse failure "
+            f"or a truncated write rather than a missing input; Open3D reports both by "
+            f"returning nothing and logging a warning."
+        )
+    return geometry
+
+
+def read_cloud(path: str | Path) -> object:
+    """A point cloud that is known to have points."""
+    return _read("point cloud", path, lambda c: len(c.points))
+
+
+def read_mesh(path: str | Path) -> object:
+    """A mesh that is known to have vertices."""
+    return _read("mesh", path, lambda m: len(m.vertices))

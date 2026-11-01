@@ -318,3 +318,106 @@ def test_every_hardcoded_data_output_goes_through_the_checked_resolver() -> None
     ]
 
     assert unchecked == [], unchecked
+
+
+def test_every_harness_compiles() -> None:
+    """The cheapest possible check, added because I broke three of these and lint found it.
+
+    Converting the geometry reads put a `from harness_io import ...` line above a
+    `from __future__` import in three harnesses, which is a hard SyntaxError. `ast.parse`
+    accepts it -- the rule is enforced by the compiler, not the parser -- so this compiles
+    rather than parses.
+    """
+    broken = []
+    for path in sorted(HARNESS.glob("*.py")):
+        try:
+            compile(path.read_text(), str(path), "exec")
+        except SyntaxError as error:
+            broken.append(f"{path.name}: {error.msg}")
+
+    assert broken == [], broken
+
+
+def test_no_harness_reads_geometry_without_checking_what_it_got() -> None:
+    """Open3D's readers do not raise on a missing file; they return an empty geometry.
+
+    That is why `band_profile_across_scenes` died in a numpy reduction with `zero-size array
+    to reduction operation maximum` and `consumer_occupancy` inside Open3D's C++ with
+    `IndexError: _Map_base::at`. Neither names a file, and both are several frames away from
+    the read that caused them.
+
+    Reads of the built-in `o3d.data` datasets are exempt: those download on demand and the
+    path comes from the library, not from a staged bundle.
+    """
+    offenders = []
+    for path in sorted(HARNESS.glob("*.py")):
+        for number, line in enumerate(path.read_text().splitlines(), start=1):
+            if "o3d.data" in line:
+                continue
+            if re.search(r"o3d\.io\.read_(point_cloud|triangle_mesh)\(", line):
+                offenders.append(f"{path.name}:{number}")
+
+    assert offenders == [], offenders
+
+
+def test_a_missing_geometry_is_reported_with_its_path_and_no_traceback(
+    tmp_path: Path,
+) -> None:
+    probe = tmp_path / "probe.py"
+    probe.write_text(
+        "import sys\n"
+        f"sys.path.insert(0, {str(HARNESS)!r})\n"
+        "from harness_io import read_cloud\n"
+        f"read_cloud({str(tmp_path / 'absent.ply')!r})\n"
+    )
+    result = subprocess.run(
+        [sys.executable, str(probe)], capture_output=True, text=True, timeout=120
+    )
+
+    message = result.stdout + result.stderr
+    assert result.returncode == 1, message
+    assert "absent.ply" in message, message
+    assert "No point cloud at" in message, message
+    assert "Traceback" not in message, message
+
+
+def test_a_file_that_exists_but_holds_nothing_is_reported_as_a_parse_failure(
+    tmp_path: Path,
+) -> None:
+    """Existence is not enough: a truncated or unparseable file also reads as empty.
+
+    Unlike the missing-file case, this one has to reach Open3D to find out, so it only runs
+    where the package is installed.
+    """
+    pytest.importorskip("open3d")
+
+    empty = tmp_path / "truncated.ply"
+    empty.write_text("ply\nformat ascii 1.0\n")
+
+    probe = tmp_path / "probe.py"
+    probe.write_text(
+        "import sys\n"
+        f"sys.path.insert(0, {str(HARNESS)!r})\n"
+        "from harness_io import read_cloud\n"
+        f"read_cloud({str(empty)!r})\n"
+    )
+    result = subprocess.run(
+        [sys.executable, str(probe)], capture_output=True, text=True, timeout=120
+    )
+
+    message = result.stdout + result.stderr
+    assert result.returncode == 1, message
+    assert "is empty" in message, message
+    assert "parse failure" in message, message
+    assert "Traceback" not in message, message
+
+
+def test_the_staged_volume_note_appears_only_for_paths_under_that_volume(
+    tmp_path: Path,
+) -> None:
+    """One harness reads `/a/fused.ply`, where advice about /data would be wrong."""
+    source = (HARNESS / "harness_io.py").read_text()
+
+    assert 'resolved.parts[:2] == ("/", "data")' in source, (
+        "the /data note is unconditional again; it is wrong for paths outside that volume"
+    )

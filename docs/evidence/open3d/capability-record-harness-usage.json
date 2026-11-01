@@ -87,5 +87,22 @@
     "the_cause": "Sampling is unseeded. Open3D 0.20.0 exposes no seed parameter on either sample_points_uniformly or sample_points_poisson_disk, and only one of the six harnesses discloses that its sampling is unseeded.",
     "it_is_fixable_and_that_is_being_handled_separately": "o3d.utility.random.seed does control both samplers: with a seed, three separate processes produce byte-identical point sets; without one, all three differ; and a different seed gives a different result, so the seed is what controls it. Seeding changes the committed numbers, which are accepted bytes bound by hash in other records, so it is not a change to make inside a PR about usage messages.",
     "what_is_not_claimed_here": "That the committed values are wrong. They are one draw from a distribution whose width was never reported. Whether to reseed and regenerate accepted evidence is review's and root's call, not mine."
+  },
+  "the_last_two_uninformative_failures_are_fixed_too": {
+    "the_two": [
+      "band_profile_across_scenes",
+      "consumer_occupancy"
+    ],
+    "what_they_did": "Reported a missing input as ValueError: zero-size array to reduction operation maximum, and IndexError: _Map_base::at from inside Open3D's C++. Neither names a file, and both are several frames from the read that caused them.",
+    "the_actual_cause": "o3d.io.read_point_cloud and read_triangle_mesh do not raise on a missing or unreadable file. They log a warning to stderr and return an empty geometry, so the failure surfaces later and somewhere unrelated. Verified directly: reading a nonexistent path returns 0 points and 0 vertices and raises nothing.",
+    "the_fix_is_general_rather_than_two_patches": "harness_io.read_cloud and read_mesh check existence and then emptiness -- emptiness too, because a file that exists and does not parse reads identically. Thirteen call sites across seven harnesses now go through them; reads of the built-in o3d.data datasets are left alone, since those download on demand and the path comes from the library.",
+    "existence_is_checked_before_open3d_is_imported": "So a reviewer without the package still gets the path named instead of ModuleNotFoundError. The emptiness check cannot work that way and its test is skipped where Open3D is absent.",
+    "measured": "Both now exit 1 with the path named and no traceback."
+  },
+  "a_defect_i_introduced_in_this_round_and_what_caught_it": {
+    "what_i_did": "The automated conversion inserted `from harness_io import ...` above a `from __future__` import in three harnesses, which is a hard SyntaxError.",
+    "why_my_first_check_missed_it": "I validated with ast.parse, which accepts it. The rule is enforced by the compiler, not the parser. Lint found it, not my check.",
+    "the_guard_added": "test_every_harness_compiles uses compile() rather than ast.parse, and the mutation that displaces a __future__ import fails it.",
+    "scope_discipline": "Converting the reads orphaned three Open3D imports and moved one import block out of order. Those are cleaned up, and every file I touched now reports the same ruff findings as before my change, compared rule by rule rather than by count."
   }
 }
