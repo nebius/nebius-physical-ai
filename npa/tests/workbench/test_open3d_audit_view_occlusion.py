@@ -21,6 +21,7 @@ measurement itself needs Open3D and two of its published datasets, so it lives i
 
 from __future__ import annotations
 
+import math
 import json
 import re
 from pathlib import Path
@@ -231,18 +232,75 @@ def test_no_camera_angle_would_have_fixed_this(record) -> None:
 
 def test_the_harness_uses_the_product_camera_rather_than_its_own(record) -> None:
     """A measurement of a camera the harness fitted itself proves nothing about the
-    one that ships, so the import is the thing under test here."""
+    one that ships, so the recorded camera has to be the production fit.
 
-    source = HARNESS.read_text()
-    assert "from npa.workbench.open3d.runner import" in source
-    assert "_view_cameras" in source
-    assert "RaycastingScene" in source
-    # And the camera recorded in each row has to be the production fit, not a literal.
+    This test was named for that property and did not enforce it. It asserted
+    `camera_elevation_degrees > 0.0`, which is satisfied by any positive number --
+    including 35.0, the synthetic control eye that already exists in this very harness.
+    A reviewer changed the record's 28.0 to 35.0 and the suite still passed 11 of 11.
+    `camera_eye` was checked with `len(...) == 3`, which admits any three floats.
+
+    The three other assertions were over harness *source text*, and source text cannot
+    substantiate a claim about what the harness actually did.
+
+    What it checks now, in increasing strength:
+
+    * the recorded angle equals the product's own constant, imported rather than
+      copied -- which is what the earlier `> 0.0` was reaching for;
+    * the angle is *recovered from the eye's own geometry*, so it cannot be edited on
+      its own. The product places the eye at `centre + offset * distance` with
+      `offset` at `CAMERA_ELEVATION_DEGREES` above the horizontal, so the angle
+      between `eye - look_target` and `up` must come back out at 28 degrees. Changing
+      only the recorded angle now contradicts the eye it was fitted with;
+    * both scenes must share that direction. It depends only on the constant and `up`,
+      never on the geometry, so two different scenes fitted by one product function
+      agree exactly while two hand-written eyes would not.
+
+    `camera_look_target` and `camera_up` were added to the record for this. They come
+    from the same `_view_cameras()` call as the eye, and the recomputation that added
+    them reproduced the recorded eye to 0.0 in both scenes, so no measured value moved.
+    """
+
+    from npa.workbench.open3d.runner import CAMERA_ELEVATION_DEGREES
+
+    directions = {}
     for row in record["scenes"]:
         if row.get("verdict") == "no_removed_surface":
             continue
-        assert len(row["camera_eye"]) == 3
-        assert row["camera_elevation_degrees"] > 0.0
+        scene = row["scene"]
+        assert row["camera_elevation_degrees"] == CAMERA_ELEVATION_DEGREES, (
+            f"{scene} records a camera at {row['camera_elevation_degrees']} degrees, "
+            f"but the product ships {CAMERA_ELEVATION_DEGREES}"
+        )
+
+        eye = row["camera_eye"]
+        target = row["camera_look_target"]
+        up = row["camera_up"]
+        assert len(eye) == len(target) == len(up) == 3
+
+        offset = [eye[i] - target[i] for i in range(3)]
+        span = math.sqrt(sum(value * value for value in offset))
+        up_span = math.sqrt(sum(value * value for value in up))
+        assert span > 0.0 and up_span > 0.0, (scene, offset, up)
+        offset = [value / span for value in offset]
+        up = [value / up_span for value in up]
+
+        recovered = math.degrees(math.asin(sum(offset[i] * up[i] for i in range(3))))
+        assert abs(recovered - CAMERA_ELEVATION_DEGREES) < 1e-6, (
+            f"{scene}'s eye sits {recovered:.6f} degrees above its look target, not "
+            f"the {CAMERA_ELEVATION_DEGREES} the product fits and the record claims"
+        )
+        directions[scene] = offset
+
+    assert len(directions) >= 2, f"need two scenes to compare fits, got {directions}"
+    scenes = sorted(directions)
+    first = directions[scenes[0]]
+    for other in scenes[1:]:
+        drift = max(abs(first[i] - directions[other][i]) for i in range(3))
+        assert drift < 1e-9, (
+            f"{scenes[0]} and {other} were fitted from different directions "
+            f"({drift:.3e} apart), so they cannot both be the one product fit"
+        )
 
 
 def test_the_record_states_its_own_stability_rather_than_implying_exactness(

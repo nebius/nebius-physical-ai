@@ -73,7 +73,17 @@
       "visible_area_fraction": 0.7848810005123376,
       "occluded_area_fraction": 0.21511899948766228,
       "self_hit_tolerance": 0.004924420388815936,
-      "samples_behind_eye": 0
+      "samples_behind_eye": 0,
+      "camera_look_target": [
+        1.3867007493972778,
+        2.7860262393951416,
+        1.3417651490731672
+      ],
+      "camera_up": [
+        0.0,
+        0.0,
+        1.0
+      ]
     },
     {
       "scene": "armadillo_complete",
@@ -108,7 +118,60 @@
       "visible_area_fraction": 0.8180565351651206,
       "occluded_area_fraction": 0.18194346483487953,
       "self_hit_tolerance": 0.08351966069115527,
-      "samples_behind_eye": 0
+      "samples_behind_eye": 0,
+      "camera_look_target": [
+        -0.003979510061832059,
+        21.450063705444336,
+        0.01126036960737764
+      ],
+      "camera_up": [
+        0.0,
+        0.0,
+        1.0
+      ]
     }
-  ]
+  ],
+  "the_recorded_camera_is_bound_to_the_product_fit": {
+    "raised_by": "review, against head 1f051f8cac",
+    "the_weakness": "test_the_harness_uses_the_product_camera_rather_than_its_own was named for the right property and did not enforce it. It asserted camera_elevation_degrees > 0.0, which 35.0 satisfies -- and 35.0 is the synthetic control eye already present in this harness. Review changed the recorded 28.0 to 35.0 and the suite still passed 11 of 11. camera_eye was checked with len(...) == 3. The other three assertions were over harness source text, which cannot substantiate what the harness did.",
+    "it_was_a_guard_weakness_not_a_false_number": "Review confirmed independently that the harness does call the product's _view_cameras() and take cameras[REMOVED_VIEW], so the recorded 28.0 was correct. What was missing was anything that would keep it correct.",
+    "what_binds_it_now": [
+      "the recorded angle equals CAMERA_ELEVATION_DEGREES, imported from the product rather than copied as a literal",
+      "the angle is recovered from the eye's own geometry: the product places the eye at centre + offset * distance with offset at CAMERA_ELEVATION_DEGREES above the horizontal, so the angle between (eye - look_target) and up must come back out at 28. Editing the angle alone now contradicts the eye it was fitted with.",
+      "both scenes must share that direction. It depends only on the constant and up, never on the geometry, so one product function fitting two different scenes agrees exactly where two hand-written eyes would not."
+    ],
+    "fields_added_for_it": {
+      "camera_look_target": "the centre the product fitted the eye around",
+      "camera_up": "the up vector it fitted against",
+      "no_measured_value_moved": "The fit is deterministic given the same geometry, so these were added by recomputing only the camera and checking the recomputed eye against the recorded one. Max drift was 0.0 in both scenes, so the target and up provably belong to the same fit and nothing measured was re-run."
+    },
+    "mutations_each_verified_applied": [
+      {
+        "mutation": "recorded angle 28.0 -> 35.0 (review's own)",
+        "result": "1 failed"
+      },
+      {
+        "mutation": "recorded angle 28.0 -> 28.1",
+        "result": "1 failed"
+      },
+      {
+        "mutation": "camera_eye z += 0.5",
+        "result": "1 failed"
+      },
+      {
+        "mutation": "camera_look_target x += 0.5",
+        "result": "1 failed"
+      },
+      {
+        "mutation": "camera_up [0,0,1] -> [0,1,0]",
+        "result": "1 failed"
+      },
+      {
+        "mutation": "one scene's up tilted, the other left alone",
+        "result": "1 failed"
+      }
+    ],
+    "baseline": "11 passed",
+    "where_this_note_lives": "At the top level, not under `controls`. I put it there first and test_the_instrument_reports_both_extremes failed on a KeyError: every entry under `controls` is a calibration control that must carry samples_behind_eye == 0, or its zero could be a clipping result. A guard note has no samples, so it does not belong in a section reserved for things that were measured."
+  }
 }

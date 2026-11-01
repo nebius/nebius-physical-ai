@@ -453,6 +453,13 @@ def main() -> int:
                 ),
                 "camera_eye": camera["eye"],
                 "camera_elevation_degrees": camera["elevation_degrees"],
+                # The eye alone cannot be checked against anything: it is three floats
+                # fitted per scene, so any three floats look plausible. With the target
+                # and up it was fitted around, the elevation is recoverable from the
+                # geometry -- which is what makes the recorded angle checkable rather
+                # than merely present.
+                "camera_look_target": camera["look_target"],
+                "camera_up": camera["up"],
                 "view_contents": list(view.contents),
                 "view_hidden_by_default": list(view.hidden_by_default),
                 "entities_shown": shown,
