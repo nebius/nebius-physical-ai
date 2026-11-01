@@ -14,6 +14,7 @@ torch.
 from __future__ import annotations
 
 import importlib.util
+import inspect
 import json
 from pathlib import Path
 from types import ModuleType
@@ -415,3 +416,28 @@ def test_no_published_finding_rests_on_a_file_that_could_swallow_the_poison(
     assert flagged, "no findings to check"
     for row in flagged:
         assert row["handlers_that_could_swallow_the_poison"] == [], row["file"]
+
+
+def test_the_documented_reproduction_matches_what_the_sweep_actually_runs(
+    sweep, record
+) -> None:
+    """A reproduction note that drifts from the code is worse than none at all.
+
+    A reviewer running this sweep from an exported archive hit eight errors, then
+    seven more from a harness missing the interpreter it shells out to, and reported
+    both as their own plumbing rather than as defects here. The record now says so, and
+    this keeps the saying true: both paths in that note are derived from the module
+    rather than retyped beside it.
+    """
+    how = record["how_to_reproduce_this"]
+
+    assert str(SWEEP.relative_to(REPO)) in how["command"]
+    assert str(sweep.PYTHON.relative_to(REPO)) in how["command"]
+    assert (
+        str(sweep.PYTHON.relative_to(REPO)) in how["needs_the_interpreter_it_invokes"]
+    )
+
+    # The checkout requirement is a real behaviour, not a caveat in prose: resolution
+    # walks up for `.git` and raises when it runs out of parents.
+    resolver = inspect.getsource(sweep.repository_root)
+    assert ".git" in resolver and "raise" in resolver, resolver

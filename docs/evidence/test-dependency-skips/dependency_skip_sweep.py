@@ -523,6 +523,27 @@ def main() -> int:
             for r in switched_off
             if not r["ci_installs_it"]
         ),
+        "how_to_reproduce_this": {
+            "command": (
+                "npa/.venv/bin/python "
+                "docs/evidence/test-dependency-skips/dependency_skip_sweep.py"
+            ),
+            "needs_a_real_checkout": (
+                "The sweep refuses to run outside a git checkout, because it resolves the "
+                "repository root by walking up for .git and its findings are per-file. An "
+                "exported archive has no repository marker, so the evidence cannot be "
+                "regenerated from one. A reviewer hit this as eight errors and reported it "
+                "as their own plumbing rather than a defect here; recorded so the next one "
+                "does not have to discover it."
+            ),
+            "needs_the_interpreter_it_invokes": (
+                "It shells out to npa/.venv/bin/python, so that path must exist. Link the "
+                "environment *directory* if you are relocating it -- linking the interpreter "
+                "binary alone corrupts prefix resolution and the run fails with seven "
+                "unrelated-looking test failures. That is the same reviewer's finding."
+            ),
+            "runtime": "about three minutes, two pytest runs per fixture-and-module pair",
+        },
         "how_live_was_determined": {
             "oracle": "ci-observed-packages.json",
             "which_is": (
