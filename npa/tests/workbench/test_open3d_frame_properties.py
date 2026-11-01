@@ -896,3 +896,111 @@ def test_the_dispute_record_names_the_tolerance_that_reproduces_the_other_figure
     ]
     assert len(reproducing) == 1, hinge["the_disputed_frame_band_by_band"]
     assert reproducing[0]["tolerances"] == [24, 26, 28, 30], reproducing
+
+
+def _headline_section() -> dict:
+    report = json.loads((EVIDENCE / "statistic-mask-sensitivity.json").read_text())
+    hinge = report["why_that_ratio_could_sustain_four_exchanges"]
+    return report, hinge, hinge["but_that_is_not_the_frame_the_headline_comes_from"]
+
+
+def test_the_frame_the_headline_comes_from_is_banded_too() -> None:
+    """Review's P4: the frame I banded was not the frame the number is quoted from.
+
+    The band table covered `observed_scan_only__overview.png`, where the mask dispute
+    happened. The headline ratio comes from a different frame, and by the argument that
+    justified banding anything -- an interval does not say whether a reading is
+    reproducible, the band structure does -- the frame whose number travels is the one
+    that most needs it. From the published data a reviewer could not tell whether 26.7
+    sat on a plateau or beside a hinge.
+
+    It sits on a plateau. The run containing the published tolerance covers 11 of the 16
+    swept tolerances, against 6 for the disputed frame.
+
+    That 11 does not identify the frame: pointing `HEADLINE_FRAME` at
+    `candidate_surface_only__overview.png` produces a run of 11 as well, which this test
+    accepts. The identity is bound by the next test instead, and the two are only sound
+    together.
+    """
+    report, hinge, section = _headline_section()
+    published = hinge["the_published_tolerance"]
+    plateau = section["the_plateau_around_the_published_condition"]
+
+    assert plateau["stable_from"] <= published <= plateau["stable_through"]
+    assert plateau["tolerances_in_the_run"] == 11, plateau
+    assert section["the_disputed_frame_for_comparison"]["tolerances_in_the_run"] == 6
+
+    # The run has to be contiguous in the sweep, or "plateau" is the wrong word for it.
+    band = next(
+        entry
+        for entry in section["the_headline_frame_band_by_band"]
+        if entry["ratio"] == plateau["ratio_at_the_published_tolerance"]
+    )
+    tolerances = band["tolerances"]
+    assert tolerances == list(range(min(tolerances), max(tolerances) + 1, 2)), band
+    assert len(tolerances) == plateau["tolerances_in_the_run"], (band, plateau)
+
+
+def test_the_named_headline_frame_is_the_frame_the_headline_ratio_belongs_to() -> None:
+    """`HEADLINE_FRAME` is a name, so it is bound to the number rather than trusted.
+
+    The headline figure only exists in prose in this record, so the constant cannot be
+    derived from it. What can be checked is that the frame it names still carries that
+    ratio in the nine-frame table -- so pointing it at a different frame stops agreeing
+    with the table beside it.
+    """
+    report, _, section = _headline_section()
+    plateau = section["the_plateau_around_the_published_condition"]
+    quoted = plateau["ratio_at_the_published_tolerance"]
+
+    rows = report["where_the_headline_ratio_sits_among_the_nine"]["per_frame"]
+    # Within the coarser record's own precision, rather than by equality after rounding.
+    # The table publishes one decimal and the sweep two, so the same quantity reads 26.7
+    # and 26.65. Re-rounding does not bridge them -- the underlying value is ~26.651, and
+    # `round(26.65, 1)` is 26.6 in binary floating point -- and a half-tenth tolerance
+    # lands exactly on the boundary, where the float difference is 0.050000000000000711.
+    matching = [
+        row
+        for row in rows
+        if row["ratio"] is not None and abs(row["ratio"] - quoted) < 0.1
+    ]
+    assert len(matching) == 1, (
+        "the named headline frame's ratio does not appear exactly once in the "
+        "nine-frame table, so the name and the table no longer agree",
+        quoted,
+        matching,
+    )
+    assert (
+        matching[0]["frame"]
+        in section["where_the_published_condition_sits_in_each_run"]
+    )
+
+
+def test_the_record_does_not_claim_a_wide_swing_makes_a_reading_fragile() -> None:
+    """The finding, which is the opposite of what the question expected.
+
+    The frame with the widest swing across the sweep has the *longer* plateau at the
+    published condition, and both frames are two steps from their nearest transition. So
+    swing and local stability are different properties, and a reading cannot be called
+    fragile because its frame travels a long way somewhere else in the sweep.
+
+    This is pinned because it is the kind of conclusion that invites being tidied into
+    the simpler, wrong sentence -- that the widest-swinging frame is the least reliable.
+    """
+    _, _, section = _headline_section()
+    # The note has to exist, but its wording is not what makes the claim true. Asserting
+    # an English phrase appears inside it would be a grep over prose -- the defect review
+    # caught on #1013 -- so what is checked is the measured relation the note describes.
+    assert section["swing_and_local_stability_are_different_properties"]
+
+    headline = section["the_plateau_around_the_published_condition"]
+    disputed = section["the_disputed_frame_for_comparison"]
+    assert headline["tolerances_in_the_run"] > disputed["tolerances_in_the_run"], (
+        "the headline frame no longer has the longer plateau, so this note is stale",
+        headline,
+        disputed,
+    )
+    assert set(section["where_the_published_condition_sits_in_each_run"]) == {
+        "candidate_scan_and_surface__topdown.png",
+        "observed_scan_only__overview.png",
+    }

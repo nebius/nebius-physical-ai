@@ -59,6 +59,13 @@ BAND_HEIGHT = 120
 # whole of a four-exchange disagreement about one diagnostic ratio.
 TOLERANCES = tuple(range(0, 32, 2))
 
+#: The frame the headline ratio is quoted from, which is not the frame the mask dispute
+#: happened on. Named here rather than derived, because the headline figure itself only
+#: exists in prose -- and bound to the sweep in the output, where
+#: `ratio_at_the_published_tolerance` has to still read as the headline number, so this
+#: cannot quietly come to point at a different frame.
+HEADLINE_FRAME = "candidate_scan_and_surface__topdown.png"
+
 # The spread floor the gate enforces, and the two figures the margin analysis produced.
 SPREAD_FLOOR = 0.06
 WEAKEST_DELIVERED_SPREAD = 0.1062
@@ -458,24 +465,55 @@ def tolerance_hinge(width: int, height: int = BAND_HEIGHT) -> dict[str, object]:
         r["gated_spread"] for readings in sweep.values() for r in readings.values()
     )
 
+    def bands_of(readings: dict[int, dict[str, object]]) -> list[dict[str, object]]:
+        """Contiguous runs of one ratio across the sweep, which is where a hinge shows."""
+
+        out: list[dict[str, object]] = []
+        for tolerance in TOLERANCES:
+            reading = readings[tolerance]
+            if out and out[-1]["ratio"] == reading["ratio"]:
+                tolerances = out[-1]["tolerances"]
+                assert isinstance(tolerances, list)
+                tolerances.append(tolerance)
+                continue
+            out.append(
+                {
+                    "tolerances": [tolerance],
+                    "ratio": reading["ratio"],
+                    "horizontal_quartile_pixels_moved": reading[
+                        "horizontal_quartile_pixels_moved"
+                    ],
+                }
+            )
+        return out
+
+    def plateau_of(readings: dict[int, dict[str, object]]) -> dict[str, object]:
+        """How far the published reading holds on either side of the published condition.
+
+        `stable_through` walks up only while every intermediate tolerance still agrees,
+        so a value that recurs after an excursion does not extend the run.
+        """
+        here = readings[published]["ratio"]
+        return {
+            "ratio_at_the_published_tolerance": here,
+            "stable_from": min(t for t in TOLERANCES if readings[t]["ratio"] == here),
+            "stable_through": max(
+                t
+                for t in TOLERANCES
+                if all(
+                    readings[u]["ratio"] == here
+                    for u in TOLERANCES
+                    if published <= u <= t
+                )
+            ),
+            "tolerances_in_the_run": sum(
+                1 for t in TOLERANCES if readings[t]["ratio"] == here
+            ),
+            "of": len(TOLERANCES),
+        }
+
     disputed = sweep["observed_scan_only__overview.png"]
-    bands: list[dict[str, object]] = []
-    for tolerance in TOLERANCES:
-        reading = disputed[tolerance]
-        if bands and bands[-1]["ratio"] == reading["ratio"]:
-            tolerances = bands[-1]["tolerances"]
-            assert isinstance(tolerances, list)
-            tolerances.append(tolerance)
-            continue
-        bands.append(
-            {
-                "tolerances": [tolerance],
-                "ratio": reading["ratio"],
-                "horizontal_quartile_pixels_moved": reading[
-                    "horizontal_quartile_pixels_moved"
-                ],
-            }
-        )
+    bands = bands_of(disputed)
 
     return {
         "the_mechanism": "The denominator is the relative movement of an interquartile spread "
@@ -502,6 +540,50 @@ def tolerance_hinge(width: int, height: int = BAND_HEIGHT) -> dict[str, object]:
             "why_it_matters": "The published reading is not balanced on the hinge; it sits on a "
             "plateau that runs from 0 through 8. That is why it is reproducible, and it is not an "
             "argument that the quantity is robust.",
+        },
+        "but_that_is_not_the_frame_the_headline_comes_from": {
+            "raised_by": "review, P4",
+            "the_asymmetry": (
+                "The band table above is for observed_scan_only__overview.png, which is "
+                "where the dispute happened. The headline ratio comes from "
+                f"{HEADLINE_FRAME}, which is the widest-swinging of the nine. The "
+                "argument for banding a frame is that an interval alone does not say "
+                "whether a reading is reproducible, and by that argument the frame whose "
+                "number travels is the one that most needs it."
+            ),
+            "the_headline_frame_band_by_band": bands_of(sweep[HEADLINE_FRAME]),
+            "the_plateau_around_the_published_condition": plateau_of(
+                sweep[HEADLINE_FRAME]
+            ),
+            "the_disputed_frame_for_comparison": plateau_of(disputed),
+            "the_answer": (
+                "It sits on a plateau, and a longer one than the disputed frame's: the "
+                "run containing the published tolerance covers 11 of the 16 swept "
+                "tolerances against the disputed frame's 6. So the reading the headline "
+                "quotes is not balanced on the hinge."
+            ),
+            "swing_and_local_stability_are_different_properties": (
+                "This is the part worth keeping. The concern was that the "
+                "widest-swinging frame might be the fragile one, and swing is the ratio "
+                "of the extremes across the whole sweep, which says nothing about how "
+                "far the published condition sits from a transition. Here the frame with "
+                "the widest swing has the longer plateau. Both frames are two steps from "
+                "their nearest transition, so neither is more locally fragile than the "
+                "other, and the frame that travels furthest across the sweep is not the "
+                "one whose published reading is least reproducible. An interval still "
+                "does not establish reproducibility -- that was the original point -- but "
+                "neither does a wide interval refute it."
+            ),
+            "where_the_published_condition_sits_in_each_run": {
+                HEADLINE_FRAME: (
+                    "published tolerance 6, run 4 through 24: two steps above the lower "
+                    "edge and eighteen below the upper"
+                ),
+                "observed_scan_only__overview.png": (
+                    "published tolerance 6, run 0 through 8: the lower edge is the floor "
+                    "of the sweep, and the upper is two steps away"
+                ),
+            },
         },
         "this_is_broader_than_the_frame_it_was_found_on": {
             "frames_swinging_2x_or_more": len(knife_edge),
