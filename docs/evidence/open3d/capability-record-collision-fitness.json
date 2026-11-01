@@ -1,0 +1,44 @@
+{
+  "capability": "Collision-fitness verdict for the reconstructed Open3D surface",
+  "recorded_utc": "2026-11-01T04:52:00Z",
+  "what_this_closes": "The lane brief asks for a verdict: if the mesh is not fit for collision use, state that and give an honest narrower output. Every record in this chain had instead abstained -- 'no claim is made about watertightness, collision fitness, or mesh readiness', 'Not collision safety'. Abstention was honest while nothing had been measured. It is now measured, so the verdict is stated: not fit for collision use.",
+  "the_verdict": {
+    "verdict": "not fit for collision use",
+    "the_question_a_collision_checker_actually_asks": "Is this point inside the obstacle, and how deep. Both are defined only for a closed surface, so the test is not whether the mesh looks solid but whether it answers inside/outside consistently at all.",
+    "measured": "The delivered surface is not watertight and not edge-manifold: 1256 boundary edges across 6 components. Ray parity disagrees across directions on 10982 of 11520 probed cells (0.953299), which is where a collision query would silently return whichever answer the ray direction produced.",
+    "corroborated_a_second_way": "Resolving every undefined cell in the mesh's favour by majority vote still leaves 785 of 1490 planner-solid cells with no observation within one support radius -- 0.785 m3 of invented obstacle. Same direction the occupancy consumer found, different instrument, so the verdict does not rest on parity alone.",
+    "what_is_fit_instead": "Occupancy-band mapping, which is what downstream-consumer.json measures and where the candidate is the better artifact: a cell is called occupied when it lies within one support radius of the surface, a question an open surface answers perfectly well. The phantom-obstacle rate there falls from 0.3245 to 0.0708. That is the narrower useful output, and it is not a workaround for this verdict -- it is a different question that does not need a closed solid."
+  },
+  "my_first_instrument_was_broken_and_a_control_caught_it": {
+    "what_it_reported": "Both variants undefined in essentially every cell, which looked like a strong finding.",
+    "why_it_was_wrong": "Axis-aligned rays against an axis-aligned probe grid graze shared edges and vertices, where count_intersections returns two hits or none. Parity then flips for a reason unrelated to holes, so every cell looked undefined and both real variants looked equally unfit. Off-axis directions remove the degeneracy, and this control is how the error surfaced before it was published.",
+    "how_it_surfaced": "A positive control: a sphere Open3D constructs is closed by construction, so the parity test must find zero undefined cells in it. The first version found 521. That is the whole reason the error did not reach a published verdict.",
+    "the_instrument_now_passes_three_ways": "Zero undefined cells on the closed sphere; parity's inside count agrees exactly with compute_signed_distance (1237 vs 1237), which Open3D defines only for closed meshes and which is therefore unavailable as the primary instrument here; and both agree with the analytic cell estimate 1241.1.",
+    "the_general_lesson_this_is_the_second_instance_of": "A measurement that makes every candidate fail is not a finding, it is an untested instrument. The earlier instance in this lane was a report that declared its own band height and was checked against itself.",
+    "the_guard_is_behavioural_not_declarative": "Verified by mutation rather than asserted. Reverting DIRECTIONS to the original axis-aligned set makes the harness fail its own closed-mesh control, print 'Instrument failed its closed-mesh control; no verdict is published' and exit 1 without a verdict. A second mutation, editing the published report to claim the control failed, is caught by the control test and by the hash binding. The point of checking both is that a report asserting its own validity is the failure mode this lane already hit once."
+  },
+  "two_assumptions_i_checked_instead_of_repeating": {
+    "the_baseline_is_not_the_closed_variant": "Both variants are open. Baseline is not watertight either: 156 boundary edges, not edge-manifold, 6 components. So the verdict is not 'the candidate lost closedness to gain mapping quality' -- neither variant ever had a defined interior, and the synthetic sphere above is the only real control in this report. I had assumed otherwise from an existing docstring and checked it instead of repeating it.",
+    "an_existing_justification_named_the_weaker_reason": "consumer_occupancy.py explains its choice of a distance band over an enclosed volume by saying 'one of the two meshes being compared is deliberately not closed', which invites the reading that the other one is. Measured: neither is. The decision to avoid compute_occupancy was right, and right for a stronger reason than the one recorded -- it was not a fairness adjustment between a closed and an open mesh, it was the only defined option for either."
+  },
+  "a_counterintuitive_number_explained_rather_than_buried": "Baseline has 156 boundary edges against the candidate's 1256, yet a higher undefined fraction (0.979253 vs 0.953299). That is not a contradiction: once a surface is open at all, parity stops tracking hole count and starts tracking how much surface a ray can cross. Baseline carries 36660 triangles to the candidate's 28208, so more directions find an odd count. Neither number should be read as a hole metric, and the undefined fraction is reported here only as evidence that the query is undefined, not as a quality score.",
+  "what_this_does_not_claim": "Nothing about accuracy against ground truth, which no artifact in this chain carries. A watertight mesh can be confidently wrong; closedness is necessary for a collision query to be defined and nowhere near sufficient for it to be safe. Nor does this say the reconstruction is bad at what it is for -- the same candidate artifact is the better one for occupancy mapping, and both statements are true at once.",
+  "regression_tests": {
+    "file": "npa/tests/workbench/test_open3d_collision_fitness.py",
+    "what_they_pin": "That the verdict is stated rather than abstained on; that the instrument's closed-mesh control is present and passes, since without it the verdict is worthless; that parity and signed distance agree on the control; that the record does not present the baseline as a closed control; and that the narrower fit output is named with its measured figures."
+  },
+  "provenance": {
+    "harness_that_produced_this": [
+      {
+        "path": "harness/collision_fitness_verdict.py",
+        "sha256": "7dc5b76855152610fc013c71449745de13318a1bc0f5f3c605bb36ca8428255c"
+      },
+      {
+        "path": "collision-fitness-verdict.json",
+        "sha256": "93e921aabe07aed6c6e26f9667cd2655657fd95979ec3c3d847b29a404de2e61"
+      }
+    ],
+    "inputs": "The privately retained final bundle's fused cloud and both mesh variants. The meshes are not committed; the harness takes its bundle root from OPEN3D_BUNDLE so the same script runs in the Open3D image against /data/final-bundle and locally against the retained copy.",
+    "open3d_version": "0.20.0"
+  }
+}
