@@ -6,8 +6,8 @@ retained surface in the same pane: a vertex can sit at reach 0.3, comfortably in
 frame and reported clean by that probe, and be entirely behind opaque geometry.
 
 Measured by ray casting from the camera that ships, 35.2% of the removed surface's area
-was visible on a partial scan and 38.5% on a resampled complete mesh. Hiding one entity
-by default takes those to 78.5% and 82.1%.
+was visible on a partial scan and 38.2% on a resampled complete mesh. Hiding one entity
+by default takes those to 78.5% and 81.8%.
 
 What makes it a view defect rather than a framing defect is that no camera fixes it. Over
 24 azimuths at the product's own elevation the removed surface never exceeded 49% visible
@@ -22,6 +22,7 @@ measurement itself needs Open3D and two of its published datasets, so it lives i
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -270,3 +271,86 @@ def test_the_record_states_its_own_stability_rather_than_implying_exactness(
         if row.get("verdict") == "no_removed_surface":
             continue
         assert row["visible_area_fraction"] - MINIMUM_VISIBLE_AREA > 0.2, row["scene"]
+
+
+def numbers_in(node) -> set[float]:
+    """Every numeric leaf of the record, booleans excluded."""
+
+    if isinstance(node, dict):
+        return {value for item in node.values() for value in numbers_in(item)}
+    if isinstance(node, list):
+        return {value for item in node for value in numbers_in(item)}
+    if isinstance(node, bool) or not isinstance(node, (int, float)):
+        return set()
+    return {float(node)}
+
+
+#: Percentages quoted about this measurement that the record does not hold as a fraction.
+#: Pinned by equality rather than counted, so a figure that *stops* resolving shows up
+#: here by name instead of being absorbed into a total. Empty is the honest state: every
+#: percentage in scope came from this record.
+QUOTED_BUT_NOT_IN_THE_RECORD: set[str] = set()
+
+
+def quoting_prose() -> list[tuple[str, str]]:
+    """The places this measurement is restated for a human, and nowhere else.
+
+    Scoped to the audit view's own table entry rather than all of `runner.py`. Run over
+    the whole file this test flagged `11.1%` and `7.4%`, which are real and are bound to
+    `pane-fit-window-aspect-sweep.json` by that measurement's own tests. Exempting them
+    here would have meant pinning two figures this record cannot check -- a test that
+    tolerates drift it cannot see is worse than one with a narrower scope that says so.
+    """
+    runner = (REPO / "npa/src/npa/workbench/open3d/runner.py").read_text().splitlines()
+    start = next(i for i, line in enumerate(runner) if "REMOVED_VIEW: _View(" in line)
+    end = next(i for i, line in enumerate(runner[start:], start) if line == "    ),")
+    block = "\n".join(runner[start : end + 1])
+
+    # A refactor that moves or renames the entry must not silently empty the scan and
+    # leave this passing over nothing.
+    assert "hidden_by_default" in block or "/world/mesh" in block, block
+    return [("runner.py REMOVED_VIEW entry", block), ("this file", __doc__ or "")]
+
+
+def test_every_percentage_quoted_in_code_or_prose_is_one_the_record_holds(
+    record,
+) -> None:
+    """The defect this exists to stop, which it did not stop the first time.
+
+    This measurement was stated three times -- the record, a comment in `runner.py`, and
+    the docstring above -- and the two restatements were both wrong and did not agree
+    with each other: 81.8 in the record against 82.5 and 82.1. Review caught it within
+    minutes of the commit and pointed out that I already ship this mechanism twice over,
+    on #1007 and #1009, and that neither was pointed here.
+
+    So it is pointed here. Every `NN.N%` in those files has to round-trip to a fraction
+    the record actually holds, at the precision it is quoted to. The gate threshold is
+    excluded by construction: 50% is an acceptance criterion rather than a measurement,
+    and it is already bound to `MINIMUM_VISIBLE_AREA` by the tests above.
+    """
+    held = numbers_in(record)
+    unresolved = set()
+    resolved = 0
+
+    for where, text in quoting_prose():
+        for literal in set(re.findall(r"(?<![\w.])(\d{1,3}\.\d)%", text)):
+            value = float(literal) / 100.0
+            decimals = len(literal.split(".")[1]) + 2
+            if any(
+                round(number, decimals) == round(value, decimals) for number in held
+            ):
+                resolved += 1
+            else:
+                unresolved.add(f"{literal} ({where})")
+
+    assert resolved >= 8, (
+        f"only {resolved} percentages bound; the scan stopped matching"
+    )
+    assert unresolved == QUOTED_BUT_NOT_IN_THE_RECORD, {
+        "no_longer_backed_by_the_record": sorted(
+            unresolved - QUOTED_BUT_NOT_IN_THE_RECORD
+        ),
+        "newly_backed_so_remove_from_the_exception_set": sorted(
+            QUOTED_BUT_NOT_IN_THE_RECORD - unresolved
+        ),
+    }

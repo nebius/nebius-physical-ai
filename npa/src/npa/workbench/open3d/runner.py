@@ -972,8 +972,8 @@ VIEW_GEOMETRY: dict[str, _View] = {
         CAMERA_WINDOW_ASPECT * CAMERA_TAB_SHARE,
         # The retained surface was hiding this view's entire subject. Measured by ray
         # casting from the camera that ships: 35.2% of the removed area visible on a
-        # partial scan and 38.5% on a resampled complete mesh, rising to 78.5% and
-        # 82.5% with this one entity hidden. The fused cloud stays visible -- points
+        # partial scan and 38.2% on a resampled complete mesh, rising to 78.5% and
+        # 81.8% with this one entity hidden. The fused cloud stays visible -- points
         # occlude nothing a ray can hit -- so the overlay is still shown against the
         # observations it is being judged against, and the surface it was cut from is
         # one click away for the comparison a reviewer would want next.
