@@ -1,0 +1,178 @@
+{
+  "capability": "The delivered Open3D frames are gated on their pixels in CI",
+  "user_outcome": "A reviewer who re-renders, replaces, crops or re-captures any of the nine delivered frames finds out in CI if the new bytes are clipped, strand the subject, wash it out, or have lost the scale reference. Before this, no test in the repository read a pixel of them.",
+  "why_this_was_open": "An independent review reduced its framing row to P4 and reframed it: the properties actually worth gating already pass, and the only residue is that nothing enforces them in CI. Measured against main, npa/tests/workbench/test_open3d.py pins the camera-fitting math and no test reads the delivered PNGs.",
+  "what_is_gated": {
+    "max_border_content_pixels": 0,
+    "max_low_contrast_content_fraction": 0.3,
+    "min_median_contrast": 60.0,
+    "min_subject_spread": 0.06,
+    "not_gated": [
+      "content_fraction",
+      "extent_span_narrower_axis",
+      "clipping_headroom_zoom"
+    ],
+    "scale_label_rect_top_bottom_left_right": [
+      648,
+      670,
+      20,
+      240
+    ],
+    "scale_label_sha256": "1bc310158d2020172cce6bda0d1214668f1a6b3eadc9ea6fd4d55a4440ed99e3"
+  },
+  "result_on_the_delivered_frames": {
+    "frames": 9,
+    "passed": true,
+    "measured": {
+      "baseline_scan_and_surface__opposite.png": {
+        "border_content_pixels": 0,
+        "low_contrast_content_fraction": 0.007347174639864614,
+        "median_contrast_vs_background": 137.2126,
+        "scale_label_intact": true,
+        "subject_spread_narrower_axis": 0.17604166666666668
+      },
+      "baseline_scan_and_surface__overview.png": {
+        "border_content_pixels": 0,
+        "low_contrast_content_fraction": 0.01242875074593082,
+        "median_contrast_vs_background": 157.8138,
+        "scale_label_intact": true,
+        "subject_spread_narrower_axis": 0.190625
+      },
+      "baseline_scan_and_surface__topdown.png": {
+        "border_content_pixels": 0,
+        "low_contrast_content_fraction": 0.011299128488588965,
+        "median_contrast_vs_background": 162.2848,
+        "scale_label_intact": true,
+        "subject_spread_narrower_axis": 0.14895833333333333
+      },
+      "baseline_surface_only__overview.png": {
+        "border_content_pixels": 0,
+        "low_contrast_content_fraction": 0.00021377541169006703,
+        "median_contrast_vs_background": 159.28480000000002,
+        "scale_label_intact": true,
+        "subject_spread_narrower_axis": 0.190625
+      },
+      "candidate_scan_and_surface__opposite.png": {
+        "border_content_pixels": 0,
+        "low_contrast_content_fraction": 0.03651696063410866,
+        "median_contrast_vs_background": 156.28480000000002,
+        "scale_label_intact": true,
+        "subject_spread_narrower_axis": 0.13125
+      },
+      "candidate_scan_and_surface__overview.png": {
+        "border_content_pixels": 0,
+        "low_contrast_content_fraction": 0.036706563265513345,
+        "median_contrast_vs_background": 152.28480000000002,
+        "scale_label_intact": true,
+        "subject_spread_narrower_axis": 0.12916666666666668
+      },
+      "candidate_scan_and_surface__topdown.png": {
+        "border_content_pixels": 0,
+        "low_contrast_content_fraction": 0.03252237200466894,
+        "median_contrast_vs_background": 169.357,
+        "scale_label_intact": true,
+        "subject_spread_narrower_axis": 0.10625
+      },
+      "candidate_surface_only__overview.png": {
+        "border_content_pixels": 0,
+        "low_contrast_content_fraction": 0.0004033097418817652,
+        "median_contrast_vs_background": 155.2848,
+        "scale_label_intact": true,
+        "subject_spread_narrower_axis": 0.12708333333333333
+      },
+      "observed_scan_only__overview.png": {
+        "border_content_pixels": 0,
+        "low_contrast_content_fraction": 0.07841950131442683,
+        "median_contrast_vs_background": 139.2848,
+        "scale_label_intact": true,
+        "subject_spread_narrower_axis": 0.13125
+      }
+    }
+  },
+  "two_findings_that_changed_the_design": {
+    "1_a_fixed_annotation_contaminates_the_obvious_measure": {
+      "what": "Every one of the nine frames carries a scale bar reading '1.0 m (scan units)' drawn at a fixed bottom-left position. It is content, so it pins the content bounding box.",
+      "the_tell": "All nine report a left margin of 27px, a bottom margin of 28px and a clipping headroom of 1.056 -- identical across nine different views of different geometry. Nine independent 3D projections cannot coincide like that; the number was describing the annotation.",
+      "magnitude": "Removing the annotation block moves the extent reading by up to 0.335 and the quartile spread by at most 0.0042, an 80x difference in sensitivity. Recorded extent spans are 0.550-0.713; the subject alone spans 0.264-0.510.",
+      "consequence": "A 0.40 floor on extent -- which is what gating the recorded number would have meant -- passes a frame whose geometry has collapsed to a 16x16 speck, because the annotation still anchors a corner of the box. That frame measures extent 0.472 and spread 0.036. It is constructed and asserted in the test module.",
+      "so": "Stranding is gated on an interquartile spread, and extent is recorded and not gated.",
+      "this_also_corrects_a_review_statement": "The review's 'the subject spans 55-71% of each frame's narrower axis' is a reading of the content bounding box, not of the subject. The arithmetic was right; the annotation was in the frame. Sent to the review lane rather than left in a file."
+    },
+    "2_the_framing_pair_had_a_hole_and_the_sweep_found_it": {
+      "what": "candidate_scan_and_surface__topdown.png fails the framing checks at 1.1x and 1.2x and passes again at 1.3x. By 1.3x the scale bar has been cropped out of the frame entirely, so it no longer contributes border content, and the geometry happens to miss the border on that step.",
+      "why_it_was_nearly_missed": "The sweep first reported each band as min..max, which called that band closed and said nothing. Reporting contiguity instead is what exposed it.",
+      "closed_by": "Hashing the scale label's exact pixels. The largest rectangle around the glyphs that is byte-identical in all nine frames is rows 648-670, cols 20-240; the bar beneath is excluded because its length encodes each view's metres-per-pixel and legitimately differs. No resample or crop survives an exact hash: across every frame the only zoom that keeps the label intact is 1.00.",
+      "cost_of_this_choice": "It is deliberately brittle. It fails if the renderer moves, restyles, refonts or rewords the label, and re-blessing LABEL_SHA256 should be a conscious act by someone who looked. A gate that quietly stopped checking would be worse."
+    }
+  },
+  "why_fill_is_not_gated": {
+    "claim": "A content_fraction gate has a floor and no ceiling, so it is passed by zooming in.",
+    "measured": "Fill rises monotonically with zoom in every one of the nine frames.",
+    "consequence": "The cheapest way to pass such a gate is to crop, and what crops away first is the sparse incomplete geometry these views exist to show. This is the review's objection, measured rather than repeated."
+  },
+  "the_framing_pair_is_closed": {
+    "measured": "9/9 framing bands are bounded on both sides",
+    "wall_below": "stranding -- zoom out and the content contracts below the spread floor",
+    "wall_above": "clipping -- zoom in and content reaches the border band",
+    "so": "No zoom satisfies both while ruining the framing, and the label check admits only 1.00."
+  },
+  "honest_note_on_the_thresholds": "Regression ratchets, not quality claims, and set with the current measurements in hand, so they are not a blind pre-registration. Zero border pixels is the exception and is not a tuned number. The rest sit far from observed values on purpose: a gate that trips on ordinary re-render variation gets deleted, and then it protects nothing. What makes them mean anything is that each is shown to fire on the defect it names.",
+  "negative_controls": [
+    "content pasted into the border band -> clipped, and only clipped",
+    "geometry replaced by a 16x16 speck with the annotation left in place -> stranded, while the extent reading it replaces still passes 0.40",
+    "all content pulled to 12% of its contrast -> washed out",
+    "two in five content pixels pushed inside the low-contrast limit -> washed-out floor fires while the median stays at 93.2, above its own floor of 60, so the two contrast checks are shown not to be redundant",
+    "the label rectangle blanked -> scale label missing",
+    "the 1.3x crop that slips past the framing checks -> caught by the label alone",
+    "geometry recoloured to a different high-contrast colour -> gate stays silent, because a gate that rejects everything protects nothing",
+    "a synthetic frame whose extent and quartile spread disagree by 20x -> pins both axes"
+  ],
+  "i_mutation_tested_my_own_tests": {
+    "killed": [
+      "border gate disabled (max 0 -> 10**9)",
+      "spread floor disabled (0.06 -> 0.0)",
+      "median contrast disabled (60 -> 0)",
+      "low-contrast gate disabled (0.30 -> 1.0)",
+      "label check skipped",
+      "spread reverted to extent on both axes",
+      "spread reverted to extent on the column axis only",
+      "spread reverted to extent on the row axis only"
+    ],
+    "my_first_mutation_was_not_faithful": "I replaced the quartile expression with count=1, which changed only the column axis. The narrower-axis min() then returned the still-correct row axis and the suite passed, so I recorded a surviving mutant. The mutation was wrong, not the tests -- the faithful both-axis version is killed by the stranded-speck test.",
+    "but_the_partial_mutation_was_a_real_gap": "A gate that is quartile-based on one axis and extent-based on the other is broken in a way no frame test would show, because min() hides it. Closed by a test that pins each axis separately against a synthetic frame where the two readings disagree by 20x. Both partial mutations are now killed."
+  },
+  "what_this_does_not_establish": [
+    "Nothing here says the frames are good, only that four named defects would be caught. The subject is an untextured point cloud and is still hard to name from a single view; the review measured that separately and the remaining remedy it named is an honest caption, which is claimed by another lane.",
+    "The zoom sweep is a 2D rescale about the frame centre, not a re-render. It exercises the gate, not the renderer or the camera fitting, which are pinned separately.",
+    "The thresholds are not calibrated against human judgement. No VLM was called: this is a pixel-measurement gate over committed bytes, so visual evaluation is not applicable rather than manufactured.",
+    "The label check encodes the current renderer's overlay convention. It does not verify the scale bar is numerically correct, only that the label's pixels are unchanged.",
+    "The off-centre framing the measurements exposed -- margins as lopsided as 27px against 405px, and a true clipping headroom near 1.06 -- is reported, not fixed. Re-centring would change accepted evidence bytes and belongs in its own change."
+  ],
+  "reproduce": [
+    "npa/.venv/bin/python docs/evidence/open3d/harness/frame_property_gate.py --out docs/evidence/open3d/delivered-frame-property-gate.json docs/evidence/open3d/frames-refit/*.png",
+    "npa/.venv/bin/python docs/evidence/open3d/harness/gate_zoom_sweep.py --out docs/evidence/open3d/gate-zoom-sweep.json docs/evidence/open3d/frames-refit/*.png",
+    "cd npa && .venv/bin/python -m pytest tests/workbench/test_open3d_frame_properties.py -q"
+  ],
+  "provenance": {
+    "source_commit": "d06e95846",
+    "built_on_main": "d06e95846",
+    "main_is_an_ancestor_of_this_commit": true,
+    "why_harness_digests_and_not_only_a_commit": "The harness that produced these numbers is added by this change, so the record cannot name its own commit -- the hash does not exist until after the record is written. The file digests are knowable now and are what a reader actually needs to recompute.",
+    "pr_602_merge_is_an_ancestor": "15b0b11f0",
+    "harness_that_produced_this": [
+      {
+        "path": "harness/frame_edge_audit.py",
+        "sha256": "b2fbbf2e9e902342498d064dade0397c5f48c5b4ab3f014c8944cd7b87330b8e"
+      },
+      {
+        "path": "harness/frame_property_gate.py",
+        "sha256": "d9da5d0e0dd701ad10cf576e04965346b0638ea802efa8415bd7696094ecd03a"
+      },
+      {
+        "path": "harness/gate_zoom_sweep.py",
+        "sha256": "305ddc353f63c06b55a94c875d38013b34a5d7c3142c5cf0d6cb89f19b5d173d"
+      }
+    ],
+    "the_two_hashes_this_change_leaves_unbound": "LABEL_SHA256 appears twice -- once in the gate report's thresholds and once in what_is_gated above -- and the evidence guard counts both as hashes that name no file. That is correct: it digests a pixel rectangle inside a frame, not a file, so no file-binding guard can check it. It first appeared 20 times, once per frame as well, which was 18 identical hashes of pure noise; the per-frame record is now a boolean and the expected value is stated once. The extended guard on the evidence-binding branch cross-checks hashes that two records state side by side, which is the check that will cover these two."
+  }
+}

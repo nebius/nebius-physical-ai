@@ -1,0 +1,179 @@
+{
+  "failed_frames": [],
+  "frames": [
+    {
+      "failures": [],
+      "gated": {
+        "border_content_pixels": 0,
+        "low_contrast_content_fraction": 0.007347174639864614,
+        "median_contrast_vs_background": 137.2126,
+        "scale_label_intact": true,
+        "subject_spread_narrower_axis": 0.17604166666666668
+      },
+      "passed": true,
+      "path": "baseline_scan_and_surface__opposite.png",
+      "recorded_not_gated": {
+        "clipping_headroom_zoom": 1.2785714285714285,
+        "content_fraction": 0.21030381944444446,
+        "extent_span_narrower_axis": 0.6802083333333333
+      }
+    },
+    {
+      "failures": [],
+      "gated": {
+        "border_content_pixels": 0,
+        "low_contrast_content_fraction": 0.01242875074593082,
+        "median_contrast_vs_background": 157.8138,
+        "scale_label_intact": true,
+        "subject_spread_narrower_axis": 0.190625
+      },
+      "passed": true,
+      "path": "baseline_scan_and_surface__overview.png",
+      "recorded_not_gated": {
+        "clipping_headroom_zoom": 1.3735632183908046,
+        "content_fraction": 0.21092447916666668,
+        "extent_span_narrower_axis": 0.7125
+      }
+    },
+    {
+      "failures": [],
+      "gated": {
+        "border_content_pixels": 0,
+        "low_contrast_content_fraction": 0.011299128488588965,
+        "median_contrast_vs_background": 162.2848,
+        "scale_label_intact": true,
+        "subject_spread_narrower_axis": 0.14895833333333333
+      },
+      "passed": true,
+      "path": "baseline_scan_and_surface__topdown.png",
+      "recorded_not_gated": {
+        "clipping_headroom_zoom": 1.1737704918032787,
+        "content_fraction": 0.2133174189814815,
+        "extent_span_narrower_axis": 0.625
+      }
+    },
+    {
+      "failures": [],
+      "gated": {
+        "border_content_pixels": 0,
+        "low_contrast_content_fraction": 0.00021377541169006703,
+        "median_contrast_vs_background": 159.28480000000002,
+        "scale_label_intact": true,
+        "subject_spread_narrower_axis": 0.190625
+      },
+      "passed": true,
+      "path": "baseline_surface_only__overview.png",
+      "recorded_not_gated": {
+        "clipping_headroom_zoom": 1.3735632183908046,
+        "content_fraction": 0.2097974537037037,
+        "extent_span_narrower_axis": 0.7125
+      }
+    },
+    {
+      "failures": [],
+      "gated": {
+        "border_content_pixels": 0,
+        "low_contrast_content_fraction": 0.03651696063410866,
+        "median_contrast_vs_background": 156.28480000000002,
+        "scale_label_intact": true,
+        "subject_spread_narrower_axis": 0.13125
+      },
+      "passed": true,
+      "path": "candidate_scan_and_surface__opposite.png",
+      "recorded_not_gated": {
+        "clipping_headroom_zoom": 1.4640122511485452,
+        "content_fraction": 0.11426070601851852,
+        "extent_span_narrower_axis": 0.6555555555555556
+      }
+    },
+    {
+      "failures": [],
+      "gated": {
+        "border_content_pixels": 0,
+        "low_contrast_content_fraction": 0.036706563265513345,
+        "median_contrast_vs_background": 152.28480000000002,
+        "scale_label_intact": true,
+        "subject_spread_narrower_axis": 0.12916666666666668
+      },
+      "passed": true,
+      "path": "candidate_scan_and_surface__overview.png",
+      "recorded_not_gated": {
+        "clipping_headroom_zoom": 1.536480686695279,
+        "content_fraction": 0.11398582175925925,
+        "extent_span_narrower_axis": 0.55
+      }
+    },
+    {
+      "failures": [],
+      "gated": {
+        "border_content_pixels": 0,
+        "low_contrast_content_fraction": 0.03252237200466894,
+        "median_contrast_vs_background": 169.357,
+        "scale_label_intact": true,
+        "subject_spread_narrower_axis": 0.10625
+      },
+      "passed": true,
+      "path": "candidate_scan_and_surface__topdown.png",
+      "recorded_not_gated": {
+        "clipping_headroom_zoom": 1.1893687707641196,
+        "content_fraction": 0.12642650462962962,
+        "extent_span_narrower_axis": 0.5520833333333334
+      }
+    },
+    {
+      "failures": [],
+      "gated": {
+        "border_content_pixels": 0,
+        "low_contrast_content_fraction": 0.0004033097418817652,
+        "median_contrast_vs_background": 155.2848,
+        "scale_label_intact": true,
+        "subject_spread_narrower_axis": 0.12708333333333333
+      },
+      "passed": true,
+      "path": "candidate_surface_only__overview.png",
+      "recorded_not_gated": {
+        "clipping_headroom_zoom": 1.536480686695279,
+        "content_fraction": 0.11120370370370371,
+        "extent_span_narrower_axis": 0.55
+      }
+    },
+    {
+      "failures": [],
+      "gated": {
+        "border_content_pixels": 0,
+        "low_contrast_content_fraction": 0.07841950131442683,
+        "median_contrast_vs_background": 139.2848,
+        "scale_label_intact": true,
+        "subject_spread_narrower_axis": 0.13125
+      },
+      "passed": true,
+      "path": "observed_scan_only__overview.png",
+      "recorded_not_gated": {
+        "clipping_headroom_zoom": 1.536480686695279,
+        "content_fraction": 0.09080584490740741,
+        "extent_span_narrower_axis": 0.55
+      }
+    }
+  ],
+  "passed": true,
+  "stranding_is_gated_on_spread_not_extent_because": "every frame carries a fixed bottom-left scale bar, which pins the content bounding box and makes the extent reading partly a measurement of the annotation. Removing the annotation block shifts the extent by up to 0.335 and the spread by at most 0.0042.",
+  "thresholds": {
+    "max_border_content_pixels": 0,
+    "max_low_contrast_content_fraction": 0.3,
+    "min_median_contrast": 60.0,
+    "min_subject_spread": 0.06,
+    "not_gated": [
+      "content_fraction",
+      "extent_span_narrower_axis",
+      "clipping_headroom_zoom"
+    ],
+    "scale_label_rect_top_bottom_left_right": [
+      648,
+      670,
+      20,
+      240
+    ],
+    "scale_label_sha256": "1bc310158d2020172cce6bda0d1214668f1a6b3eadc9ea6fd4d55a4440ed99e3"
+  },
+  "what": "Framing and legibility gate over the delivered frames, recomputed from PNG bytes rather than read back from the record that measured them."
+}
