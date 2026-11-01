@@ -60,7 +60,7 @@
       },
       {
         "path": "holes-and-outliers.json",
-        "sha256": "705a9a76a74946b19b4d7b3619d840d0b6f659c35881b32b5f5445191831fe7a"
+        "sha256": "710fc3420f6fd00a4da939fb9d9761503a940449d9ad338e66c8f0a115f382fd"
       }
     ],
     "inputs": "The privately retained final bundle's fused cloud and both mesh variants, not committed. Bundle root comes from OPEN3D_BUNDLE so the same script runs in the Open3D image against /data/final-bundle and locally against the retained copy.",

@@ -33,6 +33,32 @@ def _record() -> dict:
     return json.loads(RECORD.read_text())
 
 
+def scalar_leaves(node: object, path: str = "") -> list[tuple[str, object]]:
+    """Every leaf that is not a string, with the path that reaches it.
+
+    Not "numeric": one of the fifty is a boolean, so the set is 49 numbers and one flag. A
+    reviewer pointed out that the non-string reading is the stronger bound, because a flipped
+    flag falls inside it, and the stronger one is the one to state.
+
+    Module level rather than nested, so the digest check and the check that the report's
+    *description* of this construction matches it share one definition. A reviewer could not
+    reproduce the digest from that description because the path spelling was missing from it.
+    """
+    if isinstance(node, dict):
+        return [
+            leaf
+            for key, value in node.items()
+            for leaf in scalar_leaves(value, f"{path}/{key}")
+        ]
+    if isinstance(node, list):
+        return [
+            leaf
+            for index, value in enumerate(node)
+            for leaf in scalar_leaves(value, f"{path}[{index}]")
+        ]
+    return [] if isinstance(node, str) else [(path, node)]
+
+
 def test_the_hole_detector_passes_its_sphere_control() -> None:
     """Zero loops intact, one per removed cap, area within 2% of analytic.
 
@@ -273,27 +299,6 @@ def test_the_hand_edit_declares_itself_and_names_why_it_was_not_regenerated() ->
 
     assert "could not be re-run" in note, note
 
-    def scalar_leaves(node: object, path: str = "") -> list[tuple[str, object]]:
-        """Every leaf that is not a string, with the path that reaches it.
-
-        Not "numeric": one of the fifty is a boolean, so the set is 49 numbers and one
-        flag. A reviewer pointed out that the non-string reading is the stronger bound,
-        because a flipped flag falls inside it, and the stronger one is the one to state.
-        """
-        if isinstance(node, dict):
-            return [
-                leaf
-                for key, value in node.items()
-                for leaf in scalar_leaves(value, f"{path}/{key}")
-            ]
-        if isinstance(node, list):
-            return [
-                leaf
-                for index, value in enumerate(node)
-                for leaf in scalar_leaves(value, f"{path}[{index}]")
-            ]
-        return [] if isinstance(node, str) else [(path, node)]
-
     leaves = sorted(scalar_leaves(report))
     assert f"all {len(leaves)} scalar non-string leaves" in note, note
     assert sum(1 for _, value in leaves if isinstance(value, bool)) == 1, leaves
@@ -306,3 +311,67 @@ def test_the_hand_edit_declares_itself_and_names_why_it_was_not_regenerated() ->
     projection = hashlib.sha256(json.dumps(leaves, sort_keys=True).encode()).hexdigest()
     assert projection == PROSE_ONLY_EDIT_PROJECTION, projection
     assert PROSE_ONLY_EDIT_PROJECTION in note, note
+
+
+def test_the_published_construction_spells_out_how_a_path_is_built() -> None:
+    """A reviewer reproduced everything except the path spelling, and got a different digest.
+
+    Working only from the construction as first written -- sorted `(path, value)` over every
+    non-string leaf, `json.dumps`, `sort_keys=True` -- they computed `262f0cad...`. The
+    projection, the sort and the dump were all right; they had written dot-separated paths
+    with no leading separator. The digest is only checkable from its description once the
+    description says which of those two spellings it means.
+
+    This asserts the description against the construction the test above actually uses,
+    rather than merely asserting that some sentence about paths exists.
+    """
+    report = json.loads((EVIDENCE / "holes-and-outliers.json").read_text())
+    note = report["a_test_i_built_and_discarded"][
+        "an_asymmetry_review_found_in_this_discarded_test"
+    ]["why_this_report_was_edited_rather_than_regenerated"]
+
+    assert "262f0cad" in note, (
+        "the reviewer's value is not recorded as the near miss it was"
+    )
+
+    leaves = sorted(scalar_leaves(report))
+    first_path = leaves[0][0]
+    assert first_path in note, (first_path, "the note names a different first leaf")
+    assert first_path.startswith("/"), first_path
+    assert '"/" + key' in note, note
+    assert '"[i]"' in note, note
+
+
+def test_a_differently_spelled_path_really_does_change_the_digest() -> None:
+    """So the clause above is load-bearing rather than decorative."""
+    report = json.loads((EVIDENCE / "holes-and-outliers.json").read_text())
+
+    def dotted(node: object, path: str = "") -> list[tuple[str, object]]:
+        if isinstance(node, dict):
+            return [
+                leaf
+                for key, value in node.items()
+                for leaf in dotted(value, f"{path}.{key}" if path else key)
+            ]
+        if isinstance(node, list):
+            return [
+                leaf
+                for index, value in enumerate(node)
+                for leaf in dotted(value, f"{path}.{index}")
+            ]
+        return [] if isinstance(node, str) else [(path, node)]
+
+    ours = sorted(scalar_leaves(report))
+    theirs = sorted(dotted(report))
+
+    assert len(ours) == len(theirs), (len(ours), len(theirs))
+    assert [value for _, value in ours] == [value for _, value in theirs]
+
+    mine = hashlib.sha256(json.dumps(ours, sort_keys=True).encode()).hexdigest()
+    alternative = hashlib.sha256(
+        json.dumps(theirs, sort_keys=True).encode()
+    ).hexdigest()
+    assert mine == PROSE_ONLY_EDIT_PROJECTION
+    assert alternative != mine, (
+        "path spelling would not matter and the clause is unnecessary"
+    )
