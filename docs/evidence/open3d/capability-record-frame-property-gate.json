@@ -222,11 +222,11 @@
       },
       {
         "path": "harness/statistic_mask_sensitivity.py",
-        "sha256": "eb704f063b0a3dd30ea5bcd3eafb3033b54b9bf51a25aac0633a77ebd92b3fca"
+        "sha256": "abd6fc28f396e5365a2198d0d5b80a85090e088698bd55acb3a3a2f515a6b8ce"
       },
       {
         "path": "statistic-mask-sensitivity.json",
-        "sha256": "df4baeb175ca8d236ae6dc5391f8c9b41f46ce8a055ad367dfd18faca1bc94f2"
+        "sha256": "71c045c5d8560836c21c7685f0dd1f0d0ad39b1dc768746bafa83cc534fad7b0"
       }
     ],
     "one_of_these_pins_goes_stale_when_a_sibling_lands": "harness/frame_edge_audit.py is edited by the evidence-binding branch (PR 982), which makes it record the sha256 of each file it measures. That digest is correct for the bytes on this branch and stops being correct the moment 982 merges. Whichever of the two lands second must re-read it. Written down rather than left for a reader to discover, because a stale pin and a tampered one look the same.",
