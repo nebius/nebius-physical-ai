@@ -92,6 +92,68 @@ def test_per_env_from_distances_scoring():
     assert rows[0]["details"]["object_goal_distance_m"] == 0.0
 
 
+@pytest.mark.parametrize(
+    ("metrics", "expected"),
+    [
+        ({"placement_stable": True}, True),
+        ({"placement_stable": False}, False),
+        ({"place": True}, True),
+        ({"place": False}, False),
+        ({"placement_stable": False, "place": True}, False),
+        ({}, False),
+    ],
+)
+def test_per_env_runtime_stability_preserves_literal_booleans(
+    metrics: dict[str, object], expected: bool
+) -> None:
+    rows = ev.per_env_from_distances(
+        [0.02],
+        success_dist_m=0.05,
+        runtime_metrics=[metrics],
+    )
+    assert rows[0]["success"] is expected
+
+
+@pytest.mark.parametrize("field", ["placement_stable", "place"])
+@pytest.mark.parametrize(
+    "value",
+    ["no", "false", "unstable", 0, 1, None, [], {}],
+)
+def test_per_env_runtime_stability_rejects_non_booleans(
+    field: str, value: object
+) -> None:
+    with pytest.raises(
+        ValueError,
+        match=rf"runtime_metrics\[0\]\.{field} must be a literal boolean",
+    ):
+        ev.per_env_from_distances(
+            [0.02],
+            success_dist_m=0.05,
+            runtime_metrics=[{field: value}],
+        )
+
+
+def test_runtime_stability_controls_strict_success_statistics() -> None:
+    per_env = ev.per_env_from_distances(
+        [0.02, 0.02],
+        success_dist_m=0.05,
+        runtime_metrics=[
+            {"placement_stable": True, "difficulty": "easy"},
+            {"placement_stable": False, "difficulty": "easy"},
+        ],
+    )
+    report = ev.build_heldout_report(
+        per_env,
+        isaac_task="Isaac-Lift-Cube-Franka-v0",
+        checkpoint_uri="s3://bucket/model.pt",
+        source="byo_isaac_eval",
+    )
+    assert report["strict_success"]["count"] == 1
+    assert report["strict_success"]["rate"] == 0.5
+    assert report["per_difficulty"]["easy"]["strict_success_count"] == 1
+    assert report["per_difficulty"]["easy"]["strict_success_rate"] == 0.5
+
+
 def test_manipulator_contact_rejects_table_force_without_reach() -> None:
     ee_distance = np.array([0.20, 0.02, 0.02])
     force_contact = np.array([True, False, True])

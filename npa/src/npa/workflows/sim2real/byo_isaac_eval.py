@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Any
 
 from npa.clients.storage import StorageClient, safe_s3_download_target
+from npa.literal_values import require_boolean
 from npa.workflows.sim2real.camera_views import camera_metadata, camera_views_json
 from npa.workflows.sim2real.capture import capture_settings
 from npa.workflows.sim2real.isaac_job_payload import (
@@ -411,9 +412,7 @@ def per_env_from_distances(
             if runtime_metrics and index < len(runtime_metrics)
             else {}
         )
-        stable_place = bool(
-            metrics.get("placement_stable", metrics.get("place", False))
-        )
+        stable_place = _runtime_placement_stable(metrics, index=index)
         # A final 5 cm distance without a stable placement is not task success.
         # Runtime-free callers (unit/dry-run fixtures) retain distance-only behavior.
         strict_success = d < success_dist_m and (
@@ -428,6 +427,21 @@ def per_env_from_distances(
             }
         )
     return rows
+
+
+def _runtime_placement_stable(metrics: dict[str, Any], *, index: int) -> bool:
+    """Return downloaded placement stability without truthiness coercion."""
+
+    if "placement_stable" in metrics:
+        field = "placement_stable"
+    elif "place" in metrics:
+        field = "place"
+    else:
+        return False
+    return require_boolean(
+        metrics[field],
+        field=f"runtime_metrics[{index}].{field}",
+    )
 
 
 # In-Isaac rollout script (runs in the sibling Job). Defensive: tries the
