@@ -8,6 +8,7 @@ import io
 import os
 from pathlib import Path
 import subprocess
+import sys
 from types import SimpleNamespace
 
 import pytest
@@ -20,6 +21,18 @@ def compat():
         / "docker/workbench/common/moviepy_pillow_compat.py"
     )
     spec = importlib.util.spec_from_file_location("moviepy_compat", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+@pytest.fixture
+def selector():
+    path = (
+        Path(__file__).resolve().parents[2]
+        / "docker/workbench/common/select_moviepy_pillow_closure.py"
+    )
+    spec = importlib.util.spec_from_file_location("moviepy_selector", path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -221,39 +234,102 @@ def test_moviepy_pillow_wheels_are_exactly_hash_locked():
     )
 
     installer = (common / "install_isaac_runtime_base.sh").read_text()
-    assert "/^(imageio-ffmpeg|moviepy|pillow)==/d" in installer
+    assert "select_moviepy_pillow_closure.py" in installer
+    assert "--force-reinstall" in installer
     assert "--only-binary=:all:" in installer
     assert "--require-hashes" in installer
     assert '-r "${COMMON_DIR}/moviepy-pillow311.lock"' in installer
 
 
+def test_selector_uses_canonical_identity_and_emits_reviewed_closure(selector):
+    selected, qualified = selector.select_closure(
+        "# reviewed\n"
+        "ImageIO_FFMPEG==0.6.0\n"
+        "MoviePy==2.2.1\n"
+        "PILLOW==13.0.0\n"
+        "requests==2.34.2\n",
+        "3.11",
+    )
+
+    assert qualified is True
+    assert selected == "# reviewed\nrequests==2.34.2\n"
+
+
+def test_selector_keeps_pillow_when_moviepy_is_absent(selector):
+    selected, qualified = selector.select_closure(
+        "imageio-ffmpeg==0.6.0\npillow==13.0.0\nrequests==2.34.2\n",
+        "3.11",
+    )
+
+    assert qualified is False
+    assert selected == "pillow==13.0.0\nrequests==2.34.2\n"
+
+
+@pytest.mark.parametrize(
+    ("requirements", "message"),
+    (
+        (
+            "MoviePy==2.2.2\npillow==13.0.0\n",
+            "requires exactly moviepy==2.2.1",
+        ),
+        (
+            "moviepy==2.2.1\npillow==12.0.0\n",
+            "requires exactly pillow==13.0.0",
+        ),
+        (
+            "moviepy @ https://example.invalid/moviepy.whl\npillow==13.0.0\n",
+            "direct references",
+        ),
+        ("-r nested.txt\n", "includes"),
+        ("moviepy===2.2.1\n", "alternate comparison forms"),
+        (
+            "moviepy==2.2.1\nMoviePy==2.2.1\npillow==13.0.0\n",
+            "duplicate canonical requirement",
+        ),
+        (
+            "moviepy==2.2.1; python_version >= '3.11'\npillow==13.0.0\n",
+            "markers",
+        ),
+    ),
+)
+def test_selector_rejects_ambiguous_or_unqualified_forms(
+    selector, requirements, message
+):
+    with pytest.raises(ValueError, match=message):
+        selector.select_closure(requirements, "3.11")
+
+
 def test_unknown_moviepy_closure_fails_before_install(tmp_path):
     common = Path(__file__).resolve().parents[2] / "docker/workbench/common"
-    installer = (common / "install_isaac_runtime_base.sh").read_text()
-    selection = installer.split("MOVIEPY_PILLOW_QUALIFIED=0\n", 1)[1]
-    selection = selection.split(
-        '"$ISAAC_VENV/bin/python" -m pip install',
-        1,
-    )[0]
     output = tmp_path / "selected.txt"
-    selection = selection.replace("/tmp/npa-isaac-oss-deps.txt", str(output))
+    marker = tmp_path / "qualified.txt"
+    output.write_text("stale output")
+    marker.write_text("stale marker")
     requirements = tmp_path / "requirements.txt"
     requirements.write_text("moviepy==2.2.2\npillow==13.0.0\n")
 
     result = subprocess.run(
-        ["bash", "-eu", "-c", "MOVIEPY_PILLOW_QUALIFIED=0\n" + selection],
-        env={
-            **os.environ,
-            "ISAAC_PYTHON_MINOR": "3.11",
-            "OSS_DEPS_FILE": str(requirements),
-        },
+        [
+            sys.executable,
+            str(common / "select_moviepy_pillow_closure.py"),
+            "--requirements",
+            str(requirements),
+            "--output",
+            str(output),
+            "--qualified-marker",
+            str(marker),
+            "--python-minor",
+            "3.11",
+        ],
         capture_output=True,
         text=True,
         check=False,
     )
 
     assert result.returncode != 0
+    assert "requires exactly moviepy==2.2.1" in result.stderr
     assert not output.exists()
+    assert not marker.exists()
 
 
 def _assert_groot_keeps_qualified_moviepy_pillow_state(text):

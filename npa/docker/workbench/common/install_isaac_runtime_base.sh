@@ -236,15 +236,14 @@ fi
 
 log "OSS dependency closure for Isaac Sim / Isaac Lab"
 MOVIEPY_PILLOW_QUALIFIED=0
-if [ "$ISAAC_PYTHON_MINOR" = 3.11 ] && grep -qiE '^moviepy==' "$OSS_DEPS_FILE"; then
-  grep -Fxq 'moviepy==2.2.1' "$OSS_DEPS_FILE"
-  grep -Fxq 'pillow==13.0.0' "$OSS_DEPS_FILE"
+QUALIFIED_MARKER=/tmp/npa-moviepy-pillow-qualified
+"$ISAAC_VENV/bin/python" "${COMMON_DIR}/select_moviepy_pillow_closure.py" \
+  --requirements "$OSS_DEPS_FILE" \
+  --output /tmp/npa-isaac-oss-deps.txt \
+  --qualified-marker "$QUALIFIED_MARKER" \
+  --python-minor "$ISAAC_PYTHON_MINOR"
+if [ -f "$QUALIFIED_MARKER" ]; then
   MOVIEPY_PILLOW_QUALIFIED=1
-  sed -E '/^(imageio-ffmpeg|moviepy|pillow)==/d' "${OSS_DEPS_FILE}" \
-    > /tmp/npa-isaac-oss-deps.txt
-else
-  sed -E '/^imageio-ffmpeg==/d' "${OSS_DEPS_FILE}" \
-    > /tmp/npa-isaac-oss-deps.txt
 fi
 "$ISAAC_VENV/bin/python" -m pip install --no-cache-dir \
   --no-deps \
@@ -252,6 +251,7 @@ fi
 if [ "$MOVIEPY_PILLOW_QUALIFIED" = 1 ]; then
   "$ISAAC_VENV/bin/python" -m pip install --no-cache-dir \
     --no-deps \
+    --force-reinstall \
     --only-binary=:all: \
     --require-hashes \
     -r "${COMMON_DIR}/moviepy-pillow311.lock"
@@ -263,7 +263,7 @@ fi
 "$ISAAC_VENV/bin/python" -m pip install --no-cache-dir --no-deps \
   --no-binary imageio-ffmpeg \
   "imageio-ffmpeg==0.6.0"
-rm -f /tmp/npa-isaac-oss-deps.txt
+rm -f /tmp/npa-isaac-oss-deps.txt "$QUALIFIED_MARKER"
 IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg "$ISAAC_VENV/bin/python" - <<'PY'
 import imageio_ffmpeg
 
