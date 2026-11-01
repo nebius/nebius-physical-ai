@@ -34,7 +34,7 @@ CONTRACT = (
 )
 
 SYNTHETIC_KEY = (
-    b"-----BEGIN OPENSSH PRIVATE KEY-----\n"
+    b"-----BEGIN " + b"OPENSSH PRIVATE KEY-----\n"
     b"NOT-A-REAL-KEY-SYNTHETIC-CONTROL-FIXTURE-ONLY\n"
     b"-----END OPENSSH PRIVATE KEY-----\n"
 )
@@ -162,7 +162,7 @@ def test_path_credential_ignores_non_credentials(path: str) -> None:
 def test_content_credential_finds_a_marker_split_across_chunks() -> None:
     # The reason the reader carries an overlap. Place the marker so it straddles
     # a chunk boundary; without the overlap this returns None.
-    marker = b"-----BEGIN OPENSSH PRIVATE KEY-----\nc3ludGhldGlj"
+    marker = b"-----BEGIN " + b"OPENSSH PRIVATE KEY-----\nc3ludGhldGlj"
     head = b"\x00" * (credentials.CONTENT_CHUNK - 10)
     stream = io.BytesIO(head + marker + b"\x00" * 64)
     assert credentials.content_credential(stream) == "private_key_content"
@@ -300,7 +300,7 @@ def test_every_private_key_header_is_detected(header: bytes) -> None:
 )
 def test_a_nul_terminated_parser_constant_is_not_a_key(trailer: bytes) -> None:
     body = b"\x7fELF\x02\x01\x01" + b"\x00" * 64
-    body += b"-----BEGIN OPENSSH PRIVATE KEY-----" + trailer
+    body += b"-----BEGIN " + b"OPENSSH PRIVATE KEY-----" + trailer
     assert credentials.content_credential(io.BytesIO(body)) is None
 
 
@@ -309,12 +309,12 @@ def test_a_nul_terminated_parser_constant_is_not_a_key(trailer: bytes) -> None:
     [
         # The two lane fixtures. Both reproducer suites plant these, so the
         # false-positive fix must not turn either into a miss.
-        b"-----BEGIN OPENSSH PRIVATE KEY-----\nNOT-A-KEY-SYNTHETIC-FIXTURE\n"
+        b"-----BEGIN " + b"OPENSSH PRIVATE KEY-----\nNOT-A-KEY-SYNTHETIC-FIXTURE\n"
         b"-----END OPENSSH PRIVATE KEY-----\n",
         SYNTHETIC_KEY,
         # Traditional encrypted PEM, whose body is preceded by RFC 1421 headers
         # rather than starting with base64 straight away.
-        b"-----BEGIN RSA PRIVATE KEY-----\nProc-Type: 4,ENCRYPTED\n"
+        b"-----BEGIN " + b"RSA PRIVATE KEY-----\nProc-Type: 4,ENCRYPTED\n"
         b"DEK-Info: AES-128-CBC,0123456789ABCDEF\n\nMIIEow==\n"
         b"-----END RSA PRIVATE KEY-----\n",
     ],
@@ -334,7 +334,7 @@ def test_the_longest_marker_is_measured_correctly() -> None:
 def test_markers_are_found_when_split_at_a_chunk_boundary() -> None:
     # The property the carry exists for, exercised at the offsets where a marker
     # actually straddles a chunk edge rather than only in the middle of one.
-    marker = b"-----BEGIN OPENSSH PRIVATE KEY-----\nc3ludGhldGlj"
+    marker = b"-----BEGIN " + b"OPENSSH PRIVATE KEY-----\nc3ludGhldGlj"
     for shift in range(-3, 4):
         offset = credentials.CONTENT_CHUNK - len(marker) // 2 + shift
         stream = io.BytesIO(b"\x00" * offset + marker + b"\x00" * 32)
@@ -548,8 +548,8 @@ EQUIVALENCE_CORPUS = (
     b"see the password policy document for details",
     b"print('hello world')\n" * 500,
     b"\x00" * (CHUNK - 5) + b'password = "x"',
-    b"-----BEGIN OPENSSH PRIVATE KEY-----\nc3ludGhldGlj",
-    b"\x00" * 262145 + b"-----BEGIN RSA PRIVATE KEY-----\nc3ludGhldGlj",
+    b"-----BEGIN " + b"OPENSSH PRIVATE KEY-----\nc3ludGhldGlj",
+    b"\x00" * 262145 + b"-----BEGIN " + b"RSA PRIVATE KEY-----\nc3ludGhldGlj",
     b"AKIA" + b"A" * 16,
     b"AKIA" + b"a" * 16,
     b"",

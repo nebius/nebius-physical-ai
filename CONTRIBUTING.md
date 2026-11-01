@@ -499,6 +499,49 @@ cancels the complete superseded gate instead of six independent fragments:
 | `.github/workflows/gitleaks.yml` | the custom Nebius-pattern rules in `.gitleaks.toml` | `gitleaks detect` |
 | `.github/workflows/image-security-scan.yml` | Always reports scope; runs Trivy and complete-byte checks for image-affecting candidates and every main/scheduled audit | `npa/tests/docker/` for the contract checks |
 
+The exact-tree Gitleaks helper is bootstrapped separately from workflow
+activation. Before activation, validate it with a real installed Gitleaks binary
+and canonical full commit IDs:
+
+```bash
+npa/.venv/bin/python scripts/run_gitleaks_tree_scan.py \
+  --repo-root . \
+  --revision "$(git rev-parse HEAD)" \
+  --history-base "$(git rev-parse origin/main)" \
+  --policy-revision "$(git rev-parse origin/main)" \
+  --gitleaks-bin "$(readlink -f "$(command -v gitleaks)")"
+```
+
+`--policy-revision` is mandatory: routine scans must load `.gitleaks.toml` and
+`.gitleaksignore` from a reviewed trusted commit, never implicitly from the
+candidate. `--history-base` must also name an explicit excluded commit; missing
+event history fails instead of falling back to an implicit, known-noisy
+whole-history scan. The helper verifies exact Git object bytes, scans every
+intermediate tree in the selected range, exposes raw policy blobs at inert scan
+paths, and gives each blob and path its own text wrapper so binary bytes remain
+visible without allowing a rule match to span unrelated blobs. If a policy
+commit allowlist intersects an intermediate tree, the helper rejects the range
+because a no-Git tree scan cannot preserve that commit identity; split the range
+or use a narrowly content-scoped exception.
+It also scans localized UTF-16/32 text, disables inline `gitleaks:allow`
+suppression, and runs private binary/archive/decode controls. Archive nesting
+is deliberately restricted to verified, canonical ZIP, TAR, gzip, bzip2, and
+xz inputs. Alias, unsupported, disguised, encrypted, malformed, nested, and
+encoded archives fail closed rather than relying on filename-sensitive
+extraction or ambiguous decoder/archive composition.
+Malformed strongly identified Unicode or content that reaches the first
+unsupported decode layer also fails instead of being silently omitted. Encoded
+candidates are deduplicated into complete sub-100-KB fragments; an individual
+candidate too large to preserve as one Gitleaks fragment fails closed. The
+runner uses a fixed process environment, fixes Gitleaks parallelism at eight
+threads, requires exact Gitleaks 8.28.0, records its executable SHA-256, and
+revalidates both scanner bytes and the exact Git history plan after all
+long-running scans. Caller process hooks, scanner replacement, and concurrent
+shallow/graft changes therefore cannot silently change a passing verdict. Unit
+tests with controlled scanner processes do not replace the required
+real-Gitleaks run. Workflow activation belongs in a later focused change after
+this helper has landed on the trusted base.
+
 Start with `make precheck`: it checks the working tree's CI dependency fingerprint,
 lint, formatting, and focused CI contract regressions. It does not change files or
 run the full suite. `make format-check` is the formatting check alone.

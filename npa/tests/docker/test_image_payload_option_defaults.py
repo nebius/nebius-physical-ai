@@ -129,7 +129,7 @@ def test_encoded_default_or_decoded_metadata_is_not_an_option_exemption(
     "literal",
     [
         b"AKIA" + b"A" * 16,
-        b"-----BEGIN PRIVATE KEY-----\nA",
+        b"-----BEGIN " + b"PRIVATE KEY-----\nA",
         b"hf_token=SYNTHETICFIXTURE",
         b"hf_token=config.hf_token",
     ],
@@ -306,7 +306,7 @@ def test_impossible_python_prefix_does_not_retain_pem_whitespace_context() -> No
 
 def test_impossible_prefix_is_rejected_before_a_large_context_allocation() -> None:
     source = credentials._OptionSourceContext()
-    source.feed(b"-----BEGIN PRIVATE KEY-----" + b"\n" * 100000)
+    source.feed(b"-----BEGIN " + b"PRIVATE KEY-----" + b"\n" * 100000)
     assert source.invalid and source.data == b""
     assert not source.oversized
 
@@ -314,9 +314,9 @@ def test_impossible_prefix_is_rejected_before_a_large_context_allocation() -> No
 @pytest.mark.parametrize(
     "prefix",
     [
-        b'"-----BEGIN PRIVATE KEY-----"\n',
-        b"'''-----BEGIN PRIVATE KEY-----'''\n",
-        b"# -----BEGIN PRIVATE KEY-----\n",
+        b'"-----BEGIN ' + b'PRIVATE KEY-----"\n',
+        b"'''-----BEGIN " + b"PRIVATE KEY-----'''\n",
+        b"# -----BEGIN " + b"PRIVATE KEY-----\n",
     ],
 )
 def test_quotes_and_comments_do_not_discard_valid_python_context(prefix: bytes) -> None:

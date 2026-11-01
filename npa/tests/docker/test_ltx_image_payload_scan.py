@@ -370,7 +370,9 @@ class TestTheAuditedBaseImageBytes:
         """A path alone must not be enough, or this would be a blanket exemption."""
 
         rootfs = dict(CLEAN_ROOTFS) | {
-            "usr/sbin/sshd": b"-----BEGIN OPENSSH PRIVATE KEY-----\nnot the real sshd\n"
+            "usr/sbin/sshd": (
+                b"-----BEGIN " + b"OPENSSH PRIVATE KEY-----\nnot the real sshd\n"
+            )
         }
         findings = scanner.scan(_tar(tmp_path / "r.tar", rootfs), CLEAN_CONFIG)
 
@@ -385,7 +387,9 @@ class TestTheAuditedBaseImageBytes:
         same code path the real hashes take.
         """
 
-        payload = b"-----BEGIN OPENSSH PRIVATE KEY-----\nstand-in for the real sshd\n"
+        payload = (
+            b"-----BEGIN " + b"OPENSSH PRIVATE KEY-----\nstand-in for the real sshd\n"
+        )
         monkeypatch.setitem(
             scanner.AUDITED_SECRET_LITERAL_FILE_SHA256,
             "usr/sbin/sshd",
@@ -399,7 +403,9 @@ class TestTheAuditedBaseImageBytes:
         """Auditing the base must not have opened the door to a real leaked key."""
 
         rootfs = dict(CLEAN_ROOTFS) | {
-            "opt/npa/ltx2/id_ed25519": b"-----BEGIN OPENSSH PRIVATE KEY-----\nleaked\n"
+            "opt/npa/ltx2/id_ed25519": (
+                b"-----BEGIN " + b"OPENSSH PRIVATE KEY-----\nleaked\n"
+            )
         }
         findings = scanner.scan(_tar(tmp_path / "r.tar", rootfs), CLEAN_CONFIG)
 

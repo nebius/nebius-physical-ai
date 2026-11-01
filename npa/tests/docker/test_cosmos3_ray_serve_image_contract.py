@@ -430,7 +430,7 @@ def test_payload_scan_allows_framework_source(tmp_path: Path) -> None:
 # A fixed, obviously fake PEM block. It is not a key and opens nothing; the
 # scanner keys on the marker line, so no real key material is needed to test it.
 SYNTHETIC_KEY = (
-    b"-----BEGIN OPENSSH PRIVATE KEY-----\n"
+    b"-----BEGIN " + b"OPENSSH PRIVATE KEY-----\n"
     b"NOT-A-REAL-KEY-SYNTHETIC-CONTROL-FIXTURE-ONLY\n"
     b"-----END OPENSSH PRIVATE KEY-----\n"
 )

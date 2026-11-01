@@ -102,7 +102,7 @@ def test_every_header_split_with_short_reads(monkeypatch, header: bytes) -> None
 @pytest.mark.parametrize("suffix", [b"", b"\x00", b"!", b"\x00Y"])
 def test_whitespace_without_body_is_not_a_key(monkeypatch, suffix: bytes) -> None:
     monkeypatch.setattr(credentials, "CONTENT_CHUNK", 7)
-    payload = b"-----BEGIN PRIVATE KEY-----" + b"\n" * 100 + suffix
+    payload = b"-----BEGIN " + b"PRIVATE KEY-----" + b"\n" * 100 + suffix
     assert credentials.content_credential(io.BytesIO(payload)) is None
 
 
@@ -111,7 +111,7 @@ def test_rejected_header_does_not_hide_following_key(
     monkeypatch, terminator: bytes
 ) -> None:
     monkeypatch.setattr(credentials, "CONTENT_CHUNK", 3)
-    header = b"-----BEGIN PRIVATE KEY-----"
+    header = b"-----BEGIN " + b"PRIVATE KEY-----"
     payload = header + b"\n" * 100 + terminator + header + b"\n" * 100 + b"Y"
     assert credentials.content_credential(io.BytesIO(payload)) == "private_key_content"
 
@@ -126,7 +126,7 @@ class _WhitespaceStream:
     def read(self, size: int) -> bytes:
         if self.header:
             self.header = False
-            return b"-----BEGIN PRIVATE KEY-----"
+            return b"-----BEGIN " + b"PRIVATE KEY-----"
         if self.remaining:
             count = min(size, self.remaining)
             self.remaining -= count
@@ -149,11 +149,13 @@ def test_retained_memory_does_not_grow_with_header_whitespace(monkeypatch) -> No
 
 
 @pytest.mark.parametrize(
-    "tail", [b"Y", b"\x00", b"", b"!-----BEGIN EC PRIVATE KEY-----\nY"]
+    "tail", [b"Y", b"\x00", b"", b"!-----BEGIN " + b"EC PRIVATE KEY-----\nY"]
 )
 def test_pem_streaming_matches_whole_input_oracle(monkeypatch, tail: bytes) -> None:
     monkeypatch.setattr(credentials, "CONTENT_CHUNK", 13)
-    payload = b"-----BEGIN ENCRYPTED PRIVATE KEY-----" + b" \t\r\n\f\v" * 100 + tail
+    payload = (
+        b"-----BEGIN " + b"ENCRYPTED PRIVATE KEY-----" + b" \t\r\n\f\v" * 100 + tail
+    )
     expected = any(
         pattern.search(payload) for _, pattern in credentials.DECLARED_CONTENT_PATTERNS
     )

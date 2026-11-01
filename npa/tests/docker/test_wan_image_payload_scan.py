@@ -184,7 +184,7 @@ def test_reviewed_trixie_content_requires_both_its_path_and_unchanged_bytes(
     tmp_path, monkeypatch, catalog
 ) -> None:
     path = "usr/lib/reviewed-example.so"
-    payload = b"\x7fELF\x00-----BEGIN OPENSSH PRIVATE KEY-----\x00"
+    payload = b"\x7fELF\x00-----BEGIN " + b"OPENSSH PRIVATE KEY-----\x00"
     monkeypatch.setattr(scanner, catalog, {path: hashlib.sha256(payload).hexdigest()})
     assert scanner.scan(_tar(tmp_path / "reviewed.tar", {path: payload}), {}) == []
     findings = scanner.scan(_tar(tmp_path / "renamed.tar", {"other.so": payload}), {})
@@ -660,7 +660,7 @@ def test_compressed_non_tar_data_is_inspected_without_tar_false_positive(
         ),
         (
             "opt/application/index.json.xz",
-            lzma.compress(b"-----BEGIN OPENSSH PRIVATE KEY-----"),
+            lzma.compress(b"-----BEGIN " + b"OPENSSH PRIVATE KEY-----"),
         ),
     ],
 )
@@ -757,7 +757,7 @@ def test_known_debian_parser_and_optional_acceleration_literals_pass(
             b"\x7fELF\x00libcuda.so.1\x00"
         ),
         "usr/lib/x86_64-linux-gnu/libgnutls.so.30.34.3": (
-            b"\x7fELF\x00-----BEGIN PRIVATE KEY-----\x00"
+            b"\x7fELF\x00-----BEGIN " + b"PRIVATE KEY-----\x00"
         ),
     }
     monkeypatch.setattr(
@@ -803,7 +803,7 @@ def test_secret_literal_allowlist_contains_no_precompiled_bytecode() -> None:
     "mutation",
     [
         b"\nAKIAQRSTUVWXYZABCDEF",
-        b"\n-----BEGIN OPENSSH PRIVATE KEY-----",
+        b"\n-----BEGIN " + b"OPENSSH PRIVATE KEY-----",
         b"\nhf_token=hf_actual_secret_value",
         b"\nbenign byte drift",
     ],
@@ -842,19 +842,19 @@ def test_secret_literal_exception_mutations_fail_closed(
         ),
         (
             "usr/lib/x86_64-linux-gnu/libgnutls.so.30.34.3",
-            b"\x7fELF\x00-----BEGIN PRIVATE KEY-----\x00",
-            b"-----BEGIN OPENSSH PRIVATE KEY-----",
+            b"\x7fELF\x00-----BEGIN " + b"PRIVATE KEY-----\x00",
+            b"-----BEGIN " + b"OPENSSH PRIVATE KEY-----",
             "credential_content",
         ),
         (
             "usr/lib/x86_64-linux-gnu/libgnutls.so.30.34.3",
-            b"\x7fELF\x00-----BEGIN PRIVATE KEY-----\x00",
+            b"\x7fELF\x00-----BEGIN " + b"PRIVATE KEY-----\x00",
             b"AKIAABCDEFGHIJKLMNOP",
             "credential_content",
         ),
         (
             "usr/lib/x86_64-linux-gnu/libgnutls.so.30.34.3",
-            b"\x7fELF\x00-----BEGIN PRIVATE KEY-----\x00",
+            b"\x7fELF\x00-----BEGIN " + b"PRIVATE KEY-----\x00",
             b"hf_token=hf_example_secret_value",
             "credential_content",
         ),

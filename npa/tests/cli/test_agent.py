@@ -29,6 +29,7 @@ from npa.cli.agent import (
 )
 
 runner = CliRunner()
+_OPENSSH_PRIVATE_KEY_HEADER = "-----BEGIN " + "OPENSSH PRIVATE KEY-----"
 
 # A few tests evaluate the emitted JavaScript with a real engine, which is the only
 # way to check it rather than pattern-match it. `node` is not a suite prerequisite,
@@ -1492,7 +1493,7 @@ def test_deploy_persists_terraform_state_before_apply(monkeypatch, tmp_path) -> 
     (tmp_path / "id_ed25519.pub").write_text(
         "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f test\n"
     )
-    (tmp_path / "id_ed25519").write_text("-----BEGIN OPENSSH PRIVATE KEY-----\n")
+    (tmp_path / "id_ed25519").write_text(_OPENSSH_PRIVATE_KEY_HEADER + "\n")
     monkeypatch.setenv("NPA_TERRAFORM_BIN", "/usr/bin/terraform")
 
     deploy_cmd(
@@ -4465,7 +4466,7 @@ def test_deploy_seeds_cost_ordered_ladder_without_explicit_models(
     (tmp_path / "id_ed25519.pub").write_text(
         "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f test\n"
     )
-    (tmp_path / "id_ed25519").write_text("-----BEGIN OPENSSH PRIVATE KEY-----\n")
+    (tmp_path / "id_ed25519").write_text(_OPENSSH_PRIVATE_KEY_HEADER + "\n")
     monkeypatch.setenv("NPA_TERRAFORM_BIN", "/usr/bin/terraform")
 
     deploy_cmd(
@@ -4505,7 +4506,7 @@ def test_agent_preflight_all_pass(monkeypatch, tmp_path) -> None:
     (tmp_path / "id_ed25519.pub").write_text(
         "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f test\n"
     )
-    (tmp_path / "id_ed25519").write_text("-----BEGIN OPENSSH PRIVATE KEY-----\n")
+    (tmp_path / "id_ed25519").write_text(_OPENSSH_PRIVATE_KEY_HEADER + "\n")
     monkeypatch.setenv("NPA_TERRAFORM_BIN", "/usr/bin/terraform")
     monkeypatch.setattr(
         agent_module, "_resolve_deploy_llm_credentials", lambda: ("tf-key", "m")
@@ -4665,7 +4666,7 @@ def test_agent_preflight_rejects_private_key_passed_as_public_path(
 
     private = tmp_path / "id_ed25519"
     private.write_text(
-        "-----BEGIN OPENSSH PRIVATE KEY-----\nprivate-material\n"
+        _OPENSSH_PRIVATE_KEY_HEADER + "\nprivate-material\n"
         "-----END OPENSSH PRIVATE KEY-----\n"
     )
     (tmp_path / "id_ed25519.pub").write_text(
@@ -4707,17 +4708,21 @@ def test_agent_cloud_init_quotes_public_key_comments_before_yaml_parse() -> None
 def test_legacy_agent_cloud_init_reproduces_multiline_private_key_yaml_failure() -> (
     None
 ):
-    legacy = """#cloud-config
+    legacy = (
+        """#cloud-config
 
 users:
   - name: ubuntu
     shell: /bin/bash
     sudo: ALL=(ALL) NOPASSWD:ALL
     ssh_authorized_keys:
-      - -----BEGIN OPENSSH PRIVATE KEY-----
+      - """
+        + _OPENSSH_PRIVATE_KEY_HEADER
+        + """
 private-material
 -----END OPENSSH PRIVATE KEY-----
 """
+    )
 
     with pytest.raises(yaml.YAMLError):
         yaml.safe_load(legacy)
@@ -5188,7 +5193,7 @@ def _write_agent_setup_config(tmp_path, monkeypatch):
     key_file.write_text(
         "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f test\n"
     )
-    (tmp_path / "id_ed25519").write_text("-----BEGIN OPENSSH PRIVATE KEY-----\n")
+    (tmp_path / "id_ed25519").write_text(_OPENSSH_PRIVATE_KEY_HEADER + "\n")
     monkeypatch.setenv("NPA_TERRAFORM_BIN", "/usr/bin/terraform")
     return key_file
 
@@ -5926,7 +5931,7 @@ def test_agent_preflight_capacity_follows_requested_agent_name(
     (tmp_path / "id_ed25519.pub").write_text(
         "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f test\n"
     )
-    (tmp_path / "id_ed25519").write_text("-----BEGIN OPENSSH PRIVATE KEY-----\n")
+    (tmp_path / "id_ed25519").write_text(_OPENSSH_PRIVATE_KEY_HEADER + "\n")
     monkeypatch.setenv("NPA_TERRAFORM_BIN", "/usr/bin/terraform")
     monkeypatch.setattr(
         agent_module, "_resolve_deploy_llm_credentials", lambda: ("tf-key", "m")

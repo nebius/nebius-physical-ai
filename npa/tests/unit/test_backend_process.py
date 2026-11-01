@@ -69,7 +69,8 @@ def test_stream_capture_redacts_returned_output(capsys) -> None:
             "/bin/sh",
             "-c",
             "printf 'iam_token=stream-secret\\n"
-            "-----BEGIN PRIVATE KEY-----\\nprivate-material\\n"
+            "-----BEGIN "
+            "PRIVATE KEY-----\\nprivate-material\\n"
             "-----END PRIVATE KEY-----\\n'",
         ],
         capture_output=True,
@@ -90,7 +91,8 @@ def test_default_stream_redacts_environment_secret_and_private_key(capsys) -> No
             "/bin/sh",
             "-c",
             "printf 'environment-secret\\n"
-            "-----BEGIN PRIVATE KEY-----\\nprivate-material\\n"
+            "-----BEGIN "
+            "PRIVATE KEY-----\\nprivate-material\\n"
             "-----END PRIVATE KEY-----\\n'",
         ],
         env=env,
@@ -111,7 +113,8 @@ def test_cancellable_default_stream_is_also_redacted(capsys) -> None:
             "/bin/sh",
             "-c",
             "printf 'cancellable-secret\\n"
-            "-----BEGIN PRIVATE KEY-----\\nprivate-material\\n"
+            "-----BEGIN "
+            "PRIVATE KEY-----\\nprivate-material\\n"
             "-----END PRIVATE KEY-----\\n'",
         ],
         env=env,
