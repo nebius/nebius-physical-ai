@@ -41,6 +41,12 @@ a versioned heading when a release is cut.
   This result remains a failed model-improvement gate, separately from the
   sampler's deterministic source/provenance contract.
 
+### VLM sampling evidence validation
+
+- Validate declared sampling metadata even when a retained request manifest
+  carries the legacy v1 schema label. Historical v1 evidence without a sampling
+  member remains compatible.
+
 ### Breaking: authoritative Kubernetes GPU product aliases
 
 - Existing-capacity preflight now treats `nvidia.com/gpu.product` as
