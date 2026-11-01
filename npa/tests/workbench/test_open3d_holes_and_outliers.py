@@ -15,6 +15,12 @@ from pathlib import Path
 
 EVIDENCE = Path(__file__).resolve().parents[3] / "docs" / "evidence" / "open3d"
 HARNESS = EVIDENCE / "harness"
+
+# The digest of this report's scalar projection, pinned so the bound compares values
+# rather than their number. Its exact construction is in the test that asserts it.
+PROSE_ONLY_EDIT_PROJECTION = (
+    "e149364291607ba750082d70ed0a9df185a077b73ded1872f330b6718c3c063f"
+)
 REPORT = EVIDENCE / "holes-and-outliers.json"
 RECORD = EVIDENCE / "capability-record-holes-and-outliers.json"
 
@@ -267,13 +273,36 @@ def test_the_hand_edit_declares_itself_and_names_why_it_was_not_regenerated() ->
 
     assert "could not be re-run" in note, note
 
-    def numeric_leaves(node: object) -> list[object]:
-        if isinstance(node, dict):
-            return [leaf for value in node.values() for leaf in numeric_leaves(value)]
-        if isinstance(node, list):
-            return [leaf for value in node for leaf in numeric_leaves(value)]
-        if isinstance(node, bool) or node is None:
-            return [node]
-        return [node] if isinstance(node, (int, float)) else []
+    def scalar_leaves(node: object, path: str = "") -> list[tuple[str, object]]:
+        """Every leaf that is not a string, with the path that reaches it.
 
-    assert f"all {len(numeric_leaves(report))} are unchanged" in note, note
+        Not "numeric": one of the fifty is a boolean, so the set is 49 numbers and one
+        flag. A reviewer pointed out that the non-string reading is the stronger bound,
+        because a flipped flag falls inside it, and the stronger one is the one to state.
+        """
+        if isinstance(node, dict):
+            return [
+                leaf
+                for key, value in node.items()
+                for leaf in scalar_leaves(value, f"{path}/{key}")
+            ]
+        if isinstance(node, list):
+            return [
+                leaf
+                for index, value in enumerate(node)
+                for leaf in scalar_leaves(value, f"{path}[{index}]")
+            ]
+        return [] if isinstance(node, str) else [(path, node)]
+
+    leaves = sorted(scalar_leaves(report))
+    assert f"all {len(leaves)} scalar non-string leaves" in note, note
+    assert sum(1 for _, value in leaves if isinstance(value, bool)) == 1, leaves
+    assert "49 numbers and one flag" in note, note
+
+    # The count alone is invariant to exactly the change it is supposed to detect: alter
+    # any one of the fifty values and it is still fifty, so the sentence still matches and
+    # the test still passes. A reviewer caught that, in the one check whose job is to
+    # bound a hand-edit. The digest compares values; a count never can.
+    projection = hashlib.sha256(json.dumps(leaves, sort_keys=True).encode()).hexdigest()
+    assert projection == PROSE_ONLY_EDIT_PROJECTION, projection
+    assert PROSE_ONLY_EDIT_PROJECTION in note, note
