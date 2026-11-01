@@ -24,6 +24,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[4]
 EVIDENCE = REPO / "docs" / "evidence" / "open3d"
+CLAIM = REPO / "program/claims/open3d-evidence-record-guards/CLAIM.md"
 GUARD = REPO / "npa" / "tests" / "workbench" / "test_open3d_evidence_record_guards.py"
 PYTHON = REPO / "npa" / ".venv" / "bin" / "python"
 
@@ -84,10 +85,48 @@ def nudge_one_fraction(node: object, target: float, factor: float = 1.04) -> obj
     return node
 
 
+def migrate_bindings(data: object) -> object:
+    """Move every number by 3 percent, keeping each value legitimate for its type.
+
+    This is the edit that previously went unnoticed on a record pinned by eleven
+    citations. It destroys all eleven bindings and creates eleven new ones
+    against other records -- deleting one occurrence of a figure that appeared
+    twice makes it unique in the other record, and so newly bindable under the
+    exactly-one-record rule. The published total stayed at 29 and the
+    recomputation test passed. It is caught now only because the coverage block
+    publishes bindings per record rather than just their sum.
+    """
+    if isinstance(data, dict):
+        return {k: migrate_bindings(v) for k, v in data.items()}
+    if isinstance(data, list):
+        return [migrate_bindings(v) for v in data]
+    if isinstance(data, bool) or not isinstance(data, (int, float)):
+        return data
+    if isinstance(data, int):
+        return data + max(1, round(abs(data) * 0.03))
+    moved = data * 1.03
+    return moved if 0.0 <= moved <= 1.0 else data * 0.97
+
+
 def rewrite_json(path: Path, transform) -> None:
     path.write_text(
         json.dumps(transform(json.loads(path.read_text())), indent=2) + "\n"
     )
+
+
+def rewrite(path: Path, transform) -> None:
+    """Apply a mutation to a record or to the claim document.
+
+    The claim is markdown, so its transform takes and returns text while a
+    record's takes and returns parsed JSON. Dispatching on the suffix keeps both
+    kinds of case in one list, which matters because the claim's prose is now
+    part of the guarded surface and should be corrupted alongside the records
+    rather than in a harness of its own.
+    """
+    if path.suffix == ".md":
+        path.write_text(transform(path.read_text()))
+    else:
+        rewrite_json(path, transform)
 
 
 def main() -> int:
@@ -157,11 +196,50 @@ def main() -> int:
         )
     )
 
+    cases.extend(
+        [
+            (
+                "8. the unguarded remainder swapped for two other records",
+                coverage_record,
+                lambda data: {
+                    **data,
+                    "what_is_still_unguarded": {
+                        **data["what_is_still_unguarded"],
+                        "which_ones": [
+                            "band-validity-sweep.json",
+                            "floor-vs-resolution.json",
+                        ],
+                    },
+                },
+            ),
+            (
+                "9. a binding migrated: the record's citations destroyed while the total holds",
+                EVIDENCE / "capability-record-distance-bands.json",
+                migrate_bindings,
+            ),
+            (
+                "10. the claim's corrected coverage figures reverted to the stale pair",
+                CLAIM,
+                lambda text: text.replace(
+                    "**40 of 42** records with a meaning-bearing check and **2**",
+                    "**29 of 42** records with a meaning-bearing check and **13**",
+                ),
+            ),
+            (
+                "11. the claim's mutation count left behind",
+                CLAIM,
+                lambda text: text.replace(
+                    "| 7 mutations | **", "| 7 mutations | **7** |  # **"
+                ),
+            ),
+        ]
+    )
+
     results = []
     for label, path, transform in cases:
         original = path.read_text()
         try:
-            rewrite_json(path, transform)
+            rewrite(path, transform)
             caught = failing_tests()
         finally:
             path.write_text(original)
@@ -192,8 +270,18 @@ def main() -> int:
     # Only tracked modifications count. An earlier version of this counted anything in the
     # porcelain output ending in `.json`, which reported this harness's own new, untracked
     # records as a failure to restore.
+    # The claim is in this list because it is now one of the mutated files. Left
+    # out, a failure to restore it would go unreported by the very check that
+    # exists to notice that.
     left_modified = subprocess.run(
-        ["git", "diff", "--name-only", "--", "docs/evidence/open3d"],
+        [
+            "git",
+            "diff",
+            "--name-only",
+            "--",
+            "docs/evidence/open3d",
+            str(CLAIM.relative_to(REPO)),
+        ],
         capture_output=True,
         text=True,
         cwd=REPO,

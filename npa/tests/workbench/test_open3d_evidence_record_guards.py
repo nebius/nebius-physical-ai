@@ -442,6 +442,10 @@ def test_figures_quoted_in_code_and_prose_are_still_in_the_record_that_holds_the
 #: The record that publishes this file's coverage. It is the one record here whose own figures
 #: a test recomputes, which is why it counts as covered below.
 COVERAGE_RECORD = EVIDENCE / "evidence-record-guards.json"
+#: The claim document for this change. It lives beside the branch rather than
+#: under `docs/`, so it is read defensively: present on the branch, absent in a
+#: checkout that takes only the repository.
+CLAIM = REPO / "program/claims/open3d-evidence-record-guards/CLAIM.md"
 
 
 def covered_records() -> tuple[set[str], dict[str, int]]:
@@ -485,6 +489,16 @@ def covered_records() -> tuple[set[str], dict[str, int]]:
 
     bindings = citation_bindings()
     with_citation = {record for _, _, record in bindings}
+    # Per record, not just a total. The total is blind to a binding moving: a
+    # believable edit to `capability-record-distance-bands.json` lost all 11 of
+    # its bindings and created 11 new ones against other records, because
+    # deleting one occurrence of a figure that appeared twice makes it unique
+    # somewhere else and so newly bindable. 29 stayed 29, the recomputation
+    # test passed, and the record that had been pinned by eleven citations was
+    # pinned by none.
+    bindings_by_record: dict[str, int] = {}
+    for _, _, record in bindings:
+        bindings_by_record[record] = bindings_by_record.get(record, 0) + 1
     covered = (
         with_invariant | with_digest | with_citation | {record_key(COVERAGE_RECORD)}
     )
@@ -494,6 +508,7 @@ def covered_records() -> tuple[set[str], dict[str, int]]:
         "records_with_range_or_sign_invariants": len(with_invariant),
         "records_pinned_by_a_precise_figure_cited_elsewhere": len(with_citation),
         "figure_bindings_derived": len(bindings),
+        "figure_bindings_by_record": dict(sorted(bindings_by_record.items())),
         "records_naming_a_committed_file_with_its_digest": len(with_digest),
         "digest_pairs_that_resolve_to_committed_bytes": digest_pairs,
         "records_with_at_least_one_meaning_bearing_check": len(covered),
@@ -526,12 +541,87 @@ def test_the_published_coverage_figures_are_the_measured_ones() -> None:
     assert disagreements == {}, disagreements
 
 
+def test_the_claim_document_agrees_with_the_measured_coverage() -> None:
+    """The claim's prose gets the same reader the records got.
+
+    This test exists because of what review found. The gap this whole file answers is
+    evidence published where nothing reads it. The fix shipped a reader for the records and
+    then summarised its result in `CLAIM.md`, which nothing read -- and the summary was
+    wrong in three places, every one of them understating the work: seven mutations for
+    nine, 29 records with a meaning-bearing check for 40, and 13 structural-only for 2. The
+    29 was the figure-binding count, and the remainder was then derived as 42 - 29.
+
+    Writing the corrected numbers back by hand would rebuild exactly the thing that failed.
+    So they are recomputed here from the catalogue and from the record, and the claim is
+    required to contain them. Prose may say more than the measurement; it may not disagree
+    with it.
+    """
+    if not CLAIM.is_file():  # pragma: no cover - the claim travels with the branch
+        pytest.skip("claim document is not present in this checkout")
+
+    text = CLAIM.read_text()
+    _, measured = covered_records()
+    published = json.loads(COVERAGE_RECORD.read_text())
+    mutations = len(published["mutations_the_guard_was_tested_against"]["results"])
+
+    # Each figure is anchored in the sentence that asserts it, not searched for
+    # as a bare digit anywhere in the document. The first version of this test
+    # did the latter, and the claim's "7" passed only because an unrelated 7
+    # appears in the table of corrected figures -- a coincidental match standing
+    # in for a binding, which is the defect this file exists to catch.
+    resistance = published["what_a_believable_edit_actually_resists"][
+        "type_respecting_result"
+    ]
+
+    def anchor(sentence: str) -> str:
+        """Match a sentence across markdown line wrapping.
+
+        The claim is hard-wrapped prose, so an anchored sentence will contain
+        newlines wherever the wrap falls, and a pattern with literal spaces
+        fails for a reason that has nothing to do with the figures.
+        """
+        return r"\s+".join(re.escape(word) for word in sentence.split())
+
+    anchored = {
+        "the corrected coverage figures": anchor(
+            f"**{measured['records_with_at_least_one_meaning_bearing_check']} of "
+            f"{measured['records_total']}** records with a meaning-bearing check and "
+            f"**{measured['records_with_structural_checks_only']}**"
+        ),
+        "the believable-edit result and its attribution": anchor(
+            f"**{resistance['caught']} of the "
+            f"{resistance['records_with_numeric_content']}** records that contain "
+            "numbers: "
+            f"**{resistance['caught_because_a_figure_is_quoted_outside_the_record']}** "
+            "resist because a figure in them is quoted outside the record, and "
+            f"**{resistance['caught_by_another_cross_check']}** resist through "
+            "another cross-check"
+        ),
+        "the mutation count, against the count it used to claim": anchor(
+            f"| 7 mutations | **{mutations}** |"
+        ),
+    }
+    unanchored = {
+        label: pattern
+        for label, pattern in anchored.items()
+        if not re.search(pattern, text)
+    }
+    assert unanchored == {}, unanchored
+
+
 def test_the_unguarded_remainder_is_named_and_not_just_counted() -> None:
     """The records checked for parsing and little else should be nameable, not just counted.
 
-    A coverage figure on its own invites "two thirds is most of it". Naming them makes it
-    concrete that the remainder still includes a capability record and several viewer-UI
-    audits, and it means a newly added record cannot join that remainder unnoticed.
+    A coverage figure on its own invites "two thirds is most of it". Naming them means a
+    newly added record cannot join that remainder unnoticed, and it means the remainder
+    cannot change membership while its size stays the same.
+
+    This docstring previously described the remainder as "a capability record and several
+    viewer-UI audits". Review measured it: the remainder is `live-runtime-attempt.json`,
+    which is not a capability record, and exactly one viewer-UI file. That sentence was
+    false in the docstring of the test whose stated purpose is to stop the remainder being
+    misdescribed, so the description is now read from the record and compared rather than
+    written out here.
     """
     covered, measured = covered_records()
     remainder = sorted({record_key(path) for path in records()} - covered)
@@ -540,5 +630,11 @@ def test_the_unguarded_remainder_is_named_and_not_just_counted() -> None:
     published = json.loads(COVERAGE_RECORD.read_text())["what_is_still_unguarded"]
     assert published["structural_only_records"] == len(remainder), (
         published["structural_only_records"],
+        remainder,
+    )
+    # Which records, not only how many. Two records swapping into the remainder
+    # leaves every count above unchanged.
+    assert sorted(published["which_ones"]) == remainder, (
+        published["which_ones"],
         remainder,
     )

@@ -37,13 +37,46 @@ manifest or a schema that the records do not currently share.
 
 ## Result
 
-All five met. Seven mutations applied, seven caught, recorded in
-`docs/evidence/open3d/evidence-record-guards.json` and reproducible with
+All five met. The mutations, their count, and the coverage figures are published in
+`docs/evidence/open3d/evidence-record-guards.json`, recomputed by
+`test_the_published_coverage_figures_are_the_measured_ones`, and reproducible with
 `npa/.venv/bin/python docs/evidence/open3d/harness/evidence_guard_mutations.py`.
 
-Coverage is 29 of 42 records with a meaning-bearing check and 13 with structural checks only.
-That remainder is named by a test, not just counted, and the record states plainly that this
-does not make the catalogue self-verifying.
+Coverage is **40 of 42** records with a meaning-bearing check and **2** with structural checks
+only. That remainder is named by a test, not just counted, and the record states plainly that
+this does not make the catalogue self-verifying.
+
+Criterion 2 is met as written — a cited fraction re-measured by a few percent fails a test —
+and the honest generalisation is narrower than the criterion sounds. Measured across the
+catalogue, an edit that keeps every value legitimate for its own type is caught in **18 of the
+40** records that contain numbers: **7** resist because a figure in them is quoted outside the
+record, and **11** resist through another cross-check. A range invariant cannot detect an
+in-range value, so the rest are a floor of the mechanism and not an oversight.
+`what_a_believable_edit_actually_resists` in the record carries the measurement, including a
+migration defect this sweep found and closed.
+
+### Three figures in this section were wrong, and nothing read them
+
+The previous version of this section said *"Seven mutations applied, seven caught"* and
+*"Coverage is 29 of 42 records with a meaning-bearing check and 13 with structural checks
+only"*. All three numbers were wrong, and all three understated the work:
+
+| claimed here | actual |
+|---|---|
+| 7 mutations | **13** |
+| 29 records with a meaning-bearing check | **40** |
+| 13 with structural checks only | **2** |
+
+Twenty-nine is the number of *figure bindings*, not records; those 29 bindings fall across 7
+records. The prose then derived 42 − 29 = 13 for the remainder. Review found the coverage
+errors by running `covered_records()` on this head; I found the stale mutation count while
+fixing them, after adding two mutations and not revisiting this file.
+
+This is the finding of this very claim, one level up. The gap was evidence published where
+nothing reads it; the fix shipped a reader for the records and then restated its result in
+prose that nothing read, and the restatement was wrong. So the restatement now has a reader
+too: `test_the_claim_document_agrees_with_the_measured_coverage` recomputes these figures and
+compares them against this file. The numbers above are not maintained by hand any more.
 
 ## Two things found while measuring, neither fixed here
 
