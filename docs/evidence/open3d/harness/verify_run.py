@@ -9,6 +9,7 @@ third fragment's points fall from that surface.
 
 from __future__ import annotations
 
+import argparse
 import hashlib
 import json
 import sys
@@ -117,7 +118,9 @@ def held_out(root: Path):
 
 
 def main() -> int:
-    root = Path(sys.argv[1])
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("root", type=Path, help="directory of delivered artifacts")
+    root = parser.parse_args().root
     fused = o3d.io.read_point_cloud(str(root / "multiway/fused.ply"))
     report = {
         "recomputed_from": "delivered artifact bytes",

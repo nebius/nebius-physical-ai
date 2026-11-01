@@ -24,6 +24,7 @@ Usage:
 
 from __future__ import annotations
 
+import argparse
 import hashlib
 import json
 import platform
@@ -47,7 +48,14 @@ def main() -> None:
     from npa.workbench.open3d import runner as runner_module
     from npa.workbench.open3d.runner import run_visualize
 
-    fused, mesh, out, provenance = (Path(a) for a in sys.argv[1:5])
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("fused", type=Path, help="the fused point cloud PLY")
+    parser.add_argument("mesh", type=Path, help="the reconstructed mesh PLY")
+    parser.add_argument("output", type=Path, help="directory for the preview")
+    parser.add_argument("provenance", type=Path, help="where to write provenance")
+    args = parser.parse_args()
+    fused, mesh = args.fused, args.mesh
+    out, provenance = args.output, args.provenance
     out.mkdir(parents=True, exist_ok=True)
 
     # Every hash here is computed from the bytes actually read. No field is filled in to

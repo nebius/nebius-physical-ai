@@ -13,6 +13,7 @@ recording the camera, the source hashes, and the pixel hash of every frame.
 
 from __future__ import annotations
 
+import argparse
 import hashlib
 import json
 import sys
@@ -321,7 +322,9 @@ def _portable(path: str) -> str:
 
 
 def main() -> int:
-    plan = json.loads(Path(sys.argv[1]).read_text())
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("plan", type=Path, help="JSON render plan naming the views")
+    plan = json.loads(parser.parse_args().plan.read_text())
     manifest = {
         "renderer": "npa evidence harness z-buffer rasterizer",
         "resolution": [W, H],

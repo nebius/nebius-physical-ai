@@ -1,0 +1,61 @@
+{
+  "capability": "An evidence harness run without its inputs states what is missing, instead of failing with an internal exception that misidentifies the problem.",
+  "user_outcome": "An independent reviewer can tell the difference between 'you omitted an argument' and 'this harness is broken'. Before this change, seven harnesses reported the first as the second.",
+  "why_this_was_open": "The review contract requires an independent reviewer to recompute meaningful measurements from the evidence. The reviewer on this lane reported being unable to run any of it and fell back to arithmetic on committed bytes, which is how a figure that no reader could check survived in one of my records until they caught it another way.",
+  "the_measured_baseline": {
+    "how_it_was_measured": "All 22 harnesses on origin/main executed with the repository's own npa/.venv/bin/python, which is the interpreter AGENTS.md mandates, and the last line of each failure recorded.",
+    "ran_cleanly": 3,
+    "reported_usage_correctly": 2,
+    "blocked_on_open3d": 11,
+    "failed_with_an_internal_exception": 6,
+    "the_six_and_their_messages": {
+      "frame_edge_audit.py": "IndexError: list index out of range",
+      "background_choice_sweep.py": "IndexError: list index out of range",
+      "camera_framing_probe.py": "IndexError: list index out of range",
+      "render_views.py": "IndexError: list index out of range",
+      "preview_from_retained_plys.py": "ValueError: not enough values to unpack (expected 4, got 0)",
+      "inject_truncation.py": "KeyError: 'INJECT_MODE'"
+    },
+    "why_that_is_the_defect": "Every one of those is a missing required input reported as an internal error. Four are the same message, from `sys.argv[1]` on a bare argv. A reviewer reading 'IndexError: list index out of range' has no reason to suspect they simply omitted an argument, and the natural conclusion is that the harness does not work."
+  },
+  "the_fix_matched_a_neighbour_rather_than_inventing_a_convention": "Two harnesses in the same directory, derive_public_run_report.py and its control, already used argparse and already exited 2 with a usage message naming the missing argument. The six were changed to do what those two do. No shared framework was added, because argparse already covers five of the six and the sixth is not a CLI.",
+  "the_seventh_was_found_by_the_property_test_not_by_reading": {
+    "what_happened": "verify_run.py has the identical `sys.argv[1]`, and I had classified it as 'blocked on open3d' because that was the first error it printed. The defect was invisible while the inventory was built from what each harness happened to fail on first.",
+    "why_it_matters_beyond_one_file": "The inventory was a list of instances. Searching for the pattern directly turned it into a property of the directory, and the property found a case the list had missed. The test asserts the property, so a new harness cannot reintroduce it.",
+    "what_the_fix_does_not_do_for_it": "verify_run.py imports Open3D at module scope, so in an environment without Open3D the import still fails before argparse can report usage. That ordering is correct -- a reviewer without the module cannot run it at all and should be told that first -- so it is excluded from the execution test and covered from its source instead. That exclusion is named in the test rather than left as a silent gap."
+  },
+  "the_measurement_did_not_move": {
+    "how_that_was_checked": "The two harnesses that read only committed PNG bytes were run with arguments supplied, before and after the change, and their reports compared byte for byte.",
+    "result": "Byte-identical in both cases.",
+    "and_it_is_pinned_rather_than_asserted": "The regression test pins the actual values -- 438598 content pixels, a p05 contrast of 84.1444, a chosen background luminance of 0.0, three unclipped frames, a content tolerance of 6 -- so a changed measurement fails it."
+  },
+  "a_defect_my_own_mutation_test_found_in_my_own_guard": {
+    "what_i_shipped_first": "A test asserting that the report contained the keys 'frames' and 'frames_measured'.",
+    "what_the_mutation_showed": "Adding one to content_pixels changed the measurement and the test still passed, because the test proved the harness ran rather than that it produced the same numbers. A guard that reads the shape of the output and not its values is the declarative-guard defect a reviewer found in another gate of mine.",
+    "after_the_fix": "Four mutations, all caught: reverting a harness to the bare sys.argv[1], reverting the injector to a bare KeyError, perturbing content_pixels, and changing the content tolerance from 6 to 7."
+  },
+  "what_this_does_not_claim": "That the Open3D measurements in this directory are now reproducible by a reviewer. They are not, and this change does not make them so. Eleven harnesses need an Open3D image that is an unpublished registration candidate, and the inputs they read lived on an ephemeral /data volume that no longer exists on this host. This change makes the failure legible; it does not supply the image or the data. A separate decision about publishing either is not mine to make.",
+  "scope": "Message and argument handling only. No measurement, threshold, or report field changed. The six harnesses keep their positional arguments in the same order, so every documented invocation still works.",
+  "regression_tests": {
+    "file": "npa/tests/workbench/test_open3d_harness_usage.py",
+    "count": 12,
+    "what_they_cover": [
+      "Seven harnesses, each run with no arguments, must exit 2 with a usage message naming the missing argument and containing no IndexError, KeyError, ValueError or traceback.",
+      "The fault injector must name INJECT_MODE, INJECT_LOG and the three valid modes, and must not raise KeyError.",
+      "No harness in the directory reads a required input by bare subscript on sys.argv or os.environ.",
+      "The one harness CI cannot execute has its argument handling asserted from its source, with the reason for the exclusion stated.",
+      "Both runnable harnesses reproduce their pinned measurements exactly."
+    ]
+  },
+  "visual_evaluation": {
+    "status": "not_applicable",
+    "reason": "The change is to command-line usage messages. There is no visual artifact, and the review contract directs that a CLI-only fix should not carry an invented visual score or an irrelevant screenshot. The failing baseline, the corrected behaviour, and the regression evidence are recorded above instead."
+  },
+  "provenance": {
+    "base": "origin/main at d06e958462",
+    "interpreter": "the worktree's own npa/.venv/bin/python, 3.14.7",
+    "harnesses_inventoried": 22,
+    "harnesses_changed": 7,
+    "reproduce": "npa/.venv/bin/python -m pytest npa/tests/workbench/test_open3d_harness_usage.py"
+  }
+}

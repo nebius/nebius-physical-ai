@@ -12,6 +12,7 @@ network, no Rerun.
 
 from __future__ import annotations
 
+import argparse
 import json
 import sys
 from pathlib import Path
@@ -60,10 +61,14 @@ def worst_reach(points: np.ndarray, camera: dict, aspect: float) -> dict:
 
 
 def main() -> int:
-    artifacts = Path(sys.argv[1])
-    out = Path(sys.argv[2])
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("artifacts", type=Path, help="directory holding the run PLYs")
+    parser.add_argument("output", type=Path, help="where to write the report JSON")
+    parser.add_argument("repo", type=Path, help="repo root, whose src/ has the runner")
+    args = parser.parse_args()
+    artifacts, out = args.artifacts, args.output
 
-    sys.path.insert(0, str(Path(sys.argv[3]) / "src"))
+    sys.path.insert(0, str(args.repo / "src"))
     from npa.workbench.open3d.runner import (
         CAMERA_ASPECT,
         REMOVED_VIEW,
