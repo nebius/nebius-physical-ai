@@ -32,6 +32,15 @@
     "what_i_did_instead": "Pinned it as a regression ratchet in the frame manifest and wrote down why it is not floored. Every delivered frame sits at or below the occupancy that prompted the original complaint and four are under 13%, so a minimum-occupancy gate would be a gate the evidence fails. The cheapest way to pass one is to crop in, and what gets cropped is the sparse incomplete geometry these views exist to show. Pinning catches a silent reframing without rewarding a tighter crop.",
     "honest_state": "Measured, published, and ungated on purpose, with the reason recorded. If review wants a floor anyway, that is a product decision about framing, not an evidence fix."
   },
+  "finding_6_the_binding_stopped_one_link_short": {
+    "row": "B304 (P2), found by review against this branch",
+    "as_found": "The manifest hashes every frame and copies its measurements from the record that took them, so a changed frame is caught and a drifted copy is caught. Neither establishes that the record which produced a measurement had measured these bytes. Review stated the sequence plainly: regenerate the frames, re-run the binder, and you get freshly correct digests paired with stale measurements, and --verify passes, because it only ever checked digest against bytes.",
+    "i_agree_it_was_real": "Copying stops the manifest and the audit record from drifting apart. It does not stop the audit record from describing different pixels. I had closed one link of bytes -> digest -> measurement and written prose that reads as though I had closed both.",
+    "not_a_live_defect": "The published numbers were correct; regenerating the audit record changed no measurement and left delivered-frames-manifest.json byte-identical. That is the evidence that nothing had actually drifted, and it is also exactly why the gap was invisible.",
+    "fix": "frame_edge_audit.py records the sha256 of each file it measures, and the binder refuses to copy a row whose recorded source digest is not the digest it just computed. Review called this a comparison rather than new machinery, since the binder already hashes every PNG, and that is what it turned out to be.",
+    "the_control_that_matters": "A re-rendered frame rebound against stale measurements. That is the sequence review described, it used to produce a healthy-looking manifest, and it now refuses.",
+    "mutation_testing_found_a_gap_in_my_own_tests": "Four mutations of the binder died immediately. A fifth -- the audit harness stops recording which bytes it read -- survived, because every one of those tests feeds the binder a committed audit record that still carries digests. The hole would have opened only at the next regeneration, which is the same delayed quiet failure this evidence set has been corrected for twice. A test now pins the harness contract directly, and both that mutation and a wrong-digest mutation die."
+  },
   "the_gates_were_not_gates": {
     "found_while_doing_this": "Neither harness was run by any test or CI job, and no CI job references docs/evidence at all. Both guards could have gone red on the committed set without anything noticing.",
     "fix": "npa/tests/workbench/test_open3d_evidence_binding.py runs both against the committed evidence and then breaks each thing they claim to catch. Negative controls work on a copy, so a test run never mutates the committed set."
@@ -57,17 +66,19 @@
   "what_this_does_not_establish": [
     "Nothing about whether the frames are good, the mesh is usable, or the reconstruction is accurate. This binds measurements to bytes.",
     "No product behavior change: no file under npa/src/ is touched.",
-    "The nine pre-existing ruff findings in other harness files predate this branch and are left alone; they sit outside CI's scope because no job lints docs/evidence."
+    "Not a guarantee that a measurement is correct, only that it was taken from the bytes that are delivered. A harness bug produces a wrong number bound to the right pixels, and nothing here would catch that.",
+    "The nine pre-existing ruff findings in other harness files predate this branch and are left alone; they sit outside CI's scope because no job lints docs/evidence. Two ISC004 findings inside bind_delivered_frames.py are mine and are fixed."
   ],
   "still_open_and_deliberately_not_in_this_change": {
     "provenance_conventions": "A review lane found provenance recorded five different ways across ten capability records, and asked for one key plus binding each record to a commit that is an ancestor of the head. The key standardisation is worth doing. Blind ancestor-binding is not: three records name a source_commit that is deliberately not an ancestor because they attest to builds from a different line of development, and rewriting those to ancestors would falsify them. The honest form is one key name plus an explicit statement of whether the commit is an ancestor. That is a separate coherent change, not a stack on this one."
   },
   "provenance": {
-    "source_commit": "e781b1264f13b02fbd01dc698dbe7c800904c10e",
+    "source_commit": "e4efc66026c1b28fcf5ab2e4ab3c76d21ff0ca08",
     "built_on_main": "d06e958462865af823b4f1479867df52421c8284",
     "main_is_an_ancestor_of_this_commit": true,
     "why_this_field_exists": "A review lane found provenance recorded five different ways across these records, so an auditor cannot read the set mechanically. This is the uniform shape: which commit the record attests to, and whether that commit sits on the line of development it claims to. The second part matters because three records in this set name a commit that is deliberately not an ancestor -- they attest to builds from a different line -- and a reader cannot currently tell that apart from a stale reference.",
     "standardising_the_other_records_is_a_separate_change": "Only this record is given the shape here. Rewriting the other ten belongs in its own change, and binding them all to ancestor commits would falsify the three that are non-ancestors on purpose.",
-    "what_source_commit_means_here": "e781b1264 is the commit whose source this evidence was produced from -- the harnesses, the manifest and the tests as they ran. It is deliberately not this record's own commit, which cannot be known before the record is written. Nothing in the later commit changes a measurement; it adds this field."
+    "what_source_commit_means_here": "e4efc6602 is the commit whose source this evidence was produced from -- the harnesses, the manifest and the tests as they ran. It is deliberately not this record's own commit, which cannot be known before the record is written. Nothing in the later commit changes a measurement; it adds this record's own text.",
+    "a_digest_this_change_invalidates_elsewhere": "A sibling branch's record (capability-record-frame-property-gate.json, PR 983) pins harness/frame_edge_audit.py by sha256, and this change edits that file. Whichever lands second must re-read that digest. Recorded here rather than left for a reader to discover, because a stale pinned hash looks identical to a tampered one."
   }
 }
