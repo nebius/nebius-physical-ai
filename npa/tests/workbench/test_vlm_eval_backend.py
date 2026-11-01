@@ -60,6 +60,11 @@ _DIRECT_LIMITATIONS = (
     "Selected frames cannot verify unobserved intervals or continuous task stability.",
     "A score from one model, rubric, threshold, and frame sample does not "
     "establish physical correctness or safety.",
+    (
+        "When present, provider_observable_support is provider-authored text; NPA "
+        "checks only its required shape and retention, not semantic truth or pixel "
+        "grounding."
+    ),
 )
 _DIRECT_NO_CALL_LIMITATION = (
     "This score is a stub or caller-supplied dry-validation input; no VLM call "
@@ -72,6 +77,11 @@ _BENCHMARK_LIMITATIONS = (
     "this caller-labeled dataset and do not establish generalization, physical "
     "correctness, safety, or an operational error rate.",
     "Selected frames cannot verify unobserved intervals or continuous task stability.",
+    (
+        "When present, provider_observable_support is provider-authored text; NPA "
+        "checks only its required shape and retention, not semantic truth or pixel "
+        "grounding."
+    ),
 )
 _BENCHMARK_FIXTURE_LIMITATION = (
     "Cases with score_source 'fixture' use caller-provided dry-validation inputs; "
@@ -195,6 +205,7 @@ def test_golden_set_scores_known_good_and_bad_rollouts(
             success=score >= 0.8,
             score=score,
             rationale="golden-set fixture",
+            provider_observable_support=("Frame 1 visibly contains the fixture.",),
         )
 
     monkeypatch.setattr(vlm_eval, "_call_openai_compatible", fake_vlm_call)
@@ -347,7 +358,8 @@ def test_write_result_preserves_explicit_path_and_uses_canonical_s3_name(
 
 def test_parse_structured_response_preserves_valid_score() -> None:
     parsed = parse_structured_response(
-        '{"success": true, "score": 0.93, "rationale": "clear completion"}'
+        '{"success": true, "score": 0.93, "rationale": "clear completion",'
+        '"provider_observable_support":["Frame 1 shows clear completion."]}'
     )
 
     assert parsed.success is True
@@ -390,6 +402,9 @@ def test_mocked_self_hosted_endpoint_returns_structured_score(
             success=True,
             score=0.74,
             rationale="mocked endpoint saw the expected frame sequence",
+            provider_observable_support=(
+                "Frames 1 and 2 visibly show the expected sequence.",
+            ),
         )
 
     monkeypatch.setattr(vlm_eval, "_call_openai_compatible", fake_vlm_call)
@@ -408,6 +423,9 @@ def test_mocked_self_hosted_endpoint_returns_structured_score(
         "success": True,
         "score": 0.74,
         "rationale": "mocked endpoint saw the expected frame sequence",
+        "provider_observable_support": (
+            "Frames 1 and 2 visibly show the expected sequence.",
+        ),
     }
     assert 0.0 <= structured["score"] <= 1.0
     assert result.independent_human_label_calibration_established is False
@@ -542,12 +560,19 @@ def test_live_gpu_self_hosted_vlm_eval_returns_structured_score(
     print(f"NPA_VLM_LIVE_EVAL_OUTPUT={structured}")
     print(f"NPA_VLM_LIVE_VLLM_STARTUP={live_gpu_endpoint.startup_log[-1000:]}")
 
-    assert set(structured) == {"success", "score", "rationale"}
+    assert set(structured) == {
+        "success",
+        "score",
+        "rationale",
+        "provider_observable_support",
+    }
     assert isinstance(structured["success"], bool)
     assert isinstance(structured["score"], float)
     assert 0.0 <= structured["score"] <= 1.0
     assert isinstance(structured["rationale"], str)
     assert structured["rationale"].strip()
+    assert isinstance(structured["provider_observable_support"], tuple)
+    assert structured["provider_observable_support"]
     assert result.backend == "self-hosted"
     assert result.model == DEFAULT_MODEL
     assert result.frame_count in {2, 3, 4}
@@ -864,6 +889,7 @@ def _structured_eval_payload(result) -> dict[str, object]:
         "success": bool(result.passed),
         "score": float(result.score),
         "rationale": result.rationale,
+        "provider_observable_support": result.provider_observable_support,
     }
 
 
@@ -1756,7 +1782,10 @@ _OK_PAYLOAD = {
         {
             "finish_reason": "stop",
             "message": {
-                "content": '{"success": true, "score": 0.9, "rationale": "ok"}'
+                "content": (
+                    '{"success": true, "score": 0.9, "rationale": "ok",'
+                    '"provider_observable_support":["Frame 1 is visible."]}'
+                )
             },
         }
     ]

@@ -46,6 +46,9 @@ def test_grounding_instructions_preserve_custom_rubric(selection: str) -> None:
     assert "do not infer objects from the task text" in prompt
     assert "Do not invent timestamps, elapsed time, unseen actions" in prompt
     assert "Distinguish 'not shown' or 'cannot verify' from 'did not happen'" in prompt
+    assert '"provider_observable_support": [nonempty string, ...]' in prompt
+    assert "at least one visible observation from the supplied frames" in prompt
+    assert "provider-authored claims, not independently verified pixel facts" in prompt
     assert "rationale must still be factual and evidence-grounded" in prompt
     assert "only downstream contract" not in prompt
 

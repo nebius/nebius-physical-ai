@@ -215,7 +215,12 @@ def test_evaluator_submits_preselected_objects_without_rediscovery(
 
     def fake_call(**kwargs: Any) -> VlmStructuredResponse:
         submitted.append(kwargs["frames"])
-        return VlmStructuredResponse(success=True, score=0.9, rationale="exact frames")
+        return VlmStructuredResponse(
+            success=True,
+            score=0.9,
+            rationale="exact frames",
+            provider_observable_support=("Frame 1 is an exact selected frame.",),
+        )
 
     monkeypatch.setattr(vlm_eval, "_call_openai_compatible", fake_call)
     result = vlm_eval.evaluate_vlm(
@@ -265,6 +270,7 @@ def test_structural_preflight_freezes_metadata_task_and_explicit_task(
             success=is_positive,
             score=0.9 if is_positive else 0.1,
             rationale="task preservation control",
+            provider_observable_support=("Frame 1 is visibly supplied.",),
         )
 
     monkeypatch.setattr(vlm_eval, "select_rollout_frames", counted_select)
@@ -317,7 +323,12 @@ def test_structural_pair_propagates_custom_rubric_to_request_evidence(
         assert f"Rubric: {kwargs['rubric']}" in kwargs["prompt"]
         assert kwargs["frame_selection"] == "sequence"
         assert kwargs["max_frames"] == 6
-        return VlmStructuredResponse(success=False, score=0.1, rationale="control")
+        return VlmStructuredResponse(
+            success=False,
+            score=0.1,
+            rationale="control",
+            provider_observable_support=("Frame 1 is visibly supplied.",),
+        )
 
     monkeypatch.setattr(vlm_eval, "_call_openai_compatible", fake_call)
     benchmark_vlm_eval(
@@ -346,6 +357,9 @@ def test_structural_pair_retains_landed_sampling_provenance(
                             "success": False,
                             "score": 0.25,
                             "rationale": "Synthetic metadata control.",
+                            "provider_observable_support": [
+                                "Frame 1 visibly contains the metadata control."
+                            ],
                         }
                     )
                 },

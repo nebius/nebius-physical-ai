@@ -7,6 +7,16 @@ a versioned heading when a release is cut.
 
 ## Unreleased
 
+### Provider-reported VLM observable support
+
+- Require every real hosted or self-hosted scalar VLM verdict to return a
+  nonempty `provider_observable_support` array of nonblank strings. Retain its
+  exact decoded text and order in direct, paired, loop, benchmark, and
+  promotion evidence; stub and score-override paths never fabricate it.
+- Treat the field as provider-authored text, not verified pixel grounding.
+  Superseded three-field parser evidence now requires reevaluation and receives
+  the stable `provider_parser_obsolete` promotion diagnostic.
+
 ### cuRobo image dependency closure
 
 - Lock the full system setuptools seed independently to the runtime's 84.0.0

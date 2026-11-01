@@ -1673,6 +1673,9 @@ def _provider_completion(*, success: bool, metadata: bool) -> dict:
                             "score": 0.9,
                             "success": success,
                             "rationale": "Visible unit-test evidence.",
+                            "provider_observable_support": [
+                                "Frame 1 visibly shows the unit-test image."
+                            ],
                         }
                     )
                 },
@@ -2480,9 +2483,9 @@ def test_grade_gate_pins_retained_parser_version_contract(
     )
     if superseded:
         report["evidence"]["provider"]["parser_version"] = (
-            "npa_vlm_eval_compatible_json_v1" + suffix
+            "npa_vlm_eval_compatible_json_v2" + suffix
         )
-        _assert_completion_blocked(tmp_path, report, "provider_metadata_mismatch")
+        _assert_completion_blocked(tmp_path, report, "provider_parser_obsolete")
     else:
         (tmp_path / RESULT_FILENAME).write_text(json.dumps(report))
         assert (

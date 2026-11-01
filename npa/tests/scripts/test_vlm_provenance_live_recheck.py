@@ -474,7 +474,10 @@ def test_provenance_parser_tag_matches_retained_framing(fenced, monkeypatch):
 
     monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[1]))
     module = importlib.import_module("e2e.test_vlm_served_model_live")
-    content = '{"score":0.9,"success":true,"rationale":"test frame"}'
+    content = (
+        '{"score":0.9,"success":true,"rationale":"test frame",'
+        '"provider_observable_support":["Frame 1 is visible."]}'
+    )
     if fenced:
         content = "```json\n" + content + "\n```"
     raw = json.dumps(
@@ -488,7 +491,7 @@ def test_provenance_parser_tag_matches_retained_framing(fenced, monkeypatch):
             ],
         }
     )
-    base = "npa_vlm_eval_compatible_json_v2"
+    base = "npa_vlm_eval_compatible_json_v3"
     provider = {
         "raw_response": raw,
         "raw_response_sha256": hashlib.sha256(raw.encode()).hexdigest(),

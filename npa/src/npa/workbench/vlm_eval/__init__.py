@@ -93,8 +93,8 @@ BENCHMARK_REPORT_SCHEMA_VERSION = "npa_vlm_eval_benchmark_report_v2"
 EVIDENCE_SCHEMA_VERSION = "npa_vlm_eval_evidence_v2"
 PREFERENCE_REQUEST_EVIDENCE_SCHEMA_VERSION = "npa_vlm_preference_request_evidence_v1"
 JUDGE_COMPARISON_SCHEMA_VERSION = "npa_vlm_judge_comparison_v1"
-HOSTED_RESPONSE_PARSER_VERSION = "npa_vlm_eval_hosted_json_v1"
-SELF_HOSTED_RESPONSE_PARSER_VERSION = "npa_vlm_eval_compatible_json_v2"
+HOSTED_RESPONSE_PARSER_VERSION = "npa_vlm_eval_hosted_json_v2"
+SELF_HOSTED_RESPONSE_PARSER_VERSION = "npa_vlm_eval_compatible_json_v3"
 MARKDOWN_FENCE_PARSER_SUFFIX = "+markdown-fence-v1"
 BENCHMARK_EVIDENCE_SCOPES = frozenset({"unspecified", "illustrative_only"})
 UNPARSED_RESPONSE_PARSER_VERSION = "npa_vlm_eval_unparsed_v1"
@@ -118,10 +118,16 @@ BENCHMARK_DATASET_ALIASES = {
 }
 SUPPORTED_BACKENDS = ("self-hosted", "api", "stub")
 SUPPORTED_FRAME_SELECTIONS = ("final", "keyframes", "sequence")
+_PROVIDER_OBSERVABLE_SUPPORT_LIMITATION = (
+    "When present, provider_observable_support is provider-authored text; NPA "
+    "checks only its required shape and retention, not semantic truth or pixel "
+    "grounding."
+)
 _DIRECT_RESULT_LIMITATIONS = (
     "Selected frames cannot verify unobserved intervals or continuous task stability.",
     "A score from one model, rubric, threshold, and frame sample does not "
     "establish physical correctness or safety.",
+    _PROVIDER_OBSERVABLE_SUPPORT_LIMITATION,
 )
 _DIRECT_NO_CALL_LIMITATION = (
     "This score is a stub or caller-supplied dry-validation input; no VLM call "
@@ -131,6 +137,7 @@ _LOOP_REPORT_LIMITATIONS = (
     "task_success is a mean-score gate, not a per-rollout success rate.",
     "Selected frames cannot verify unobserved intervals or continuous task stability.",
     "The visual gate does not establish physical correctness or safety.",
+    _PROVIDER_OBSERVABLE_SUPPORT_LIMITATION,
 )
 _LOOP_STUB_LIMITATION = (
     "Stub scores are wiring inputs; no VLM call occurred, so they are not model "
@@ -143,6 +150,7 @@ _BENCHMARK_REPORT_LIMITATIONS = (
     "this caller-labeled dataset and do not establish generalization, physical "
     "correctness, safety, or an operational error rate.",
     "Selected frames cannot verify unobserved intervals or continuous task stability.",
+    _PROVIDER_OBSERVABLE_SUPPORT_LIMITATION,
 )
 _BENCHMARK_FIXTURE_LIMITATION = (
     "Cases with score_source 'fixture' use caller-provided dry-validation inputs; "
@@ -303,6 +311,7 @@ class VlmEvalResult:
     independent_human_label_calibration_established: bool = False
     limitations: tuple[str, ...] = _DIRECT_RESULT_LIMITATIONS
     provider_call_made: bool = False
+    provider_observable_support: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -465,6 +474,7 @@ class VlmStructuredResponse:
     parser_version: str = SELF_HOSTED_RESPONSE_PARSER_VERSION
     provider_success: bool | None = None
     served_model_match_enforced: bool = False
+    provider_observable_support: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -645,6 +655,7 @@ class VlmBenchmarkCaseResult:
     requested_model: str = ""
     served_model: str | None = None
     served_model_match_enforced: bool = False
+    provider_observable_support: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -1722,6 +1733,7 @@ def _comparison_limitations() -> tuple[str, ...]:
         "In-image instructions remain an unresolved input-integrity risk.",
         "Judge agreement cannot prove that a critical visible defect is absent.",
         "Visual agreement does not establish physical correctness or robot safety.",
+        _PROVIDER_OBSERVABLE_SUPPORT_LIMITATION,
     )
 
 
@@ -1830,7 +1842,9 @@ def parse_structured_response(text: str) -> VlmStructuredResponse:
     """
 
     payload, deframed = _load_json_object(text)
-    success, score, rationale = _validate_verdict_fields(payload, "Self-hosted")
+    success, score, rationale, support = _validate_verdict_fields(
+        payload, "Self-hosted"
+    )
     provider_success = _literal_provider_success(payload.get("success"))
     return VlmStructuredResponse(
         success=success,
@@ -1838,6 +1852,7 @@ def parse_structured_response(text: str) -> VlmStructuredResponse:
         rationale=rationale,
         parser_version=_parser_version(SELF_HOSTED_RESPONSE_PARSER_VERSION, deframed),
         provider_success=provider_success,
+        provider_observable_support=support,
     )
 
 
@@ -1847,7 +1862,7 @@ def _parse_api_structured_response(
     """Validate the complete hosted judge output without repairing its verdict."""
 
     payload, deframed = _load_hosted_verdict(text)
-    success, score, rationale = _validate_verdict_fields(payload, "Hosted")
+    success, score, rationale, support = _validate_verdict_fields(payload, "Hosted")
     return VlmStructuredResponse(
         success=success,
         score=score,
@@ -1855,6 +1870,7 @@ def _parse_api_structured_response(
         served_model=served_model,
         parser_version=_parser_version(HOSTED_RESPONSE_PARSER_VERSION, deframed),
         provider_success=success,
+        provider_observable_support=support,
     )
 
 
@@ -1892,7 +1908,7 @@ def _load_hosted_verdict(text: Any) -> tuple[dict[str, Any], bool]:
 
 def _validate_verdict_fields(
     payload: dict[str, Any], response_label: str
-) -> tuple[bool, float, str]:
+) -> tuple[bool, float, str, tuple[str, ...]]:
     """Validate verdict fields without coercing or clamping model output."""
 
     provider_success = _literal_provider_success(payload.get("success"))
@@ -1913,7 +1929,17 @@ def _validate_verdict_fields(
         raise VlmEvalError(
             f"{response_label} VLM response rationale must be a nonempty string"
         )
-    return provider_success, float(score), rationale
+    support = payload.get("provider_observable_support")
+    if (
+        not isinstance(support, list)
+        or not support
+        or any(not isinstance(item, str) or not item.strip() for item in support)
+    ):
+        raise VlmEvalError(
+            f"{response_label} VLM response provider_observable_support must be "
+            "a nonempty array of nonempty strings"
+        )
+    return provider_success, float(score), rationale, tuple(support)
 
 
 def result_uri_for(output_path: str) -> str:
@@ -2018,6 +2044,7 @@ class VlmLoopRollout:
     requested_model: str = ""
     served_model: str | None = None
     served_model_match_enforced: bool = False
+    provider_observable_support: tuple[str, ...] = ()
 
 
 def evaluate_rollout_set(
@@ -2084,6 +2111,7 @@ def evaluate_rollout_set(
                 requested_model=result.model,
                 served_model=result.served_model,
                 served_model_match_enforced=result.served_model_match_enforced,
+                provider_observable_support=result.provider_observable_support,
             )
         )
 
@@ -2132,7 +2160,15 @@ def aggregate_loop_report(
         "task_success": mean_score >= success_threshold,
         "independent_human_label_calibration_established": False,
         "limitations": _loop_report_limitations(backend),
-        "rollouts": [asdict(rollout) for rollout in rollouts],
+        "rollouts": [
+            {
+                **asdict(rollout),
+                "provider_observable_support": list(
+                    rollout.provider_observable_support
+                ),
+            }
+            for rollout in rollouts
+        ],
     }
 
 
@@ -2282,6 +2318,21 @@ def _result_from_structured(
     structured: VlmStructuredResponse,
     provider_call_made: bool,
 ) -> VlmEvalResult:
+    support = structured.provider_observable_support
+    if not isinstance(support, tuple) or any(
+        not isinstance(item, str) or not item.strip() for item in support
+    ):
+        raise VlmEvalError(
+            "Validated provider_observable_support must be a tuple of nonempty strings"
+        )
+    if provider_call_made and not support:
+        raise VlmEvalError(
+            "Real-provider VLM results require provider_observable_support"
+        )
+    if not provider_call_made and support:
+        raise VlmEvalError(
+            "No-call VLM results cannot contain provider_observable_support"
+        )
     score = round(structured.score, 4)
     passed = score >= success_threshold
     provider_success = (
@@ -2313,6 +2364,7 @@ def _result_from_structured(
         evidence=structured.evidence,
         limitations=_direct_result_limitations(provider_call_made=provider_call_made),
         provider_call_made=provider_call_made,
+        provider_observable_support=support,
     )
 
 
@@ -2387,6 +2439,7 @@ def _run_benchmark_case(
         provider_success=result.provider_success,
         provider_success_matches_score_gate=result.provider_success_matches_score_gate,
         evidence=result.evidence,
+        provider_observable_support=result.provider_observable_support,
     )
 
 
@@ -2972,7 +3025,13 @@ def _build_prompt(
             "occluded evidence, state what cannot be verified instead of "
             "asserting an unseen outcome.",
             "Return only a JSON object with this schema:",
-            '{"success": boolean, "score": number between 0 and 1, "rationale": string}',
+            '{"success": boolean, "score": number between 0 and 1, '
+            '"rationale": string, "provider_observable_support": '
+            "[nonempty string, ...]}",
+            "provider_observable_support must contain at least one visible "
+            "observation from the supplied frames that supports or limits the "
+            "verdict. Its members are provider-authored claims, not independently "
+            "verified pixel facts.",
             "The downstream gate uses the score and threshold; the rationale "
             "must still be factual and evidence-grounded.",
         ]
