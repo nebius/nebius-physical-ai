@@ -1,0 +1,183 @@
+{
+  "what_this_adds": "A fourth matched control pair for VLM geometry judging: an occlusion defect, which controls-v3 does not contain and whose schema cannot express it.",
+  "frozen_plan_sha256": "e53257bc63380b12c0c5dd4edfc395b02b41055001e0314dbab08689fe025e45",
+  "acceptance_as_frozen": {
+    "A1_one_camera_one_geometry": {
+      "result": "pass",
+      "how": "Both frames share the fitted camera and the same three layer PLYs; only the retained-surface layer differs."
+    },
+    "A2_defect_visible_in_pixels_below_50_percent": {
+      "result": "FAILED",
+      "required": "subject footprint in D4_occluded below 50% of D4_unoccluded",
+      "measured": 0.521556785774199,
+      "margin": "missed by 2.16 points",
+      "not_moved": "The threshold stands as frozen. It was chosen to match #1014's geometric gate so the two instruments would answer on one boundary, and that was a mistake made before measuring: the ray cast's denominator is total surface area including back faces, the rasterizer's is screen footprint. The same defect is 35.2% visible by area and 52.2% by footprint, because the hidden regions are at grazing angles -- much area, few pixels. Recording the failure rather than relabelling the quantity.",
+      "what_did_hold": "The defect is unmistakable in the delivered frames by a measurement I did not freeze: 51,864 pixels differ, and the retained surface accounts for 46,562 pale pixels in D4_occluded against 11,463 in D4_unoccluded."
+    },
+    "A3_prediction_at_least_2_of_4_accept_the_occluded_frame": {
+      "result": "confirmed, and more strongly than predicted",
+      "predicted": "at least 2 of 4",
+      "measured": "4 of 4",
+      "models_that_accepted_it": [
+        "deepseek-ai/DeepSeek-V4.1-Flash",
+        "moonshotai/Kimi-K2.6",
+        "moonshotai/Kimi-K3",
+        "zai-org/GLM-5.3-Flash"
+      ]
+    },
+    "A4_not_a_qualification": "No judge is qualified or disqualified. v3's negative result stands. #1014 remains vlm_eval not_applicable; nothing here is a visual acceptance gate for it.",
+    "A5_call_integrity": {
+      "attempts": 8,
+      "parsed": 8,
+      "inconclusive": 0,
+      "retries": 0,
+      "distinct_provider_request_ids": 8,
+      "exact_returned_models_recorded": 8
+    }
+  },
+  "the_finding": "Every one of the four judges accepted the occluded frame as adequate for reviewing the surface it hides. This is v3's clipped-frame result in a fourth defect class: there, every parsed call called a reproducibly clipped frame reviewable and accepted it. The mechanism here is not a perception failure -- all four correctly reported the pale occluding surface as present, so they saw it -- it is that seeing an occluder and judging the subject behind it unreadable are different steps, and these judges do not take the second one. Only Kimi K3 called the subject partly hidden, and it accepted the frame anyway.",
+  "confusion": {
+    "false_accepts": 4,
+    "false_rejects": 0,
+    "verdict_correct": 4,
+    "of": 8,
+    "note": "Every false accept is on D4_occluded; every D4_unoccluded verdict is right."
+  },
+  "image_dependency_probe": {
+    "deepseek-ai/DeepSeek-V4.1-Flash": {
+      "occluded": "yes",
+      "unoccluded": "no",
+      "changed_correctly": true,
+      "reading": "answers track the pixels that differ"
+    },
+    "moonshotai/Kimi-K2.6": {
+      "occluded": "yes",
+      "unoccluded": "yes",
+      "changed_correctly": false,
+      "reading": "same answer for both frames, so this call is no evidence of image sensitivity"
+    },
+    "moonshotai/Kimi-K3": {
+      "occluded": "yes",
+      "unoccluded": "no",
+      "changed_correctly": true,
+      "reading": "answers track the pixels that differ"
+    },
+    "zai-org/GLM-5.3-Flash": {
+      "occluded": "yes",
+      "unoccluded": "yes",
+      "changed_correctly": false,
+      "reading": "same answer for both frames, so this call is no evidence of image sensitivity"
+    }
+  },
+  "probe_limitation": "Two of the four answered 'yes' to the pale-surface question for both frames, so for DeepSeek V4.1 Flash and Kimi K3 the pixels demonstrably drove the answer, while for Kimi K2.6 and GLM 5.3 Flash these calls carry no evidence of image sensitivity at all. Their false accepts are correspondingly weaker evidence and are not interchangeable with the other two.",
+  "models_that_noticed_the_subject_was_hidden": [
+    "moonshotai/Kimi-K3"
+  ],
+  "rows": [
+    {
+      "case_id": "D4_occluded",
+      "model": "deepseek-ai/DeepSeek-V4.1-Flash",
+      "returned_model": "deepseek-ai/DeepSeek-V4.1-Flash",
+      "verdict": "accept",
+      "expected_verdict": "reject",
+      "verdict_correct": false,
+      "pale": "yes",
+      "expected_pale": "yes",
+      "visibility": "mostly_visible",
+      "expected_visibility": "partly_hidden",
+      "status": "parsed"
+    },
+    {
+      "case_id": "D4_occluded",
+      "model": "moonshotai/Kimi-K2.6",
+      "returned_model": "moonshotai/Kimi-K2.6",
+      "verdict": "accept",
+      "expected_verdict": "reject",
+      "verdict_correct": false,
+      "pale": "yes",
+      "expected_pale": "yes",
+      "visibility": "mostly_visible",
+      "expected_visibility": "partly_hidden",
+      "status": "parsed"
+    },
+    {
+      "case_id": "D4_occluded",
+      "model": "moonshotai/Kimi-K3",
+      "returned_model": "moonshotai/Kimi-K3",
+      "verdict": "accept",
+      "expected_verdict": "reject",
+      "verdict_correct": false,
+      "pale": "yes",
+      "expected_pale": "yes",
+      "visibility": "partly_hidden",
+      "expected_visibility": "partly_hidden",
+      "status": "parsed"
+    },
+    {
+      "case_id": "D4_occluded",
+      "model": "zai-org/GLM-5.3-Flash",
+      "returned_model": "zai-org/GLM-5.3-Flash",
+      "verdict": "accept",
+      "expected_verdict": "reject",
+      "verdict_correct": false,
+      "pale": "yes",
+      "expected_pale": "yes",
+      "visibility": "mostly_visible",
+      "expected_visibility": "partly_hidden",
+      "status": "parsed"
+    },
+    {
+      "case_id": "D4_unoccluded",
+      "model": "deepseek-ai/DeepSeek-V4.1-Flash",
+      "returned_model": "deepseek-ai/DeepSeek-V4.1-Flash",
+      "verdict": "accept",
+      "expected_verdict": "accept",
+      "verdict_correct": true,
+      "pale": "no",
+      "expected_pale": "no",
+      "visibility": "mostly_visible",
+      "expected_visibility": "mostly_visible",
+      "status": "parsed"
+    },
+    {
+      "case_id": "D4_unoccluded",
+      "model": "moonshotai/Kimi-K2.6",
+      "returned_model": "moonshotai/Kimi-K2.6",
+      "verdict": "accept",
+      "expected_verdict": "accept",
+      "verdict_correct": true,
+      "pale": "yes",
+      "expected_pale": "no",
+      "visibility": "mostly_visible",
+      "expected_visibility": "mostly_visible",
+      "status": "parsed"
+    },
+    {
+      "case_id": "D4_unoccluded",
+      "model": "moonshotai/Kimi-K3",
+      "returned_model": "moonshotai/Kimi-K3",
+      "verdict": "accept",
+      "expected_verdict": "accept",
+      "verdict_correct": true,
+      "pale": "no",
+      "expected_pale": "no",
+      "visibility": "mostly_visible",
+      "expected_visibility": "mostly_visible",
+      "status": "parsed"
+    },
+    {
+      "case_id": "D4_unoccluded",
+      "model": "zai-org/GLM-5.3-Flash",
+      "returned_model": "zai-org/GLM-5.3-Flash",
+      "verdict": "accept",
+      "expected_verdict": "accept",
+      "verdict_correct": true,
+      "pale": "yes",
+      "expected_pale": "no",
+      "visibility": "mostly_visible",
+      "expected_visibility": "mostly_visible",
+      "status": "parsed"
+    }
+  ],
+  "limits": "Two frames, one scene, four hosted models, one call each. Not judge qualification, not geometry accuracy, not generalization, and not a visual gate for any PR."
+}

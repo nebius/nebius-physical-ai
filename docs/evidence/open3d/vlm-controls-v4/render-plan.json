@@ -1,0 +1,74 @@
+{
+  "viewpoints": {
+    "removed_view": {
+      "eye": [
+        15.912635043805132,
+        17.311960533802996,
+        12.264551457346407
+      ],
+      "look_target": [
+        1.3867007493972778,
+        2.7860262393951416,
+        1.3417651490731672
+      ],
+      "up": [
+        0.0,
+        0.0,
+        1.0
+      ]
+    }
+  },
+  "frames": [
+    {
+      "name": "D4_occluded",
+      "out_template": "docs/evidence/open3d/vlm-controls-v4/D4_occluded.png",
+      "viewpoints": [
+        "removed_view"
+      ],
+      "layers": [
+        {
+          "path": "docs/evidence/open3d/vlm-controls-v4/D4.fused.ply",
+          "radius": 0
+        },
+        {
+          "path": "docs/evidence/open3d/vlm-controls-v4/D4.retained.ply",
+          "tint": [
+            215,
+            215,
+            220
+          ]
+        },
+        {
+          "path": "docs/evidence/open3d/vlm-controls-v4/D4.subject.ply",
+          "tint": [
+            214,
+            92,
+            46
+          ]
+        }
+      ]
+    },
+    {
+      "name": "D4_unoccluded",
+      "out_template": "docs/evidence/open3d/vlm-controls-v4/D4_unoccluded.png",
+      "viewpoints": [
+        "removed_view"
+      ],
+      "layers": [
+        {
+          "path": "docs/evidence/open3d/vlm-controls-v4/D4.fused.ply",
+          "radius": 0
+        },
+        {
+          "path": "docs/evidence/open3d/vlm-controls-v4/D4.subject.ply",
+          "tint": [
+            214,
+            92,
+            46
+          ]
+        }
+      ]
+    }
+  ],
+  "manifest_out": "docs/evidence/open3d/vlm-controls-v4/render-manifest.json"
+}

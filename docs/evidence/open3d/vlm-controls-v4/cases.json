@@ -1,0 +1,30 @@
+{
+  "format": "npa geometry vlm control cases v4 (occlusion)",
+  "label_provenance": "Labels derive from two objective measurements of these exact bytes, not from inspection. pale_surface_present: pale pixels in the delivered frame, 46,562 in D4_occluded against 11,463 in D4_unoccluded. subject_visibility and verdict: the z-buffer subject-footprint fraction in controls-manifest.json, 0.5216 against 1.0000, cross-checked against the ray-cast surface-area fraction in audit-view-occlusion.json, 0.3521 against 0.7849.",
+  "dimension_v3_does_not_have": "occlusion. v3 spells its good framing case 'reviewable', which conflates being inside the frame with being visible. camera_framing_probe.py passed this very view with no vertex clipped while most of its subject was unreadable, so the two properties need separate dimensions.",
+  "boundary_disclosed": "D4_occluded is labelled partly_hidden, not mostly_hidden. By screen footprint 52% of the subject survives, which is the honest reading of these pixels; by surface area only 35% does. The frozen plan's control-strength criterion A2 required the footprint figure below 50% and it came in at 52.16%, so that criterion failed and was not moved. The label follows the measurement rather than the intent.",
+  "cases": [
+    {
+      "id": "D4_occluded",
+      "frame": "docs/evidence/open3d/vlm-controls-v4/D4_occluded.png",
+      "frame_sha256": "2fafe9d99699cd96924c2db44c81cf830bdfde4c55b9e935abc93ee409e9a538",
+      "expected_pale_surface_present": "yes",
+      "expected_subject_visibility": "partly_hidden",
+      "expected_occlusion": "occluded_by_retained_surface",
+      "expected_framing": "reviewable",
+      "expected_verdict": "reject",
+      "why": "Correctly framed and still not reviewable: the retained surface is drawn opaque in front of the subject and takes 47.8% of its footprint."
+    },
+    {
+      "id": "D4_unoccluded",
+      "frame": "docs/evidence/open3d/vlm-controls-v4/D4_unoccluded.png",
+      "frame_sha256": "9e55c4e52c1b4bee92cb51ef3b15a850a16973241c49ce65e4f6d9f391c56b85",
+      "expected_pale_surface_present": "no",
+      "expected_subject_visibility": "mostly_visible",
+      "expected_occlusion": "not_occluded",
+      "expected_framing": "reviewable",
+      "expected_verdict": "accept",
+      "why": "Same camera, same geometry, retained surface hidden as PR #1014 ships it."
+    }
+  ]
+}
