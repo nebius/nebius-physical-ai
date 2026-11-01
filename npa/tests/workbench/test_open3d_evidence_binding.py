@@ -163,3 +163,91 @@ def test_the_guard_reports_what_it_could_not_check(evidence: Path) -> None:
     assert "bound to a named file" in result.stdout
     assert "equality claims" in result.stdout
     assert "cannot be bound to anything" in result.stdout
+
+
+def test_a_reframed_frame_cannot_be_rebound_against_stale_measurements(
+    evidence: Path,
+) -> None:
+    """The gap a review lane found: fresh digests paired with measurements of bytes that are gone.
+
+    Copying measurements rather than recomputing them stops this file and the record that took them
+    from drifting apart. It did not stop the record itself from describing different pixels. The
+    sequence that used to pass: re-render a frame, re-run the binder, and get a manifest whose
+    digests are all correct and whose measurements were taken from the old bytes. Nothing compared
+    the two, because the audit record did not say which bytes it had read.
+    """
+    frame = evidence / "frames-refit" / "candidate_scan_and_surface__topdown.png"
+    with frame.open("ab") as handle:
+        handle.write(b"\x00")
+
+    # Rebuilding is what anyone would do after re-rendering, and is the step that used to launder
+    # the staleness into a healthy-looking manifest.
+    result = run(evidence, BIND)
+    assert result.returncode != 0, result.stdout + result.stderr
+    combined = result.stdout + result.stderr
+    assert "candidate_scan_and_surface__topdown.png" in combined
+    assert "Refusing to copy a measurement taken from different bytes" in combined
+
+
+def test_an_audit_record_that_does_not_say_which_bytes_it_read_is_refused(
+    evidence: Path,
+) -> None:
+    """A measurement that cannot name its input binds to a frame by filename only.
+
+    This is the pre-fix shape of the audit record, so it is also the regression control: if the
+    digest is ever dropped from that harness again, binding must fail loudly rather than quietly
+    going back to trusting the filename.
+    """
+
+    def drop_digests(data: dict) -> None:
+        for row in data["frames"]:
+            row.pop("sha256", None)
+
+    edit(evidence, "frame-edge-audit-after.json", drop_digests)
+
+    built = run(evidence, BIND)
+    assert built.returncode != 0, built.stdout + built.stderr
+    assert "without recording which bytes it read" in built.stdout + built.stderr
+
+    checked = run(evidence, BIND, "--verify")
+    assert checked.returncode == 1, checked.stdout
+    assert "by name only" in checked.stdout
+
+
+def test_verify_catches_an_audit_record_that_measured_different_bytes(
+    evidence: Path,
+) -> None:
+    def retarget(data: dict) -> None:
+        data["frames"][0]["sha256"] = "0" * 64
+
+    edit(evidence, "frame-edge-audit-after.json", retarget)
+
+    result = run(evidence, BIND, "--verify")
+    assert result.returncode == 1, result.stdout
+    assert "describe bytes that are gone" in result.stdout
+
+
+def test_the_audit_harness_records_the_digest_of_the_bytes_it_read(
+    evidence: Path, tmp_path: Path
+) -> None:
+    """Pins the harness contract the binder leans on, which mutation testing found unpinned.
+
+    The tests above all feed the binder a committed audit record, so they keep passing if the
+    harness stops emitting digests -- the stale record still has them, and the gap only appears the
+    next time someone regenerates it. That is exactly the delayed, quiet failure this evidence set
+    has been corrected for before, so the harness is pinned directly here.
+    """
+    import hashlib
+
+    frame = evidence / "frames-refit" / "baseline_surface_only__overview.png"
+    report = tmp_path / "audit.json"
+
+    result = run(evidence, "harness/frame_edge_audit.py", str(report), str(frame))
+    assert result.returncode == 0, result.stdout + result.stderr
+
+    rows = json.loads(report.read_text())["frames"]
+    assert len(rows) == 1, rows
+    assert rows[0]["sha256"] == hashlib.sha256(frame.read_bytes()).hexdigest(), (
+        "the audit harness must record which bytes it measured; the binder refuses to copy a "
+        "measurement that cannot name its input"
+    )

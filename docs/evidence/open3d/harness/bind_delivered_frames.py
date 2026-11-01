@@ -16,6 +16,14 @@ The measurements are copied from `frame-edge-audit-after.json`, which computed t
 recomputed here. Recomputing would let this file and that one drift apart while both looked
 healthy; copying means a mismatch is a failure in `--verify` instead of a difference nobody reads.
 
+Copying alone left one link unverified, which a review lane found. The chain is bytes -> digest ->
+measurement, and the first arrow was checked while the second was taken on trust: nothing said the
+record that produced a measurement had measured *these* bytes. Regenerate the frames, re-run this
+binder, and you got freshly correct digests paired with stale measurements, with every check
+passing -- the same "both look healthy" failure that copying was meant to prevent, one file further
+along. The audit record now carries a digest per frame, and this binder refuses to copy a
+measurement whose source digest is not the digest it just computed itself.
+
 On `content_fraction`: it is recorded as a **regression ratchet, not a quality gate**. The review
 lane is right that every delivered frame sits at or below the occupancy that prompted the original
 complaint, and four are under 13%. A minimum-occupancy gate would be the wrong remedy, because the
@@ -72,9 +80,22 @@ def build() -> dict:
                 f"{png.name} is delivered but {AUDIT.name} never measured it; a frame with no "
                 "measurement cannot be bound to one"
             )
+        actual = digest(png)
+        source = row.get("sha256")
+        if source is None:
+            raise SystemExit(
+                f"{AUDIT.name} measured {png.name} without recording which bytes it read, so its "
+                "measurements cannot be bound to these. Re-run harness/frame_edge_audit.py."
+            )
+        if source != actual:
+            raise SystemExit(
+                f"{AUDIT.name} measured {png.name} at {source[:12]}.. but the delivered bytes hash "
+                f"to {actual[:12]}... Refusing to copy a measurement taken from different bytes; "
+                "re-run harness/frame_edge_audit.py against the delivered frames."
+            )
         entry = {
             "path": f"{FRAMES.name}/{png.name}",
-            "sha256": digest(png),
+            "sha256": actual,
             "bytes": png.stat().st_size,
         }
         entry.update({key: row[key] for key in COPIED if key in row})
@@ -99,11 +120,15 @@ def build() -> dict:
         "to show. Every delivered frame sits at or below the occupancy that prompted the original "
         "complaint and four are under 13%; that is measured, published and ungated on purpose.",
         "what_this_does_not_establish": [
-            "Nothing about whether the frames are good. This binds measurements to bytes; it is "
-            "not a judgement about framing, legibility or reconstruction quality.",
+            (
+                "Nothing about whether the frames are good. This binds measurements to bytes; "
+                "it is not a judgement about framing, legibility or reconstruction quality."
+            ),
             "Nothing about the geometry. A frame can be byte-stable and still show a bad mesh.",
-            "No claim that these are the only frames that matter, only that these are the nine "
-            "delivered here.",
+            (
+                "No claim that these are the only frames that matter, only that these are the "
+                "nine delivered here."
+            ),
         ],
         "measured_but_not_delivered": sorted(unmeasured),
         "generator": "harness/bind_delivered_frames.py",
@@ -141,6 +166,17 @@ def verify() -> int:
         if audit_row is None:
             findings.append(f"{path} is bound but {AUDIT.name} no longer measures it")
             continue
+        source = audit_row.get("sha256")
+        if source is None:
+            findings.append(
+                f"{path}: {AUDIT.name} does not record which bytes it measured, so its "
+                f"measurements are bound to this frame by name only"
+            )
+        elif source != actual:
+            findings.append(
+                f"{path}: {AUDIT.name} measured {source[:12]}.. but the delivered bytes hash to "
+                f"{actual[:12]}.., so the copied measurements describe bytes that are gone"
+            )
         for key in COPIED:
             if key in row and key in audit_row and row[key] != audit_row[key]:
                 findings.append(
@@ -154,8 +190,8 @@ def verify() -> int:
             print(f"  - {finding}")
         return 1
     print(
-        f"All {len(by_path)} delivered frames hash as bound, and every copied measurement still "
-        f"matches {AUDIT.name}."
+        f"All {len(by_path)} delivered frames hash as bound, every copied measurement still "
+        f"matches {AUDIT.name}, and {AUDIT.name} recorded the same bytes it was measuring."
     )
     return 0
 
