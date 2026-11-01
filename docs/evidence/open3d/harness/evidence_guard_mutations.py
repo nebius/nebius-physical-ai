@@ -120,6 +120,16 @@ def main() -> int:
             ),
         ),
         (
+            "5a. a downstream-consumer record corrupted (unguarded until the vocabulary widened)",
+            EVIDENCE / "downstream-consumer.json",
+            negate_everything,
+        ),
+        (
+            "5b. the viewer capability record's fit ratios corrupted (reached only by path)",
+            EVIDENCE / "capability-record-viewer-ui-capture.json",
+            negate_everything,
+        ),
+        (
             "5. the duplicated filename made to disagree with its twin",
             EVIDENCE / "viewer-ui" / "ordinary-window-audit.json",
             # This record is a list at the top level, not an object, which is worth knowing

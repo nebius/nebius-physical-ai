@@ -18,10 +18,11 @@ record names, a figure some other file cites, or an invariant the field's own na
 
 Coverage is uneven, and rather than leave a reader to assume otherwise, the figures live in
 `docs/evidence/open3d/evidence-record-guards.json` and the last two tests recompute them from
-the catalogue. At the time of writing, of 42 records: 27 carry fractions, shares or counts
-whose range and sign are checkable, 7 are pinned by a precise figure cited in code or prose,
-2 name a committed file with its digest, 29 are covered by at least one of those, and **13 by
-structural checks only**.
+the catalogue. At the time of writing, of 42 records: 40 carry quantities whose range
+or sign their own names imply, 7 are pinned by a precise figure cited in code or prose, 2 name
+a committed file with its digest, 40 are covered by at least one of those, and **2 by
+structural checks only** -- and those two contain no numbers at all, which is a floor rather
+than an oversight.
 
 Those numbers are deliberately not repeated as literals in the assertions below. Duplicating
 them here and in the record would give them somewhere to drift apart, which is the defect this
@@ -53,15 +54,38 @@ CITING_SOURCES = (
 #: Field names whose value is a proportion and so cannot leave [0, 1]. Deliberately excludes
 #: `ratio`, `multiple` and `_over_` names: `spacing_over_voxel` legitimately reaches 5.449, and
 #: a rule that fired on it would be switched off within a week.
+#:
+#: `_rate$`, `^recall_of` and `^precision_` were added after measuring: they are what the
+#: downstream-consumer records call their occupancy numbers, and without them the records
+#: carrying this lane's actual consumer evidence had no invariant at all.
 BOUNDED_NAME = re.compile(
-    r"(fraction|_share$|share_of|^share|probability|rate_for|coverage$)", re.I
-)
-
-#: Field names that count things.
-COUNT_NAME = re.compile(
-    r"(^samples$|_count$|^count$|triangles|vertices|observations|^n_|frames?_logged)",
+    r"(fraction|_share$|share_of|^share|probability|rate_for|coverage$"
+    r"|_rate$|^recall_of|^precision_)",
     re.I,
 )
+
+#: A difference of two proportions, which lives in [-1, 1]. `recall_delta` is genuinely
+#: negative at -0.0016, so folding it into the rule above would have failed on correct data --
+#: which is how I found it.
+DELTA_NAME = re.compile(r"^recall_delta$|^precision_delta$|_rate_delta$", re.I)
+
+#: Field names that count things. `_cells$` is here *after* the proportion test deliberately:
+#: `recall_of_observed_cells` ends in `_cells` and is a rate, not a count, so a rule checked in
+#: the other order would reject a correct 0.96.
+COUNT_NAME = re.compile(
+    r"(^samples$|_count$|^count$|triangles|vertices|observations|^n_|frames?_logged"
+    r"|_cells$|_rows$|^reads$|_emitted$|_scanned$|^occurrences|^leaves_)",
+    re.I,
+)
+
+#: Magnitudes that cannot be negative without being nonsense: a volume, a byte size, a spatial
+#: extent, an aspect. None is bounded above, so only the sign is checkable.
+NON_NEGATIVE_NAME = re.compile(r"(_m3$|^size$|_span$|_aspect$)", re.I)
+
+#: Fit ratios in the viewer capability record are keyed by human view names -- "Observed scan
+#: only" -- so no field-name rule can reach them. Their *path* can: a fit ratio is required
+#: extent over available extent, and zero or negative is impossible.
+FIT_PATH = re.compile(r"fit_measured|_fit_|/fit$|fit_ratio", re.I)
 
 #: Four or more decimals, so a figure precise enough that its appearance in two files is a
 #: citation rather than a coincidence.
@@ -144,39 +168,98 @@ def test_no_record_carries_a_non_finite_number(loaded: dict) -> None:
     assert offenders == [], offenders
 
 
-def test_every_proportion_lies_between_zero_and_one(loaded: dict) -> None:
-    """The invariant the field's own name implies, over 807 values in 26 records.
+def invariant_for(path: str) -> str | None:
+    """Which invariant, if any, a recorded quantity is subject to, from how it is named.
+
+    The order is load-bearing. `recall_delta` is a signed difference and
+    `recall_of_observed_cells` is a rate whose name ends in `_cells`, so testing the delta rule
+    first and the proportion rule before the count rule is what keeps both correct. I found
+    both by measuring candidate rules against the committed catalogue rather than by reading
+    the names, and each one rejected correct data on the first attempt.
+    """
+    name = field_name(path)
+    if DELTA_NAME.search(name):
+        return "delta"
+    if BOUNDED_NAME.search(name):
+        return "proportion"
+    if COUNT_NAME.search(name):
+        return "count"
+    if NON_NEGATIVE_NAME.search(name):
+        return "non_negative"
+    if FIT_PATH.search(path):
+        return "fit_ratio"
+    return None
+
+
+def satisfies(kind: str, value: float) -> bool:
+    """Whether a value is consistent with the invariant its name implies."""
+    if kind == "proportion":
+        # -0.0 is not a share of anything. It only arises from negating a zero, which is
+        # exactly how the one record that resisted the reviewer's corruption resisted it:
+        # `fraction_beyond_one_voxel = 0.0` negates to a value still inside [0, 1].
+        return 0.0 <= value <= 1.0 and not (
+            value == 0.0 and math.copysign(1.0, value) < 0
+        )
+    if kind == "delta":
+        return -1.0 <= value <= 1.0
+    if kind == "count":
+        return value >= 0 and value == int(value)
+    if kind == "fit_ratio":
+        return value > 0
+    return value >= 0
+
+
+def classified_quantities(
+    data: object, record: str | None = None
+) -> list[tuple[str, str, float]]:
+    """Each quantity in a record that some invariant applies to, with its path and kind.
+
+    One exclusion, and it is not a convenience. The coverage block of
+    `evidence-record-guards.json` is a summary *of this measurement*, and its field names
+    describe the invariant classes -- so `values_checked_by_invariant.count` is itself matched
+    as a count and `fit_ratio` as a fit ratio. Counting them makes the published total a fixed
+    point that moves every time it is written: I measured 1093, wrote it down, and the act of
+    writing it made the answer 1095. The block is held to its arithmetic by
+    `test_the_published_coverage_figures_are_the_measured_ones`, which is a stronger check
+    than a range rule anyway.
+    """
+    summary_block = record == record_key(COVERAGE_RECORD)
+    found = []
+    for where, value in scalars(data):
+        if not isinstance(value, (int, float)) or isinstance(value, bool):
+            continue
+        if summary_block and where.startswith("/coverage/"):
+            continue
+        kind = invariant_for(where)
+        if kind:
+            found.append((where, kind, float(value)))
+    return found
+
+
+def invariant_violations(data: object, record: str | None = None) -> list[str]:
+    """Every recorded quantity that contradicts the invariant its own name implies."""
+    return [
+        f"{kind}: {where} = {value}"
+        for where, kind, value in classified_quantities(data, record)
+        if not satisfies(kind, value)
+    ]
+
+
+def test_every_recorded_quantity_satisfies_the_invariant_its_name_implies(
+    loaded: dict,
+) -> None:
+    """1093 values across 40 records, checked against what their own names mean.
 
     This is what catches the corruption the reviewer demonstrated on records that no citation
-    pins: negating a fraction puts it outside [0, 1]. It carries domain meaning rather than
-    just bytes, which is why it is worth more than a digest manifest over the same files.
-
-    The name test is deliberately narrow. It skips `ratio`, `multiple` and `_over_` names
-    because `spacing_over_voxel` legitimately reaches 5.449, and a rule that fired on that
-    would be switched off within a week.
+    pins: negating a proportion puts it outside [0, 1], negating a count makes it negative,
+    negating a fit ratio makes it impossible. The rules carry domain meaning rather than
+    bytes, which is why they are worth more than a digest manifest over the same files -- a
+    manifest would also fire on every legitimate regeneration.
     """
     offenders = [
-        f"{record_key(path)}{where} = {value}"
+        f"{record_key(path)} {violation}"
         for path, data in loaded.items()
-        for where, value in scalars(data)
-        if isinstance(value, (int, float))
-        and not isinstance(value, bool)
-        and BOUNDED_NAME.search(field_name(where))
-        and not 0.0 <= float(value) <= 1.0
-    ]
-    assert offenders == [], offenders
-
-
-def test_every_count_is_a_non_negative_whole_number(loaded: dict) -> None:
-    """Same idea, for the hundred fields that count samples, triangles or frames."""
-    offenders = [
-        f"{record_key(path)}{where} = {value}"
-        for path, data in loaded.items()
-        for where, value in scalars(data)
-        if isinstance(value, (int, float))
-        and not isinstance(value, bool)
-        and COUNT_NAME.search(field_name(where))
-        and (float(value) < 0 or float(value) != int(float(value)))
+        for violation in invariant_violations(data, record_key(path))
     ]
     assert offenders == [], offenders
 
@@ -185,13 +268,13 @@ def test_the_invariants_actually_detect_the_demonstrated_corruption() -> None:
     """A guard nobody has seen fail is a guard nobody has seen.
 
     This applies the reviewer's exact corruption -- every boolean flipped, every number negated
-    -- to each record in turn and requires the proportion or count invariant to object.
+    -- to each record in turn and requires an invariant to object.
 
-    It objects for 26 of the 27 records those invariants reach. The exception is
-    `complete-capture-threshold-sweep.json`, whose only bounded field is
-    `fraction_beyond_one_voxel = 0.0`: negated that is `-0.0`, which compares inside [0, 1], so
-    the corruption leaves nothing out of range to find. Immunity by way of a zero, not by way
-    of the record being sound.
+    It now objects for every record the invariants reach. It did not at first: with only the
+    proportion and count rules, `complete-capture-threshold-sweep.json` survived, because its
+    one bounded field is `fraction_beyond_one_voxel = 0.0` and negating zero leaves a value
+    inside [0, 1]. Immunity by way of a zero rather than by way of the record being sound,
+    which is why `satisfies` rejects a negative zero share.
     """
 
     def wreck(node: object) -> object:
@@ -205,30 +288,22 @@ def test_the_invariants_actually_detect_the_demonstrated_corruption() -> None:
             return -node
         return node
 
-    def objects(data: object) -> bool:
-        for where, value in scalars(data):
-            if not isinstance(value, (int, float)) or isinstance(value, bool):
-                continue
-            name = field_name(where)
-            if BOUNDED_NAME.search(name) and not 0.0 <= float(value) <= 1.0:
-                return True
-            if COUNT_NAME.search(name) and (
-                float(value) < 0 or float(value) != int(float(value))
-            ):
-                return True
-        return False
+    reached = {
+        record_key(path)
+        for path in records()
+        if classified_quantities(json.loads(path.read_text()), record_key(path))
+    }
+    caught = {
+        record_key(path)
+        for path in records()
+        if invariant_violations(wreck(json.loads(path.read_text())), record_key(path))
+    }
 
-    caught = [
-        record_key(p) for p in records() if objects(wreck(json.loads(p.read_text())))
-    ]
-    assert len(caught) >= 26, (
+    assert reached - caught == set(), sorted(reached - caught)
+    assert len(caught) >= 36, (
         len(caught),
-        "the invariants cover fewer records than measured; coverage has regressed",
+        "the invariants reach fewer records than measured",
     )
-    #: And they must not fire on the records as committed, or they would be useless.
-    assert [
-        record_key(p) for p in records() if objects(json.loads(p.read_text()))
-    ] == []
 
 
 def test_the_one_duplicated_filename_stays_a_duplicate_rather_than_a_divergence() -> (
@@ -380,19 +455,14 @@ def covered_records() -> tuple[set[str], dict[str, int]]:
     """
     with_invariant: set[str] = set()
     with_digest: set[str] = set()
-    bounded = counted = digest_pairs = 0
+    digest_pairs = 0
+    by_kind: dict[str, int] = {}
 
     for path in records():
         data = json.loads(path.read_text())
-        for where, value in scalars(data):
-            if isinstance(value, (int, float)) and not isinstance(value, bool):
-                name = field_name(where)
-                if BOUNDED_NAME.search(name):
-                    bounded += 1
-                    with_invariant.add(record_key(path))
-                elif COUNT_NAME.search(name):
-                    counted += 1
-                    with_invariant.add(record_key(path))
+        for _, kind, _value in classified_quantities(data, record_key(path)):
+            by_kind[kind] = by_kind.get(kind, 0) + 1
+            with_invariant.add(record_key(path))
 
         def walk(node: object, this: Path = path) -> None:
             nonlocal digest_pairs
@@ -428,8 +498,8 @@ def covered_records() -> tuple[set[str], dict[str, int]]:
         "digest_pairs_that_resolve_to_committed_bytes": digest_pairs,
         "records_with_at_least_one_meaning_bearing_check": len(covered),
         "records_with_structural_checks_only": len(records()) - len(covered),
-        "bounded_values_checked": bounded,
-        "count_values_checked": counted,
+        "values_checked_by_invariant": dict(sorted(by_kind.items())),
+        "values_checked_in_total": sum(by_kind.values()),
     }
 
 
