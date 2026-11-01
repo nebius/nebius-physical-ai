@@ -29,14 +29,17 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import subprocess
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
-#: Where `ROOT` sits inside the repository, for naming a path to `git show`.
-PREFIX = "docs/evidence/open3d"
+#: Overridable so the provenance behaviour below can be tested against a purpose-built
+#: repository. It needs a checkout with history, and CI checks out without any, so tests
+#: that pointed this at the real catalogue either crashed or skipped -- and a test that
+#: skips in CI is the defect a sibling branch spent today removing.
+ROOT = Path(os.environ.get("NPA_EVIDENCE_ROOT", Path(__file__).resolve().parent.parent))
 
 #: Paths inside a record that refer to files *produced by a workflow run* rather than to
 #: evidence committed here. Naming them descriptively is correct, so they are not findings.
@@ -152,9 +155,8 @@ def bound_pairs(
                     # `artifact_hashes: {"multiway/fused.ply": "<sha>"}`. The key is the binding.
                     named = key
                 if isinstance(named, str) and named:
-                    bound.append(
-                        (here, named, value, at_commit if isinstance(at_commit, str) else None)
-                    )
+                    declared = at_commit if isinstance(at_commit, str) else None
+                    bound.append((here, named, value, declared))
                 else:
                     unbound.append(here)
             else:
@@ -176,16 +178,31 @@ def digest_at_commit(commit: str, path: str) -> str | None:
     is a property of the checkout, and a check that turns one into a finding about
     the evidence is describing the wrong thing.
     """
-    present = subprocess.run(
-        ["git", "cat-file", "-e", f"{commit}^{{commit}}"],
-        cwd=ROOT,
-        capture_output=True,
-        check=False,
-    )
+    try:
+        present = subprocess.run(
+            ["git", "cat-file", "-e", f"{commit}^{{commit}}"],
+            cwd=ROOT,
+            capture_output=True,
+            check=False,
+        )
+    except OSError:
+        # No git at all, which some containers are. Same answer as a shallow clone:
+        # this checkout cannot decide, and saying so beats raising inside a gate.
+        return None
     if present.returncode != 0:
         return None
+    # Where ROOT sits under the git toplevel, asked for rather than hardcoded, so this
+    # works against the real catalogue and against a test repository where the evidence
+    # root *is* the toplevel.
+    prefix = subprocess.run(
+        ["git", "rev-parse", "--show-prefix"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
     shown = subprocess.run(
-        ["git", "show", f"{commit}:{PREFIX}/{path}"],
+        ["git", "show", f"{commit}:{prefix}{path}"],
         cwd=ROOT,
         capture_output=True,
         check=False,
