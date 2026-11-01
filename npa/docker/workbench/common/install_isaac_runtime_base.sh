@@ -183,7 +183,8 @@ if [ "$ISAAC_PYTHON_MINOR" = 3.11 ]; then
       --with-ensurepip=no \
       --without-static-libpython
     make -j "$PYTHON_BUILD_JOBS"
-    ./python -m test --fail-env-changed \
+    LD_LIBRARY_PATH="$PWD${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
+      ./python -m test --fail-env-changed \
       test_pyexpat test_sax test_xml_etree test_xml_etree_c
     make altinstall
     install -d -m 0755 /usr/share/doc/cpython3.11
