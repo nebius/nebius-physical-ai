@@ -739,7 +739,8 @@ def test_teacher_solver_evidence_rejects_missing_joint_target() -> None:
     )
 
     with pytest.raises(
-        RuntimeError, match="teacher articulation joint_pos_target telemetry is unavailable"
+        RuntimeError,
+        match="teacher articulation joint_pos_target telemetry is unavailable",
     ):
         _teacher_solver_evidence(native)
 

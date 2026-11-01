@@ -644,8 +644,7 @@ def _teacher_tracking_receipt(
         "arm_joint_positions_before_rad": joints_before,
         "arm_joint_positions_after_rad": joints,
         "arm_joint_motion_rad": [
-            after - before
-            for before, after in zip(joints_before, joints, strict=True)
+            after - before for before, after in zip(joints_before, joints, strict=True)
         ],
         "arm_joint_position_limit_margins_after_rad": margins,
         "collision_evidence_available": True,
@@ -787,8 +786,12 @@ def _teacher_arm_joint_values(
     if tensor is None or not hasattr(tensor, "detach") or tensor.ndim != 2:
         raise RuntimeError(f"teacher articulation {field} telemetry is unavailable")
     selected = tensor[:, joint_ids]
-    if selected.shape != (1, len(joint_names)) or not bool(torch.isfinite(selected).all()):
-        raise RuntimeError(f"teacher articulation {field} telemetry has an invalid shape")
+    if selected.shape != (1, len(joint_names)) or not bool(
+        torch.isfinite(selected).all()
+    ):
+        raise RuntimeError(
+            f"teacher articulation {field} telemetry has an invalid shape"
+        )
     return [float(value) for value in selected[0].detach().cpu().tolist()]
 
 
