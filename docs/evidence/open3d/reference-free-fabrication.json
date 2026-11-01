@@ -1,0 +1,422 @@
+{
+  "construction_validity_instrument": {
+    "what_it_reads": "Share of reference-surface samples with solid on both sides, so on an internal face rather than the boundary.",
+    "validated_against": {
+      "three_boxes_added_together_my_first_slot": 0.2203,
+      "open3d_boolean_difference_output": 0.0125,
+      "extruded_u_profile_used_here": 0.0,
+      "plain_box_control": 0.0
+    },
+    "why_is_watertight_is_not_the_check": "It returns False for the extruded U and for Open3D's own boolean_difference output, on winding rather than on holes, while occupancy through the slot is exactly right for both."
+  },
+  "what_this_tests": "Whether the runner's own statement -- that deciding fabrication needs a reference surface -- is true. The candidate reads only the cloud and the mesh.",
+  "gate_1_the_products_counterexample_reproduces": {
+    "what_the_product_records": {
+      "unsupported": 0.3157,
+      "beyond_3": 0.1316,
+      "share": 0.4169
+    },
+    "what_this_run_measures": {
+      "unsupported": 0.325208,
+      "beyond_3": 0.131302,
+      "share": 0.403748
+    },
+    "largest_absolute_difference": 0.013152,
+    "gate": "the claim allows 0.02; nothing after this counts if it is not met"
+  },
+  "cases": [
+    {
+      "case": "dense on five faces, sparse on the sixth",
+      "per_face_counts": {
+        "five_faces_each": 4000,
+        "sixth_face": 40
+      },
+      "observations": 20040,
+      "median_sample_spacing": 0.007398,
+      "voxel_size": 0.014796,
+      "invented_area_fraction": 0.0,
+      "why_nothing_is_invented": "Every mesh vertex lies on a face of the analytic unit cube and every observation is drawn on that same cube, so there is nothing for a fabrication reading to be right about.",
+      "unsupported_area_fraction": 0.325208,
+      "unsupported_area_beyond_3_voxels": 0.131302,
+      "far_band_share_of_unsupported_area": 0.403748,
+      "far_share_recomputed_here": 0.403748,
+      "misoriented_far_share_of_unsupported_area": 0.081198,
+      "orientation_unsupported_far_share_of_unsupported_area": 0.008969,
+      "median_orientation_consistent_support_in_voxels_on_far_area": 5.573,
+      "misoriented_share_of_all_area": 0.043073,
+      "median_disagreement_degrees_on_far_area": 5.1061,
+      "reads_as": "far from any observation"
+    },
+    {
+      "case": "even coverage of all six faces",
+      "per_face_counts": {
+        "five_faces_each": 4000,
+        "sixth_face": 4000
+      },
+      "observations": 24000,
+      "median_sample_spacing": 0.007359,
+      "voxel_size": 0.014718,
+      "invented_area_fraction": 0.0,
+      "why_nothing_is_invented": "Every mesh vertex lies on a face of the analytic unit cube and every observation is drawn on that same cube, so there is nothing for a fabrication reading to be right about.",
+      "unsupported_area_fraction": 0.192187,
+      "unsupported_area_beyond_3_voxels": 0.0,
+      "far_band_share_of_unsupported_area": 0.0,
+      "far_share_recomputed_here": 0.0,
+      "misoriented_far_share_of_unsupported_area": 0.0,
+      "orientation_unsupported_far_share_of_unsupported_area": 0.0,
+      "median_orientation_consistent_support_in_voxels_on_far_area": 0.0,
+      "misoriented_share_of_all_area": 0.001927,
+      "median_disagreement_degrees_on_far_area": 0.0,
+      "reads_as": "near-threshold surface"
+    }
+  ],
+  "sparse_density_sweep_zero_invented_everywhere": [
+    {
+      "case": "sparse sixth face, 160 samples",
+      "per_face_counts": {
+        "five_faces_each": 4000,
+        "sixth_face": 160
+      },
+      "observations": 20160,
+      "median_sample_spacing": 0.007429,
+      "voxel_size": 0.014859,
+      "invented_area_fraction": 0.0,
+      "why_nothing_is_invented": "Every mesh vertex lies on a face of the analytic unit cube and every observation is drawn on that same cube, so there is nothing for a fabrication reading to be right about.",
+      "unsupported_area_fraction": 0.320469,
+      "unsupported_area_beyond_3_voxels": 0.078438,
+      "far_band_share_of_unsupported_area": 0.244759,
+      "far_share_recomputed_here": 0.244759,
+      "misoriented_far_share_of_unsupported_area": 0.024053,
+      "orientation_unsupported_far_share_of_unsupported_area": 0.0,
+      "median_orientation_consistent_support_in_voxels_on_far_area": 3.464,
+      "misoriented_share_of_all_area": 0.021927,
+      "median_disagreement_degrees_on_far_area": 0.0,
+      "reads_as": "far from any observation"
+    },
+    {
+      "case": "sparse sixth face, 80 samples",
+      "per_face_counts": {
+        "five_faces_each": 4000,
+        "sixth_face": 80
+      },
+      "observations": 20080,
+      "median_sample_spacing": 0.007412,
+      "voxel_size": 0.014823,
+      "invented_area_fraction": 0.0,
+      "why_nothing_is_invented": "Every mesh vertex lies on a face of the analytic unit cube and every observation is drawn on that same cube, so there is nothing for a fabrication reading to be right about.",
+      "unsupported_area_fraction": 0.323698,
+      "unsupported_area_beyond_3_voxels": 0.11,
+      "far_band_share_of_unsupported_area": 0.339823,
+      "far_share_recomputed_here": 0.339823,
+      "misoriented_far_share_of_unsupported_area": 0.04103,
+      "orientation_unsupported_far_share_of_unsupported_area": 0.0,
+      "median_orientation_consistent_support_in_voxels_on_far_area": 4.021,
+      "misoriented_share_of_all_area": 0.02875,
+      "median_disagreement_degrees_on_far_area": 2.4185,
+      "reads_as": "far from any observation"
+    },
+    {
+      "case": "sparse sixth face, 40 samples",
+      "per_face_counts": {
+        "five_faces_each": 4000,
+        "sixth_face": 40
+      },
+      "observations": 20040,
+      "median_sample_spacing": 0.007398,
+      "voxel_size": 0.014796,
+      "invented_area_fraction": 0.0,
+      "why_nothing_is_invented": "Every mesh vertex lies on a face of the analytic unit cube and every observation is drawn on that same cube, so there is nothing for a fabrication reading to be right about.",
+      "unsupported_area_fraction": 0.325208,
+      "unsupported_area_beyond_3_voxels": 0.131302,
+      "far_band_share_of_unsupported_area": 0.403748,
+      "far_share_recomputed_here": 0.403748,
+      "misoriented_far_share_of_unsupported_area": 0.081198,
+      "orientation_unsupported_far_share_of_unsupported_area": 0.008969,
+      "median_orientation_consistent_support_in_voxels_on_far_area": 5.573,
+      "misoriented_share_of_all_area": 0.043073,
+      "median_disagreement_degrees_on_far_area": 5.1061,
+      "reads_as": "far from any observation"
+    },
+    {
+      "case": "sparse sixth face, 20 samples",
+      "per_face_counts": {
+        "five_faces_each": 4000,
+        "sixth_face": 20
+      },
+      "observations": 20020,
+      "median_sample_spacing": 0.007392,
+      "voxel_size": 0.014785,
+      "invented_area_fraction": 0.0,
+      "why_nothing_is_invented": "Every mesh vertex lies on a face of the analytic unit cube and every observation is drawn on that same cube, so there is nothing for a fabrication reading to be right about.",
+      "unsupported_area_fraction": 0.325833,
+      "unsupported_area_beyond_3_voxels": 0.140469,
+      "far_band_share_of_unsupported_area": 0.431106,
+      "far_share_recomputed_here": 0.431106,
+      "misoriented_far_share_of_unsupported_area": 0.139226,
+      "orientation_unsupported_far_share_of_unsupported_area": 0.06234,
+      "median_orientation_consistent_support_in_voxels_on_far_area": 7.6,
+      "misoriented_share_of_all_area": 0.06224,
+      "median_disagreement_degrees_on_far_area": 9.7288,
+      "reads_as": "far from any observation"
+    },
+    {
+      "case": "sparse sixth face, 10 samples",
+      "per_face_counts": {
+        "five_faces_each": 4000,
+        "sixth_face": 10
+      },
+      "observations": 20010,
+      "median_sample_spacing": 0.007391,
+      "voxel_size": 0.014781,
+      "invented_area_fraction": 0.0,
+      "why_nothing_is_invented": "Every mesh vertex lies on a face of the analytic unit cube and every observation is drawn on that same cube, so there is nothing for a fabrication reading to be right about.",
+      "unsupported_area_fraction": 0.326042,
+      "unsupported_area_beyond_3_voxels": 0.145052,
+      "far_band_share_of_unsupported_area": 0.444888,
+      "far_share_recomputed_here": 0.444888,
+      "misoriented_far_share_of_unsupported_area": 0.188498,
+      "orientation_unsupported_far_share_of_unsupported_area": 0.150799,
+      "median_orientation_consistent_support_in_voxels_on_far_area": 9.682,
+      "misoriented_share_of_all_area": 0.078906,
+      "median_disagreement_degrees_on_far_area": 19.9858,
+      "reads_as": "far from any observation"
+    }
+  ],
+  "bridged_cases_real_invented_surface": [
+    {
+      "case": "two boxes, gap 0.20, 20000 samples",
+      "observations": 20000,
+      "median_sample_spacing": 0.010234,
+      "voxel_size": 0.020467,
+      "invented_area_fraction": 0.372187,
+      "internal_face_sample_share_of_the_reference": 0.0,
+      "how_invented_was_established": "Distance from each reconstructed triangle's centroid to the reference surface, past one voxel. The reference produced the samples and confirms this afterwards; neither measure below reads it.",
+      "unsupported_area_fraction": 0.372187,
+      "unsupported_area_beyond_3_voxels": 0.372187,
+      "far_band_share_of_unsupported_area": 1.0,
+      "far_share_recomputed_here": 1.0,
+      "misoriented_far_share_of_unsupported_area": 1.0,
+      "orientation_unsupported_far_share_of_unsupported_area": 0.51074,
+      "median_orientation_consistent_support_in_voxels_on_far_area": 10.933,
+      "misoriented_share_of_all_area": 0.372195,
+      "median_disagreement_degrees_on_far_area": 89.7735,
+      "reads_as": "far from any observation"
+    },
+    {
+      "case": "two boxes, gap 0.20, 8000 samples",
+      "observations": 8000,
+      "median_sample_spacing": 0.01618,
+      "voxel_size": 0.03236,
+      "invented_area_fraction": 0.375491,
+      "internal_face_sample_share_of_the_reference": 0.0,
+      "how_invented_was_established": "Distance from each reconstructed triangle's centroid to the reference surface, past one voxel. The reference produced the samples and confirms this afterwards; neither measure below reads it.",
+      "unsupported_area_fraction": 0.375491,
+      "unsupported_area_beyond_3_voxels": 0.375491,
+      "far_band_share_of_unsupported_area": 1.0,
+      "far_share_recomputed_here": 1.0,
+      "misoriented_far_share_of_unsupported_area": 1.0,
+      "orientation_unsupported_far_share_of_unsupported_area": 0.181151,
+      "median_orientation_consistent_support_in_voxels_on_far_area": 7.384,
+      "misoriented_share_of_all_area": 0.375491,
+      "median_disagreement_degrees_on_far_area": 89.7039,
+      "reads_as": "far from any observation"
+    },
+    {
+      "case": "two spheres, gap 0.20, 20000 samples",
+      "observations": 20000,
+      "median_sample_spacing": 0.007432,
+      "voxel_size": 0.014865,
+      "invented_area_fraction": 0.525904,
+      "internal_face_sample_share_of_the_reference": 0.0,
+      "how_invented_was_established": "Distance from each reconstructed triangle's centroid to the reference surface, past one voxel. The reference produced the samples and confirms this afterwards; neither measure below reads it.",
+      "unsupported_area_fraction": 0.525904,
+      "unsupported_area_beyond_3_voxels": 0.525904,
+      "far_band_share_of_unsupported_area": 1.0,
+      "far_share_recomputed_here": 1.0,
+      "misoriented_far_share_of_unsupported_area": 1.0,
+      "orientation_unsupported_far_share_of_unsupported_area": 0.886811,
+      "median_orientation_consistent_support_in_voxels_on_far_area": 12.0,
+      "misoriented_share_of_all_area": 0.525904,
+      "median_disagreement_degrees_on_far_area": 89.8679,
+      "reads_as": "far from any observation"
+    },
+    {
+      "case": "two spheres, gap 0.20, 8000 samples",
+      "observations": 8000,
+      "median_sample_spacing": 0.011732,
+      "voxel_size": 0.023464,
+      "invented_area_fraction": 0.525512,
+      "internal_face_sample_share_of_the_reference": 0.0,
+      "how_invented_was_established": "Distance from each reconstructed triangle's centroid to the reference surface, past one voxel. The reference produced the samples and confirms this afterwards; neither measure below reads it.",
+      "unsupported_area_fraction": 0.525512,
+      "unsupported_area_beyond_3_voxels": 0.525512,
+      "far_band_share_of_unsupported_area": 1.0,
+      "far_share_recomputed_here": 1.0,
+      "misoriented_far_share_of_unsupported_area": 1.0,
+      "orientation_unsupported_far_share_of_unsupported_area": 0.706789,
+      "median_orientation_consistent_support_in_voxels_on_far_area": 12.0,
+      "misoriented_share_of_all_area": 0.525512,
+      "median_disagreement_degrees_on_far_area": 89.8025,
+      "reads_as": "far from any observation"
+    },
+    {
+      "case": "narrow slot, 1.5 voxels wide, 20000 samples",
+      "observations": 20000,
+      "median_sample_spacing": 0.010016,
+      "voxel_size": 0.020031,
+      "invented_area_fraction": 0.058833,
+      "internal_face_sample_share_of_the_reference": 0.0,
+      "how_invented_was_established": "Distance from each reconstructed triangle's centroid to the reference surface, past one voxel. The reference produced the samples and confirms this afterwards; neither measure below reads it.",
+      "unsupported_area_fraction": 0.061977,
+      "unsupported_area_beyond_3_voxels": 0.032398,
+      "far_band_share_of_unsupported_area": 0.522734,
+      "far_share_recomputed_here": 0.522734,
+      "misoriented_far_share_of_unsupported_area": 0.0,
+      "orientation_unsupported_far_share_of_unsupported_area": 0.0,
+      "median_orientation_consistent_support_in_voxels_on_far_area": 3.781,
+      "misoriented_share_of_all_area": 0.031167,
+      "median_disagreement_degrees_on_far_area": 15.4896,
+      "reads_as": "far from any observation"
+    },
+    {
+      "case": "narrow slot, 1.5 voxels wide, 8000 samples",
+      "observations": 8000,
+      "median_sample_spacing": 0.015855,
+      "voxel_size": 0.03171,
+      "invented_area_fraction": 0.055871,
+      "internal_face_sample_share_of_the_reference": 0.0,
+      "how_invented_was_established": "Distance from each reconstructed triangle's centroid to the reference surface, past one voxel. The reference produced the samples and confirms this afterwards; neither measure below reads it.",
+      "unsupported_area_fraction": 0.061972,
+      "unsupported_area_beyond_3_voxels": 0.0,
+      "far_band_share_of_unsupported_area": 0.0,
+      "far_share_recomputed_here": 0.0,
+      "misoriented_far_share_of_unsupported_area": 0.0,
+      "orientation_unsupported_far_share_of_unsupported_area": 0.0,
+      "median_orientation_consistent_support_in_voxels_on_far_area": 0.0,
+      "misoriented_share_of_all_area": 0.053158,
+      "median_disagreement_degrees_on_far_area": 0.0,
+      "reads_as": "near-threshold surface"
+    }
+  ],
+  "open3d_version": "0.20.0",
+  "numpy_seed": 7,
+  "normal_agreement_cutoff_degrees": 60.0,
+  "local_samples_per_plane_fit": 10,
+  "verdict_against_the_frozen_acceptance": {
+    "where_acceptance_was_frozen": "program/claims/open3d-reference-free-fabrication/CLAIM.md",
+    "frozen_before_any_of_this_ran": true,
+    "candidate_a_misoriented_against_nearest_samples": {
+      "1_products_counterexample_below_0_05": {
+        "reading": 0.081198,
+        "required": "< 0.05",
+        "met": false
+      },
+      "2_every_invented_case_above_0_30": {
+        "lowest_invented_reading": 0.0,
+        "required": "> 0.30",
+        "met": false,
+        "which_case_is_lowest": "narrow slot, 1.5 voxels wide, 20000 samples"
+      },
+      "3_no_overlap_between_invented_and_clean": {
+        "highest_clean_reading": 0.188498,
+        "lowest_invented_reading": 0.0,
+        "met": false,
+        "inverted": true
+      },
+      "4_sparser_coverage_stays_below_0_05": {
+        "readings_as_the_sixth_face_thins": [
+          0.024053,
+          0.04103,
+          0.081198,
+          0.139226,
+          0.188498
+        ],
+        "required": "all < 0.05",
+        "met": false
+      },
+      "5_false_alarm_floor_below_0_01": {
+        "reading": 0.0,
+        "required": "< 0.01",
+        "met": true
+      }
+    },
+    "candidate_b_no_orientation_consistent_sample_within_12_voxels": {
+      "1_products_counterexample_below_0_05": {
+        "reading": 0.008969,
+        "required": "< 0.05",
+        "met": true
+      },
+      "2_every_invented_case_above_0_30": {
+        "lowest_invented_reading": 0.0,
+        "required": "> 0.30",
+        "met": false,
+        "which_case_is_lowest": "narrow slot, 1.5 voxels wide, 20000 samples"
+      },
+      "3_no_overlap_between_invented_and_clean": {
+        "highest_clean_reading": 0.150799,
+        "lowest_invented_reading": 0.0,
+        "met": false,
+        "inverted": true
+      },
+      "4_sparser_coverage_stays_below_0_05": {
+        "readings_as_the_sixth_face_thins": [
+          0.0,
+          0.0,
+          0.008969,
+          0.06234,
+          0.150799
+        ],
+        "required": "all < 0.05",
+        "met": false
+      },
+      "5_false_alarm_floor_below_0_01": {
+        "reading": 0.0,
+        "required": "< 0.01",
+        "met": true
+      }
+    },
+    "criteria_met": {
+      "candidate_a": 1,
+      "candidate_b": 2,
+      "out_of": 5
+    },
+    "outcome": "Both candidates are rejected. The hypothesis does not hold."
+  },
+  "the_decisive_case": {
+    "which": "narrow slot, 1.5 voxels wide",
+    "why_it_decides": "It is the only construction here whose invented surface runs parallel to observed surface: Poisson roofs a slot 1.5 voxels wide, and the slot floor underneath is sampled. Both candidates read exactly 0.0 on it while 5.9 and 5.6 percent of its area is invented, and both read higher on the cube where nothing is invented at all. That is an inversion, not a weak signal, and it is the geometry an operator is most likely to meet: a bridge over a gap in a surface is usually roughly parallel to it.",
+    "readings": {
+      "invented_area_fraction": [
+        0.058833,
+        0.055871
+      ],
+      "candidate_a": [
+        0.0,
+        0.0
+      ],
+      "candidate_b": [
+        0.0,
+        0.0
+      ],
+      "product_far_share": [
+        0.522734,
+        0.0
+      ]
+    },
+    "the_product_reading_is_also_unstable_here": "0.5227 at 20000 samples and 0.0000 at 8000, for invented fractions of 0.0588 and 0.0559. Same fabrication, opposite readings. That is within the limitation the runner already documents rather than a new defect, and it is recorded because it is the sharpest example of it I have measured."
+  },
+  "why_both_candidates_fail_in_one_sentence_each": {
+    "candidate_a": "Comparing a triangle against whichever samples are nearest makes it fire on correct surface whose nearest samples belong to a perpendicular patch -- a sparse cube face near its edge, whose ten nearest samples are all on the adjacent dense face -- and stay silent on invented surface whose nearest samples are parallel to it.",
+    "candidate_b": "Requiring an orientation-agreeing sample nearby fixes the first failure, taking the cube control from 0.0812 to 0.0090, and leaves the second untouched: a roof over a slot has the slot floor parallel to it and well within the radius, so it reads as supported."
+  },
+  "what_this_means_for_the_product": {
+    "conclusion": "The runner's own statement -- deciding fabrication needs a reference surface -- stands, and now has a measurement behind it rather than an argument. a828e58fd3 was right to withdraw the stronger reading.",
+    "nothing_changes_in_the_product": "No threshold, no default and no accepted number moves. This is a negative result about a reading that was never added.",
+    "what_the_next_person_should_not_repeat": "Normal correspondence against the input cloud. It is the obvious candidate, it is cheap, it reads plausibly on the counterexample the product documents, and it is defeated by the most ordinary fabrication there is.",
+    "where_normal_correspondence_does_work": "Against a reference surface, which is #1006. That measurement stands; this one does not contradict it. The difference is entirely the reference: with one, a bridge's normal is compared against the surface it should have been part of, and without one it is compared against whatever happens to be nearby."
+  },
+  "visual_evaluation": {
+    "status": "not_applicable",
+    "reason": "Every reading here is a scalar area share computed from geometry. There is no frame, no render and nothing for a vision model to see, and attaching one would be decoration. The nonvisual allowance in EXPANDED-REVIEW-CONTRACT.md covers this."
+  }
+}

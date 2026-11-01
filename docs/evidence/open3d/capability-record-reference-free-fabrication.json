@@ -1,0 +1,74 @@
+{
+  "capability": "A measured answer to whether any reference-free reading separates invented surface from sparse correct coverage. It does not, and the runner's withdrawal of that claim stands.",
+  "why": "_crop_justification reports which side of FAR_BAND_AREA_SHARE the removed area fell on and states its own limit: thin coverage and surface that does not belong both read the same way, and deciding fabrication needs a reference surface. a828e58fd3 withdrew the stronger reading on that basis. The last clause is an argument, and it is cheap enough to test that leaving it untested is a choice.",
+  "source_commit": "see the PR head; the product is unchanged by this work",
+  "hardware": "CPU only. Open3D's registration and reconstruction APIs have no CUDA path.",
+  "what_was_measured": {
+    "candidate_a": "A far triangle is invented if its own normal disagrees by more than 60 degrees with the plane fitted to its ten nearest samples.",
+    "candidate_b": "A far triangle is invented if no sample within twelve voxels has an orientation agreeing with it. Reference-free: the cloud's normals are estimated from the cloud.",
+    "denominator": "Unsupported area, the same denominator the product's own far reading uses, so the three readings are directly comparable."
+  },
+  "acceptance_was_frozen_first": {
+    "where": "program/claims/open3d-reference-free-fabrication/CLAIM.md",
+    "when": "before any measurement ran",
+    "why_it_matters_here": "The result is negative. Without a gate fixed in advance, a negative result is one sentence away from being reported as a promising direction.",
+    "result": "Candidate A meets 1 of 5 criteria; candidate B meets 2 of 5. Both rejected."
+  },
+  "gate_1_passed_so_the_rest_counts": "The product's own counterexample reproduces: the cube sampled densely on five faces and sparsely on the sixth reads 0.3252 unsupported area, 0.1313 past three voxels and a far share of 0.4037, against the recorded 0.3157 / 0.1316 / 0.4169. Largest difference 0.0132, inside the 0.02 the claim allowed.",
+  "the_decisive_case": "A slot 1.5 voxels wide, which Poisson roofs. 5.9 percent of the reconstruction's area is invented, and both candidates read exactly 0.0000 on it -- while reading 0.0812 and 0.0090 on the cube where nothing is invented, and up to 0.1885 and 0.1508 as that cube's sparse face thins. The order is inverted, not merely blurred. It is also the most ordinary fabrication there is: a roof over a gap runs parallel to the surface it spans, and the surface underneath is sampled, so it reads as supported.",
+  "why_each_fails": {
+    "candidate_a": "Nearest samples need not be samples of the thing being judged. On the cube's sparse face near an edge, all ten nearest samples lie on the adjacent dense perpendicular face: planarity 0.0000, neighbourhood radius 0.0697 against a voxel of 0.0148. The samples are right and the mesh is right, and they correspond to nothing in common. My first explanation of this was the opposite -- mixed neighbourhoods spanning two faces -- and the measurement said 14 percent for the false alarms against 73 percent for the correct readings.",
+    "candidate_b": "Requiring an orientation-agreeing sample nearby fixes that, taking the control from 0.0812 to 0.0090, and does nothing for the decisive case, because a roof's agreeing sample is the floor directly beneath it.",
+    "shared": "Both climb as correct coverage thins, which makes them partly density detectors. That is the error the product already removed once, so it is the failure that settles it."
+  },
+  "constructions_that_failed_to_exercise_the_effect": {
+    "kept_because": "A construction that fails to exercise an effect is not evidence the effect is absent. Three of five attempts here produced nothing to detect.",
+    "sphere_with_a_cap_of_samples_removed": "Invents 0.0004 of its area. Poisson closing a cap of a sphere reproduces the sphere.",
+    "thin_torus": "Invents exactly nothing; Poisson reconstructs it correctly.",
+    "slot_at_7_6_4_0_and_2_5_voxels_wide": "Invents exactly nothing. The slot had to be narrowed to 1.5 voxels before Poisson roofed it at all."
+  },
+  "a_broken_construction_that_produced_a_plausible_number": {
+    "what_it_was": "The first slotted reference was three boxes added with `+=`, which concatenates triangles without a boolean union. The base's top face and the teeth's bottom faces survive inside the solid, sample_points_poisson_disk draws samples on them, and distance-to-reference then measures against a surface soup.",
+    "what_it_cost": "A whole conclusion. It read 0.1041 invented, both candidates read about zero on it, and I was one step from publishing that as the decisive negative. The number was plausible and the mechanism was not: the area it called invented was a band just above the internal face, spanning the full width, only 2 percent of it inside the slot.",
+    "how_it_was_caught": "By checking the mechanism I had asserted rather than the fraction I had measured. Nothing in the reading itself distinguished it.",
+    "the_instrument_that_now_catches_it": "Share of reference-surface samples with solid on both sides. It reads 0.2203 on the broken construction, 0.0125 on Open3D's own boolean_difference output, and 0.0000 on the hand-extruded U used here and on a plain box. is_watertight() is not that check: it returns False for both the U and the boolean output, on winding, while occupancy through the slot is exactly right for both."
+  },
+  "what_changes_in_the_product": "Nothing. No threshold, no default, no accepted number.",
+  "this_does_not_contradict_1006": "#1006 found normal correspondence works against a reference surface, and that stands. The difference is the reference: with one, a bridge is compared against the surface it should have belonged to; without one, against whatever happens to be nearby.",
+  "regression_guards": {
+    "file": "npa/tests/workbench/test_open3d_reference_free_fabrication.py",
+    "count": 15,
+    "what_they_hold": "The verdict is recomputed from the published rows and compared against the recorded pass counts, so the report never asserts its own validity. The overlap, the inversion, the climb with sparsity, gate 1's margin, and the validity of every reference actually measured are each recomputed.",
+    "mutations_caught": [
+      "the narrow slot suddenly reads 0.6: 4 tests fail",
+      "the sparsity sweep stops climbing: 3 fail",
+      "the recorded pass count inflated to 5 of 5: 1 fails",
+      "gate 1 drifts past the frozen 0.02: 1 fails",
+      "a reference with internal faces is used: 1 fails",
+      "the construction instrument loses its validating positive: 1 fails",
+      "the distinction from #1006 is dropped: 1 fails"
+    ]
+  },
+  "limitations": "Two candidate readings, three inventing geometries, two sampling densities, one reconstruction method (Poisson at depth 7) and one normal-agreement cutoff. This rejects these candidates on these constructions; it does not prove no reference-free reading can work. What it does establish is that the obvious one cannot, and why.",
+  "visual_evaluation": {
+    "status": "not_applicable",
+    "reason": "Every reading is a scalar area share computed from geometry. There is no frame and nothing for a vision model to see; attaching one would be decoration. EXPANDED-REVIEW-CONTRACT.md allows this for nonvisual work with a reason."
+  },
+  "independent_review": "requested on the PR",
+  "provenance": {
+    "harness_that_produced_this": [
+      {
+        "path": "harness/reference_free_fabrication.py",
+        "sha256": "4d65d13334eb356699761c2dc8cdd73925f1ea80cbfa709d4b1d66b334d75da4"
+      },
+      {
+        "path": "reference-free-fabrication.json",
+        "sha256": "87ef51c8bf85bdfaf9c132066439616de3e38230a183c129a55373867d59c500"
+      }
+    ],
+    "inputs": "None external. Every geometry is constructed analytically in the harness, so this reproduces from the repository with no staged data and no retained bundle.",
+    "reproduce": "OPEN3D_OUT_DIR=<existing dir> python docs/evidence/open3d/harness/reference_free_fabrication.py  (about five minutes, CPU only)",
+    "open3d_version": "0.20.0",
+    "numpy_seed": 7
+  }
+}
