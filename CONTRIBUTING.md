@@ -574,13 +574,13 @@ aggregate authenticated commit reads. Authenticated tree objects, aggregate
 tree metadata, expanded path count/path bytes, and generated scan-view bytes
 have separate ceilings before materialization. Before the two native Gitleaks
 history passes, the helper reproduces the pinned `git log -p -U0` input and
-also inventories every changed regular blob per selected commit. It charges the
-full size of every such blob as a conservative upper bound for binary archives
-that Gitleaks can reopen through `git cat-file`, even when Git's patch contains
-only a short binary marker. The patch plus changed-blob upper bound must fit
-1 GiB per pass, and both invocations share a 2-GiB aggregate native-history
-input ceiling. NUL-delimited raw-diff metadata is bounded to 64 MiB per commit
-and 512 MiB in aggregate before blob sizes are queried.
+also inventories every changed regular or symbolic-link blob per selected
+commit. It charges the full size of every such blob as a conservative upper
+bound for binary archives that Gitleaks can reopen through `git cat-file`, even
+when Git's patch contains only a short binary marker. The patch plus changed-blob
+upper bound must fit 1 GiB per pass, and both invocations share a 2-GiB aggregate
+native-history input ceiling. NUL-delimited raw-diff metadata is bounded to
+64 MiB per commit and 512 MiB in aggregate before blob sizes are queried.
 It also scans complete and localized UTF-16/32 text, disables inline `gitleaks:allow`
 suppression, and runs private binary/archive/decode controls. Those controls
 pass only when findings identify all three distinct binary, archive-member, and
@@ -614,7 +614,8 @@ archive members, 256 MiB per logical member, and 512 MiB aggregate decompressed
 member bytes per scan source. Parser-only PAX/GNU TAR metadata records are not
 charged as logical members, but the complete decompressed TAR structure,
 including those records, and ZIP central directories are byte-bounded before
-Python parses or indexes them. Embedded-TAR checksum fields must first have a
+Python parses or indexes them. XZ dictionary allocation is separately capped at
+256 MiB. Embedded-TAR checksum fields must first have a
 parseable numeric layout and supported TAR type; those structurally plausible
 candidates have one 100,000-candidate work limit across all streamed archive
 members, and exhausting it fails closed. ZIP64/multi-disk metadata is rejected.
@@ -641,12 +642,15 @@ cardinality is bounded by distinct codec-and-byte identity so repeated
 scan-view bytes retain every governed path without consuming the same work
 budget again; generated-file count and aggregate encoded-candidate output are
 bounded separately. The runner uses fixed process environments for authenticated
-Git object reads and Gitleaks, fixes Gitleaks parallelism at eight threads,
-requires exact Gitleaks 8.28.0, and compares the Linux x86-64 executable SHA-256
-with the pinned official release byte digest before executing it. It rejects
-warning, error, or archive-coverage diagnostics even when the scanner returns
-success, applies a 256-MiB report-file ceiling in each child process and one
-512-MiB aggregate report budget across controls and all sharded invocations,
+Git object reads and Gitleaks. Native history scans use fresh private Git
+metadata backed by the source object database, so repository-local signature
+helpers and other caller-controlled Git configuration are not inherited. The
+runner fixes Gitleaks parallelism at eight threads, requires exact Gitleaks
+8.28.0, and compares the Linux x86-64 executable SHA-256 with the pinned official
+release byte digest before executing it. It rejects warning, error, or
+archive-coverage diagnostics even when the scanner returns success, applies a
+256-MiB report-file ceiling in each child process and one 512-MiB aggregate
+report budget across controls and all sharded invocations,
 spools diagnostics to bounded files instead of memory, and revalidates both
 scanner bytes and the exact Git history plan after all long-running scans. Caller
 process hooks,

@@ -97,6 +97,47 @@ def _commit(repo: Path, message: str) -> str:
     return _git(repo, "rev-parse", "HEAD")
 
 
+def _synthetic_signed_commit(repo: Path, parent: str) -> str:
+    """Create one inert commit carrying enough SSH signature syntax for Git."""
+    _git(repo, "add", "source.txt")
+    tree = _git(repo, "write-tree")
+    body = (
+        f"tree {tree}\n"
+        f"parent {parent}\n"
+        "author NPA synthetic control <npa-test@example.invalid> 1700000000 +0000\n"
+        "committer NPA synthetic control <npa-test@example.invalid> "
+        "1700000000 +0000\n"
+        "gpgsig -----BEGIN SSH SIGNATURE-----\n"
+        " U1NIU0lHAAAAAQ==\n"
+        " -----END SSH SIGNATURE-----\n"
+        "\n"
+        "synthetic signed candidate\n"
+    )
+    return subprocess.run(
+        ["git", "-C", str(repo), "hash-object", "-t", "commit", "-w", "--stdin"],
+        input=body,
+        check=True,
+        stdout=subprocess.PIPE,
+        text=True,
+    ).stdout.strip()
+
+
+def _configure_signature_helper(repo: Path, root: Path) -> tuple[Path, Path]:
+    """Install one observable repository-local SSH signature helper."""
+    marker = root / "signature-helper-invoked"
+    helper = root / "signature-helper"
+    helper.write_text(
+        f"#!/bin/sh\nprintf invoked > {marker}\nexit 1\n",
+        encoding="utf-8",
+    )
+    helper.chmod(0o700)
+    _git(repo, "config", "log.showSignature", "true")
+    _git(repo, "config", "gpg.format", "ssh")
+    _git(repo, "config", "gpg.ssh.program", str(helper))
+    _git(repo, "config", "gpg.ssh.allowedSignersFile", os.devnull)
+    return marker, helper
+
+
 def _runner_arguments(
     repo: Path,
     candidate: str,
@@ -2467,6 +2508,32 @@ def test_archive_container_wrapper_preserves_outer_policy_path(
     assert "archive-container-path-control" in output.err
 
 
+def test_xz_decoder_rejects_oversized_dictionary_before_allocation(
+    tmp_path: Path,
+) -> None:
+    """Bound attacker-controlled XZ dictionary memory as well as output bytes."""
+    encoded = bytearray(lzma.compress(b"bounded payload", format=lzma.FORMAT_XZ))
+    assert encoded[12:20] == bytes.fromhex("0200210116000000")
+    encoded[16] = 40
+    encoded[20:24] = (zlib.crc32(encoded[12:20]) & 0xFFFFFFFF).to_bytes(4, "little")
+    path = tmp_path / "oversized-dictionary.xz"
+    path.write_bytes(encoded)
+
+    with pytest.raises(tree_scan._ScanError, match="xz archive could not be verified"):
+        tree_scan._validate_archive_file(path)
+
+
+def test_memory_bounded_xz_reader_finishes_a_short_read(tmp_path: Path) -> None:
+    """Return short final output instead of waiting for requested bytes forever."""
+    payload = b"bounded payload"
+    path = tmp_path / "short.xz"
+    path.write_bytes(lzma.compress(payload, format=lzma.FORMAT_XZ))
+
+    with tree_scan._open_memory_bounded_xz(path, "rb") as stream:
+        assert stream.read(len(payload) + 1) == payload
+        assert stream.read(1) == b""
+
+
 @pytest.mark.skipif(
     shutil.which("gitleaks") is None, reason="gitleaks is not installed"
 )
@@ -4308,6 +4375,78 @@ def test_native_history_input_preflight_counts_and_bounds_replay(
             history_range,
             commits,
         )
+
+
+def test_native_history_input_charges_symlink_archive_blob(
+    tmp_path: Path,
+) -> None:
+    """Charge archive bytes that Gitleaks reopens even under Git mode 120000."""
+    repo = _repo(tmp_path)
+    (repo / "base.txt").write_text("clean base\n", encoding="utf-8")
+    base = _commit(repo, "base")
+    encoded = io.BytesIO()
+    with zipfile.ZipFile(encoded, "w", compression=zipfile.ZIP_STORED) as archive:
+        archive.writestr("payload.txt", b"A" * 65_536)
+    blob_path = tmp_path / "symlink-archive.bin"
+    blob_path.write_bytes(encoded.getvalue())
+    blob = _git(repo, "hash-object", "-w", str(blob_path))
+    _git(repo, "read-tree", base)
+    _git(repo, "update-index", "--add", "--cacheinfo", f"120000,{blob},carrier.zip")
+    tree = _git(repo, "write-tree")
+    candidate = _git(
+        repo,
+        "commit-tree",
+        tree,
+        "-p",
+        base,
+        "-m",
+        "symlink-mode archive",
+    )
+    _git(repo, "update-ref", "HEAD", candidate)
+    source = tree_scan._isolated_history_source(repo, tmp_path / "history-source")
+    metadata = tree_scan._read_native_diff_metadata(source, candidate, 1_000_000)
+
+    assert tree_scan._changed_blob_ids(metadata, b"sha1") == [blob.encode()]
+    measured = tree_scan._measure_native_history_input(
+        source,
+        f"{base}..{candidate}",
+        [candidate],
+    )
+    assert measured.changed_blob_bytes_upper_bound == len(encoded.getvalue())
+    assert measured.bytes_per_scan == (measured.patch_bytes + len(encoded.getvalue()))
+
+
+def test_isolated_history_source_drops_local_signature_program(
+    tmp_path: Path,
+) -> None:
+    """Never execute a caller-controlled verifier from the source Git config."""
+    repo = _repo(tmp_path)
+    _git(repo, "config", "commit.gpgsign", "false")
+    (repo / "source.txt").write_text("base\n", encoding="utf-8")
+    base = _commit(repo, "base")
+    (repo / "source.txt").write_text("candidate\n", encoding="utf-8")
+    candidate = _synthetic_signed_commit(repo, base)
+    _git(repo, "update-ref", "HEAD", candidate)
+    marker, helper = _configure_signature_helper(repo, tmp_path)
+    subprocess.run(
+        ["git", "-C", str(repo), "log", "-1", candidate],
+        check=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    assert marker.read_text(encoding="utf-8") == "invoked"
+    marker.unlink()
+
+    source = tree_scan._isolated_history_source(repo, tmp_path / "history-source")
+    assert materializer.git_directory(source) != materializer.git_directory(repo)
+    assert str(helper) not in (source / ".git" / "config").read_text(encoding="utf-8")
+    measured = tree_scan._measure_native_history_input(
+        source,
+        f"{base}..{candidate}",
+        [candidate],
+    )
+    assert measured.bytes_per_scan > 0
+    assert not marker.exists()
 
 
 @pytest.mark.skipif(

@@ -96,6 +96,7 @@ _ENCODING_CANDIDATES = (
 )
 _PROBE_STREAM_MAX_BYTES = 96 * 1024
 _PROBE_DECODE_CHUNK_BYTES = 64 * 1024
+_MAX_XZ_DECOMPRESS_MEMORY_BYTES = 256 * 1024 * 1024
 _NON_PRINTABLE_ASCII = re.compile(rb"[^\x09-\x7e]")
 _BASE64_HINT = re.compile(rb"[0-9+/_-]")
 _INVALID_STANDARD_BASE64 = re.compile(rb"[^A-Za-z0-9+/=]")
@@ -1502,6 +1503,82 @@ def _validate_zip_archive(
         raise _ScanError("ZIP archive could not be verified") from exc
 
 
+class _MemoryBoundedXzReader:
+    """Stream concatenated XZ members with an explicit decoder-memory ceiling."""
+
+    def __init__(self, path: Path) -> None:
+        self._stream = path.open("rb")
+        self._decompressor = self._new_decompressor()
+        self._pending = b""
+        self._output = bytearray()
+        self._finished = False
+
+    @staticmethod
+    def _new_decompressor() -> lzma.LZMADecompressor:
+        return lzma.LZMADecompressor(
+            format=lzma.FORMAT_XZ,
+            memlimit=_MAX_XZ_DECOMPRESS_MEMORY_BYTES,
+        )
+
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(self, *unused: object) -> None:
+        self.close()
+
+    def close(self) -> None:
+        self._stream.close()
+
+    def _pump(self, maximum: int) -> None:
+        starting_output_size = len(self._output)
+        while len(self._output) == starting_output_size and not self._finished:
+            if self._decompressor.eof:
+                compressed = self._decompressor.unused_data
+                if not compressed:
+                    compressed = self._stream.read(_ARCHIVE_READ_BYTES)
+                if not compressed:
+                    self._finished = True
+                    return
+                self._decompressor = self._new_decompressor()
+                self._pending = compressed
+            if self._decompressor.needs_input:
+                compressed = self._pending
+                self._pending = b""
+                if not compressed:
+                    compressed = self._stream.read(_ARCHIVE_READ_BYTES)
+                if not compressed:
+                    raise lzma.LZMAError("truncated XZ stream")
+            else:
+                compressed = b""
+            self._output.extend(
+                self._decompressor.decompress(compressed, max_length=maximum)
+            )
+
+    def read(self, size: int = -1) -> bytes:
+        if size == 0:
+            return b""
+        if size < 0:
+            chunks = [bytes(self._output)]
+            self._output.clear()
+            while not self._finished:
+                self._pump(_ARCHIVE_READ_BYTES)
+                if self._output:
+                    chunks.append(bytes(self._output))
+                    self._output.clear()
+            return b"".join(chunks)
+        while len(self._output) < size and not self._finished:
+            self._pump(max(size - len(self._output), 1))
+        result = bytes(self._output[:size])
+        del self._output[:size]
+        return result
+
+
+def _open_memory_bounded_xz(path: Path, mode: str) -> _MemoryBoundedXzReader:
+    if mode != "rb":
+        raise ValueError("bounded XZ reader only supports binary reads")
+    return _MemoryBoundedXzReader(path)
+
+
 def _validate_tar_archive(
     path: Path,
     budget: _ArchiveBudget,
@@ -1515,7 +1592,7 @@ def _validate_tar_archive(
         if lowered.endswith(".tar.bz2")
         else gzip.open
         if lowered.endswith(".tar.gz")
-        else lzma.open
+        else _open_memory_bounded_xz
         if lowered.endswith(".tar.xz")
         else Path.open
     )
@@ -1598,7 +1675,7 @@ def _validate_compressed_stream(
     openers = {
         "bzip2": bz2.open,
         "gzip": gzip.open,
-        "xz": lzma.open,
+        "xz": _open_memory_bounded_xz,
     }
     budget.start_member()
     member_writer = (
@@ -2032,16 +2109,72 @@ def _prepare_decode_probe_source(
     return counts.render(candidates, archive_budget)
 
 
+def _git_object_directory(repo: Path) -> Path:
+    """Resolve the source object directory as one alternates-file-safe path."""
+    raw_objects = materializer._git(repo, "rev-parse", "--git-path", "objects").rstrip(
+        b"\n"
+    )
+    if not raw_objects or b"\n" in raw_objects or b"\r" in raw_objects:
+        raise _ScanError("Git object path cannot be represented safely")
+    object_directory = Path(os.fsdecode(raw_objects))
+    if not object_directory.is_absolute():
+        object_directory = repo / object_directory
+    object_directory = object_directory.resolve(strict=True)
+    if not object_directory.is_dir():
+        raise _ScanError("Git object path must resolve to a directory")
+    return object_directory
+
+
+def _initialize_isolated_git_directory(
+    destination: Path,
+    object_format: bytes,
+    object_directory: Path,
+) -> Path:
+    """Create private Git metadata backed only by the source object database."""
+    encoded_objects = os.fsencode(object_directory)
+    if b"\n" in encoded_objects or b"\r" in encoded_objects:
+        raise _ScanError("Git object path cannot be represented safely")
+    git_directory = destination / ".git"
+    git_directory.mkdir(mode=0o700)
+    (git_directory / "objects").mkdir(mode=0o700)
+    (git_directory / "objects" / "info").mkdir(mode=0o700)
+    (git_directory / "refs").mkdir(mode=0o700)
+    (git_directory / "refs" / "heads").mkdir(mode=0o700)
+    extension = (
+        b"" if object_format == b"sha1" else b"[extensions]\n\tobjectFormat = sha256\n"
+    )
+    repository_format = b"0" if object_format == b"sha1" else b"1"
+    _write_private(
+        git_directory / "config",
+        (
+            b"[core]\n\trepositoryformatversion = "
+            + repository_format
+            + b"\n\tbare = false\n\tfilemode = false\n"
+            + extension
+        ),
+    )
+    _write_private(git_directory / "HEAD", b"ref: refs/heads/npa-isolated\n")
+    _write_private(
+        git_directory / "objects" / "info" / "alternates",
+        encoded_objects + b"\n",
+    )
+    return git_directory
+
+
 def _isolated_history_source(repo: Path, destination: Path) -> Path:
-    """Expose only Git metadata so checkout ignore files cannot affect history."""
+    """Expose objects through new metadata with no caller-controlled local config."""
     destination.mkdir(mode=0o700)
-    git_directory = materializer.git_directory(repo)
-    encoded = os.fsencode(git_directory)
-    if b"\n" in encoded or b"\r" in encoded:
-        raise _ScanError("Git metadata path cannot be represented safely")
-    _write_private(destination / ".git", b"gitdir: " + encoded + b"\n")
-    if materializer.git_directory(destination) != git_directory:
+    object_format = materializer._object_format(repo)
+    object_directory = _git_object_directory(repo)
+    git_directory = _initialize_isolated_git_directory(
+        destination,
+        object_format,
+        object_directory,
+    )
+    if materializer.git_directory(destination) != git_directory.resolve(strict=True):
         raise _ScanError("Isolated history source resolved different Git metadata")
+    if materializer._object_format(destination) != object_format:
+        raise _ScanError("Isolated history source changed Git object format")
     return destination
 
 
@@ -2340,7 +2473,7 @@ def _read_native_diff_metadata(
 
 
 def _changed_blob_ids(metadata: bytes, object_format: bytes) -> list[bytes]:
-    """Parse nondeleted regular blobs from one NUL-delimited raw diff."""
+    """Parse every nondeleted blob mode that native Gitleaks can reopen."""
     fields = metadata.split(b"\0")
     if not fields or fields[-1] != b"" or len(fields) % 2 != 1:
         raise _ScanError("Native Git returned invalid raw diff metadata")
@@ -2353,7 +2486,7 @@ def _changed_blob_ids(metadata: bytes, object_format: bytes) -> list[bytes]:
         _old_mode, new_mode, _old_id, new_id, status = parts
         if status not in {b"A", b"D", b"M", b"T", b"U"}:
             raise _ScanError("Native Git returned unsupported raw diff status")
-        if status != b"D" and new_mode in materializer.REGULAR_MODES:
+        if status != b"D" and new_mode in materializer._SUPPORTED_MODES:
             materializer._validate_object_id(new_id, object_format)
             object_ids.append(new_id)
     return object_ids
@@ -2385,7 +2518,7 @@ def _sum_changed_blob_sizes(
     object_ids: list[bytes],
     byte_limit: int,
 ) -> int:
-    """Upper-bound archive replay with every changed regular blob."""
+    """Upper-bound archive replay with every changed scannable blob."""
     process = subprocess.Popen(
         materializer._git_command(
             source,
