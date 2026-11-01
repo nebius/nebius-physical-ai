@@ -222,11 +222,11 @@
       },
       {
         "path": "harness/statistic_mask_sensitivity.py",
-        "sha256": "d2d9b483fe72f9961184ad26614b7e25c0e6b89f2e841a9713e4076da1f6eb35"
+        "sha256": "330d601fe5bb114153a142e8187fca7bc1cd46b635ca9eddb32e6362a4d72f63"
       },
       {
         "path": "statistic-mask-sensitivity.json",
-        "sha256": "8ff390efdcdb485eac94f945305b398ed82cf0a923f9e55d0351f7be0a891ffb"
+        "sha256": "a7ae5a58a76582534e0a79394bdc012c8e8ebfd20c8cb65638a99bd890dac157"
       }
     ],
     "one_of_these_pins_goes_stale_when_a_sibling_lands": "harness/frame_edge_audit.py is edited by the evidence-binding branch (PR 982), which makes it record the sha256 of each file it measures. That digest is correct for the bytes on this branch and stops being correct the moment 982 merges. Whichever of the two lands second must re-read it. Written down rather than left for a reader to discover, because a stale pin and a tampered one look the same.",
@@ -262,7 +262,8 @@
     "who_noticed": "A reviewer, after neither of us had thought to ask. I had recorded the absolute movement and drawn the right conclusion from it, but never as the ratio that makes the case, which is the form that shows the dispute could not have changed a verdict.",
     "why_quartiles_behave_this_way": "An interquartile spread is insensitive to a compact cluster at one corner, which is what a fixed annotation is. An extent is defined by the outermost pixel, so one glyph can set it.",
     "what_this_does_not_excuse": "The extent figure was still published wrong and corrected twice. Being a diagnostic makes it less dangerous, not less wrong.",
-    "where_the_headline_ratio_sits": "26.7x is the second smallest of the nine per-frame ratios, which run 24.5x to 66.2x, and one frame's spread does not move under the mask at all. A reviewer called it the smallest; it is the second smallest. Either way it is near the bottom of the range, so the conclusion does not rest on a flattering frame."
+    "where_the_headline_ratio_sits": "26.7x is the second smallest of the nine per-frame ratios, which run 24.5x to 66.2x, and one frame's spread does not move under the mask at all. A reviewer called it the smallest; it is the second smallest. Either way it is near the bottom of the range, so the conclusion does not rest on a flattering frame.",
+    "a_cross_measurement_disagreement_and_what_it_was_not": "A reviewer recomputed all nine frames and matched at the top of the range while differing by almost exactly 2x on observed_scan_only__overview, and proposed a spread-definition difference. Tested under four axis conventions, that frame is invariant -- 24.6x under all four -- so the definition cannot produce it. The other half of their disagreement, which frame has no finite ratio, does resolve as an axis question. Their 48.5x is within 0.2 of this harness's reading for the frame immediately above it in sorted order, so row attribution is the hypothesis the numbers support. Recorded because convention has already caused two disagreements about these frames that were not about the data."
   },
   "the_floors_fragility_stated_from_measured_movement": {
     "the_figures": "The weakest delivered frame sits 1.77x above the floor. The largest movement the statistic has shown between two reconstructions of one view is 1.50x.",

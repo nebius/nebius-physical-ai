@@ -230,6 +230,106 @@
     "weakest_masked_over_floor": 1.74,
     "the_difference_is_the_mask_not_a_disagreement": "The gate reads the masked frame, so 1.74x is the operative margin and 1.77x is the unmasked view of the same thing."
   },
+  "whether_the_ratios_depend_on_the_axis_convention": {
+    "per_frame": [
+      {
+        "frame": "baseline_scan_and_surface__opposite.png",
+        "ratio_by_convention": {
+          "narrower_axis_as_the_gate_uses": 66.0,
+          "horizontal_only": 66.0,
+          "vertical_only": 82.8,
+          "mean_of_both_axes": 75.6
+        },
+        "convention_invariant": false
+      },
+      {
+        "frame": "baseline_scan_and_surface__overview.png",
+        "ratio_by_convention": {
+          "narrower_axis_as_the_gate_uses": null,
+          "horizontal_only": null,
+          "vertical_only": 52.5,
+          "mean_of_both_axes": 91.4
+        },
+        "convention_invariant": false
+      },
+      {
+        "frame": "baseline_scan_and_surface__topdown.png",
+        "ratio_by_convention": {
+          "narrower_axis_as_the_gate_uses": 66.0,
+          "horizontal_only": 66.0,
+          "vertical_only": 56.1,
+          "mean_of_both_axes": 58.8
+        },
+        "convention_invariant": false
+      },
+      {
+        "frame": "baseline_surface_only__overview.png",
+        "ratio_by_convention": {
+          "narrower_axis_as_the_gate_uses": 52.7,
+          "horizontal_only": 52.7,
+          "vertical_only": null,
+          "mean_of_both_axes": 123.7
+        },
+        "convention_invariant": false
+      },
+      {
+        "frame": "candidate_scan_and_surface__opposite.png",
+        "ratio_by_convention": {
+          "narrower_axis_as_the_gate_uses": 64.3,
+          "horizontal_only": 64.3,
+          "vertical_only": 103.1,
+          "mean_of_both_axes": 86.5
+        },
+        "convention_invariant": false
+      },
+      {
+        "frame": "candidate_scan_and_surface__overview.png",
+        "ratio_by_convention": {
+          "narrower_axis_as_the_gate_uses": 48.4,
+          "horizontal_only": 48.4,
+          "vertical_only": 55.4,
+          "mean_of_both_axes": 52.4
+        },
+        "convention_invariant": false
+      },
+      {
+        "frame": "candidate_scan_and_surface__topdown.png",
+        "ratio_by_convention": {
+          "narrower_axis_as_the_gate_uses": 26.7,
+          "horizontal_only": 26.7,
+          "vertical_only": 26.8,
+          "mean_of_both_axes": 26.7
+        },
+        "convention_invariant": true
+      },
+      {
+        "frame": "candidate_surface_only__overview.png",
+        "ratio_by_convention": {
+          "narrower_axis_as_the_gate_uses": 48.3,
+          "horizontal_only": 48.3,
+          "vertical_only": 18.9,
+          "mean_of_both_axes": 24.8
+        },
+        "convention_invariant": false
+      },
+      {
+        "frame": "observed_scan_only__overview.png",
+        "ratio_by_convention": {
+          "narrower_axis_as_the_gate_uses": 24.6,
+          "horizontal_only": 24.6,
+          "vertical_only": 24.6,
+          "mean_of_both_axes": 24.6
+        },
+        "convention_invariant": true
+      }
+    ],
+    "frames_whose_ratio_does_not_depend_on_the_convention": [
+      "candidate_scan_and_surface__topdown.png",
+      "observed_scan_only__overview.png"
+    ],
+    "what_this_settles": "A reviewer's 48.5x for observed_scan_only__overview against this harness's 24.6x cannot be a spread-definition difference: that frame is convention-invariant, reading the same under all four. Their undefined frame does resolve as an axis question -- it is the undefined one under a vertical-only spread, where this gate uses the narrower axis.",
+    "what_it_does_not_settle": "Why the 2x remains. It is not the axis convention and not the anchor, both of which are now tested. The next candidate is the content threshold or the frame bytes themselves, and it needs their harness rather than more of mine."
+  },
   "the_floors_fragility_without_proposing_a_new_floor": {
     "weakest_delivered_frame_over_floor": 1.77,
     "largest_movement_observed_between_matched_reconstructions": 1.5,

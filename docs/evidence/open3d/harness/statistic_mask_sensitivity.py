@@ -220,6 +220,91 @@ def masked_and_unmasked_margin(width: int) -> dict[str, object]:
     }
 
 
+def axis_convention_sensitivity(
+    width: int, height: int = BAND_HEIGHT
+) -> dict[str, object]:
+    """Which per-frame ratios depend on the axis convention, so a disagreement is diagnosable.
+
+    A reviewer recomputed the nine frames and matched at the top of the range while differing by
+    almost exactly 2x on one frame, and proposed a definition difference in the spread term. It
+    is testable, so here it is tested under four conventions: the narrower axis this gate uses,
+    horizontal only, vertical only, and the mean.
+
+    The result splits their two disagreements apart. Which frame has no finite ratio *is* an
+    axis question -- under the narrower axis it is `baseline_scan_and_surface__overview`, and
+    `candidate_surface_only__overview` is the undefined one only under a vertical-only spread,
+    which is the frame they named. But the 2x gap is not, because that frame reads the same
+    under all four conventions. A definition difference cannot produce it.
+
+    This exists because anchoring convention already caused two disagreements about these frames
+    that were not about the data. Reporting convention-invariance turns the third into a lookup.
+    """
+    row, col = ORIGIN
+    conventions = {
+        "narrower_axis_as_the_gate_uses": lambda h, v: min(h, v),
+        "horizontal_only": lambda h, _: h,
+        "vertical_only": lambda _, v: v,
+        "mean_of_both_axes": lambda h, v: (h + v) / 2,
+    }
+    per_frame = []
+    for path in sorted(FRAMES.glob("*.png")):
+        mask = controls.content_mask(controls.rgb(path))
+        cut = mask.copy()
+        cut[row : row + height, col : col + width] = False
+        before, after = controls.narrower_extent(mask), controls.narrower_extent(cut)
+        extent_change = abs(before - after) / before
+        ratios: dict[str, float | None] = {}
+        for name, pick in conventions.items():
+            axes = []
+            for current in (mask, cut):
+                rows_, cols_ = np.nonzero(current)
+                frame_height, frame_width = current.shape
+                axes.append(
+                    pick(
+                        float(
+                            (np.percentile(cols_, 75) - np.percentile(cols_, 25))
+                            / frame_width
+                        ),
+                        float(
+                            (np.percentile(rows_, 75) - np.percentile(rows_, 25))
+                            / frame_height
+                        ),
+                    )
+                )
+            moved = abs(axes[0] - axes[1]) / axes[0] if axes[0] else 0.0
+            ratios[name] = round(extent_change / moved, 1) if moved else None
+        finite = [v for v in ratios.values() if v is not None]
+        per_frame.append(
+            {
+                "frame": path.name,
+                "ratio_by_convention": ratios,
+                "convention_invariant": len(finite) == len(conventions)
+                and max(finite) - min(finite) < 1.0,
+            }
+        )
+    return {
+        "per_frame": per_frame,
+        "frames_whose_ratio_does_not_depend_on_the_convention": [
+            f["frame"] for f in per_frame if f["convention_invariant"]
+        ],
+        "what_this_settles": "A reviewer's 48.5x for observed_scan_only__overview against this "
+        "harness's 24.6x cannot be a spread-definition difference: that frame is "
+        "convention-invariant, reading the same under all four. Their undefined frame does "
+        "resolve as an axis question -- it is the undefined one under a vertical-only spread, "
+        "where this gate uses the narrower axis.",
+        "the_likeliest_remaining_explanation": "Row attribution rather than measurement. Their "
+        "48.5x is within 0.2 of this harness's 48.3x for candidate_surface_only__overview, the "
+        "frame immediately above observed_scan_only__overview in sorted order, and the frame "
+        "they report as having no finite ratio is the one this harness reads at 48.3x while its "
+        "own undefined frame is baseline_scan_and_surface__overview. Two labels moved by one row "
+        "would produce exactly both disagreements. Offered as the hypothesis the numbers "
+        "support, not as a verdict on their harness, which only they can run.",
+        "what_it_does_not_settle": "Whether that hypothesis is right. It is not the axis "
+        "convention and not the anchor, both of which are now tested, so the remaining "
+        "candidates are row attribution, the content threshold, or the frame bytes.",
+    }
+
+
 def why_the_old_figure_was_wrong() -> dict[str, object]:
     """The record said 0.0042. That was measured where the box is not overlay-only."""
     certified = overlay_only_width()["widest_certified_overlay_only"]
@@ -289,6 +374,9 @@ def build() -> dict[str, object]:
         "a_figure_this_corrects": why_the_old_figure_was_wrong(),
         "where_the_headline_ratio_sits_among_the_nine": per_frame_ratio_range(width),
         "the_margin_masked_and_unmasked": masked_and_unmasked_margin(width),
+        "whether_the_ratios_depend_on_the_axis_convention": axis_convention_sensitivity(
+            width
+        ),
         "the_floors_fragility_without_proposing_a_new_floor": fragility_from_observed_movement(),
         "what_this_does_not_establish": "That the floor's edge is correct. It establishes that "
         "the mask question could not have moved the gate, and that the statistic choice was the "

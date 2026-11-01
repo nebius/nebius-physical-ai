@@ -702,3 +702,32 @@ def test_both_the_masked_and_unmasked_margins_are_recorded() -> None:
     # The gate reads the masked frame, so the masked figure must be the smaller of the two or
     # the record is describing the kinder number as the operative one.
     assert margin["weakest_masked_over_floor"] <= margin["weakest_unmasked_over_floor"]
+
+
+def test_the_disputed_frames_ratio_does_not_depend_on_the_axis_convention() -> None:
+    """A reviewer proposed a spread-definition difference for a 2x gap. It is testable, and no.
+
+    Anchoring convention already caused two disagreements about these frames that were not about
+    the data, so convention-invariance is reported rather than argued. The frame we differ on
+    reads the same under the narrower axis, horizontal only, vertical only, and the mean, which
+    rules the definition out. Which frame has no finite ratio does depend on the axis, and that
+    half of the disagreement resolves.
+    """
+    report = json.loads((EVIDENCE / "statistic-mask-sensitivity.json").read_text())
+    by_frame = {
+        f["frame"]: f
+        for f in report["whether_the_ratios_depend_on_the_axis_convention"]["per_frame"]
+    }
+
+    disputed = by_frame["observed_scan_only__overview.png"]
+    assert disputed["convention_invariant"] is True, disputed
+    assert len(set(disputed["ratio_by_convention"].values())) == 1, disputed
+
+    # The undefined frame is an axis question: under the gate's narrower axis it is this one,
+    # and it is finite under a vertical-only spread, which is what makes the other half of the
+    # disagreement explainable rather than contradictory.
+    undefined = by_frame["baseline_scan_and_surface__overview.png"][
+        "ratio_by_convention"
+    ]
+    assert undefined["narrower_axis_as_the_gate_uses"] is None, undefined
+    assert undefined["vertical_only"] is not None, undefined
