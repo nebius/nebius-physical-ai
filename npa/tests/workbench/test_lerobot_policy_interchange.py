@@ -535,6 +535,47 @@ def test_typed_raw_rgb_wire_is_consumed_and_hash_bound() -> None:
         _smolvla_batch(observation, manifest, "cpu")
 
 
+def test_typed_chw_raw_rgb_preserves_declared_channel_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    numpy = pytest.importorskip("numpy")
+
+    class FakeTensor:
+        def __init__(self, values):
+            self.values = values
+
+        def float(self):
+            return self
+
+        def __truediv__(self, value):
+            return FakeTensor(self.values / value)
+
+        def permute(self, *axes):
+            return FakeTensor(numpy.transpose(self.values, axes))
+
+    monkeypatch.setitem(
+        sys.modules,
+        "torch",
+        SimpleNamespace(from_numpy=lambda values: FakeTensor(values)),
+    )
+    raw_chw = numpy.asarray([[[11, 12]], [[21, 22]], [[31, 32]]], dtype=numpy.uint8)
+    encoded = raw_chw.tobytes()
+
+    tensor = policy_container._decode_camera(
+        {
+            "image_rgb8_base64": base64.b64encode(encoded).decode("ascii"),
+            "image_sha256": hashlib.sha256(encoded).hexdigest(),
+        },
+        {"image_size_wh": [2, 1], "layout": "CHW"},
+    )
+
+    assert tensor.values.tolist() == [
+        [[11 / 255.0, 12 / 255.0]],
+        [[21 / 255.0, 22 / 255.0]],
+        [[31 / 255.0, 32 / 255.0]],
+    ]
+
+
 def test_six_axis_manifest_cannot_accept_reordered_or_padded_state() -> None:
     pytest.importorskip("torch")
     manifest = _manifest("a" * 64)
@@ -643,6 +684,7 @@ def test_health_exposes_loaded_interchange_identities_and_byte_hash(
         ),
     )
     monkeypatch.setenv("NPA_POLICY_CHECKPOINT", str(checkpoint))
+    monkeypatch.setenv("NPA_POLICY_AUTH_TOKEN", "private-token")
     import npa.workbench.lerobot.policy_container as policy_container
 
     monkeypatch.setattr(policy_container, "LeRobotPolicyRuntime", lambda _: runtime)
@@ -672,6 +714,45 @@ def test_health_exposes_loaded_interchange_identities_and_byte_hash(
         interchange["manifest_sha256"]
         == hashlib.sha256(manifest_path.read_bytes()).hexdigest()
     )
+
+
+def test_checkpoint_backed_policy_service_requires_and_checks_bearer_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fastapi_testclient = pytest.importorskip("fastapi.testclient")
+    monkeypatch.setenv("NPA_POLICY_CHECKPOINT", "/sealed/checkpoint")
+    monkeypatch.delenv("NPA_POLICY_AUTH_TOKEN", raising=False)
+
+    with pytest.raises(PolicyContainerError, match="NPA_POLICY_AUTH_TOKEN"):
+        policy_container.create_app()
+
+    class Runtime:
+        checkpoint_path = Path("/sealed/checkpoint")
+        manifest: dict[str, object] = {}
+
+        def infer(self, _payload):
+            return {"actions": []}
+
+    comparisons: list[tuple[str, str]] = []
+    monkeypatch.setenv("NPA_POLICY_AUTH_TOKEN", "private-token")
+    monkeypatch.setattr(policy_container, "LeRobotPolicyRuntime", lambda _: Runtime())
+    monkeypatch.setattr(
+        policy_container.hmac,
+        "compare_digest",
+        lambda actual, expected: (
+            comparisons.append((actual, expected)) or actual == expected
+        ),
+    )
+    client = fastapi_testclient.TestClient(policy_container.create_app())
+
+    assert client.post("/infer", json={}).status_code == 401
+    assert (
+        client.post(
+            "/infer", json={}, headers={"Authorization": "Bearer private-token"}
+        ).status_code
+        == 200
+    )
+    assert comparisons == [("Bearer private-token", "Bearer private-token")]
 
 
 def test_typed_endpoint_binds_fresh_observation_and_exact_sampler_noise(

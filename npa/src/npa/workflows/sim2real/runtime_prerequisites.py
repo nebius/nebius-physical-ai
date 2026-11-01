@@ -27,19 +27,18 @@ class RuntimePrerequisiteError(RuntimeError):
 
 
 def _slug(run_id: str) -> str:
+    """Derive a collision-safe Kubernetes name stem from the raw run identity."""
+
     value = re.sub(r"[^a-z0-9-]+", "-", run_id.lower()).strip("-")
     if not value:
         raise RuntimePrerequisiteError("run id must contain a DNS-safe character")
-    if value != run_id or len(value) > 180:
-        raise RuntimePrerequisiteError(
-            "run id must already be a lowercase DNS label of at most 180 characters"
-        )
     # The longest prerequisite suffix is ``-policy-cache`` (13 characters),
     # while ``npa-smolvla-`` consumes another 12.  Keep the variable stem at
     # most 38 characters so every generated name is also safe when copied into
     # the warm Job's 63-character Kubernetes label value.  The hash prevents
-    # distinct long run IDs with the same readable prefix from colliding.
-    if len(value) > 38:
+    # distinct raw run IDs that normalize to the same readable prefix from
+    # colliding. The raw ID remains in ownership metadata for custody.
+    if value != run_id or len(value) > 38:
         digest = hashlib.sha256(run_id.encode()).hexdigest()[:8]
         value = f"{value[:29].rstrip('-')}-{digest}"
     return value

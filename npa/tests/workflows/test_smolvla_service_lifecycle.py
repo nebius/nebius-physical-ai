@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
+import npa.workflows.sim2real.smolvla_service_lifecycle as lifecycle
 from npa.workflows.sim2real.smolvla_service_lifecycle import (
     SmolVLAServiceError,
     _run,
@@ -189,6 +190,72 @@ def test_start_preserves_readiness_failure_when_owned_cleanup_also_fails(
     assert exc.value.__notes__ == [
         "owned service cleanup also failed: SmolVLAServiceError: cleanup API failure"
     ]
+
+
+def test_cleanup_verifies_each_deleted_owned_resource_is_absent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _credentials(monkeypatch)
+    manifests = build_manifests(_args())
+    namespace = manifests["deployment"]["metadata"]["namespace"]
+    events: list[tuple[str, str]] = []
+    live = {"deployment", "service", "secret"}
+
+    class NotFound(RuntimeError):
+        status = 404
+
+    def actual(kind: str):
+        return SimpleNamespace(
+            metadata=SimpleNamespace(labels=manifests[kind]["metadata"]["labels"])
+        )
+
+    class Api:
+        def read_namespaced_service(self, name, actual_namespace, **_kwargs):
+            assert actual_namespace == namespace
+            events.append(("read", "service"))
+            if "service" not in live:
+                raise NotFound()
+            return actual("service")
+
+        def delete_namespaced_service(self, name, actual_namespace, **_kwargs):
+            assert name == manifests["service"]["metadata"]["name"]
+            assert actual_namespace == namespace
+            events.append(("delete", "service"))
+            live.remove("service")
+
+        def read_namespaced_secret(self, name, actual_namespace, **_kwargs):
+            assert actual_namespace == namespace
+            events.append(("read", "secret"))
+            if "secret" not in live:
+                raise NotFound()
+            return actual("secret")
+
+        def delete_namespaced_secret(self, name, actual_namespace, **_kwargs):
+            assert name == manifests["secret"]["metadata"]["name"]
+            assert actual_namespace == namespace
+            events.append(("delete", "secret"))
+            live.remove("secret")
+
+    class Apps:
+        def read_namespaced_deployment(self, name, actual_namespace, **_kwargs):
+            assert actual_namespace == namespace
+            events.append(("read", "deployment"))
+            if "deployment" not in live:
+                raise NotFound()
+            return actual("deployment")
+
+        def delete_namespaced_deployment(self, name, actual_namespace, **_kwargs):
+            assert name == manifests["deployment"]["metadata"]["name"]
+            assert actual_namespace == namespace
+            events.append(("delete", "deployment"))
+            live.remove("deployment")
+
+    result = lifecycle._cleanup(Api(), Apps(), manifests)
+
+    assert result == {"deployment": True, "service": True, "secret": True}
+    for kind in ("deployment", "service", "secret"):
+        delete_at = events.index(("delete", kind))
+        assert ("read", kind) in events[delete_at + 1 :]
 
 
 def test_evaluator_rejects_service_checkpoint_drift_from_sealed_preparation() -> None:

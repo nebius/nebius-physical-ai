@@ -334,8 +334,9 @@ def run_workflow(
                     on_step(step)
                 results.append(_execute_step(step, execute=False))
             status = "planned"
-    except NpaWorkflowError as exc:
+    except Exception as exc:
         status = "failed"
+        primary_error = _as_workflow_error(exc)
         cleanup_error = _run_failure_handler(
             spec,
             ctx,
@@ -350,7 +351,7 @@ def run_workflow(
             results=results,
         )
         error = WorkflowExecutionError(
-            exc,
+            primary_error,
             failure_handler=spec.on_failure,
             cleanup_error=cleanup_error,
         )
@@ -390,6 +391,14 @@ def run_workflow(
     return report
 
 
+def _as_workflow_error(exc: Exception) -> NpaWorkflowError:
+    """Preserve unexpected executor failures in the workflow error contract."""
+
+    if isinstance(exc, NpaWorkflowError):
+        return exc
+    return NpaWorkflowError(f"unexpected {type(exc).__name__}: {exc}")
+
+
 def _run_failure_handler(
     spec: NpaWorkflowSpec,
     ctx: RunContext,
@@ -422,12 +431,17 @@ def _run_failure_handler(
             trigger_waiter=trigger_waiter,
             results_out=results,
         )
-    except NpaWorkflowError as exc:
-        return exc
+    except Exception as exc:
+        return _as_workflow_error(exc)
     return None
 
 
-def _make_context(spec: NpaWorkflowSpec, *, run_id: str) -> RunContext:
+def _make_context(
+    spec: NpaWorkflowSpec,
+    *,
+    run_id: str,
+    enforce_owned_runtime_identities: bool = True,
+) -> RunContext:
     run = {"id": run_id, "prefix": f"{spec.name}/{run_id}", **dict(spec.run_defaults)}
     run["id"] = run_id
     config_with_tool_defaults = dict(spec.config)
@@ -438,7 +452,11 @@ def _make_context(spec: NpaWorkflowSpec, *, run_id: str) -> RunContext:
             continue
         for key, value in config_defaults_for_tool(state.tool_ref).items():
             config_with_tool_defaults.setdefault(key, value)
-    _bind_workflow_owned_runtime_identities(config_with_tool_defaults, run_id)
+    _bind_workflow_owned_runtime_identities(
+        config_with_tool_defaults,
+        run_id,
+        enforce_configured_values=enforce_owned_runtime_identities,
+    )
     config = _resolve_config_strings(config_with_tool_defaults, run=run)
     if config.get("prefix"):
         run["prefix"] = resolve_tokens(str(config["prefix"]), config=config, run=run)
@@ -446,7 +464,10 @@ def _make_context(spec: NpaWorkflowSpec, *, run_id: str) -> RunContext:
 
 
 def _bind_workflow_owned_runtime_identities(
-    config: dict[str, Any], run_id: str
+    config: dict[str, Any],
+    run_id: str,
+    *,
+    enforce_configured_values: bool = True,
 ) -> None:
     """Bind collision-safe prerequisite names before config token resolution."""
 
@@ -463,8 +484,37 @@ def _bind_workflow_owned_runtime_identities(
         "policy_cache_pvc": "policy_cache_pvc",
         "isaac_warm_job": "isaac_warm_job",
     }
+    canonical_templates = {
+        "auth_secret": "npa-smolvla-{{run.id}}-auth",
+        "base_service_account": "npa-smolvla-{{run.id}}-base-ctl",
+        "adapted_service_account": "npa-smolvla-{{run.id}}-adapted-ctl",
+        "isaac_cache_pvc": "npa-smolvla-{{run.id}}-isaac-cache",
+        "policy_cache_pvc": "npa-smolvla-{{run.id}}-policy-cache",
+        "isaac_warm_job": "npa-smolvla-{{run.id}}-isaac-warm",
+    }
     for identity_key, config_key in config_keys.items():
-        config[config_key] = identities[identity_key]
+        expected = identities[identity_key]
+        configured = config.get(config_key)
+        if (
+            enforce_configured_values
+            and configured is not None
+            and str(configured) != canonical_templates[identity_key]
+        ):
+            try:
+                configured_name = resolve_tokens(
+                    str(configured), config=config, run={"id": run_id}
+                )
+            except ValueError as exc:
+                raise NpaWorkflowError(
+                    f"config.{config_key} cannot resolve for workflow-owned runtime "
+                    f"identity: {exc}"
+                ) from exc
+            if configured_name != expected:
+                raise NpaWorkflowError(
+                    f"config.{config_key} conflicts with workflow-owned runtime "
+                    f"identity: expected {expected!r}, got {configured_name!r}"
+                )
+        config[config_key] = expected
 
 
 def _resolve_config_strings(

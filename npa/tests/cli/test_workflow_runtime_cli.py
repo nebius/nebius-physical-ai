@@ -32,6 +32,7 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 SPECS = REPO_ROOT / "workflows" / "testing"
 FANOUT = SPECS / "token-factory-parallel-fanout.yaml"
 GATE_LOOP = SPECS / "token-factory-gate-loop.yaml"
+SIM2REAL_EVAL = SPECS / "sim2real-smolvla-franka-cube-eval.yaml"
 PAIDF_COSMOS3 = REPO_ROOT / "workflows" / "main" / "paidf-cosmos3.yaml"
 EMBODIEDGEN = SPECS / "byof-embodiedgen.yaml"
 RUNNER = CliRunner()
@@ -1609,6 +1610,67 @@ def test_plan_only_wins_over_runtime(mocker, monkeypatch, satisfied_preflight) -
     payload = json.loads(result.output)
     assert payload["status"] == "PLANNED"
     assert "execution: serial" in payload["skypilot_yaml"]
+
+
+def test_plan_only_sim2real_submit_binds_generated_runtime_names(
+    mocker, monkeypatch, satisfied_preflight, tmp_path: Path
+) -> None:
+    """Exercise the submit CLI with its real generated identifier path."""
+
+    from npa.orchestration.npa_workflow import first_run_state
+
+    mocker.patch("npa.cli.workbench.workflow._preflight_submit_images", return_value={})
+    monkeypatch.setattr(first_run_state, "DEFAULT_ROOT", tmp_path / "runs")
+    monkeypatch.setattr(first_run_state, "LEGACY_PATH", tmp_path / "legacy")
+    monkeypatch.setattr(
+        first_run_state,
+        "resolve_project_identity",
+        lambda project: ("project-id", project or "synthetic", "configured_project_id"),
+    )
+
+    result = RUNNER.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(SIM2REAL_EVAL),
+            "--runtime",
+            "--plan-only",
+            "--var",
+            "bucket=rt-bucket",
+            "--var",
+            "source_sha=" + "c" * 40,
+            "--var",
+            "isaac_image=ghcr.io/nebius/isaac@sha256:" + "b" * 64,
+            "--var",
+            "runtime_image=ghcr.io/nebius/lerobot@sha256:" + "d" * 64,
+            "--output-format",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    run_id = str(payload["run_id"])
+    runtime_step = next(
+        step
+        for step in payload["plan"]["steps"]
+        if step["state"] == "provision-runtime-prerequisites"
+    )
+    argv = runtime_step["argv"]
+    for flag in (
+        "--isaac-cache-pvc",
+        "--policy-cache-pvc",
+        "--auth-secret",
+        "--base-service-account",
+        "--adapted-service-account",
+        "--isaac-warm-job",
+    ):
+        value = argv[argv.index(flag) + 1]
+        assert value.startswith("npa-smolvla-")
+        assert value == value.lower()
+    assert "T" in run_id and "Z" in run_id
 
 
 def test_runtime_workflow_prefix_selects_control_store(fake_runtime) -> None:

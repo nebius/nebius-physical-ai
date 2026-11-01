@@ -876,7 +876,11 @@ def _validate_resource_profiles(spec: NpaWorkflowSpec) -> None:
 
     from npa.orchestration.npa_workflow.interpreter import _make_context
 
-    context = _make_context(spec, run_id="validate-run")
+    context = _make_context(
+        spec,
+        run_id="validate-run",
+        enforce_owned_runtime_identities=False,
+    )
     for name, profile in spec.resources.items():
         if not isinstance(profile, dict):
             raise NpaWorkflowError(f"resource profile {name!r} must be a mapping")
@@ -895,7 +899,11 @@ def _validate_executable_resource_contracts(spec: NpaWorkflowSpec) -> None:
     from npa.orchestration.npa_workflow.catalog import TOOL_CATALOG
     from npa.orchestration.npa_workflow.interpreter import _make_context
 
-    context = _make_context(spec, run_id="validate-run")
+    context = _make_context(
+        spec,
+        run_id="validate-run",
+        enforce_owned_runtime_identities=False,
+    )
     # Executable params may carry a named loop token (for append-only per-attempt
     # output prefixes). Use the same first-iteration sentinel as the general
     # resolvability validator so semantic checks validate the resolved contract.
@@ -1210,7 +1218,11 @@ def _validate_resolvable(spec: NpaWorkflowSpec) -> None:
     )
     from npa.orchestration.npa_workflow.tokens import TokenError, resolve_tokens
 
-    ctx = _make_context(spec, run_id="validate-run")
+    ctx = _make_context(
+        spec,
+        run_id="validate-run",
+        enforce_owned_runtime_identities=False,
+    )
     # Named loop tokens are execution-time values. Resolve them with a harmless
     # first-iteration sentinel here so validation still catches misspelled loop
     # names while nested-loop specs remain statically checkable.

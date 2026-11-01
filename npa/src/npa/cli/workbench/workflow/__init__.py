@@ -5257,7 +5257,7 @@ def _workflow_owned_preflight_service_accounts(
                         "labels": labels,
                         "annotations": annotations,
                     },
-                    "automountServiceAccountToken": False,
+                    "automountServiceAccountToken": True,
                 }
                 try:
                     existing = core.create_namespaced_service_account(namespace, body)
@@ -5286,30 +5286,58 @@ def _workflow_owned_preflight_service_accounts(
                 )
         yield
     finally:
+        cleanup_errors: list[Exception] = []
         for name, uid in reversed(tuple(created.items())):
-            current = core.read_namespaced_service_account(name, namespace)
-            if str(metadata_value(current, "uid") or "") != uid:
-                raise RuntimeError(
-                    f"preflight ServiceAccount {name!r} changed before cleanup"
-                )
-            core.delete_namespaced_service_account(
-                name,
-                namespace,
-                body={"preconditions": {"uid": uid}},
-            )
-            deadline = time.monotonic() + 30.0
-            while True:
+            try:
                 try:
-                    core.read_namespaced_service_account(name, namespace)
+                    current = core.read_namespaced_service_account(name, namespace)
                 except Exception as exc:
                     if getattr(exc, "status", None) == 404:
-                        break
+                        continue
                     raise
-                if time.monotonic() >= deadline:
+                if str(metadata_value(current, "uid") or "") != uid:
                     raise RuntimeError(
-                        f"preflight ServiceAccount {name!r} was not deleted"
+                        f"preflight ServiceAccount {name!r} changed before cleanup"
                     )
-                time.sleep(0.2)
+                try:
+                    core.delete_namespaced_service_account(
+                        name,
+                        namespace,
+                        body={"preconditions": {"uid": uid}},
+                    )
+                except Exception as exc:
+                    if getattr(exc, "status", None) == 404:
+                        continue
+                    raise
+                deadline = time.monotonic() + 30.0
+                while True:
+                    try:
+                        core.read_namespaced_service_account(name, namespace)
+                    except Exception as exc:
+                        if getattr(exc, "status", None) == 404:
+                            break
+                        raise
+                    if time.monotonic() >= deadline:
+                        raise RuntimeError(
+                            f"preflight ServiceAccount {name!r} was not deleted"
+                        )
+                    time.sleep(0.2)
+            except Exception as exc:
+                cleanup_errors.append(exc)
+        if cleanup_errors:
+            detail = "; ".join(
+                f"{type(error).__name__}: {error}" for error in cleanup_errors
+            )
+            primary_error = sys.exc_info()[1]
+            if primary_error is not None:
+                primary_error.add_note(
+                    "workflow-owned preflight ServiceAccount cleanup also failed: "
+                    + detail
+                )
+            else:
+                raise RuntimeError(
+                    "workflow-owned preflight ServiceAccount cleanup failed: " + detail
+                ) from cleanup_errors[0]
 
 
 def _image_pull_execution_paths(

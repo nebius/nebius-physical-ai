@@ -24,7 +24,11 @@ def _dependencies() -> None:
 
     assert Path(npa.__file__) == Path("/opt/npa/src/npa/__init__.py")
     assert app is not None
-    subprocess.run([sys.executable, "-m", "pip", "check"], check=True)
+    # The Dockerfile runs pip check immediately after installing the locked
+    # LeRobot closure.  NPA is deliberately installed afterwards with
+    # --no-deps so this service image can carry its real policy/lifecycle
+    # modules without pretending to provide every optional NPA application
+    # dependency; running pip check here would reject that intentional layout.
     os.environ["HF_HUB_OFFLINE"] = "1"
     os.environ["TRANSFORMERS_OFFLINE"] = "1"
     os.environ["WANDB_MODE"] = "disabled"

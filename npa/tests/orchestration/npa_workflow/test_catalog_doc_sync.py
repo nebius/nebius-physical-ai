@@ -69,3 +69,11 @@ def test_stub_flags_match_echo_stubs() -> None:
 def test_byof_toolref_uses_cli() -> None:
     argv = TOOL_CATALOG["workbench.byof.repo"].argv_template
     assert argv[:4] == ["npa", "workbench", "byof", "run"]
+
+
+def test_smolvla_adapted_gold_doc_invocation_matches_catalog() -> None:
+    invocation = " ".join(
+        TOOL_CATALOG["workbench.sim2real.smolvla_adapted_gold"].argv_template[:3]
+    )
+    row = f"| `workbench.sim2real.smolvla_adapted_gold` | `{invocation}` |"
+    assert row in DOC_PATH.read_text(encoding="utf-8")

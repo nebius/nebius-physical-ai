@@ -3,8 +3,14 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
+import re
 
-from npa.orchestration.npa_workflow.interpreter import build_plan
+import pytest
+
+from npa.orchestration.npa_workflow.errors import NpaWorkflowError
+from npa.orchestration.npa_workflow.first_run_state import prepare_run
+from npa.orchestration.npa_workflow.interpreter import _make_context, build_plan
+from npa.orchestration.npa_workflow.run_resolution import validate_run_id
 from npa.orchestration.npa_workflow.skypilot_render import (
     SkypilotRenderOptions,
     render_skypilot_yaml,
@@ -120,6 +126,63 @@ def test_experimental_eval_runtime_names_match_the_runtime_owner() -> None:
         ("adapted_service_account", "--adapted-service-account"),
     ):
         assert _value(prerequisites, flag) == expected[key]
+
+
+def test_generated_run_identity_binds_safe_runtime_prerequisites() -> None:
+    prepared = prepare_run(
+        project="project-id",
+        workflow_identity="sim2real-smolvla-franka-cube-eval",
+        persist=False,
+    )
+
+    raw_run_id = validate_run_id(prepared.run_id)
+    context = _make_context(_spec(), run_id=raw_run_id)
+    identities = resource_identities(raw_run_id)
+
+    assert re.fullmatch(
+        r"sim2real-smolvla-franka-cube-eval-\d{8}T\d{12}Z-[0-9a-f]{6}",
+        raw_run_id,
+    )
+    assert context.run["id"] == raw_run_id
+    assert context.config["service_auth_secret"] == identities["auth_secret"]
+    assert context.config["base_service_account"] == identities["base_service_account"]
+    assert (
+        context.config["adapted_service_account"]
+        == identities["adapted_service_account"]
+    )
+    assert context.config["isaac_cache_pvc"] == identities["isaac_cache_pvc"]
+    assert context.config["policy_cache_pvc"] == identities["policy_cache_pvc"]
+    assert context.config["isaac_warm_job"] == identities["isaac_warm_job"]
+    assert all(
+        len(value) <= 63 and re.fullmatch(r"[a-z0-9](?:[-a-z0-9]*[a-z0-9])?", value)
+        for value in identities.values()
+    )
+
+
+def test_normalized_runtime_identity_names_remain_collision_safe() -> None:
+    upper = "sim2real-smolvla-franka-cube-eval-20261101T120000000000Z-a1b2c3"
+    lower = upper.lower()
+
+    assert resource_identities(upper) != resource_identities(lower)
+
+
+def test_workflow_owned_runtime_name_override_must_match_derived_identity() -> None:
+    run_id = "explicit-owned-name"
+    expected = resource_identities(run_id)
+    matching = merge_config_overrides(
+        _spec(), {"base_service_account": expected["base_service_account"]}
+    )
+
+    assert (
+        _make_context(matching, run_id=run_id).config["base_service_account"]
+        == expected["base_service_account"]
+    )
+
+    conflicting = merge_config_overrides(
+        _spec(), {"base_service_account": "foreign-service-account"}
+    )
+    with pytest.raises(NpaWorkflowError, match="conflicts with workflow-owned runtime"):
+        _make_context(conflicting, run_id=run_id)
 
 
 def test_experimental_eval_finalizer_receives_every_native_artifact() -> None:

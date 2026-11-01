@@ -66,14 +66,26 @@ states:
 
 
 class _FailureHandlerExecutor:
-    def __init__(self, *, cleanup_fails: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        cleanup_fails: bool = False,
+        unexpected_primary: bool = False,
+        unexpected_cleanup: bool = False,
+    ) -> None:
         self.cleanup_fails = cleanup_fails
+        self.unexpected_primary = unexpected_primary
+        self.unexpected_cleanup = unexpected_cleanup
         self.states: list[str] = []
 
     def execute(self, step: PlanStep) -> dict[str, object]:
         self.states.append(step.state)
         if step.state == "work":
+            if self.unexpected_primary:
+                raise RuntimeError("unexpected work failure")
             raise NpaWorkflowError("primary work failed")
+        if self.unexpected_cleanup:
+            raise RuntimeError("unexpected cleanup failure")
         if self.cleanup_fails:
             raise NpaWorkflowError("cleanup failed")
         return {"state": step.state, "status": "ok"}
@@ -120,6 +132,33 @@ def test_failure_handler_records_cleanup_error_without_hiding_primary(
     assert caught.value.primary_error == "primary work failed"
     assert caught.value.failure_handler == "cleanup"
     assert str(caught.value.cleanup_error) == "cleanup failed"
+    assert executor.states == ["work", "cleanup"]
+
+
+def test_failure_handler_runs_for_unexpected_errors_and_preserves_both_outcomes(
+    tmp_path: Path,
+) -> None:
+    executor = _FailureHandlerExecutor(
+        unexpected_primary=True,
+        unexpected_cleanup=True,
+    )
+
+    with pytest.raises(WorkflowExecutionError) as caught:
+        run_workflow(
+            _failure_handler_spec(tmp_path),
+            run_id="unexpected-failure-handler",
+            execute=True,
+            step_executor=executor,
+        )
+
+    assert (
+        caught.value.primary_error == "unexpected RuntimeError: unexpected work failure"
+    )
+    assert caught.value.failure_handler == "cleanup"
+    assert (
+        caught.value.cleanup_error
+        == "unexpected RuntimeError: unexpected cleanup failure"
+    )
     assert executor.states == ["work", "cleanup"]
 
 

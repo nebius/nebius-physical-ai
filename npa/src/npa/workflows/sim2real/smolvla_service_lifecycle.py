@@ -533,6 +533,13 @@ def _cleanup(
                 f"refusing cleanup of {kind} {name!r} without exact ownership"
             )
         deleter(name, namespace, _request_timeout=30)
+        deadline = time.monotonic() + 30.0
+        while _read_or_none(reader, name, namespace) is not None:
+            if time.monotonic() >= deadline:
+                raise SmolVLAServiceError(
+                    f"owned {kind} {name!r} remains present after deletion"
+                )
+            time.sleep(0.2)
         result[kind] = True
     return result
 

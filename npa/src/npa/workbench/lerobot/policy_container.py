@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import base64
 import hashlib
+import hmac
 import io
 import importlib
 import importlib.metadata
@@ -945,7 +946,20 @@ def _decode_camera(camera: dict[str, Any], declaration: dict[str, Any]) -> Any:
             width, height = declaration["image_size_wh"]
             if len(raw) != width * height * 3:
                 raise ValueError("raw RGB byte length does not match calibration")
-            image = np.frombuffer(raw, dtype=np.uint8).reshape(height, width, 3).copy()
+            expected_hash = str(camera.get("image_sha256") or "")
+            if expected_hash and hashlib.sha256(raw).hexdigest() != expected_hash:
+                raise ValueError("camera RGB hash does not match encoded bytes")
+            if declaration["layout"] == "HWC":
+                image = (
+                    np.frombuffer(raw, dtype=np.uint8).reshape(height, width, 3).copy()
+                )
+            else:
+                image = (
+                    np.frombuffer(raw, dtype=np.uint8)
+                    .reshape(3, height, width)
+                    .transpose(1, 2, 0)
+                    .copy()
+                )
         else:
             from PIL import Image
 
@@ -959,12 +973,15 @@ def _decode_camera(camera: dict[str, Any], declaration: dict[str, Any]) -> Any:
             "camera bytes do not match declared image dimensions"
         )
     expected_hash = str(camera.get("image_sha256") or "")
-    if expected_hash and hashlib.sha256(image.tobytes()).hexdigest() != expected_hash:
+    if (
+        not raw_rgb
+        and expected_hash
+        and hashlib.sha256(image.tobytes()).hexdigest() != expected_hash
+    ):
         raise PolicyContainerError("camera RGB hash does not match decoded bytes")
     tensor = torch.from_numpy(image).float() / 255.0
-    # LeRobot processor inputs are CHW tensors. ``layout`` describes the
-    # external bytes and is checked above; decoding a PNG yields HWC in both
-    # cases, so the adapter performs the single explicit conversion here.
+    # LeRobot processor inputs are CHW tensors. Raw bytes honor the declared
+    # layout above; decoding a PNG yields HWC in either case.
     return tensor.permute(2, 0, 1)
 
 
@@ -1913,12 +1930,19 @@ def create_app() -> Any:
     app = FastAPI(title="npa-lerobot-policy-container")
     policy: LeRobotPolicyRuntime | None = None
     checkpoint = os.environ.get("NPA_POLICY_CHECKPOINT", "")
+    auth_token = os.environ.get("NPA_POLICY_AUTH_TOKEN", "").strip()
     if checkpoint:
+        if not auth_token:
+            raise PolicyContainerError(
+                "NPA_POLICY_AUTH_TOKEN is required when NPA_POLICY_CHECKPOINT is configured"
+            )
         policy = LeRobotPolicyRuntime(checkpoint)
 
     def authorize(authorization: str | None) -> None:
-        token = os.environ.get("NPA_POLICY_AUTH_TOKEN", "").strip()
-        if token and authorization != f"Bearer {token}":
+        expected = f"Bearer {auth_token}"
+        if auth_token and (
+            authorization is None or not hmac.compare_digest(authorization, expected)
+        ):
             raise HTTPException(status_code=401, detail="invalid bearer token")
 
     @app.get("/health")
