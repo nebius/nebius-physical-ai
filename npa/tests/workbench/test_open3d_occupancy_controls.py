@@ -237,31 +237,146 @@ def test_the_record_does_not_claim_the_published_rate_is_mostly_floor(record) ->
     assert block["the_published_baseline_rate"] > block["the_published_candidate_rate"]
 
 
-def test_the_controls_call_the_instrument_rather_than_a_copy_of_it() -> None:
-    """Identity, not a substring of the harness source.
-
-    Checked as object identity: the functions the control harness uses are the very
-    objects `consumer_occupancy` defines. A source-text assertion would pass against a
-    harness that imported them and then shadowed them, which is the defect this program
-    has already been caught making twice.
-    """
-    pytest.importorskip(
-        "open3d", reason="the instrument imports Open3D at module level"
-    )
-
+def _import_from_harness(*names):
+    import importlib
     import sys
 
     sys.path.insert(0, str(EVIDENCE / "harness"))
     try:
-        import consumer_occupancy
-        import occupancy_instrument_controls
+        return tuple(importlib.import_module(name) for name in names)
     finally:
         sys.path.remove(str(EVIDENCE / "harness"))
 
-    for name in ("probe_grid", "support_mask", "score_variant"):
-        assert getattr(occupancy_instrument_controls, name) is getattr(
-            consumer_occupancy, name
-        ), f"{name} in the control harness is not the instrument's own function"
+
+def _instrument():
+    """Only the instrument, which is why it can be imported without Open3D.
+
+    Kept apart from the control harness deliberately: the control harness imports Open3D
+    at module level, so pulling both in would make the definition check below skip on
+    every CI shard -- the exact defect it exists to repair. I asserted this worked before
+    I had tested it; blocking `open3d` through `sys.meta_path` showed the control harness
+    failing to import, and only `consumer_occupancy` surviving.
+    """
+    return _import_from_harness("consumer_occupancy")[0]
+
+
+def test_the_control_harness_produces_what_the_instrument_produces() -> None:
+    """Behavioural, because identity was not enough.
+
+    The first version of this test asserted object identity: the functions the control
+    harness holds are the very objects `consumer_occupancy` defines. A reviewer defeated
+    it with a *function-local* shadow, which satisfies module-attribute identity while
+    executing something else, with the import line untouched::
+
+        from instrument import score_variant   # the attribute IS the real object
+
+        def run(x):
+            score_variant = _copy              # local shadow, invisible to `is`
+            return score_variant(x)
+
+    I reproduced that before changing anything: the honest and the evading harness both
+    pass the identity assertion, returning ('REAL', 10) and ('COPY', 15). Identity
+    constrains the module namespace; execution resolves names one scope down.
+
+    So this calls both paths on one shared input and requires the outputs to agree. A
+    copy now has to be *correct* to pass, which is the only kind of copy nobody needs to
+    care about.
+
+    This needs Open3D and skips where it is absent. See
+    `test_the_published_definitions_are_what_the_instrument_computes` for the half that
+    runs everywhere, and why that split had to exist.
+    """
+    pytest.importorskip("open3d", reason="the instrument's queries need Open3D")
+
+    instrument, controls = _import_from_harness(
+        "consumer_occupancy", "occupancy_instrument_controls"
+    )
+
+    mesh = controls.sphere()
+    points = controls.fibonacci_sphere(1500)
+    cell, factor = instrument.CELL, instrument.SUPPORT_RADIUS_FACTOR
+
+    cloud = controls.cloud_of(points)
+    centres, _ = instrument.probe_grid(cloud, cell)
+    radius = factor * cell
+    supported = instrument.support_mask(cloud, centres, radius)
+    direct = instrument.score_variant(mesh, centres, supported, radius, cell)
+
+    through_harness = controls.measure(mesh, points, cell, factor)
+
+    for key, value in direct.items():
+        assert through_harness[key] == value, (
+            f"the control harness and the instrument disagree on {key}: "
+            f"{through_harness[key]} against {value}, so the harness is not running the "
+            f"instrument"
+        )
+
+
+def test_the_published_definitions_are_what_the_instrument_computes(record) -> None:
+    """The half of the above that runs on every shard.
+
+    A reviewer established that Open3D is installed nowhere CI runs: it appears in
+    `npa/pyproject.toml` only as a container image tag, in no optional-dependency extra,
+    and not in `npa/ci/requirements.txt`. So the behavioural check above skips
+    permanently there, and the guard against a replaced instrument was inert in exactly
+    the place it was meant to hold.
+
+    `score_from_distance` carries the definitions with the Open3D query already done, so
+    it imports with NumPy alone. Every published row is rebuilt here from its own counts
+    and put back through the instrument's real arithmetic. A set of numbers that does not
+    satisfy these definitions did not come from this instrument.
+    """
+    import numpy as np
+
+    instrument = _instrument()
+    radius, cell = 0.5, 0.1
+
+    rows = {
+        "positive_control": record["positive_control"]["measured"],
+        "fabrication_inside": record[
+            "negative_control_fabrication_inside_the_observed_extent"
+        ]["measured"],
+        "fabrication_outside": record[
+            "negative_control_fabrication_outside_the_observed_extent"
+        ]["measured"],
+        "recall_control": record["recall_control_observed_structure_the_mesh_omits"][
+            "measured"
+        ],
+    }
+    for name, row in rows.items():
+        cells = row["cells"]
+        supported_count = row["cells_with_samples"]
+        occupied_count = row["occupied_cells"]
+        phantom_count = row["phantom_obstacle_cells"]
+        both = occupied_count - phantom_count
+
+        # Masks realising exactly these counts: `both` cells occupied and supported,
+        # then `phantom_count` occupied only, then the remaining supported cells.
+        supported = np.zeros(cells, dtype=bool)
+        occupied = np.zeros(cells, dtype=bool)
+        supported[:both] = True
+        occupied[: both + phantom_count] = True
+        supported[
+            both + phantom_count : both + phantom_count + supported_count - both
+        ] = True
+        assert int(supported.sum()) == supported_count, name
+        assert int(occupied.sum()) == occupied_count, name
+
+        distance = np.where(occupied, 0.0, radius * 2.0)
+        rebuilt = instrument.score_from_distance(distance, supported, radius, cell)
+
+        for key in (
+            "occupied_cells",
+            "phantom_obstacle_cells",
+            "phantom_obstacle_rate",
+            "precision_wrt_observation",
+            "recall_of_observed_cells",
+            "missed_structure_cells",
+        ):
+            assert rebuilt[key] == pytest.approx(row[key], abs=1e-12), (
+                f"{name}.{key} is {row[key]}, but the instrument's own definitions give "
+                f"{rebuilt[key]} from the counts published beside it"
+            )
 
 
 def test_the_instrument_still_exposes_what_the_record_names(record) -> None:

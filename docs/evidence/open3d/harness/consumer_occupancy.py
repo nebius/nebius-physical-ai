@@ -35,7 +35,6 @@ import json
 from pathlib import Path
 
 import numpy as np
-import open3d as o3d
 
 BUNDLE = Path("/data/final-bundle")
 OUT = Path("/data/downstream-consumer-reproduced.json")
@@ -44,8 +43,12 @@ CELL = 0.1
 #: Support radius as a multiple of the cell. 0.87 is the rounded value of the
 #: cell's circumradius factor sqrt(3)/2 = 0.8660254, a cell-centre-to-corner
 #: reach, so a cell counts as touched when anything falls anywhere inside it.
-#: It is the rounded constant that ran, not the exact factor; the review lane
-#: swept 0.5 to 2.0 and every setting kept the same direction and ordering.
+#: It is the rounded constant that ran, not the exact factor. An earlier version of
+#: this comment credited a 0.5-to-2.0 sweep to the review lane; they searched their
+#: own dispatches and phases for it, found nothing, and said plainly that they never
+#: ran it and never claimed to. The sweep is now this lane's own, over cell sizes
+#: 0.05/0.1/0.2 against factors 0.5/0.87/1.5/2.0, in
+#: `occupancy-instrument-controls.json` under `parameter_sweep`.
 SUPPORT_RADIUS_FACTOR = 0.87
 
 VARIANTS = {"baseline": "mesh-baseline/mesh.ply", "candidate": "mesh/mesh.ply"}
@@ -73,6 +76,8 @@ def probe_grid(cloud, cell: float):
 
 def support_mask(cloud, centres, radius: float):
     """Which cells hold an observation: centre within `radius` of a sample."""
+    import open3d as o3d
+
     tree = o3d.geometry.KDTreeFlann(cloud)
     return np.array(
         [bool(tree.search_radius_vector_3d(centre, radius)[0]) for centre in centres]
@@ -86,11 +91,28 @@ def score_variant(mesh, centres, supported, radius: float, cell: float) -> dict:
     radius, which is the symmetry the module docstring argues for: neither the surface
     nor the observations get the more generous test.
     """
+    import open3d as o3d
+
     scene = o3d.t.geometry.RaycastingScene()
     scene.add_triangles(o3d.t.geometry.TriangleMesh.from_legacy(mesh))
     distance = scene.compute_distance(
         o3d.core.Tensor(centres.astype(np.float32))
     ).numpy()
+    return score_from_distance(distance, supported, radius, cell)
+
+
+def score_from_distance(distance, supported, radius: float, cell: float) -> dict:
+    """The definitions themselves, with the Open3D query already done.
+
+    Split out so they can be exercised where Open3D is not installed, which is every
+    CI shard: `open3d` appears in `npa/pyproject.toml` only as a container image tag,
+    is in no optional-dependency extra, and is not in `npa/ci/requirements.txt`. A
+    reviewer pointed out that the guard protecting this instrument from being quietly
+    replaced by a copy was the one test that could never run there.
+
+    Pure NumPy and pure arithmetic over two boolean masks, so a reader can check that a
+    published set of counts and rates is internally what these definitions produce.
+    """
     occupied = distance <= radius
     phantom = occupied & ~supported
     return {
@@ -107,6 +129,8 @@ def score_variant(mesh, centres, supported, radius: float, cell: float) -> dict:
 
 
 def main() -> int:
+    import open3d as o3d
+
     cloud = o3d.io.read_point_cloud(str(BUNDLE / "multiway/fused.ply"))
     centres, dims = probe_grid(cloud, CELL)
     radius = SUPPORT_RADIUS_FACTOR * CELL

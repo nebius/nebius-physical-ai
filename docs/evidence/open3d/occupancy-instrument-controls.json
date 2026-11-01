@@ -120,8 +120,36 @@
       "observations_per_supported_cell": 1.943
     }
   },
+  "the_guard_on_this_harness_was_inert_in_ci_and_evadable": {
+    "raised_by": "review lane, 2026-11-01T21:18Z, three findings on this PR",
+    "the_first_version": "`test_the_controls_call_the_instrument_rather_than_a_copy_of_it` asserted object identity: the functions this harness holds are the objects `consumer_occupancy` defines.",
+    "why_identity_was_not_enough": "A function-local shadow satisfies module-attribute identity while executing something else. Reproduced before changing anything: an honest harness and an evading harness both pass the identity assertion and return ('REAL', 10) and ('COPY', 15). Identity constrains the module namespace; execution resolves names one scope down.",
+    "why_it_also_never_ran_where_it_mattered": "Open3D is installed nowhere CI runs: it appears in `npa/pyproject.toml` only as a container image tag, in no optional-dependency extra, and not in `npa/ci/requirements.txt`. The guard skipped on every shard, on every PR.",
+    "what_replaced_it": [
+      "A behavioural check: the instrument and this harness are called on one shared input and every field of the two results must agree. A copy now has to be correct to pass. Verified against the reviewer's own mutation -- a function-local shadow inside `measure()`, import line intact and the module attribute still the real object -- which the identity test passed and this one fails.",
+      "`score_from_distance` split out of `score_variant`, carrying the definitions with the Open3D query already done, so it imports under NumPy alone. Every published row is rebuilt from its own counts and put back through the real arithmetic, which runs on every shard."
+    ],
+    "a_claim_of_mine_that_was_false_until_i_tested_it": "I first wrote the definition check to import this control harness too, and stated it ran without Open3D. It did not: this harness imports Open3D at module level. A first attempt to prove it used a `find_module` hook, which Python 3.12 removed, so it blocked nothing and the check appeared to pass. With a working `find_spec` hook the import failed. The test now imports the instrument alone, and was re-verified with `open3d` genuinely unresolvable: 12 passed, 1 skipped, and four mutations of published values each caught in that state.",
+    "mutations_run_in_both_states": {
+      "how": "Each mutation was applied, the suite run twice -- once normally, once with `open3d` made unresolvable through `sys.meta_path` to reproduce a CI shard -- and the file restored.",
+      "caught_in_both_states": [
+        "positive control phantom rate zeroed",
+        "floor claimed to rise with density",
+        "inside-extent detection margin erased",
+        "outside-extent phantom count inflated",
+        "recall control missed cells zeroed",
+        "precision made inconsistent with counts",
+        "sweep claims detection it lacks",
+        "occupied cells inconsistent with phantom"
+      ],
+      "caught_only_where_open3d_is_installed": [
+        "the reviewer's function-local shadow of `score_variant` inside `measure()`: 1 failed locally, 12 passed and 1 skipped in the CI state"
+      ]
+    },
+    "what_is_still_not_bound": "The shadow defence is behavioural, so it needs Open3D, so it is still absent from CI -- measured, not assumed: the shadow mutation passes in the CI state. What runs there is the definitional half, which catches any published number that does not satisfy the instrument's own arithmetic. Neither notices a shadow added without re-running the harness, because the record would then no longer be this harness's output and nothing here compares the two."
+  },
   "parameter_sweep": {
-    "why": "The published pair was measured at one cell size and one radius factor. The module docstring says the review lane swept 0.5 to 2.0, but no committed record holds those numbers, so this sweep is run here rather than cited.",
+    "why": "The published pair was measured at one cell size and one radius factor. The constant's comment used to credit a 0.5-to-2.0 sweep to the review lane; they searched their own dispatches and phases for it and reported that they never ran it and never said they had. The attribution is deleted rather than hunted for, because there is nothing to point at, and the sweep below is this lane's own.",
     "what_is_swept": "the controls, where the answer is known",
     "what_is_not_swept": "the published 0.3245/0.0708 pair, which needs /data/final-bundle. That bundle is a run output in object storage, not in the repository or the image, so no reader working from this repository can recompute it at other parameters either.",
     "rows": {
