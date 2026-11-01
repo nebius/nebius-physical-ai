@@ -186,6 +186,85 @@ def test_the_recorded_verdict_matches_a_verdict_recomputed_from_the_rows(
     assert recorded["candidate_b"] == expected["candidate_b"] == 2
 
 
+def test_each_per_criterion_flag_matches_the_reading_beside_it(
+    report: dict, clean: list[dict], bridged: list[dict]
+) -> None:
+    """The verdict is stated twice, and the test above only checked the sum.
+
+    A reviewer set candidate A's criterion 1 `met` to true -- making the record claim that a
+    reading of 0.081198 satisfies `< 0.05` -- and all fifteen tests passed, because the
+    summary count was recomputed and the per-criterion booleans were not. The flags were
+    correct; the exposure was that nothing held them to the readings.
+
+    So this recomputes all ten from the rows. Two representations of one verdict cannot be
+    allowed to separate, and the cheap fix is to assert both rather than to delete one: the
+    per-criterion detail is the useful part of the record for a reader, and the summary is the
+    useful part for a scanner.
+    """
+    verdict = report["verdict_against_the_frozen_acceptance"]
+    control = next(
+        row for row in clean if row["case"].startswith("dense on five faces")
+    )
+    floor = next(row for row in clean if row["case"].startswith("even coverage"))
+    sweep = report["sparse_density_sweep_zero_invented_everywhere"]
+
+    blocks = {
+        "candidate_a_misoriented_against_nearest_samples": CANDIDATE_A,
+        "candidate_b_no_orientation_consistent_sample_within_12_voxels": CANDIDATE_B,
+    }
+    assert set(blocks) <= set(verdict), sorted(verdict)
+
+    for block, field in blocks.items():
+        criteria = verdict[block]
+        recomputed = {
+            "1_products_counterexample_below_0_05": control[field] < 0.05,
+            "2_every_invented_case_above_0_30": min(row[field] for row in bridged)
+            > 0.30,
+            "3_no_overlap_between_invented_and_clean": (
+                min(row[field] for row in bridged) > max(row[field] for row in clean)
+            ),
+            "4_sparser_coverage_stays_below_0_05": all(
+                row[field] < 0.05 for row in sweep
+            ),
+            "5_false_alarm_floor_below_0_01": floor[field] < 0.01,
+        }
+        assert set(criteria) == set(recomputed), (block, sorted(criteria))
+        for name, expected_flag in recomputed.items():
+            assert criteria[name]["met"] is expected_flag, (block, name, criteria[name])
+
+        assert (
+            sum(entry["met"] for entry in criteria.values())
+            == verdict["criteria_met"][block.split("_")[0] + "_" + block.split("_")[1]]
+        ), (block, "the per-criterion flags and the summary count disagree")
+
+
+def test_the_readings_each_criterion_quotes_are_the_readings_it_was_judged_on(
+    report: dict, clean: list[dict]
+) -> None:
+    """Each criterion block also quotes the number it judged, which is a third copy.
+
+    Holding the quoted value to the row it came from closes the same class of drift one level
+    down: a flag can agree with a quoted reading while the quoted reading has drifted from the
+    measurement.
+    """
+    verdict = report["verdict_against_the_frozen_acceptance"]
+    control = next(
+        row for row in clean if row["case"].startswith("dense on five faces")
+    )
+    floor = next(row for row in clean if row["case"].startswith("even coverage"))
+
+    for block, field in (
+        ("candidate_a_misoriented_against_nearest_samples", CANDIDATE_A),
+        ("candidate_b_no_orientation_consistent_sample_within_12_voxels", CANDIDATE_B),
+    ):
+        criteria = verdict[block]
+        assert (
+            criteria["1_products_counterexample_below_0_05"]["reading"]
+            == control[field]
+        )
+        assert criteria["5_false_alarm_floor_below_0_01"]["reading"] == floor[field]
+
+
 def test_the_two_constructions_that_failed_to_exercise_the_effect_are_still_recorded() -> (
     None
 ):

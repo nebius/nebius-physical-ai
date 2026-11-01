@@ -37,7 +37,7 @@
   "this_does_not_contradict_1006": "#1006 found normal correspondence works against a reference surface, and that stands. The difference is the reference: with one, a bridge is compared against the surface it should have belonged to; without one, against whatever happens to be nearby.",
   "regression_guards": {
     "file": "npa/tests/workbench/test_open3d_reference_free_fabrication.py",
-    "count": 15,
+    "count": 17,
     "what_they_hold": "The verdict is recomputed from the published rows and compared against the recorded pass counts, so the report never asserts its own validity. The overlap, the inversion, the climb with sparsity, gate 1's margin, and the validity of every reference actually measured are each recomputed.",
     "mutations_caught": [
       "the narrow slot suddenly reads 0.6: 4 tests fail",
@@ -47,7 +47,21 @@
       "a reference with internal faces is used: 1 fails",
       "the construction instrument loses its validating positive: 1 fails",
       "the distinction from #1006 is dropped: 1 fails"
-    ]
+    ],
+    "a_gap_review_found_and_how_it_was_closed": {
+      "the_gap": "This record states each candidate's verdict twice: a summary count under criteria_met, and a per-criterion `met` flag inside each candidate block. The guard recomputed the summary from the readings and never looked at the flags.",
+      "demonstrated_not_argued": "Review set candidate A's criterion 1 flag to true, making the record claim that a reading of 0.081198 satisfies `< 0.05`, and all fifteen tests passed. The flags were correct; nothing held them to the readings.",
+      "the_fix": "All ten flags are now recomputed from the rows, the per-criterion flags are held to agree with the summary they sum to, and the reading each criterion quotes is held to the row it came from -- a third copy of the same fact, one level down.",
+      "why_not_delete_one_representation": "The per-criterion detail is the useful part for a reader and the summary is the useful part for a scanner. Asserting both is cheaper than choosing.",
+      "mutations_now_caught": [
+        "review's exact mutation, candidate A criterion 1 flagged met: fails",
+        "a true flag flipped to false on candidate B: fails",
+        "a flag flipped and the summary adjusted to match it: fails twice",
+        "the reading a criterion quotes drifting from its row: fails",
+        "a criterion renamed so the block no longer matches: fails twice"
+      ]
+    },
+    "what_these_tests_do_not_do": "Re-run the geometry. They validate the committed record, which is the right split while Open3D is not installable everywhere, but it means the suite protects the document's integrity rather than reproducing the measurement. Review raised this and I agree with the framing; the harness is the reproduction path and it takes five minutes on CPU."
   },
   "limitations": "Two candidate readings, three inventing geometries, two sampling densities, one reconstruction method (Poisson at depth 7) and one normal-agreement cutoff. This rejects these candidates on these constructions; it does not prove no reference-free reading can work. What it does establish is that the obvious one cannot, and why.",
   "visual_evaluation": {
