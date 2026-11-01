@@ -1,3 +1,5 @@
+"""Protect interpreter-bound Rerun CLI resolution across smoke subprocesses."""
+
 from __future__ import annotations
 
 import importlib
@@ -20,6 +22,18 @@ def _python_path(tmp_path: Path) -> Path:
     python = tmp_path / "venv/bin/python"
     _write_executable(python)
     return python
+
+
+def _path_copy_with_invalid_sibling(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> Path:
+    python = _python_path(tmp_path)
+    python.with_name("rerun").write_text("not executable", encoding="utf-8")
+    ambient = tmp_path / "ambient/rerun"
+    _write_executable(ambient)
+    monkeypatch.setattr(sys, "executable", str(python))
+    monkeypatch.setenv("PATH", str(ambient.parent))
+    return ambient
 
 
 def test_rerun_cli_prefers_executable_interpreter_sibling(
@@ -145,13 +159,7 @@ def test_curobo_decode_rejects_nonexecutable_sibling_for_path_copy(
 ) -> None:
     from npa.workbench.curobo import artifacts
 
-    python = _python_path(tmp_path)
-    sibling = python.with_name("rerun")
-    sibling.write_text("not executable", encoding="utf-8")
-    ambient = tmp_path / "ambient/rerun"
-    _write_executable(ambient)
-    monkeypatch.setattr(sys, "executable", str(python))
-    monkeypatch.setenv("PATH", str(ambient.parent))
+    ambient = _path_copy_with_invalid_sibling(monkeypatch, tmp_path)
     calls: list[list[str]] = []
 
     def reject_verify(argv, **_kwargs):
@@ -168,6 +176,52 @@ def test_curobo_decode_rejects_nonexecutable_sibling_for_path_copy(
         )
 
     assert calls[0][0] == str(ambient)
+
+
+def test_curobo_decode_reuses_resolved_path_for_every_subprocess(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from npa.workbench.curobo import artifacts
+
+    ambient = _path_copy_with_invalid_sibling(monkeypatch, tmp_path)
+    calls: list[list[str]] = []
+
+    def run(argv, **_kwargs):
+        calls.append(argv)
+        if argv[2] == "filter":
+            output = Path(argv[argv.index("--output") + 1])
+            output.write_bytes(b"filtered")
+        return SimpleNamespace(returncode=0)
+
+    def write_rrd(_rows, _journal, output, **_kwargs):
+        Path(output).write_bytes(b"expected")
+
+    monkeypatch.setattr(artifacts.subprocess, "run", run)
+    monkeypatch.setattr(artifacts, "_write_rrd", write_rrd)
+    monkeypatch.setattr(
+        artifacts,
+        "_scan_decoded_chunks",
+        lambda *_args, **_kwargs: ("decoded-sha256", 0, []),
+    )
+
+    result = artifacts._decode_rrd_to(
+        tmp_path / "input.rrd",
+        tmp_path / "decoded.txt",
+        rows=[],
+        run_id="all-subprocess-control",
+    )
+
+    assert [argv[2] for argv in calls] == [
+        "verify",
+        "print",
+        "filter",
+        "optimize",
+        "filter",
+        "optimize",
+        "compare",
+    ]
+    assert [argv[0] for argv in calls] == [str(ambient)] * 7
+    assert result["semantic_compare"] == "passed"
 
 
 def test_curobo_decode_fails_before_subprocess_without_rerun(
