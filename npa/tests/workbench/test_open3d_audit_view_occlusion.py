@@ -300,6 +300,17 @@ def quoting_prose() -> list[tuple[str, str]]:
     `pane-fit-window-aspect-sweep.json` by that measurement's own tests. Exempting them
     here would have meant pinning two figures this record cannot check -- a test that
     tolerates drift it cannot see is worse than one with a narrower scope that says so.
+
+    Review measured what the scope leaves exposed: an occlusion percentage written into
+    the composite view's comment instead of this one would not be bound. The obvious
+    repair is to widen the scan to the whole file and resolve each figure against *any*
+    committed record, and that is worse than the exposure. The 40 records under
+    `docs/evidence/open3d` hold 1,787 numeric leaves between them, and **50.3% of
+    arbitrary `NN.N%` values find a coincidental match** among them -- `11.1%` itself
+    resolves against three records that have nothing to do with window aspect. A guard
+    that passes half of all drifts while looking authoritative is worse than a narrow
+    one that states its edge, so the scope stays and the next reader gets the number
+    rather than having to re-derive it.
     """
     runner = (REPO / "npa/src/npa/workbench/open3d/runner.py").read_text().splitlines()
     start = next(i for i, line in enumerate(runner) if "REMOVED_VIEW: _View(" in line)
@@ -354,3 +365,51 @@ def test_every_percentage_quoted_in_code_or_prose_is_one_the_record_holds(
             QUOTED_BUT_NOT_IN_THE_RECORD - unresolved
         ),
     }
+
+
+def test_widening_the_scan_to_every_record_would_be_a_coin_flip(record) -> None:
+    """Why `quoting_prose` is narrow, asserted rather than argued.
+
+    Review noted that a figure written outside the scoped block would not be bound, and
+    the natural repair is to check every percentage in `runner.py` against every
+    committed record. This measures that repair instead of adopting it: across the
+    evidence directory a coincidental match is roughly as likely as not, so the widened
+    guard would pass about half of all drifts while reading as comprehensive.
+
+    Kept as a test rather than only a comment so that if the record set ever becomes
+    sparse enough for the wide check to mean something, this fails and the scope
+    decision gets revisited on evidence instead of staying narrow out of habit.
+    """
+    leaves: set[float] = set()
+    for path in sorted((REPO / "docs/evidence/open3d").glob("*.json")):
+        leaves |= numbers_in(json.loads(path.read_text()))
+
+    candidates = [tenths / 1000.0 for tenths in range(1000)]
+    collisions = sum(
+        1
+        for value in candidates
+        if any(round(leaf, 3) == round(value, 3) for leaf in leaves)
+    )
+    rate = collisions / len(candidates)
+
+    # Well above the point where "backed by some record" stops being informative. If
+    # this drops below a third, widening is worth reconsidering.
+    assert rate > 0.33, (
+        f"only {rate:.1%} of arbitrary percentages collide with the {len(leaves)} "
+        "numeric leaves on record, so a whole-file check against all records may now "
+        "be strong enough to replace the scope"
+    )
+
+    # The concrete instance behind the rate: a figure this record does not own, matching
+    # records that do not own it either.
+    pane_fit = 0.111
+    unrelated = [
+        path.name
+        for path in sorted((REPO / "docs/evidence/open3d").glob("*.json"))
+        if "pane-fit" not in path.name
+        and any(
+            round(leaf, 3) == pane_fit
+            for leaf in numbers_in(json.loads(path.read_text()))
+        )
+    ]
+    assert unrelated, "11.1% no longer collides; re-measure before trusting this"
