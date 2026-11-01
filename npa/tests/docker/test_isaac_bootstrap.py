@@ -821,11 +821,9 @@ def test_base_installer_uses_the_selected_isaac_dependency_lock() -> None:
     """Isaac 3 must not silently install the legacy Isaac dependency closure."""
 
     installer = BASE_INSTALLER.read_text(encoding="utf-8")
-    assert "sed -E '/^imageio-ffmpeg==/d' \"${OSS_DEPS_FILE}\"" in installer
-    assert (
-        "sed -E '/^imageio-ffmpeg==/d' \"${COMMON_DIR}/isaac-oss-deps.txt\""
-        not in installer
-    )
+    assert '"${COMMON_DIR}/select_moviepy_pillow_closure.py"' in installer
+    assert '--requirements "$OSS_DEPS_FILE"' in installer
+    assert '--requirements "${COMMON_DIR}/isaac-oss-deps.txt"' not in installer
 
 
 def test_base_installer_upgrades_linux_headers_from_the_fixed_snapshot() -> None:
