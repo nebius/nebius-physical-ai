@@ -9,12 +9,32 @@ out of building it.
 
 from __future__ import annotations
 
+import importlib.util
 import json
+import sys
+import types
 from pathlib import Path
 
 EVIDENCE = Path(__file__).resolve().parents[3] / "docs" / "evidence" / "open3d"
 VERDICT = EVIDENCE / "collision-fitness-verdict.json"
 RECORD = EVIDENCE / "capability-record-collision-fitness.json"
+HARNESS = EVIDENCE / "harness" / "collision_fitness_verdict.py"
+
+
+def _harness():
+    """Load the harness with open3d stubbed.
+
+    The gate is a decision about a dict and needs no geometry, but the module imports
+    open3d at top level because its measurement functions do. Stubbing keeps these tests
+    runnable in CI, which has no Open3D, while still executing the real gate code rather
+    than a copy of it.
+    """
+    sys.modules.setdefault("open3d", types.ModuleType("open3d"))
+    spec = importlib.util.spec_from_file_location("collision_fitness_verdict", HARNESS)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules.setdefault("collision_fitness_verdict", module)
+    spec.loader.exec_module(module)
+    return module
 
 
 def _verdict() -> dict:
@@ -175,6 +195,66 @@ def test_the_narrower_fit_output_is_named_with_its_figures() -> None:
     assert "downstream-consumer.json" in fit, fit
     assert "0.3245" in fit and "0.0708" in fit, fit
     assert "not a workaround" in fit, fit
+
+
+def test_a_failed_control_writes_no_verdict_to_the_published_path(tmp_path) -> None:
+    """Review's finding: the report was written three lines before the control was read.
+
+    So a quarantined run left a file at the published name stating a fitness verdict from
+    an instrument just proven invalid -- and the consumers of these records are tests that
+    read the JSON, which would have passed on it. This executes the real main() with a
+    forced-invalid control and asserts the published path stays absent.
+    """
+    harness = _harness()
+    published = tmp_path / "verdict.json"
+    harness.OUT = published
+    harness.build = lambda: {
+        "verdict": harness.verdict_for({"instrument_is_valid": False}, fit=True),
+        "instrument_validation": {"instrument_is_valid": False, "undefined_cells": 521},
+    }
+
+    assert harness.main() == 1
+
+    assert not published.exists(), "a failed control must not occupy the published name"
+    quarantined = tmp_path / f"verdict{harness.QUARANTINE}.json"
+    assert quarantined.exists(), sorted(p.name for p in tmp_path.iterdir())
+    assert json.loads(quarantined.read_text())["verdict"] == harness.WITHHELD
+
+
+def test_the_verdict_field_itself_depends_on_the_control() -> None:
+    """Not a sibling field two levels down that a reader has to go and find.
+
+    The earlier version derived the verdict from the mesh alone, so the control could fail
+    without the verdict changing at all. Both fitness outcomes are checked, because a gate
+    that only withholds the unfavourable answer is not a gate.
+    """
+    harness = _harness()
+    valid = {"instrument_is_valid": True}
+    invalid = {"instrument_is_valid": False}
+
+    assert harness.verdict_for(valid, fit=False) == "not fit for collision use"
+    assert harness.verdict_for(valid, fit=True) == "fit"
+    assert harness.verdict_for(invalid, fit=False) == harness.WITHHELD
+    assert harness.verdict_for(invalid, fit=True) == harness.WITHHELD
+
+
+def test_the_published_artifact_states_a_verdict_only_because_its_control_passed() -> (
+    None
+):
+    """The invariant tying the two together on the committed artifact.
+
+    Reads as: this file is allowed to carry a fitness verdict. If the control ever fails,
+    this test says the verdict must have become the withheld string.
+    """
+    harness = _harness()
+    report = _verdict()
+    valid = report["instrument_validation"]["instrument_is_valid"]
+
+    assert valid is True, report["instrument_validation"]
+    assert report["verdict"] != harness.WITHHELD
+    assert harness.publication_path(report, Path("x/verdict.json")) == Path(
+        "x/verdict.json"
+    )
 
 
 def test_the_record_binds_its_harness_and_report_bytes() -> None:

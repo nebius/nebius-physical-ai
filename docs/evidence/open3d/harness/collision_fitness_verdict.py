@@ -191,6 +191,31 @@ def inferred_solid_vs_observed(
     }
 
 
+#: What the verdict field says when the instrument failed its control. Review found that
+#: an earlier version computed the verdict from the mesh alone and wrote the report three
+#: lines before consulting the control, so a quarantined run still left a file on disk
+#: stating a fitness verdict produced by an instrument just proven invalid -- and the
+#: consumers of these records are tests that read the JSON, which would pass on it.
+WITHHELD = "withheld: the instrument failed its closed-mesh control"
+
+#: Suffix for the quarantined artifact, so an invalid run never occupies the published name.
+QUARANTINE = ".quarantined-invalid-instrument"
+
+
+def verdict_for(validation: dict, fit: bool) -> str:
+    """The control gates the verdict itself, not a sibling field a reader has to find."""
+    if not validation["instrument_is_valid"]:
+        return WITHHELD
+    return "fit" if fit else "not fit for collision use"
+
+
+def publication_path(report: dict, out: Path) -> Path:
+    """Where this report may be written. An invalid run cannot take the published name."""
+    if report["instrument_validation"]["instrument_is_valid"]:
+        return out
+    return out.with_name(f"{out.stem}{QUARANTINE}{out.suffix}")
+
+
 def instrument_validation() -> dict:
     """Does the parity test give the right answer on a mesh known to be closed?
 
@@ -260,7 +285,7 @@ def build() -> dict:
     )
     return {
         "question": "Can the delivered surface be used as a collision geometry?",
-        "verdict": "fit" if fit else "not fit for collision use",
+        "verdict": verdict_for(validation, fit),
         "instrument_validation": validation,
         "why": (
             "The delivered surface is not closed, so the two questions a collision checker "
@@ -347,13 +372,18 @@ def build() -> dict:
 
 def main() -> int:
     report = build()
-    OUT.write_text(json.dumps(report, indent=2) + "\n")
+    # The check comes before the write. An earlier version had these the other way round,
+    # so a failed control still left a verdict-bearing file at the published path.
+    destination = publication_path(report, OUT)
+    if not report["instrument_validation"]["instrument_is_valid"]:
+        destination.write_text(json.dumps(report, indent=2) + "\n")
+        print("Instrument failed its closed-mesh control; no verdict is published.")
+        print(f"Quarantined to {destination}; {OUT} not written.")
+        return 1
+
+    destination.write_text(json.dumps(report, indent=2) + "\n")
     candidate = report["variants"]["candidate"]
     baseline = report["variants"]["baseline"]
-    if not report["instrument_validation"]["instrument_is_valid"]:
-        print("Instrument failed its closed-mesh control; no verdict is published.")
-        print(f"Wrote {OUT}")
-        return 1
     print(f"Verdict: {report['verdict']}.")
     print(
         f"  candidate: watertight={candidate['topology']['is_watertight']}, "
