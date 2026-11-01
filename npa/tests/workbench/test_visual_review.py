@@ -16,7 +16,7 @@ from PIL import Image
 
 from npa.clients.storage import StoragePreconditionFailed
 from npa.workbench import vlm_eval
-from npa.workbench.vlm_eval import visual_review
+from npa.workbench.vlm_eval import visual_review, visual_review_schema
 
 
 MODEL = "MiniMaxAI/MiniMax-M3"
@@ -286,6 +286,138 @@ def _paired_completions() -> list[dict]:
         _completion(_paired_payload(current_is_A=True)),
         _completion(_paired_payload(current_is_A=False)),
     ]
+
+
+_VISUAL_REVIEW_VOCABULARIES = {
+    "TASK_STATUSES": (
+        "complete",
+        "partial",
+        "failure",
+        "unclear",
+        "no_evidence",
+    ),
+    "FIDELITY_STATUSES": (
+        "no_visible_issue",
+        "issues_visible",
+        "unclear",
+    ),
+    "FIDELITY_CATEGORIES": (
+        "unsupported_geometry",
+        "misalignment",
+        "hallucinated_detail",
+        "label_inconsistency",
+        "temporal_defect",
+        "other",
+    ),
+    "ISSUE_SEVERITIES": (
+        "critical",
+        "major",
+        "minor",
+        "unclear",
+    ),
+    "REVIEWABILITY_STATUSES": (
+        "reviewable",
+        "limited",
+        "unreviewable",
+    ),
+    "IMPRESSIVENESS_STATUSES": (
+        "strong",
+        "moderate",
+        "limited",
+        "none",
+        "unresolved",
+    ),
+    "USEFULNESS_STATUSES": (
+        "plausible",
+        "unsupported",
+        "unresolved",
+    ),
+    "COMPARISON_PREFERENCES": (
+        "A",
+        "B",
+        "tie",
+        "unresolved",
+    ),
+    "COMPARISON_DIFFERENCES": (
+        "materially_better",
+        "equivalent",
+        "unresolved",
+    ),
+    "CONFIDENCES": ("high", "medium", "low"),
+}
+_ARM_ENUM_SITES = {
+    "/$defs/arm/properties/task_evidence/properties/visible_status/enum": (
+        visual_review_schema.TASK_STATUSES
+    ),
+    "/$defs/arm/properties/artifact_fidelity/properties/status/enum": (
+        visual_review_schema.FIDELITY_STATUSES
+    ),
+    (
+        "/$defs/arm/properties/artifact_fidelity/properties/issues/items/"
+        "properties/category/enum"
+    ): visual_review_schema.FIDELITY_CATEGORIES,
+    (
+        "/$defs/arm/properties/artifact_fidelity/properties/issues/items/"
+        "properties/severity/enum"
+    ): visual_review_schema.ISSUE_SEVERITIES,
+    "/$defs/arm/properties/reviewability/properties/status/enum": (
+        visual_review_schema.REVIEWABILITY_STATUSES
+    ),
+    "/$defs/arm/properties/impressiveness/properties/status/enum": (
+        visual_review_schema.IMPRESSIVENESS_STATUSES
+    ),
+    "/$defs/arm/properties/physical_ai_usefulness/properties/status/enum": (
+        visual_review_schema.USEFULNESS_STATUSES
+    ),
+}
+_COMPARISON_ENUM_SITES = {
+    "/properties/comparison/properties/preferred_set/enum": (
+        visual_review_schema.COMPARISON_PREFERENCES
+    ),
+    "/properties/comparison/properties/visible_evidence_difference/enum": (
+        visual_review_schema.COMPARISON_DIFFERENCES
+    ),
+    "/properties/comparison/properties/confidence/enum": (
+        visual_review_schema.CONFIDENCES
+    ),
+}
+
+
+def _enum_sites(node: object, pointer: str = "") -> dict[str, tuple[str, ...]]:
+    found: dict[str, tuple[str, ...]] = {}
+    if isinstance(node, dict):
+        if "enum" in node:
+            values = node["enum"]
+            assert isinstance(values, (list, tuple)), (
+                f"{pointer}/enum must be an array"
+            )
+            found[f"{pointer}/enum"] = tuple(values)
+        for name, value in node.items():
+            found.update(_enum_sites(value, f"{pointer}/{name}"))
+    elif isinstance(node, (list, tuple)):
+        for index, value in enumerate(node):
+            found.update(_enum_sites(value, f"{pointer}/{index}"))
+    return found
+
+
+def test_visual_review_vocabularies_keep_exact_membership() -> None:
+    actual = {
+        name: value
+        for name, value in vars(visual_review_schema).items()
+        if name.isupper() and isinstance(value, tuple)
+    }
+    assert actual == _VISUAL_REVIEW_VOCABULARIES
+
+
+def test_visual_review_schema_enums_match_pinned_vocabularies() -> None:
+
+    single = visual_review_schema.visual_review_response_schema("single")
+    paired = visual_review_schema.visual_review_response_schema("paired")
+
+    assert single["additionalProperties"] is False
+    assert paired["additionalProperties"] is False
+    assert _enum_sites(single) == _ARM_ENUM_SITES
+    assert _enum_sites(paired) == _ARM_ENUM_SITES | _COMPARISON_ENUM_SITES
 
 
 @pytest.mark.parametrize("status", visual_review._TASK_STATUSES)
