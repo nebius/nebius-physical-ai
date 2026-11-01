@@ -76,6 +76,17 @@
       "why_it_failed": "Exactly the property this change documents. The commits are on zero remote refs, so a clone made by anyone else does not have the objects and git log -S has nothing to search. The test asserted something only the clone that made the commits can verify.",
       "the_fix": "Split in two. The half every clone can check -- that the probe symbol is in the tree, which is what the record claims the commit contributed -- always runs. The trace skips with the absent shas named and a pointer to the reachability audit. Skipping where the objects are absent is honest; asserting a trace that cannot run is not, and silently passing would be worse than either.",
       "what_i_should_have_noticed_sooner": "I read the shard results as one red check and did not open them. The failure had been there since the first push and moved shards when I added tests, which is what finally made me look."
+    },
+    "merge_refs_are_now_tested_rather_than_skipped_on_an_argument": {
+      "what_the_first_version_did": "Skipped refs/pull/*/merge, arguing a merge ref has its PR head as an ancestor and so cannot hold a commit the head lacks.",
+      "what_a_reviewer_found": "The property holds for every merge ref on this remote, but for one of them it holds for a different reason than the one I gave: the head had moved since the merge ref was last computed, so the merge ref was behind rather than derived from the current head. Harmless there. A force-push is the case that would not be harmless.",
+      "the_fix": "They are fetched and tested with everything else. An audit about commits hiding on forgotten refs should not rest on an argument about refs when the measurement costs one more refspec. Including them changed no verdict, which is the empirical version of the reviewer's analysis.",
+      "a_count_i_published_that_was_stale_on_arrival": "I wrote 23 merge refs in prose. The harness measured 24, and the remote now advertises 25. This repository gains refs continuously, so a count written into prose is wrong almost immediately. Counts live in the report and the prose points there."
+    },
+    "what_this_changes_enforcement_does_not_reach": {
+      "the_finding": "A reviewer measured the whole evidence directory instead of the records this change rewrote, and found files that carry digests, declare no provenance, and are not capability-record-*, so nothing inside this glob will ever reach them.",
+      "my_independent_count": "6 files carry digests with no provenance block, 5 of them the same files the reviewer named. The differences are population and base: their measurement was on main, this branch is 310 commits behind it, and one of their seven does not yet exist here.",
+      "why_it_is_reported_and_not_fixed_here": "Widening the glob means designing provenance for six artifacts this change did not produce, on a stale base where the set is incomplete. That is a different change with its own review surface. The audit now reports the count so the enforcement edge is visible rather than silent, which is the part that was actually wrong."
     }
   },
   "two_commits_were_recovered_not_invented": {
@@ -134,11 +145,11 @@
       },
       {
         "path": "harness/audit_commit_reachability.py",
-        "sha256": "667379fa03823e2d6c8751e80a7bf3a245f34b543402a8f6c94f9240bf3830b1"
+        "sha256": "32a27773aabf21183cafa5eb369674abb88db35036fe9f14aff4025dc1c79540"
       },
       {
         "path": "commit-reachability-audit.json",
-        "sha256": "584b787dc9de4bb57e395709e86ad3770be6df04164ba72ad55f017fab4e61cb"
+        "sha256": "d85e01f8657745f5c57d9ae588061071fbda0306ce7d877834b1951c23767550"
       }
     ],
     "why_this_shape": "A review lane found provenance recorded six different ways across these records, so an auditor had to learn each file. This is the one shape. A record about provenance that carried none would have been the defect it complains about.",

@@ -346,6 +346,18 @@ def test_the_reachability_audit_consulted_the_refs_the_remote_advertises() -> No
     # was unsound. If they stop being consulted the audit is back to checking a quarter of them.
     assert coverage["fetched_pull_refs"] >= coverage["pull_heads_advertised"] - 1
     assert coverage["fetched_tag_refs"] == coverage["tags_advertised"]
+    # Merge refs were skipped on an argument until a reviewer found a ref the argument did not
+    # describe. They are fetched and tested now, so the audit rests on no argument about refs.
+    assert coverage["fetched_merge_refs"] >= coverage["pull_merges_advertised"] - 1
+    # The decomposition has to close, or "the rest are branches" is hiding a category.
+    assert (
+        coverage["pull_heads_advertised"]
+        + coverage["pull_merges_advertised"]
+        + coverage["tags_advertised"]
+        + coverage["branches_advertised"]
+        + coverage["refs_in_no_other_category"]
+        == coverage["total_refs_advertised_by_remote"]
+    ), coverage
 
 
 def test_shallow_truncation_is_ruled_out_per_commit_not_waved_at() -> None:
@@ -410,3 +422,31 @@ def test_every_record_claiming_no_remote_ref_names_a_commit_the_audit_agrees_is_
         for name in claiming
     }
     assert len(named) == 7, sorted(s[:12] for s in named)
+
+
+def test_the_audit_reports_the_evidence_its_own_glob_cannot_reach() -> None:
+    """An enforcement edge should be a number a reader can see, not an absence they must notice.
+
+    A reviewer measured the whole evidence directory rather than the records this change
+    rewrote, and found files that carry digests, name no resolvable commit, and are not
+    `capability-record-*`, so no hardening inside the glob will ever reach them. Widening it
+    means designing provenance for artifacts this change did not produce; reporting the count
+    is what stops it being silent in the meantime.
+    """
+    audit = json.loads((EVIDENCE / "commit-reachability-audit.json").read_text())
+    edge = audit["what_this_audits_glob_does_not_reach"]
+
+    assert edge["evidence_json_outside_this_audits_glob"] > 0
+    # The digest-carrying subset is the one that matters: a digest with no declared origin is
+    # exactly the case this change exists to close. The reviewer measured seven on main; this
+    # base is behind main and uses a slightly different population, and the lists overlap in
+    # five. Pinning the exact count would pin that difference rather than the property.
+    assert edge["of_those_that_also_carry_digests"] >= 5, edge
+    assert (
+        len(edge["files_carrying_digests_with_no_declared_provenance"])
+        == (edge["of_those_that_also_carry_digests"])
+    )
+    for entry in edge["files_carrying_digests_with_no_declared_provenance"]:
+        assert entry["carries_digests"] is True, entry
+        assert entry["has_a_provenance_block"] is False, entry
+        assert not entry["file"].startswith("capability-record-"), entry

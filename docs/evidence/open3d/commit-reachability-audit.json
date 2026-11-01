@@ -2,17 +2,21 @@
   "what_this_answers": "For every commit a capability record names, can another reader resolve it from a ref this remote advertises?",
   "why_it_exists": "The records claimed zero remote refs. The clone that checked held only refs/heads/* out of 1271 advertised refs, and was shallow. The claim was true and unestablished, which is its own kind of defect.",
   "ref_coverage": {
-    "total_refs_advertised_by_remote": 1274,
-    "pull_heads_advertised": 933,
-    "pull_merges_skipped": 24,
+    "total_refs_advertised_by_remote": 1277,
+    "pull_heads_advertised": 934,
+    "pull_merges_advertised": 25,
     "tags_advertised": 11,
-    "fetched_pull_refs": 933,
+    "branches_advertised": 306,
+    "refs_in_no_other_category": 1,
+    "fetched_pull_refs": 934,
+    "fetched_merge_refs": 25,
     "fetched_tag_refs": 11,
-    "why_merge_refs_are_skipped": "A refs/pull/N/merge is the computed merge of the base and the PR head, so it has the head as an ancestor and cannot contain what the head lacks."
+    "why_merge_refs_are_no_longer_skipped": "The first version skipped them, arguing a merge ref has its PR head as an ancestor and so cannot hold a commit the head lacks. A reviewer tested it on all of them and found one where the head had moved since the merge ref was computed, so the property held for a different reason than the one I gave. It was harmless, and a force-push is the case that would not be. They are now fetched and tested, so the audit rests on no argument about refs.",
+    "counts_here_are_a_moment_not_a_constant": "This remote gains refs continuously. A count written into prose is stale almost immediately -- one of mine was wrong by the time it was published -- so the numbers live in this report and the prose points here."
   },
   "shallow_clone": {
     "is_shallow": true,
-    "graft_points": 1,
+    "graft_points": 12,
     "why_this_does_not_invalidate_the_result": "Truncation removes the ancestors of a graft point. A named commit is hidden only if it is one of them, which is tested per commit rather than argued from commit dates.",
     "commits_that_could_be_concealed": 0
   },
@@ -33,8 +37,8 @@
     {
       "commit": "15b0b11f0bc137631954ac87076f44753c513976",
       "verdict": "resolvable_remotely",
-      "remote_refs_containing": 328,
-      "local_refs_containing": 29,
+      "remote_refs_containing": 338,
+      "local_refs_containing": 26,
       "shallow_clone_could_conceal_it": false,
       "orphaned_tracking_refs_containing": 0,
       "example_remote_refs": [
@@ -91,8 +95,8 @@
     {
       "commit": "d06e958462865af823b4f1479867df52421c8284",
       "verdict": "resolvable_remotely",
-      "remote_refs_containing": 18,
-      "local_refs_containing": 19,
+      "remote_refs_containing": 26,
+      "local_refs_containing": 17,
       "shallow_clone_could_conceal_it": false,
       "orphaned_tracking_refs_containing": 0,
       "example_remote_refs": [
@@ -104,8 +108,8 @@
     {
       "commit": "d22893238d75efbb05a69eb75bca1b82eb5fe280",
       "verdict": "resolvable_remotely",
-      "remote_refs_containing": 613,
-      "local_refs_containing": 1101,
+      "remote_refs_containing": 623,
+      "local_refs_containing": 1098,
       "shallow_clone_could_conceal_it": false,
       "orphaned_tracking_refs_containing": 71,
       "example_remote_refs": [
@@ -181,6 +185,233 @@
       "15b0b11f0bc137631954ac87076f44753c513976",
       "b18d7aef56bbe25a5b45290e0b705f20a59ad4da"
     ]
+  },
+  "what_this_audits_glob_does_not_reach": {
+    "evidence_json_outside_this_audits_glob": 31,
+    "of_those_with_no_provenance_block_at_all": 30,
+    "of_those_that_also_carry_digests": 6,
+    "why_three_numbers_and_not_one": "A reviewer measured this as seven files. That is the subset carrying digests and naming no resolvable commit; the broadest count here is every non-record evidence JSON. Different populations rather than a disagreement, and the digest-carrying count is the one that matters, because a digest with no declared origin is the case this change exists to close.",
+    "files_carrying_digests_with_no_declared_provenance": [
+      {
+        "file": "derived-report-controls.json",
+        "has_a_provenance_block": false,
+        "carries_digests": true,
+        "names_a_commit": false
+      },
+      {
+        "file": "image-payload-scan.json",
+        "has_a_provenance_block": false,
+        "carries_digests": true,
+        "names_a_commit": false
+      },
+      {
+        "file": "independent-verification.json",
+        "has_a_provenance_block": false,
+        "carries_digests": true,
+        "names_a_commit": false
+      },
+      {
+        "file": "irregular-density-counterexample.json",
+        "has_a_provenance_block": false,
+        "carries_digests": true,
+        "names_a_commit": false
+      },
+      {
+        "file": "pane-abstention-control.json",
+        "has_a_provenance_block": false,
+        "carries_digests": true,
+        "names_a_commit": false
+      },
+      {
+        "file": "replay-b18d-public-report.json",
+        "has_a_provenance_block": false,
+        "carries_digests": true,
+        "names_a_commit": false
+      }
+    ],
+    "files": [
+      {
+        "file": "background-choice-sweep-refit.json",
+        "has_a_provenance_block": false,
+        "carries_digests": false,
+        "names_a_commit": false
+      },
+      {
+        "file": "band-false-negative-sweep.json",
+        "has_a_provenance_block": false,
+        "carries_digests": false,
+        "names_a_commit": false
+      },
+      {
+        "file": "band-measurement-demo-scan.json",
+        "has_a_provenance_block": false,
+        "carries_digests": false,
+        "names_a_commit": false
+      },
+      {
+        "file": "band-profile-across-scenes.json",
+        "has_a_provenance_block": false,
+        "carries_digests": false,
+        "names_a_commit": false
+      },
+      {
+        "file": "band-validity-sweep.json",
+        "has_a_provenance_block": false,
+        "carries_digests": false,
+        "names_a_commit": false
+      },
+      {
+        "file": "camera-framing-probe.json",
+        "has_a_provenance_block": false,
+        "carries_digests": false,
+        "names_a_commit": false
+      },
+      {
+        "file": "commit-reachability-audit.json",
+        "has_a_provenance_block": false,
+        "carries_digests": false,
+        "names_a_commit": false
+      },
+      {
+        "file": "complete-capture-control.json",
+        "has_a_provenance_block": false,
+        "carries_digests": false,
+        "names_a_commit": false
+      },
+      {
+        "file": "complete-capture-threshold-sweep.json",
+        "has_a_provenance_block": false,
+        "carries_digests": false,
+        "names_a_commit": false
+      },
+      {
+        "file": "consumer-recovery.json",
+        "has_a_provenance_block": false,
+        "carries_digests": false,
+        "names_a_commit": false
+      },
+      {
+        "file": "derived-report-controls.json",
+        "has_a_provenance_block": false,
+        "carries_digests": true,
+        "names_a_commit": false
+      },
+      {
+        "file": "downstream-consumer-reproduced.json",
+        "has_a_provenance_block": false,
+        "carries_digests": false,
+        "names_a_commit": false
+      },
+      {
+        "file": "downstream-consumer.json",
+        "has_a_provenance_block": false,
+        "carries_digests": false,
+        "names_a_commit": false
+      },
+      {
+        "file": "floor-across-geometry-and-sampling.json",
+        "has_a_provenance_block": false,
+        "carries_digests": false,
+        "names_a_commit": false
+      },
+      {
+        "file": "floor-vs-resolution.json",
+        "has_a_provenance_block": false,
+        "carries_digests": false,
+        "names_a_commit": false
+      },
+      {
+        "file": "floor-vs-voxel-multiple.json",
+        "has_a_provenance_block": false,
+        "carries_digests": false,
+        "names_a_commit": false
+      },
+      {
+        "file": "frame-edge-audit-after.json",
+        "has_a_provenance_block": false,
+        "carries_digests": false,
+        "names_a_commit": false
+      },
+      {
+        "file": "frame-edge-audit-before.json",
+        "has_a_provenance_block": false,
+        "carries_digests": false,
+        "names_a_commit": false
+      },
+      {
+        "file": "hardening-overlay-threshold.json",
+        "has_a_provenance_block": false,
+        "carries_digests": false,
+        "names_a_commit": false
+      },
+      {
+        "file": "hardening-truncated-read.json",
+        "has_a_provenance_block": false,
+        "carries_digests": false,
+        "names_a_commit": false
+      },
+      {
+        "file": "image-payload-scan.json",
+        "has_a_provenance_block": false,
+        "carries_digests": true,
+        "names_a_commit": false
+      },
+      {
+        "file": "independent-verification.json",
+        "has_a_provenance_block": false,
+        "carries_digests": true,
+        "names_a_commit": false
+      },
+      {
+        "file": "irregular-density-counterexample.json",
+        "has_a_provenance_block": false,
+        "carries_digests": true,
+        "names_a_commit": false
+      },
+      {
+        "file": "live-runtime-attempt.json",
+        "has_a_provenance_block": false,
+        "carries_digests": false,
+        "names_a_commit": false
+      },
+      {
+        "file": "ordinary-window-audit.json",
+        "has_a_provenance_block": false,
+        "carries_digests": false,
+        "names_a_commit": false
+      },
+      {
+        "file": "pane-abstention-control.json",
+        "has_a_provenance_block": false,
+        "carries_digests": true,
+        "names_a_commit": false
+      },
+      {
+        "file": "pane-fit-window-aspect-sweep.json",
+        "has_a_provenance_block": false,
+        "carries_digests": false,
+        "names_a_commit": false
+      },
+      {
+        "file": "poisson-procedure-and-overcall-audit.json",
+        "has_a_provenance_block": false,
+        "carries_digests": false,
+        "names_a_commit": false
+      },
+      {
+        "file": "replay-b18d-public-report.json",
+        "has_a_provenance_block": false,
+        "carries_digests": true,
+        "names_a_commit": false
+      },
+      {
+        "file": "viewer-wgpu-error-diagnosis.json",
+        "has_a_provenance_block": false,
+        "carries_digests": false,
+        "names_a_commit": false
+      }
+    ],
+    "why_this_is_reported_instead_of_fixed": "Widening the glob means designing provenance for artifacts this change did not produce, on a base well behind main. Reported so the enforcement edge is a number a reader can see rather than an absence they have to notice."
   },
   "what_this_does_not_establish": "That any measurement taken at these commits is correct. Reachability is about whether a reader can look the commit up, nothing more."
 }

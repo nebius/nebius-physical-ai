@@ -47,6 +47,7 @@ OUT = EVIDENCE / "commit-reachability-audit.json"
 # rewrites what the clone's own tracking refs mean.
 AUDIT_NS = "refs/remotes/provenance-audit/"
 PR_NS = AUDIT_NS + "pr"
+MERGE_NS = AUDIT_NS + "merge"
 TAG_NS = AUDIT_NS + "tag"
 
 SHA_RE = re.compile(r"^[0-9a-f]{7,40}$")
@@ -72,15 +73,28 @@ def advertised_refs() -> dict[str, str]:
 
 
 def fetch_everything_resolvable(refs: dict[str, str]) -> dict[str, int]:
+    """Mirror every resolvable ref locally. Refspecs are forced because PR heads move: a second
+    run of this audit otherwise fails on the first non-fast-forward update, which is a stale
+    mirror reported as a broken harness."""
     pulls = [r for r in refs if r.startswith("refs/pull/") and r.endswith("/head")]
+    merges = [r for r in refs if r.startswith("refs/pull/") and r.endswith("/merge")]
     tags = [r for r in refs if r.startswith("refs/tags/")]
+    branches = [r for r in refs if r.startswith("refs/heads/")]
     if pulls:
         git(
             "fetch",
             "--quiet",
             "--no-write-fetch-head",
             "origin",
-            f"refs/pull/*/head:{PR_NS}/*",
+            f"+refs/pull/*/head:{PR_NS}/*",
+        )
+    if merges:
+        git(
+            "fetch",
+            "--quiet",
+            "--no-write-fetch-head",
+            "origin",
+            f"+refs/pull/*/merge:{MERGE_NS}/*",
         )
     if tags:
         git(
@@ -88,14 +102,20 @@ def fetch_everything_resolvable(refs: dict[str, str]) -> dict[str, int]:
             "--quiet",
             "--no-write-fetch-head",
             "origin",
-            f"refs/tags/*:{TAG_NS}/*",
+            f"+refs/tags/*:{TAG_NS}/*",
         )
+    other = len(refs) - len(pulls) - len(merges) - len(tags) - len(branches)
     return {
         "pull_heads_advertised": len(pulls),
-        "pull_merges_skipped": len([r for r in refs if r.endswith("/merge")]),
+        "pull_merges_advertised": len(merges),
         "tags_advertised": len(tags),
+        "branches_advertised": len(branches),
+        "refs_in_no_other_category": other,
         "fetched_pull_refs": len(
             git("for-each-ref", PR_NS, "--format=%(refname)").splitlines()
+        ),
+        "fetched_merge_refs": len(
+            git("for-each-ref", MERGE_NS, "--format=%(refname)").splitlines()
         ),
         "fetched_tag_refs": len(
             git("for-each-ref", TAG_NS, "--format=%(refname)").splitlines()
@@ -170,6 +190,61 @@ def named_commits() -> tuple[dict[str, list[str]], dict[str, str]]:
         if shas:
             found[record.name] = sorted(set(shas))
     return found, kinds
+
+
+def evidence_outside_the_record_glob() -> dict[str, object]:
+    """How much evidence this audit's glob does not reach, as a number rather than a hope.
+
+    A reviewer measured the whole evidence directory rather than the records this change
+    rewrote and found seven JSON files that name no commit a reader can resolve and are not
+    `capability-record-*`, so no amount of hardening inside the glob will ever reach them. The
+    shape is right and its enforcement stops short of the files that still need it.
+
+    Widening the glob is the real fix and is deliberately not done here: those files carry no
+    provenance block at all, so it would mean designing provenance for six artifacts this
+    change did not produce, on a base 310 commits behind main where the seventh does not yet
+    exist. Reporting the boundary as a count keeps it from being a silent hole in the meantime,
+    which is the part that was actually wrong.
+    """
+    outside = []
+    for path in sorted(EVIDENCE.glob("*.json")):
+        if path.name.startswith("capability-record-"):
+            continue
+        data = json.loads(path.read_text())
+        # Not every evidence file is an object. Some are top-level arrays of readings, which
+        # cannot carry a provenance block at all and are counted as unreached rather than
+        # crashing the audit that is supposed to be measuring them.
+        provenance = data.get("provenance") if isinstance(data, dict) else None
+        blob = json.dumps(data)
+        outside.append(
+            {
+                "file": path.name,
+                "has_a_provenance_block": isinstance(provenance, dict),
+                "carries_digests": bool(re.search(r"[0-9a-f]{64}", blob)),
+                "names_a_commit": isinstance(provenance, dict)
+                and any(
+                    isinstance(v, str) and SHA_RE.match(v) for v in provenance.values()
+                ),
+            }
+        )
+    unreached = [f for f in outside if not f["has_a_provenance_block"]]
+    carrying = [f for f in unreached if f["carries_digests"]]
+    return {
+        "evidence_json_outside_this_audits_glob": len(outside),
+        "of_those_with_no_provenance_block_at_all": len(unreached),
+        "of_those_that_also_carry_digests": len(carrying),
+        "why_three_numbers_and_not_one": "A reviewer measured this as seven files. That is the "
+        "subset carrying digests and naming no resolvable commit; the broadest count here is "
+        "every non-record evidence JSON. Different populations rather than a disagreement, and "
+        "the digest-carrying count is the one that matters, because a digest with no declared "
+        "origin is the case this change exists to close.",
+        "files_carrying_digests_with_no_declared_provenance": carrying,
+        "files": unreached,
+        "why_this_is_reported_instead_of_fixed": "Widening the glob means designing provenance "
+        "for artifacts this change did not produce, on a base well behind main. Reported so the "
+        "enforcement edge is a number a reader can see rather than an absence they have to "
+        "notice.",
+    }
 
 
 def classify(sha: str, grafts: list[str]) -> dict[str, object]:
@@ -247,9 +322,16 @@ def build() -> dict[str, object]:
         "ref_coverage": {
             "total_refs_advertised_by_remote": len(refs),
             **coverage,
-            "why_merge_refs_are_skipped": "A refs/pull/N/merge is the computed merge of the "
-            "base and the PR head, so it has the head as an "
-            "ancestor and cannot contain what the head lacks.",
+            "why_merge_refs_are_no_longer_skipped": "The first version skipped them, arguing a "
+            "merge ref has its PR head as an ancestor and so cannot hold a commit the head "
+            "lacks. A reviewer tested it on all of them and found one where the head had moved "
+            "since the merge ref was computed, so the property held for a different reason than "
+            "the one I gave. It was harmless, and a force-push is the case that would not be. "
+            "They are now fetched and tested, so the audit rests on no argument about refs.",
+            "counts_here_are_a_moment_not_a_constant": "This remote gains refs continuously. A "
+            "count written into prose is stale almost immediately -- one of mine was wrong by "
+            "the time it was published -- so the numbers live in this report and the prose "
+            "points here.",
         },
         "shallow_clone": {
             "is_shallow": git("rev-parse", "--is-shallow-repository") == "true",
@@ -267,6 +349,7 @@ def build() -> dict[str, object]:
         "commits": results,
         "object_kinds": dict(sorted(kinds.items())),
         "records_naming_them": {k: v for k, v in sorted(by_record.items())},
+        "what_this_audits_glob_does_not_reach": evidence_outside_the_record_glob(),
         "what_this_does_not_establish": "That any measurement taken at these commits is "
         "correct. Reachability is about whether a reader can "
         "look the commit up, nothing more.",
