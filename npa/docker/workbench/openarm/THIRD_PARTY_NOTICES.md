@@ -4,6 +4,11 @@
 | --- | --- | --- |
 | Enactic openarm_mujoco 2.2.0 (`a8c979…`) | yes | Apache-2.0 source, MJCF, meshes, and package; upstream license retained. |
 | Enactic openarm_isaac_lab (`bad82e…`, extension 0.1.0) | yes | Apache-2.0 source and OpenArm USD assets; upstream license retained. |
+| CPython 3.11.18 | yes | Python Software Foundation License Version 2; built from the exact hash-pinned Python.org source release, with its license retained at `/usr/share/doc/cpython3.11/LICENSE`. |
+| Expat 2.9.0 | yes, statically in `pyexpat` | MIT; exact bundled source notice retained at `/usr/share/doc/cpython3.11/EXPAT-LICENSE`. |
+| mpdecimal 2.5.1 | yes, statically in `_decimal` | BSD-2-Clause; exact license-bearing source header retained at `/usr/share/doc/cpython3.11/MPDECIMAL-LICENSE.h`. |
+| tiny_sha3 `dcbb3192047c2a721f5f851db591871d428036a9` | yes, compiled into `_sha3` | MIT; exact bundled source notice retained at `/usr/share/doc/cpython3.11/SHA3-LICENSE`. |
+| BLAKE2 reference implementation (CPython 3.11.18 bundle) | yes, compiled into `_blake2` | CC0-1.0; exact source header carrying the dedication and warranty text retained at `/usr/share/doc/cpython3.11/BLAKE2-CC0-SOURCE.h`. |
 | MuJoCo 3.6.0 | yes | Apache-2.0 binary wheel; exact hashes in `mujoco-requirements.txt`. |
 | FastAPI 0.136.1 / Starlette 1.6.0 / Pydantic 2.13.5 / Uvicorn 0.53.0 | yes | MIT-licensed API, ASGI toolkit, schema, and server runtime; exact hashes and transitive dependencies are recorded in `mujoco-requirements.txt`. OpenArm overrides the shared Isaac 2 closure's vulnerable Starlette release. |
 | GitPython 3.2.1 / gitdb 4.0.12 / smmap 5.0.3 | yes | BSD-3-Clause helper and dependencies. OpenArm's exact lock enforces the current GitPython security floor before publication. |

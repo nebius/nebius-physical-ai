@@ -5,6 +5,9 @@
 | LeIsaac 0.4.0 | pinned Apache-2.0 source checkout | Apache-2.0; NPA's two reviewable patches are retained beside the Dockerfile and listed in `REDISTRIBUTION.md`. |
 | CPython 3.11.18 | hash-pinned Python.org source release | Python Software Foundation License Version 2; the exact release license is retained at `/usr/share/doc/cpython3.11/LICENSE`. |
 | Expat 2.9.0 | bundled in the exact CPython 3.11.18 source release and statically compiled into `pyexpat` | MIT; the bundled license is retained at `/usr/share/doc/cpython3.11/EXPAT-LICENSE`. |
+| mpdecimal 2.5.1 | bundled in the exact CPython 3.11.18 source release and statically compiled into `_decimal` | BSD-2-Clause; the exact license-bearing source header is retained at `/usr/share/doc/cpython3.11/MPDECIMAL-LICENSE.h`. |
+| tiny_sha3 `dcbb3192047c2a721f5f851db591871d428036a9` | bundled in the exact CPython 3.11.18 source release and compiled into `_sha3` | MIT; the exact bundled license is retained at `/usr/share/doc/cpython3.11/SHA3-LICENSE`. |
+| BLAKE2 reference implementation (CPython 3.11.18 bundle) | bundled in the exact CPython 3.11.18 source release and compiled into `_blake2` | CC0-1.0; the exact source header carrying the dedication and warranty text is retained at `/usr/share/doc/cpython3.11/BLAKE2-CC0-SOURCE.h`. |
 | FFmpeg | Debian distribution packages (`ffmpeg` and shared libraries) | GPL/LGPL components under the Debian package copyright files in `/usr/share/doc`; no static or bundled `imageio-ffmpeg` executable is installed. |
 | imageio-ffmpeg 0.6.0 | optional `npa[leisaac]` host dependency only | BSD-2-Clause wrapper. Its PyPI wheel may contain a separately licensed static FFmpeg executable, so it is excluded from NPA core and from the LeIsaac runtime image. |
 | pygame 2.6.1 | pinned PyPI runtime dependency | LGPL-2.1; source and license terms are published by the pygame project. The unmodified library is dynamically imported by LeIsaac's keyboard device path. |

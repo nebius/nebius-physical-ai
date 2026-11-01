@@ -1117,8 +1117,20 @@ def _assert_cpython_source_contract(text: str) -> None:
         "pyexpat.EXPAT_VERSION",
         "expat_2.9.0",
         "CPython pyexpat unexpectedly links the snapshot system Expat",
+        "ea0b9c6b296c13aed6ecaa50b463e39a9c1bdc059b84f50507fd8247b2e660f9",
+        "4633fc5859344c6f244939c27700fb941d12c4636215a8eccde17d9a6d1dcb0d",
+        "2f6c9d0ecf70be474f2853b52394993625a32960e0a64eae147ef97a3a5c1460",
         "install -m 0444 LICENSE /usr/share/doc/cpython3.11/LICENSE",
         "install -m 0444 Modules/expat/COPYING",
+        "install -m 0444 Modules/_decimal/libmpdec/mpdecimal.h",
+        "install -m 0444 Modules/_sha3/LICENSE",
+        "install -m 0444 Modules/_blake2/impl/blake2.h",
+        "cmp -s Modules/_decimal/libmpdec/mpdecimal.h",
+        "cmp -s Modules/_sha3/LICENSE",
+        "cmp -s Modules/_blake2/impl/blake2.h",
+        "test -s /usr/share/doc/cpython3.11/MPDECIMAL-LICENSE.h",
+        "test -s /usr/share/doc/cpython3.11/SHA3-LICENSE",
+        "test -s /usr/share/doc/cpython3.11/BLAKE2-CC0-SOURCE.h",
         "test -s /usr/share/doc/cpython3.11/EXPAT-LICENSE",
         "rm -rf /usr/local/lib/python3.11/ensurepip/_bundled",
     )
@@ -1139,7 +1151,10 @@ def _assert_cpython_source_contract(text: str) -> None:
     assert "tk-dev" not in text
     assert "libexpat1-dev" not in text
     assert "--with-system-expat" not in text
-    assert "import bz2, ctypes, ensurepip, lzma, readline, sqlite3, ssl, zlib" in text
+    assert (
+        "import _blake2, _sha3, bz2, ctypes, ensurepip, lzma, readline, "
+        "sqlite3, ssl, zlib"
+    ) in text
     assert "test -s /usr/share/doc/cpython3.11/LICENSE" in text
     assert text.index("make altinstall") < text.index(
         "install -m 0444 LICENSE /usr/share/doc/cpython3.11/LICENSE"
@@ -1220,8 +1235,20 @@ def test_cpython_source_contract_rejects_mutated_source_or_digest() -> None:
         "pyexpat.EXPAT_VERSION",
         "expat_2.9.0",
         "CPython pyexpat unexpectedly links the snapshot system Expat",
+        "ea0b9c6b296c13aed6ecaa50b463e39a9c1bdc059b84f50507fd8247b2e660f9",
+        "4633fc5859344c6f244939c27700fb941d12c4636215a8eccde17d9a6d1dcb0d",
+        "2f6c9d0ecf70be474f2853b52394993625a32960e0a64eae147ef97a3a5c1460",
         "install -m 0444 LICENSE /usr/share/doc/cpython3.11/LICENSE",
         "install -m 0444 Modules/expat/COPYING",
+        "install -m 0444 Modules/_decimal/libmpdec/mpdecimal.h",
+        "install -m 0444 Modules/_sha3/LICENSE",
+        "install -m 0444 Modules/_blake2/impl/blake2.h",
+        "cmp -s Modules/_decimal/libmpdec/mpdecimal.h",
+        "cmp -s Modules/_sha3/LICENSE",
+        "cmp -s Modules/_blake2/impl/blake2.h",
+        "test -s /usr/share/doc/cpython3.11/MPDECIMAL-LICENSE.h",
+        "test -s /usr/share/doc/cpython3.11/SHA3-LICENSE",
+        "test -s /usr/share/doc/cpython3.11/BLAKE2-CC0-SOURCE.h",
         "test -s /usr/share/doc/cpython3.11/EXPAT-LICENSE",
         "rm -rf /usr/local/lib/python3.11/ensurepip/_bundled",
     ):
