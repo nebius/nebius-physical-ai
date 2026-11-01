@@ -34,11 +34,13 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from harness_io import output_path
+
 import numpy as np
 import open3d as o3d
 
 BUNDLE = Path("/data/final-bundle")
-OUT = Path("/data/downstream-consumer-reproduced.json")
+OUT = output_path("/data/downstream-consumer-reproduced.json")
 
 CELL = 0.1
 #: Support radius as a multiple of the cell. 0.87 is the rounded value of the

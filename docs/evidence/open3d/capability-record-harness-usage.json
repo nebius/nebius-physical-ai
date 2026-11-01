@@ -34,7 +34,7 @@
     "what_the_mutation_showed": "Adding one to content_pixels changed the measurement and the test still passed, because the test proved the harness ran rather than that it produced the same numbers. A guard that reads the shape of the output and not its values is the declarative-guard defect a reviewer found in another gate of mine.",
     "after_the_fix": "Four mutations, all caught: reverting a harness to the bare sys.argv[1], reverting the injector to a bare KeyError, perturbing content_pixels, and changing the content tolerance from 6 to 7."
   },
-  "what_this_does_not_claim": "That the Open3D measurements in this directory are now reproducible by a reviewer. They are not, and this change does not make them so. Eleven harnesses need an Open3D image that is an unpublished registration candidate, and the inputs they read lived on an ephemeral /data volume that no longer exists on this host. This change makes the failure legible; it does not supply the image or the data. A separate decision about publishing either is not mine to make.",
+  "what_this_does_not_claim": "That every measurement here is reproducible. Two harnesses genuinely need the vanished input bundle -- band_profile_across_scenes and consumer_occupancy -- and this change does not supply it. A separate and larger limitation is recorded below: the six that do run now produce different numbers on every run, because their sampling is unseeded.",
   "scope": "Message and argument handling only. No measurement, threshold, or report field changed. The six harnesses keep their positional arguments in the same order, so every documented invocation still works.",
   "regression_tests": {
     "file": "npa/tests/workbench/test_open3d_harness_usage.py",
@@ -57,5 +57,35 @@
     "harnesses_inventoried": 22,
     "harnesses_changed": 7,
     "reproduce": "npa/.venv/bin/python -m pytest npa/tests/workbench/test_open3d_harness_usage.py"
+  },
+  "i_had_overstated_this_and_measuring_it_corrected_me": {
+    "what_i_published_first": "That eleven harnesses need an Open3D image that is an unpublished registration candidate and inputs that lived on an ephemeral volume, implying none of the eleven could be run by a reviewer.",
+    "what_is_actually_true": "Seven of the eleven run without that image and without the bundle. Six generate their own synthetic geometry and only needed somewhere writable to put the result; one, irregular_density_counterexample, already ran. Two genuinely need the vanished bundle. The remaining two were a broken import and a missing argument.",
+    "how_the_error_happened": "I classified each harness by the first error it printed, and the first error was the environment rather than the obstacle. That is the same mistake that hid the seventh bare-subscript instance, made twice in one change.",
+    "what_it_cost": "An overstatement in a published PR body, about my own evidence being less checkable than it is. It is corrected here and in the PR."
+  },
+  "two_further_defects_found_by_actually_running_them": {
+    "a_broken_import": {
+      "harnesses": [
+        "band_validity_sweep.py",
+        "floor_across_geometry_and_sampling.py"
+      ],
+      "the_defect": "Both imported FABRICATION_AREA_SHARE from npa.workbench.open3d.runner. That name exists nowhere in npa/src, so neither harness could import at all on main, independent of data, image or arguments.",
+      "the_fix_and_how_it_was_confirmed": "Renamed to FAR_BAND_AREA_SHARE, confirmed three ways rather than by name similarity: it sits beside _crop_justification, which is the function the constant gates; both harnesses use it as 'reading_boundary', which is exactly what that constant thresholds; and its value, 0.1, is the reading_boundary recorded in the committed evidence both harnesses produced.",
+      "a_link_that_was_broken_one_way": "The runner's own docstring for that constant cites evidence/open3d/floor-vs-resolution.json, so the reference between code and evidence was intended in both directions and live in only one."
+    },
+    "a_measurement_lost_at_the_last_line": {
+      "harnesses_affected": 8,
+      "the_defect": "Each wrote to a hardcoded /data/<name>.json. That is correct inside the container they document, which mounts the evidence directory there. Outside it the harness ran the entire measurement and then died on FileNotFoundError while writing. band_validity_sweep reaches that point after about 75 seconds of work.",
+      "the_fix": "harness_io.output_path resolves the destination at import time, honours an OPEN3D_OUT_DIR override so a reviewer outside the container can keep the result, and refuses before the measurement runs rather than after. It does not create the directory: a harness that invents somewhere to write is harder to reason about than one that says where it was pointed and stops.",
+      "measured_effect": "The same four harnesses now fail in 1 to 2 seconds with a message naming the variable, and six of the eight produce a real report when it is set."
+    }
+  },
+  "the_nondeterminism_this_exposed": {
+    "what_happened": "With the output path fixed, six harnesses produced reports that could be compared against the committed evidence for the first time. They match structurally -- the same leaves in five of six -- and roughly half the values differ in every one.",
+    "the_worst_case": "In band-validity-sweep.json a row's reads_as_extrapolated_shell is True in the committed evidence and False on rerun, so a conclusion and not merely a number moves between runs. One distance reading moved from 3.379 to 0.609 voxels.",
+    "the_cause": "Sampling is unseeded. Open3D 0.20.0 exposes no seed parameter on either sample_points_uniformly or sample_points_poisson_disk, and only one of the six harnesses discloses that its sampling is unseeded.",
+    "it_is_fixable_and_that_is_being_handled_separately": "o3d.utility.random.seed does control both samplers: with a seed, three separate processes produce byte-identical point sets; without one, all three differ; and a different seed gives a different result, so the seed is what controls it. Seeding changes the committed numbers, which are accepted bytes bound by hash in other records, so it is not a change to make inside a PR about usage messages.",
+    "what_is_not_claimed_here": "That the committed values are wrong. They are one draw from a distribution whose width was never reported. Whether to reseed and regenerate accepted evidence is review's and root's call, not mine."
   }
 }

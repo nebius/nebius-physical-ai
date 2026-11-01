@@ -25,6 +25,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from harness_io import output_path
+
 import numpy as np
 import open3d as o3d
 from npa.workbench.open3d.runner import (
@@ -34,7 +36,7 @@ from npa.workbench.open3d.runner import (
 )
 
 BUNDLE = Path("/data/final-bundle")
-OUT = Path("/data/band-profile-across-scenes.json")
+OUT = output_path("/data/band-profile-across-scenes.json")
 
 #: Quantile of Poisson density discarded before anything else, matching the tool.
 DENSITY_QUANTILE = 0.02
