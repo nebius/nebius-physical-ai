@@ -40,6 +40,7 @@ from npa.workflows.sim2real.interchange_isaac_runtime import (
     _teacher_command,
     _teacher_contact_evidence,
     _teacher_hand_target_root,
+    _teacher_layout,
     _require_teacher_hand_frame,
     _teacher_solver_evidence,
     _teacher_tracking_receipt,
@@ -269,7 +270,7 @@ def test_surface_task_binds_contact_sensors_to_resolved_finger_bodies(
     assert getattr(config.scene.npa_robot_contact, "filter_prim_paths_expr", []) == []
 
 
-def test_relative_ik_and_measured_frame_use_calibrated_tool_offset(
+def test_absolute_ik_and_measured_frame_use_calibrated_tool_offset(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     profile = _profile()
@@ -289,10 +290,31 @@ def test_relative_ik_and_measured_frame_use_calibrated_tool_offset(
     envs.mdp = SimpleNamespace(
         BinaryJointPositionActionCfg=lambda **values: SimpleNamespace(**values)
     )
+    controllers = types.ModuleType("isaaclab.controllers")
+    controllers.DifferentialIKControllerCfg = lambda **values: SimpleNamespace(  # type: ignore[attr-defined]
+        **values
+    )
+    actions = types.ModuleType("isaaclab.envs.mdp.actions")
+    actions_cfg = types.ModuleType("isaaclab.envs.mdp.actions.actions_cfg")
+
+    class DifferentialInverseKinematicsActionCfg:
+        OffsetCfg = staticmethod(lambda **values: SimpleNamespace(**values))
+
+        def __new__(cls, **values):
+            return SimpleNamespace(**values)
+
+    actions_cfg.DifferentialInverseKinematicsActionCfg = (  # type: ignore[attr-defined]
+        DifferentialInverseKinematicsActionCfg
+    )
     monkeypatch.setitem(sys.modules, "isaaclab", isaaclab)
     monkeypatch.setitem(sys.modules, "isaaclab.sim", sim)
     monkeypatch.setitem(sys.modules, "isaaclab.actuators", actuators)
+    monkeypatch.setitem(sys.modules, "isaaclab.controllers", controllers)
     monkeypatch.setitem(sys.modules, "isaaclab.envs", envs)
+    monkeypatch.setitem(sys.modules, "isaaclab.envs.mdp.actions", actions)
+    monkeypatch.setitem(
+        sys.modules, "isaaclab.envs.mdp.actions.actions_cfg", actions_cfg
+    )
     from npa.workflows.sim2real import isaac_robot_asset
 
     monkeypatch.setattr(
@@ -346,16 +368,22 @@ def test_relative_ik_and_measured_frame_use_calibrated_tool_offset(
         profile,
         spec,
         usd,
-        controller_representation="relative_ee_pose",
+        controller_representation="absolute_ee_pose",
     )
 
     expected = profile.ee_from_tool
+    assert config.actions.arm_action.controller.command_type == "pose"
+    assert config.actions.arm_action.controller.use_relative_mode is False
+    assert config.actions.arm_action.joint_names == list(profile.arm_joint_names)
+    assert config.actions.arm_action.body_name == profile.ee_link
+    assert config.actions.arm_action.scale == (1.0,) * 7
     assert config.actions.arm_action.body_offset.pos == (0.0, 0.0, 0.0)
     assert config.actions.arm_action.body_offset.rot == (0.0, 0.0, 0.0, 1.0)
     assert config.scene.ee_frame.target_frames[0].offset.pos == expected.translation_m
     assert config.scene.ee_frame.target_frames[0].offset.rot == expected.quaternion_xyzw
     assert receipt["ee_from_tool"] == expected.to_dict()
     assert receipt["controller_frame"] == profile.ee_link
+    assert receipt["controller_representation"] == "absolute_ee_pose"
 
 
 def test_teacher_derives_hand_target_without_native_tool_offset() -> None:
@@ -385,7 +413,7 @@ def test_teacher_derives_hand_target_without_native_tool_offset() -> None:
     )
 
 
-def test_teacher_command_uses_hand_frame_and_reports_tool_error() -> None:
+def test_teacher_command_holds_absolute_hand_target_as_measured_pose_changes() -> None:
     torch = pytest.importorskip("torch")
     profile = _profile()
     tool_target = Transform((0.5, 0.0, 0.2), (1.0, 0.0, 0.0, 0.0))
@@ -416,10 +444,9 @@ def test_teacher_command_uses_hand_frame_and_reports_tool_error() -> None:
     )
     layout = {
         "arm": arm,
-        "scale": np.asarray([0.5] * 6),
-        "total_dimension": 7,
+        "total_dimension": 8,
         "arm_start": 0,
-        "gripper_start": 6,
+        "gripper_start": 7,
     }
 
     command, position_error, rotation_error, receipt = _teacher_command(
@@ -431,12 +458,62 @@ def test_teacher_command_uses_hand_frame_and_reports_tool_error() -> None:
 
     assert position_error == pytest.approx(0.1)
     assert rotation_error == pytest.approx(0.0)
-    assert command[0, :3].tolist() == pytest.approx([0.14, 0.0, 0.0], abs=1.0e-7)
+    expected_hand = _teacher_hand_target_root(native, profile, tool_target)
+    assert command[0, :7].tolist() == pytest.approx(
+        [*expected_hand.translation_m, *expected_hand.quaternion_xyzw], abs=1.0e-7
+    )
+    arm._compute_frame_pose = lambda: (
+        torch.tensor([tool_target.translation_m]),
+        torch.tensor([tool_target.quaternion_xyzw]),
+    )
+    repeated, *_ = _teacher_command(
+        native,
+        layout,
+        SimpleNamespace(world_from_ee=tool_target, gripper_closed=False),
+        profile,
+    )
+    assert repeated.tolist() == command.tolist()
     assert receipt["frame"] == profile.ee_link
     assert (
         receipt["body_offset"]
         == Transform((0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0)).to_dict()
     )
+
+
+def test_teacher_layout_rejects_relative_or_wrong_width_ik() -> None:
+    profile = _profile()
+
+    def native(*, width: int, relative: bool) -> SimpleNamespace:
+        arm = SimpleNamespace(
+            cfg=SimpleNamespace(
+                body_name=profile.ee_link,
+                body_offset=SimpleNamespace(
+                    pos=(0.0, 0.0, 0.0), rot=(0.0, 0.0, 0.0, 1.0)
+                ),
+                controller=SimpleNamespace(
+                    command_type="pose", use_relative_mode=relative
+                ),
+            ),
+            _joint_names=profile.arm_joint_names,
+        )
+        gripper = SimpleNamespace(_joint_names=profile.gripper.joint_names)
+        terms = {"arm_action": arm, "gripper_action": gripper}
+        return SimpleNamespace(
+            action_manager=SimpleNamespace(
+                active_terms=["arm_action", "gripper_action"],
+                action_term_dim=[width, 1],
+                get_term=terms.__getitem__,
+            )
+        )
+
+    with pytest.raises(RuntimeError, match="seven-axis absolute pose"):
+        _teacher_layout(native(width=6, relative=False), profile)
+    with pytest.raises(RuntimeError, match="absolute pose IK controller"):
+        _teacher_layout(native(width=7, relative=True), profile)
+    layout = _teacher_layout(native(width=7, relative=False), profile)
+    assert layout["total_dimension"] == 8
+    assert layout["arm_start"] == 0
+    assert layout["gripper_start"] == 7
 
 
 def test_teacher_rejects_shifted_native_ik_frame() -> None:
@@ -675,8 +752,8 @@ def test_teacher_solver_evidence_binds_commands_and_jacobian_conditioning() -> N
         applied_torque=torch.tensor([[0.5] * 6 + [0.0]]),
     )
     arm = SimpleNamespace(
-        raw_actions=torch.tensor([[1.0, 0.0, 0.0, 0.0, 0.0, 0.0]]),
-        processed_actions=torch.tensor([[0.1, 0.0, 0.0, 0.0, 0.0, 0.0]]),
+        raw_actions=torch.tensor([[1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0]]),
+        processed_actions=torch.tensor([[0.1, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0]]),
         jacobian_w=torch.diag(torch.tensor([6.0, 5.0, 4.0, 3.0, 2.0, 1.0])).unsqueeze(
             0
         ),
@@ -688,7 +765,7 @@ def test_teacher_solver_evidence_binds_commands_and_jacobian_conditioning() -> N
     native = SimpleNamespace(
         action_manager=SimpleNamespace(
             active_terms=["arm_action", "gripper_action"],
-            action_term_dim=[6, 1],
+            action_term_dim=[7, 1],
             get_term=lambda name: arm if name == "arm_action" else SimpleNamespace(),
         )
     )
@@ -696,8 +773,10 @@ def test_teacher_solver_evidence_binds_commands_and_jacobian_conditioning() -> N
     receipt = _teacher_solver_evidence(native)
 
     assert receipt["method"] == "dls"
-    assert receipt["raw_action"] == [1.0, 0.0, 0.0, 0.0, 0.0, 0.0]
-    assert receipt["processed_action"] == pytest.approx([0.1, 0.0, 0.0, 0.0, 0.0, 0.0])
+    assert receipt["raw_action"] == [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0]
+    assert receipt["processed_action"] == pytest.approx(
+        [0.1, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0]
+    )
     assert receipt["jacobian_singular_values"] == pytest.approx([6, 5, 4, 3, 2, 1])
     assert receipt["jacobian_condition_number"] == pytest.approx(6.0)
     assert receipt["joint_target_available"] is True
@@ -722,8 +801,8 @@ def test_teacher_solver_evidence_binds_commands_and_jacobian_conditioning() -> N
 def test_teacher_solver_evidence_rejects_missing_joint_target() -> None:
     torch = pytest.importorskip("torch")
     arm = SimpleNamespace(
-        raw_actions=torch.zeros((1, 6)),
-        processed_actions=torch.zeros((1, 6)),
+        raw_actions=torch.zeros((1, 7)),
+        processed_actions=torch.zeros((1, 7)),
         jacobian_w=torch.eye(6).unsqueeze(0),
         cfg=SimpleNamespace(controller=SimpleNamespace(ik_method="dls")),
         _asset=SimpleNamespace(data=SimpleNamespace()),
@@ -733,7 +812,7 @@ def test_teacher_solver_evidence_rejects_missing_joint_target() -> None:
     native = SimpleNamespace(
         action_manager=SimpleNamespace(
             active_terms=["arm_action", "gripper_action"],
-            action_term_dim=[6, 1],
+            action_term_dim=[7, 1],
             get_term=lambda name: arm if name == "arm_action" else SimpleNamespace(),
         )
     )

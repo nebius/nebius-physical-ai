@@ -396,7 +396,7 @@ def _native_tensor(value: Any) -> Any:
 
 
 def _teacher_layout(native: Any, robot: Any) -> dict[str, Any]:
-    """Bind the native differential-IK action to the sealed morphology."""
+    """Bind the native absolute-pose IK action to the sealed morphology."""
 
     names, dimensions, arm, gripper, arm_index, gripper_index = _teacher_terms(native)
     arm_names = tuple(
@@ -411,13 +411,12 @@ def _teacher_layout(native: Any, robot: Any) -> dict[str, Any]:
     if str(arm.cfg.body_name) != robot.ee_link:
         raise RuntimeError("teacher IK end-effector differs from the sealed robot")
     _require_teacher_hand_frame(arm)
-    values = _teacher_scale(arm)
+    _require_teacher_absolute_controller(arm)
     return {
         "arm": arm,
         "total_dimension": sum(dimensions),
         "arm_start": sum(dimensions[:arm_index]),
         "gripper_start": sum(dimensions[:gripper_index]),
-        "scale": values,
         "arm_joint_names": list(robot.arm_joint_names),
         "gripper_joint_names": list(robot.gripper.joint_names),
         "ee_link": robot.ee_link,
@@ -446,7 +445,7 @@ def _require_teacher_hand_frame(arm: Any) -> None:
 
 
 def _teacher_terms(native: Any) -> tuple[list[str], list[int], Any, Any, int, int]:
-    """Resolve the named six-axis IK and binary gripper terms."""
+    """Resolve the named absolute-pose IK and binary gripper terms."""
 
     names = list(native.action_manager.active_terms)
     dimensions = [int(value) for value in native.action_manager.action_term_dim]
@@ -454,8 +453,8 @@ def _teacher_terms(native: Any) -> tuple[list[str], list[int], Any, Any, int, in
         raise RuntimeError("teacher requires one named arm and gripper action")
     arm_index = names.index("arm_action")
     gripper_index = names.index("gripper_action")
-    if dimensions[arm_index] != 6 or dimensions[gripper_index] != 1:
-        raise RuntimeError("teacher requires six-axis relative IK plus gripper")
+    if dimensions[arm_index] != 7 or dimensions[gripper_index] != 1:
+        raise RuntimeError("teacher requires seven-axis absolute pose IK plus gripper")
     return (
         names,
         dimensions,
@@ -466,18 +465,16 @@ def _teacher_terms(native: Any) -> tuple[list[str], list[int], Any, Any, int, in
     )
 
 
-def _teacher_scale(arm: Any) -> Any:
-    """Validate and return the native six-axis IK scale."""
+def _require_teacher_absolute_controller(arm: Any) -> None:
+    """Reject a native IK term that would reinterpret absolute hand poses."""
 
-    scale = _native_tensor(getattr(arm, "_scale", None))
-    if scale is None or not hasattr(scale, "detach"):
-        raise RuntimeError("teacher IK action does not expose its native scale")
-    values = scale[0].detach().cpu().numpy().astype(float)
-    if values.shape != (6,) or not all(
-        math.isfinite(item) and item > 0 for item in values
+    controller = getattr(arm.cfg, "controller", None)
+    if (
+        controller is None
+        or str(getattr(controller, "command_type", "")) != "pose"
+        or getattr(controller, "use_relative_mode", None) is not False
     ):
-        raise RuntimeError("teacher IK native scale is invalid")
-    return values
+        raise RuntimeError("teacher requires an absolute pose IK controller")
 
 
 def _axis_angle_error(current: Any, target: tuple[float, ...]) -> Any:
@@ -525,16 +522,14 @@ def _teacher_command(
         hand_pose.translation_m
     )
     rotation = _axis_angle_error(hand_pose.quaternion_xyzw, hand_target.quaternion_xyzw)
-    processed = np.r_[
-        np.clip(translation, -0.07, 0.07),
-        np.clip(rotation, -0.25, 0.25),
-    ]
-    raw = np.clip(processed / layout["scale"], -1.0, 1.0)
     command = torch.zeros(
         (1, layout["total_dimension"]), dtype=torch.float32, device=native.device
     )
     start = layout["arm_start"]
-    command[0, start : start + 6] = torch.as_tensor(raw, device=native.device)
+    absolute_pose = [*hand_target.translation_m, *hand_target.quaternion_xyzw]
+    command[0, start : start + 7] = torch.as_tensor(
+        absolute_pose, dtype=torch.float32, device=native.device
+    )
     command[0, layout["gripper_start"]] = -1.0 if waypoint.gripper_closed else 1.0
     controller = {
         "frame": robot.ee_link,
@@ -701,8 +696,8 @@ def _teacher_solver_evidence(native: Any) -> dict[str, Any]:
         raw is None
         or processed is None
         or jacobian is None
-        or raw.shape != (1, 6)
-        or processed.shape != (1, 6)
+        or raw.shape != (1, 7)
+        or processed.shape != (1, 7)
         or jacobian.ndim != 3
         or jacobian.shape[0] != 1
         or jacobian.shape[1] != 6
@@ -1027,7 +1022,7 @@ def _teacher_environment(
     object_usd_path: Path,
     control_hz: float,
 ) -> tuple[Any, dict[str, Any], dict[str, Any]]:
-    """Configure the embodiment-aware relative-IK teacher environment."""
+    """Configure the embodiment-aware absolute-pose IK teacher environment."""
 
     from npa.workflows.franka_rl_environment import (
         POLICY_INTERCHANGE_SCAFFOLD_TASK,
@@ -1047,7 +1042,7 @@ def _teacher_environment(
         robot,
         robot_spec,
         args.robot_usd_path,
-        controller_representation="relative_ee_pose",
+        controller_representation="absolute_ee_pose",
     )
     configure_policy_interchange_surface_task(
         config,

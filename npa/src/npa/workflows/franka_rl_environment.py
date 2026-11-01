@@ -176,6 +176,24 @@ def configure_policy_interchange_robot(
             scale=1.0,
             use_default_offset=False,
         )
+    elif controller_representation == "absolute_ee_pose":
+        from isaaclab.controllers import DifferentialIKControllerCfg
+        from isaaclab.envs.mdp.actions.actions_cfg import (
+            DifferentialInverseKinematicsActionCfg,
+        )
+
+        config.actions.arm_action = DifferentialInverseKinematicsActionCfg(
+            asset_name="robot",
+            joint_names=list(robot_profile.arm_joint_names),
+            body_name=robot_profile.ee_link,
+            scale=(1.0,) * 7,
+            controller=DifferentialIKControllerCfg(
+                command_type="pose", use_relative_mode=False, ik_method="dls"
+            ),
+            body_offset=DifferentialInverseKinematicsActionCfg.OffsetCfg(
+                pos=(0.0, 0.0, 0.0), rot=(0.0, 0.0, 0.0, 1.0)
+            ),
+        )
     elif controller_representation == "relative_ee_pose":
         action = config.actions.arm_action
         if (
