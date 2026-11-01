@@ -14,11 +14,23 @@ import json
 import sys
 from pathlib import Path
 
+#: Stated in the record and bound to the committed suite by a test, which counts
+#: the entries in `harness/consumer_error_guard_mutations.py`. A count in prose
+#: that nothing checks is how a guard suite decays while still looking tested.
+MUTATIONS_CLAIMED = 11
 
-def main() -> int:
-    measured = json.loads(Path(sys.argv[1]).read_text())
-    out = Path(sys.argv[2])
 
+def narrative(measured: dict) -> dict:
+    """The record's prose, formatted from the measured values and nothing else.
+
+    Kept separate from `main` so that the guard suite can call it with the
+    committed record as input and compare the result to the committed prose.
+    That makes the narrative reproducible rather than merely plausible: a
+    hand-touched sentence, or a regenerated measurement whose prose was left
+    behind, stops matching. Consistency is all this establishes -- the figures
+    are true because the harness gated on reproducing the published counts, not
+    because they appear here.
+    """
     base = measured["variants"]["baseline"]
     cand = measured["variants"]["candidate"]
     bp = base["phantom_obstacle_structure"]
@@ -27,7 +39,7 @@ def main() -> int:
     cm = cand["missed_structure_structure"]
     threshold = measured["structured_threshold_cells"]
 
-    record = dict(measured)
+    record: dict = {}
     record["recorded_utc"] = "2026-11-01T16:05:00Z"
     record["what_this_closes"] = (
         "`downstream-consumer.json` reports the mapping consumer's residual "
@@ -139,6 +151,28 @@ def main() -> int:
             "wrong setting. All "
             f"{len(measured['labeller_validation']['checks'])} checks pass."
         ),
+        "the_guards_were_tested_by_corrupting_the_record": (
+            f"The guard suite is exercised against {MUTATIONS_CLAIMED} "
+            "mutations of this record in "
+            "`harness/consumer_error_guard_mutations.py`, each applied to the "
+            "real file and reverted. All are caught. The one worth reading is "
+            "the first: the candidate's largest phantom component is exactly "
+            "the frozen threshold, so moving the threshold to 9 would turn one "
+            "structured component into none and make this record read better. "
+            "One mutation found a real weakness rather than confirming a "
+            "strength: a prose check that accepted the false sentence "
+            "'only 3 of the 79 components exceed 6 cells', because 3, 79 "
+            "and 6 are all figures this record holds elsewhere. That check "
+            "was replaced by regenerating the narrative from the "
+            "measurements and comparing, which the same mutation then "
+            "failed. Running the suite also surfaced two defects in the "
+            "suite itself -- it ran pytest from the wrong directory, "
+            "collected nothing, and scored every mutation as missed; and it "
+            "restored the record with `git checkout`, which reverts to the "
+            "last commit rather than to the bytes under test. Both were "
+            "caught by its own assertions, which is the reason to write "
+            "them."
+        ),
         "the_baseline_is_the_positive_control": (
             "A method that finds no object-scale error could be a method that "
             "cannot see one. The baseline variant of the same run carries a real "
@@ -148,6 +182,13 @@ def main() -> int:
             "than an artifact of the instrument."
         ),
     }
+    return record
+
+
+def main() -> int:
+    measured = json.loads(Path(sys.argv[1]).read_text())
+    out = Path(sys.argv[2])
+    record = {**measured, **narrative(measured)}
     out.write_text(json.dumps(record, indent=2, sort_keys=True))
     print(f"wrote {out}")
     return 0

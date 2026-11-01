@@ -20,10 +20,10 @@ interpretive weight -- rather than the record's report of it.
 
 from __future__ import annotations
 
+import ast
 import importlib.util
 import json
 import math
-import re
 from pathlib import Path
 from types import ModuleType
 
@@ -33,6 +33,7 @@ EVIDENCE = Path(__file__).resolve().parents[3] / "docs/evidence/open3d"
 RECORD = EVIDENCE / "consumer-error-structure.json"
 CONSUMER = EVIDENCE / "downstream-consumer.json"
 HARNESS = EVIDENCE / "harness/consumer_error_structure.py"
+GENERATOR = EVIDENCE / "harness/build_consumer_error_record.py"
 
 VARIANTS = ("baseline", "candidate")
 CLASSES = ("phantom_obstacle_structure", "missed_structure_structure")
@@ -53,15 +54,25 @@ def consumer() -> dict:
     return json.loads(CONSUMER.read_text())
 
 
-@pytest.fixture(scope="module")
-def harness() -> ModuleType:
-    pytest.importorskip("open3d")
-    pytest.importorskip("scipy")
-    spec = importlib.util.spec_from_file_location("consumer_error_structure", HARNESS)
+def _load(path: Path, name: str) -> ModuleType:
+    spec = importlib.util.spec_from_file_location(name, path)
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+@pytest.fixture(scope="module")
+def generator() -> ModuleType:
+    """The record generator imports nothing heavy, so this never skips."""
+    return _load(GENERATOR, "build_consumer_error_record")
+
+
+@pytest.fixture(scope="module")
+def harness() -> ModuleType:
+    pytest.importorskip("open3d")
+    pytest.importorskip("scipy")
+    return _load(HARNESS, "consumer_error_structure")
 
 
 def test_the_reproduction_gate_passed_before_anything_else_was_reported(record):
@@ -211,61 +222,58 @@ def test_the_missed_cells_sit_at_the_quantisation_boundary(record, variant):
     assert 1.0 <= distance["min"] <= distance["median"] <= distance["max"] <= 2.0
 
 
-def test_the_prose_quotes_figures_the_distribution_actually_holds(record):
-    """Every figure in the finding must be a figure the record measures.
+def test_the_prose_is_reproducible_from_the_measurements_it_describes(
+    generator, record
+):
+    """Regenerate every narrative block from the record's own data and compare.
 
-    The generator formats these strings from measured values, so today they
-    agree by construction. The guard is for the edit after that: a hand-touched
-    sentence, or a regenerated record whose prose was left behind. Integers are
-    matched against the pool of values the distributions publish, which is
-    weaker than binding each figure to its own field and strong enough to catch
-    a number that came from nowhere.
+    The first version of this test checked that each integer in the prose
+    appeared somewhere among the measured values. That is too weak to be worth
+    having: the sentence "only 3 of the 79 components exceed 6 cells" is false
+    about this run, and 3, 79 and 6 are all figures the record holds elsewhere,
+    so a membership check waves it through. It was a mutation that showed this,
+    not review.
+
+    Because the record is generated, the stronger property is available --
+    the narrative is a pure function of the measurements, so the guard can
+    recompute it. A hand-edited sentence fails, and so does a regenerated
+    measurement whose prose was not regenerated with it.
     """
-    pool: set[int] = {record["structured_threshold_cells"]}
-    for variant in VARIANTS:
-        row = record["variants"][variant]
-        pool.update(
-            {
-                row["occupied_cells"],
-                row["phantom_obstacle_cells"],
-                row["missed_structure_cells"],
-            }
-        )
-        for error_class in CLASSES:
-            block = row[error_class]
-            pool.update(
-                {
-                    block["cells_total"],
-                    block["components"],
-                    block["largest_component_cells"],
-                    block["single_cell_components"],
-                    block["structured_components"],
-                    block["cells_in_structured_components"],
-                    block["largest_component_min_thickness_cells"],
-                    *block["largest_component_extent_cells"],
-                }
-            )
-    base_p = record["variants"]["baseline"]["phantom_obstacle_structure"]
-    cand_p = record["variants"]["candidate"]["phantom_obstacle_structure"]
-    cand_m = record["variants"]["candidate"]["missed_structure_structure"]
-    base_m = record["variants"]["baseline"]["missed_structure_structure"]
-    pool.add(
-        base_p["cells_in_structured_components"]
-        - cand_p["cells_in_structured_components"]
-    )
-    pool.add(cand_m["cells_total"] - base_m["cells_total"])
-    pool.add(5)  # "beyond five radii", the band the distance reading reports
+    regenerated = generator.narrative(record)
+    assert set(regenerated) <= set(record)
+    for block in sorted(regenerated):
+        assert record[block] == regenerated[block], block
 
-    unresolved: dict[str, list[int]] = {}
-    for key, sentence in sorted(record["the_finding"].items()):
-        stray = [
-            int(token)
-            for token in re.findall(r"(?<![\d.])(\d+)(?![\d.])", sentence)
-            if int(token) not in pool
-        ]
-        if stray:
-            unresolved[key] = stray
-    assert unresolved == {}, unresolved
+
+def test_the_mutation_count_the_record_claims_is_the_suite_that_exists(
+    generator, record
+):
+    """Bind the claimed mutation count to the committed suite.
+
+    The record says the guards are exercised against a specific number of
+    mutations. Nothing stops that sentence from being true when written and
+    stale a month later, so the number is read back out of the mutation
+    script's `MUTATIONS` table by parsing it, not by importing it -- importing
+    would run a module whose job is to rewrite files in the working tree.
+    """
+    source = (EVIDENCE / "harness/consumer_error_guard_mutations.py").read_text()
+    tree = ast.parse(source)
+    tables = [
+        node.value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.AnnAssign)
+        and isinstance(node.target, ast.Name)
+        and node.target.id == "MUTATIONS"
+    ]
+    assert len(tables) == 1, "expected exactly one MUTATIONS table"
+    assert isinstance(tables[0], ast.Dict)
+    defined = len(tables[0].keys)
+
+    assert defined == generator.MUTATIONS_CLAIMED
+    sentence = record["how_this_was_validated"][
+        "the_guards_were_tested_by_corrupting_the_record"
+    ]
+    assert f"against {defined} mutations" in sentence
 
 
 def test_the_labeller_was_controlled_against_the_case_that_would_merge_wrongly(record):

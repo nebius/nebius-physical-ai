@@ -134,7 +134,7 @@ def run_tests() -> tuple[int, int]:
             "-p",
             "no:cacheprovider",
         ],
-        cwd=REPO / "npa",
+        cwd=REPO,
         capture_output=True,
         text=True,
         check=False,
@@ -152,12 +152,16 @@ def run_tests() -> tuple[int, int]:
     )
 
 
-def restore() -> None:
-    subprocess.run(
-        ["git", "checkout", "--", str(RECORD.relative_to(REPO))],
-        cwd=REPO,
-        check=True,
-    )
+def restore(original: str) -> None:
+    """Put back the exact bytes this run read, not whatever HEAD holds.
+
+    The first version ran `git checkout --` on the record, which restores to the
+    last commit. Run while the record had uncommitted edits, that silently
+    replaced the file under test with an older one and then failed its own
+    restore assertion. Writing back the text read at startup is correct whether
+    or not the record is committed.
+    """
+    RECORD.write_text(original)
 
 
 def main() -> int:
@@ -165,7 +169,11 @@ def main() -> int:
 
     failed, passed = run_tests()
     print(f"baseline: {passed} passed, {failed} failed")
-    if failed:
+    if failed or not passed:
+        # Zero passed is not zero failed. The first version of this script ran
+        # pytest from the wrong directory, collected nothing, and reported every
+        # mutation as missed -- which is the failure mode the mutations exist to
+        # rule out, reproduced in the harness that checks for it.
         print("the committed record does not pass its own guards; stopping")
         return 1
 
@@ -175,23 +183,14 @@ def main() -> int:
         mutate(data)
         RECORD.write_text(json.dumps(data, indent=2, sort_keys=True))
         failed, passed = run_tests()
-        restore()
+        restore(original)
         verdict = "caught" if failed else "MISSED"
         caught += bool(failed)
         print(f"  {verdict:7} by {failed} test(s): {name}")
 
     assert RECORD.read_text() == original, "record not restored"
-    dirty = subprocess.run(
-        ["git", "diff", "--name-only"],
-        cwd=REPO,
-        capture_output=True,
-        text=True,
-        check=False,
-    ).stdout.split()
-    print(
-        f"\n{caught}/{len(MUTATIONS)} caught; tracked files left modified: {len(dirty)}"
-    )
-    return 0 if caught == len(MUTATIONS) and not dirty else 1
+    print(f"\n{caught}/{len(MUTATIONS)} caught; record restored byte-for-byte")
+    return 0 if caught == len(MUTATIONS) else 1
 
 
 if __name__ == "__main__":
