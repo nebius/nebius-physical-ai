@@ -5089,6 +5089,16 @@ def _preference_limitations() -> tuple[str, ...]:
         "Audit record only; a preference is not an acceptance gate.",
         "One request per order cannot separate order effects from provider nondeterminism.",
         "One matched pair does not estimate an operational preference rate.",
+        (
+            "The lexical source-role screen case-folds the model ID, task, rubric, "
+            "and provider-request text and searches only for the substrings "
+            "'baseline' and 'candidate'; synonyms and other content-linked "
+            "disclosures are not rejected. Such a disclosure can select different "
+            "neutral A/B labels after order reversal while mapping to the same "
+            "private source arm, so counterbalancing alone cannot distinguish it "
+            "from a genuine source-arm preference and a consistent mapped "
+            "preference does not establish content blinding."
+        ),
         "In-image instructions remain an unresolved input-integrity risk.",
         "Visible preference does not establish geometry accuracy or physical validity.",
         "A vision judgment cannot establish robot safety.",
