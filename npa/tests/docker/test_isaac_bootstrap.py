@@ -1105,9 +1105,7 @@ def _assert_cpython_source_contract(text: str) -> None:
     assert "Python-${PYTHON_VERSION}.tgz" in text
     assert "sha256sum --check --strict" in text
     assert text.index(digest) < text.index("sha256sum --check --strict")
-    assert text.index("sha256sum --check --strict") < text.index(
-        "tar --extract --gzip"
-    )
+    assert text.index("sha256sum --check --strict") < text.index("tar --extract --gzip")
     assert "make altinstall" in text
     assert "ppa.launchpadcontent.net/deadsnakes" not in text
     assert "launchpad.net/~deadsnakes" not in text
