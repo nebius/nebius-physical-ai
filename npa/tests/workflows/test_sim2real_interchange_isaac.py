@@ -27,6 +27,7 @@ from npa.workflows.sim2real.interchange_isaac import (
     IsaacActionLayout,
     assert_live_robot_matches_profile,
     camera_world_pose,
+    compose_transform,
     gripper_position_tolerances,
     measured_policy_state,
     render_absolute_joint_action,
@@ -36,9 +37,12 @@ from npa.workflows.sim2real.interchange_isaac_runtime import (
     TeacherTrace,
     _axis_angle_error,
     _run_with_app,
-    _teacher_tracking_receipt,
+    _teacher_command,
     _teacher_contact_evidence,
+    _teacher_hand_target_root,
+    _require_teacher_hand_frame,
     _teacher_solver_evidence,
+    _teacher_tracking_receipt,
     _teacher_trace,
     _write_teacher_failure_evidence,
     _update_events,
@@ -346,11 +350,106 @@ def test_relative_ik_and_measured_frame_use_calibrated_tool_offset(
     )
 
     expected = profile.ee_from_tool
-    assert config.actions.arm_action.body_offset.pos == expected.translation_m
-    assert config.actions.arm_action.body_offset.rot == expected.quaternion_xyzw
+    assert config.actions.arm_action.body_offset.pos == (0.0, 0.0, 0.0)
+    assert config.actions.arm_action.body_offset.rot == (0.0, 0.0, 0.0, 1.0)
     assert config.scene.ee_frame.target_frames[0].offset.pos == expected.translation_m
     assert config.scene.ee_frame.target_frames[0].offset.rot == expected.quaternion_xyzw
     assert receipt["ee_from_tool"] == expected.to_dict()
+    assert receipt["controller_frame"] == profile.ee_link
+
+
+def test_teacher_derives_hand_target_without_native_tool_offset() -> None:
+    torch = pytest.importorskip("torch")
+    profile = _profile()
+    world_from_root = Transform((0.2, -0.3, 0.1), (0.0, 0.0, 2**-0.5, 2**-0.5))
+    tool_target = Transform((0.5, 0.1, 0.25), (1.0, 0.0, 0.0, 0.0))
+    native = SimpleNamespace(
+        scene={
+            "robot": SimpleNamespace(
+                data=SimpleNamespace(
+                    root_pos_w=torch.tensor([world_from_root.translation_m]),
+                    root_quat_w=torch.tensor([world_from_root.quaternion_xyzw]),
+                )
+            )
+        }
+    )
+
+    root_from_hand = _teacher_hand_target_root(native, profile, tool_target)
+    reconstructed_tool = compose_transform(
+        compose_transform(world_from_root, root_from_hand), profile.ee_from_tool
+    )
+
+    assert reconstructed_tool.translation_m == pytest.approx(tool_target.translation_m)
+    assert reconstructed_tool.quaternion_xyzw == pytest.approx(
+        tool_target.quaternion_xyzw
+    )
+
+
+def test_teacher_command_uses_hand_frame_and_reports_tool_error() -> None:
+    torch = pytest.importorskip("torch")
+    profile = _profile()
+    tool_target = Transform((0.5, 0.0, 0.2), (1.0, 0.0, 0.0, 0.0))
+    current_hand = Transform((0.4, 0.0, 0.3034), (1.0, 0.0, 0.0, 0.0))
+    current_tool = compose_transform(current_hand, profile.ee_from_tool)
+    arm = SimpleNamespace(
+        _compute_frame_pose=lambda: (
+            torch.tensor([current_hand.translation_m]),
+            torch.tensor([current_hand.quaternion_xyzw]),
+        )
+    )
+    native = SimpleNamespace(
+        device="cpu",
+        scene={
+            "robot": SimpleNamespace(
+                data=SimpleNamespace(
+                    root_pos_w=torch.tensor([[0.0, 0.0, 0.0]]),
+                    root_quat_w=torch.tensor([[0.0, 0.0, 0.0, 1.0]]),
+                )
+            ),
+            "ee_frame": SimpleNamespace(
+                data=SimpleNamespace(
+                    target_pos_w=torch.tensor([[current_tool.translation_m]]),
+                    target_quat_w=torch.tensor([[current_tool.quaternion_xyzw]]),
+                )
+            ),
+        },
+    )
+    layout = {
+        "arm": arm,
+        "scale": np.asarray([0.5] * 6),
+        "total_dimension": 7,
+        "arm_start": 0,
+        "gripper_start": 6,
+    }
+
+    command, position_error, rotation_error, receipt = _teacher_command(
+        native,
+        layout,
+        SimpleNamespace(world_from_ee=tool_target, gripper_closed=False),
+        profile,
+    )
+
+    assert position_error == pytest.approx(0.1)
+    assert rotation_error == pytest.approx(0.0)
+    assert command[0, :3].tolist() == pytest.approx([0.14, 0.0, 0.0], abs=1.0e-7)
+    assert receipt["frame"] == profile.ee_link
+    assert (
+        receipt["body_offset"]
+        == Transform((0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0)).to_dict()
+    )
+
+
+def test_teacher_rejects_shifted_native_ik_frame() -> None:
+    with pytest.raises(RuntimeError, match="unshifted hand frame"):
+        _require_teacher_hand_frame(
+            SimpleNamespace(
+                cfg=SimpleNamespace(
+                    body_offset=SimpleNamespace(
+                        pos=(0.0, 0.0, 0.1034), rot=(0.0, 0.0, 0.0, 1.0)
+                    )
+                )
+            )
+        )
 
 
 def test_measured_policy_state_bounds_one_physics_step_of_joint_overshoot() -> None:
@@ -515,6 +614,12 @@ def test_teacher_tracking_receipt_binds_pose_residual_and_joint_margins() -> Non
             "method": "dls",
             "jacobian_condition_number": 2.0,
         },
+        {
+            "frame": robot.ee_link,
+            "target_root_pose": Transform(
+                (0.5, 0.1, 0.2), (0.0, 0.0, 0.0, 1.0)
+            ).to_dict(),
+        },
     )
 
     assert receipt["translation_error_before_m"] == pytest.approx([0.1, 0.0, 0.0])
@@ -527,6 +632,7 @@ def test_teacher_tracking_receipt_binds_pose_residual_and_joint_margins() -> Non
     assert receipt["solver_state_available"] is False
     assert receipt["solver_kinematic_evidence_available"] is True
     assert receipt["differential_ik"]["jacobian_condition_number"] == 2.0
+    assert receipt["controller_hand_frame"]["frame"] == robot.ee_link
 
 
 def test_teacher_contact_evidence_binds_named_robot_body_forces() -> None:

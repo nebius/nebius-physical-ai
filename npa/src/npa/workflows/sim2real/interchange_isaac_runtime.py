@@ -19,6 +19,7 @@ import zlib
 
 from npa.workflows.lerobot_transfer_data import write_json
 from npa.workflows.sim2real.interchange_contract import (
+    Transform,
     policy_profile_from_dict,
     rigid_object_profile_from_dict,
     robot_sensor_profile_from_dict,
@@ -29,6 +30,8 @@ from npa.workflows.sim2real.interchange_isaac import (
     action_layout_from_live_isaac,
     apply_absolute_joint_target,
     assert_live_robot_matches_profile,
+    compose_transform,
+    inverse_transform,
     live_camera_world_pose,
     measured_policy_state,
     surface_teacher_waypoints,
@@ -407,8 +410,10 @@ def _teacher_layout(native: Any, robot: Any) -> dict[str, Any]:
     _require_teacher_action_order(arm_names, gripper_names, robot)
     if str(arm.cfg.body_name) != robot.ee_link:
         raise RuntimeError("teacher IK end-effector differs from the sealed robot")
+    _require_teacher_hand_frame(arm)
     values = _teacher_scale(arm)
     return {
+        "arm": arm,
         "total_dimension": sum(dimensions),
         "arm_start": sum(dimensions[:arm_index]),
         "gripper_start": sum(dimensions[:gripper_index]),
@@ -428,6 +433,16 @@ def _require_teacher_action_order(
         raise RuntimeError("teacher IK joint order differs from the sealed robot")
     if gripper_names != robot.gripper.joint_names:
         raise RuntimeError("teacher gripper order differs from the sealed robot")
+
+
+def _require_teacher_hand_frame(arm: Any) -> None:
+    """Reject a native IK offset whose Jacobian is not the real hand frame."""
+
+    offset = arm.cfg.body_offset
+    position = tuple(float(value) for value in offset.pos)
+    quaternion = tuple(float(value) for value in offset.rot)
+    if position != (0.0, 0.0, 0.0) or quaternion != (0.0, 0.0, 0.0, 1.0):
+        raise RuntimeError("teacher IK must control the unshifted hand frame")
 
 
 def _teacher_terms(native: Any) -> tuple[list[str], list[int], Any, Any, int, int]:
@@ -491,17 +506,25 @@ def _axis_angle_error(current: Any, target: tuple[float, ...]) -> Any:
 
 
 def _teacher_command(
-    native: Any, layout: dict[str, Any], waypoint: Any
-) -> tuple[Any, float, float]:
+    native: Any, layout: dict[str, Any], waypoint: Any, robot: Any
+) -> tuple[Any, float, float, dict[str, Any]]:
     import numpy as np
     import torch
 
-    frame = native.scene["ee_frame"].data
-    position = _native_tensor(frame.target_pos_w)[0, 0, :3].detach().cpu().numpy()
-    quaternion = _native_tensor(frame.target_quat_w)[0, 0, :4].detach().cpu().numpy()
-    target = waypoint.world_from_ee
-    translation = np.asarray(target.translation_m, dtype=float) - position
-    rotation = _axis_angle_error(quaternion, target.quaternion_xyzw)
+    tool_pose = _teacher_end_effector_pose(native)
+    tool_target = waypoint.world_from_ee
+    tool_translation = np.asarray(tool_target.translation_m) - np.asarray(
+        tool_pose["translation_m"]
+    )
+    tool_rotation = _axis_angle_error(
+        tool_pose["quaternion_xyzw"], tool_target.quaternion_xyzw
+    )
+    hand_pose = _teacher_hand_pose_root(layout)
+    hand_target = _teacher_hand_target_root(native, robot, tool_target)
+    translation = np.asarray(hand_target.translation_m) - np.asarray(
+        hand_pose.translation_m
+    )
+    rotation = _axis_angle_error(hand_pose.quaternion_xyzw, hand_target.quaternion_xyzw)
     processed = np.r_[
         np.clip(translation, -0.07, 0.07),
         np.clip(rotation, -0.25, 0.25),
@@ -513,7 +536,58 @@ def _teacher_command(
     start = layout["arm_start"]
     command[0, start : start + 6] = torch.as_tensor(raw, device=native.device)
     command[0, layout["gripper_start"]] = -1.0 if waypoint.gripper_closed else 1.0
-    return command, float(np.linalg.norm(translation)), float(np.linalg.norm(rotation))
+    controller = {
+        "frame": robot.ee_link,
+        "body_offset": Transform((0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0)).to_dict(),
+        "current_root_pose": hand_pose.to_dict(),
+        "target_root_pose": hand_target.to_dict(),
+        "translation_error_root_m": translation.tolist(),
+        "rotation_error_root_rad": rotation.tolist(),
+    }
+    return (
+        command,
+        float(np.linalg.norm(tool_translation)),
+        float(np.linalg.norm(tool_rotation)),
+        controller,
+    )
+
+
+def _teacher_hand_pose_root(layout: dict[str, Any]) -> Transform:
+    """Read the real rigid-body frame controlled by native differential IK."""
+
+    position, quaternion = layout["arm"]._compute_frame_pose()
+    return Transform(
+        tuple(float(value) for value in position[0].detach().cpu().tolist()),
+        tuple(float(value) for value in quaternion[0].detach().cpu().tolist()),
+    )
+
+
+def _teacher_hand_target_root(
+    native: Any, robot: Any, tool_target: Transform
+) -> Transform:
+    """Convert a declared world tool target into the controller's root hand frame."""
+
+    asset = native.scene["robot"]
+    world_from_root = Transform(
+        tuple(
+            float(value)
+            for value in _native_tensor(asset.data.root_pos_w)[0]
+            .detach()
+            .cpu()
+            .tolist()
+        ),
+        tuple(
+            float(value)
+            for value in _native_tensor(asset.data.root_quat_w)[0]
+            .detach()
+            .cpu()
+            .tolist()
+        ),
+    )
+    world_from_hand = compose_transform(
+        tool_target, inverse_transform(robot.ee_from_tool)
+    )
+    return compose_transform(inverse_transform(world_from_root), world_from_hand)
 
 
 def _teacher_end_effector_pose(native: Any) -> dict[str, list[float]]:
@@ -536,6 +610,7 @@ def _teacher_tracking_receipt(
     measured_after: dict[str, float],
     contact_evidence: dict[str, Any],
     solver_evidence: dict[str, Any],
+    controller_evidence: dict[str, Any],
 ) -> dict[str, Any]:
     """Bind controller tracking and physical joint margins to one command."""
 
@@ -571,6 +646,7 @@ def _teacher_tracking_receipt(
         "solver_state_available": False,
         "solver_kinematic_evidence_available": True,
         "differential_ik": solver_evidence,
+        "controller_hand_frame": controller_evidence,
     }
 
 
@@ -1054,8 +1130,8 @@ def _apply_teacher_step(
     """Apply one teacher command after proving its cameras are causal."""
 
     pose_before = _teacher_end_effector_pose(native)
-    command, position_error, orientation_error = _teacher_command(
-        native, layout, waypoint
+    command, position_error, orientation_error, controller = _teacher_command(
+        native, layout, waypoint, robot
     )
     before = _sim_time(native)
     if any(value > before + 1.0e-9 for value in captures.values()):
@@ -1074,6 +1150,7 @@ def _apply_teacher_step(
         measured_after,
         _teacher_contact_evidence(native),
         _teacher_solver_evidence(native),
+        controller,
     )
     return (
         command,
