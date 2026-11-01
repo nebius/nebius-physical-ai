@@ -1,0 +1,209 @@
+{
+  "what_this_validates": "The instrument in consumer_occupancy.py, which produces this lane's published positive claim (phantom-obstacle rate 0.3245 -> 0.0708) and which had no positive or negative control.",
+  "instrument": {
+    "imported_from": "consumer_occupancy.py",
+    "functions": [
+      "probe_grid",
+      "support_mask",
+      "score_variant"
+    ],
+    "not_reimplemented": "The harness was refactored to expose these without changing their logic. Its own reproduction check against downstream-consumer.json exits non-zero on any field that moves, so a reader with the bundle can confirm the extraction did not alter a published number.",
+    "cell_size": 0.1,
+    "support_radius_factor": 0.87
+  },
+  "positive_control": {
+    "geometry": "closed sphere r=1.0, observations exactly on its surface",
+    "expectation_before_measuring": "Every occupied cell lies near observed surface by construction, so a phantom rate at or near zero.",
+    "measured": {
+      "occupied_cells": 2110,
+      "phantom_obstacle_cells": 51,
+      "phantom_obstacle_rate": 0.024170616113744076,
+      "phantom_volume_m3": 0.05100000000000001,
+      "precision_wrt_observation": 0.975829383886256,
+      "recall_of_observed_cells": 1.0,
+      "missed_structure_cells": 0,
+      "cells": 8000,
+      "cells_with_samples": 2059,
+      "observations": 4000,
+      "observations_per_supported_cell": 1.943
+    }
+  },
+  "the_floor_is_a_sampling_artifact": {
+    "why": "occupied is distance to the continuous mesh surface; supported is distance to the nearest discrete observation. A cell centre can sit within the radius of a smooth surface and outside the radius of every sample of it. Nothing is fabricated in any of these rows.",
+    "by_observation_count": {
+      "500": {
+        "phantom_obstacle_rate": 0.386439070649597,
+        "observations_per_supported_cell": 0.386
+      },
+      "1000": {
+        "phantom_obstacle_rate": 0.16159695817490494,
+        "observations_per_supported_cell": 0.567
+      },
+      "2000": {
+        "phantom_obstacle_rate": 0.0702420503084955,
+        "observations_per_supported_cell": 1.021
+      },
+      "4000": {
+        "phantom_obstacle_rate": 0.024170616113744076,
+        "observations_per_supported_cell": 1.943
+      },
+      "8000": {
+        "phantom_obstacle_rate": 0.016611295681063124,
+        "observations_per_supported_cell": 3.861
+      },
+      "16000": {
+        "phantom_obstacle_rate": 0.015676959619952493,
+        "observations_per_supported_cell": 7.722
+      }
+    },
+    "how_this_bears_on_the_published_figure": {
+      "the_artifacts_observations": 6339,
+      "the_artifacts_supported_cells": 1884,
+      "the_artifacts_observations_per_supported_cell": 3.365,
+      "nearest_control_density": "8000",
+      "that_controls_observations_per_supported_cell": 3.861,
+      "that_controls_floor": 0.016611295681063124,
+      "the_published_candidate_rate": 0.07084188911704312,
+      "the_published_baseline_rate": 0.3245156482861401,
+      "reading": "The floor is not zero, so the candidate's published rate cannot be read as 'this fraction of its occupied volume is fabricated' -- part of any such number is the instrument. At the nearest control density the floor is well below the published candidate rate, so most of that rate is not floor. The comparison between the two variants is unaffected either way: both are scored on one grid against one support mask, so the floor applies equally to both and cannot produce the gap between them.",
+      "what_would_settle_it_properly": "Running this instrument on the real cloud with the real surface removed and replaced by a surface known to be fully observed. That needs /data/final-bundle, which is not in the repository."
+    }
+  },
+  "negative_control_fabrication_inside_the_observed_extent": {
+    "geometry": "the same sphere plus an unobserved r=0.35 shell at its centre; no observation lies near the added surface",
+    "expectation_before_measuring": "phantom rate must rise above the floor",
+    "measured": {
+      "occupied_cells": 2382,
+      "phantom_obstacle_cells": 323,
+      "phantom_obstacle_rate": 0.13560033585222503,
+      "phantom_volume_m3": 0.32300000000000006,
+      "precision_wrt_observation": 0.8643996641477749,
+      "recall_of_observed_cells": 1.0,
+      "missed_structure_cells": 0,
+      "cells": 8000,
+      "cells_with_samples": 2059,
+      "observations": 4000,
+      "observations_per_supported_cell": 1.943
+    }
+  },
+  "negative_control_fabrication_outside_the_observed_extent": {
+    "geometry": "the same sphere plus an unobserved r=0.6 shell centred 3.0 away, entirely outside the observed cloud's bounding box",
+    "expectation_before_measuring": "unknown when written. probe_grid derives the grid from the cloud's bounding box, so fabricated surface beyond it may never be probed.",
+    "measured": {
+      "occupied_cells": 2110,
+      "phantom_obstacle_cells": 51,
+      "phantom_obstacle_rate": 0.024170616113744076,
+      "phantom_volume_m3": 0.05100000000000001,
+      "precision_wrt_observation": 0.975829383886256,
+      "recall_of_observed_cells": 1.0,
+      "missed_structure_cells": 0,
+      "cells": 8000,
+      "cells_with_samples": 2059,
+      "observations": 4000,
+      "observations_per_supported_cell": 1.943
+    }
+  },
+  "recall_control_observed_structure_the_mesh_omits": {
+    "geometry": "the sphere with its cap above z=0.5 deleted, cloud unchanged",
+    "expectation_before_measuring": "missed_structure_cells must rise above the positive control's, which is the recall direction rather than the phantom direction",
+    "measured": {
+      "occupied_cells": 1562,
+      "phantom_obstacle_cells": 34,
+      "phantom_obstacle_rate": 0.02176696542893726,
+      "phantom_volume_m3": 0.03400000000000001,
+      "precision_wrt_observation": 0.9782330345710627,
+      "recall_of_observed_cells": 0.7421078193297718,
+      "missed_structure_cells": 531,
+      "cells": 8000,
+      "cells_with_samples": 2059,
+      "observations": 4000,
+      "observations_per_supported_cell": 1.943
+    }
+  },
+  "parameter_sweep": {
+    "why": "The published pair was measured at one cell size and one radius factor. The module docstring says the review lane swept 0.5 to 2.0, but no committed record holds those numbers, so this sweep is run here rather than cited.",
+    "what_is_swept": "the controls, where the answer is known",
+    "what_is_not_swept": "the published 0.3245/0.0708 pair, which needs /data/final-bundle. That bundle is a run output in object storage, not in the repository or the image, so no reader working from this repository can recompute it at other parameters either.",
+    "rows": {
+      "cell=0.05,factor=0.5": {
+        "floor": 0.586779,
+        "with_fabrication": 0.635164,
+        "fabrication_is_detected": true,
+        "margin": 0.048385
+      },
+      "cell=0.05,factor=0.87": {
+        "floor": 0.159613,
+        "with_fabrication": 0.250494,
+        "fabrication_is_detected": true,
+        "margin": 0.090881
+      },
+      "cell=0.05,factor=1.5": {
+        "floor": 0.05115,
+        "with_fabrication": 0.158987,
+        "fabrication_is_detected": true,
+        "margin": 0.107837
+      },
+      "cell=0.05,factor=2.0": {
+        "floor": 0.02917,
+        "with_fabrication": 0.145681,
+        "fabrication_is_detected": true,
+        "margin": 0.116511
+      },
+      "cell=0.1,factor=0.5": {
+        "floor": 0.090097,
+        "with_fabrication": 0.18532,
+        "fabrication_is_detected": true,
+        "margin": 0.095223
+      },
+      "cell=0.1,factor=0.87": {
+        "floor": 0.024171,
+        "with_fabrication": 0.1356,
+        "fabrication_is_detected": true,
+        "margin": 0.111429
+      },
+      "cell=0.1,factor=1.5": {
+        "floor": 0.002983,
+        "with_fabrication": 0.13688,
+        "fabrication_is_detected": true,
+        "margin": 0.133897
+      },
+      "cell=0.1,factor=2.0": {
+        "floor": 0.0,
+        "with_fabrication": 0.137417,
+        "fabrication_is_detected": true,
+        "margin": 0.137417
+      },
+      "cell=0.2,factor=0.5": {
+        "floor": 0.0,
+        "with_fabrication": 0.133333,
+        "fabrication_is_detected": true,
+        "margin": 0.133333
+      },
+      "cell=0.2,factor=0.87": {
+        "floor": 0.0,
+        "with_fabrication": 0.147059,
+        "fabrication_is_detected": true,
+        "margin": 0.147059
+      },
+      "cell=0.2,factor=1.5": {
+        "floor": 0.0,
+        "with_fabrication": 0.155963,
+        "fabrication_is_detected": true,
+        "margin": 0.155963
+      },
+      "cell=0.2,factor=2.0": {
+        "floor": 0.0,
+        "with_fabrication": 0.140496,
+        "fabrication_is_detected": true,
+        "margin": 0.140496
+      }
+    },
+    "fabrication_detected_in_every_combination": true
+  },
+  "what_this_does_not_claim": {
+    "not_that_the_published_figures_are_wrong": "Nothing here recomputes them. The controls establish what the instrument does on geometry whose answer is known, which is the thing that was missing.",
+    "not_that_the_reconstruction_is_accurate": "No artifact in this chain carries ground truth. A low phantom rate means occupied cells have observations near them, not that the surface is in the right place.",
+    "the_control_geometry_is_not_the_artifact": "A closed convex sphere at one scale, not a room scan. The floor's size depends on surface area per cell, so the regime comparison above indicates a magnitude and is not a measurement of the artifact's own floor.",
+    "the_blind_spot_is_a_property_of_the_grid_not_of_this_scene": "probe_grid derives the grid from the observed cloud's bounding box. Any fabricated surface beyond that box is unprobed in any scene, so this limitation travels with the instrument rather than with the control."
+  }
+}
