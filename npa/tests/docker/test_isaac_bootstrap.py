@@ -1100,13 +1100,38 @@ def test_base_installer_proves_the_refusal_at_build_time() -> None:
 def _assert_cpython_source_contract(text: str) -> None:
     source = "https://www.python.org/ftp/python"
     digest = "53cdee63ac4bf12387b7b33a53d3b1f8f4941cad73807a7b4fe91bb001ef004a"
+    required_build_contract = (
+        'CFLAGS="$(dpkg-buildflags --get CFLAGS)"',
+        'CPPFLAGS="$(dpkg-buildflags --get CPPFLAGS)"',
+        'LDFLAGS="$(dpkg-buildflags --get LDFLAGS)"',
+        "--enable-optimizations",
+        "--with-lto",
+        "--with-ensurepip=no",
+        "--with-system-expat",
+        "--without-static-libpython",
+        "install -m 0444 LICENSE /usr/share/doc/cpython3.11/LICENSE",
+        "rm -rf /usr/local/lib/python3.11/ensurepip/_bundled",
+    )
     assert source in text
     assert digest in text
     assert "Python-${PYTHON_VERSION}.tgz" in text
     assert "sha256sum --check --strict" in text
     assert text.index(digest) < text.index("sha256sum --check --strict")
     assert text.index("sha256sum --check --strict") < text.index("tar --extract --gzip")
+    for token in required_build_contract:
+        assert token in text
     assert "make altinstall" in text
+    assert 'from importlib import metadata; print(metadata.version("pip"))' in text
+    assert ')" = 26.2.2' in text
+    assert "tk-dev" not in text
+    assert "import bz2, ctypes, ensurepip, lzma, readline, sqlite3, ssl, zlib" in text
+    assert "test -s /usr/share/doc/cpython3.11/LICENSE" in text
+    assert text.index("make altinstall") < text.index(
+        "install -m 0444 LICENSE /usr/share/doc/cpython3.11/LICENSE"
+    )
+    assert text.index('"pip==26.2.2"') < text.index(
+        "rm -rf /usr/local/lib/python3.11/ensurepip/_bundled"
+    )
     assert "ppa.launchpadcontent.net/deadsnakes" not in text
     assert "launchpad.net/~deadsnakes" not in text
 
@@ -1150,7 +1175,7 @@ def test_base_installer_uses_immutable_system_and_bootstrap_inputs() -> None:
 
 def test_cpython_source_contract_rejects_mutated_source_or_digest() -> None:
     text = BASE_INSTALLER.read_text(encoding="utf-8")
-    mutations = (
+    mutations = [
         text.replace(
             "https://www.python.org/ftp/python",
             "https://ppa.launchpadcontent.net/deadsnakes/ppa/ubuntu/pool",
@@ -1162,7 +1187,20 @@ def test_cpython_source_contract_rejects_mutated_source_or_digest() -> None:
             1,
         ),
         text.replace("sha256sum --check --strict", "true # skipped digest", 1),
-    )
+    ]
+    for token in (
+        'CFLAGS="$(dpkg-buildflags --get CFLAGS)"',
+        'CPPFLAGS="$(dpkg-buildflags --get CPPFLAGS)"',
+        'LDFLAGS="$(dpkg-buildflags --get LDFLAGS)"',
+        "--enable-optimizations",
+        "--with-lto",
+        "--with-ensurepip=no",
+        "--with-system-expat",
+        "--without-static-libpython",
+        "install -m 0444 LICENSE /usr/share/doc/cpython3.11/LICENSE",
+        "rm -rf /usr/local/lib/python3.11/ensurepip/_bundled",
+    ):
+        mutations.append(text.replace(token, "OMITTED_CPYTHON_BUILD_CONTRACT", 1))
     for mutation in mutations:
         with pytest.raises(AssertionError):
             _assert_cpython_source_contract(mutation)
