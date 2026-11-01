@@ -383,6 +383,7 @@ class RobotSensorProfile:
     source_sha256: str
     base_link: str
     ee_link: str
+    ee_from_tool: Transform
     arm_joint_names: tuple[str, ...]
     measured_state_names: tuple[str, ...]
     measured_state_units: tuple[str, ...]
@@ -441,6 +442,7 @@ class RobotSensorProfile:
             "fixed_base": self.fixed_base,
             "base_link": self.base_link,
             "ee_link": self.ee_link,
+            "ee_from_tool": self.ee_from_tool.to_dict(),
             "arm_joint_names": list(self.arm_joint_names),
             "measured_state_names": list(self.measured_state_names),
             "measured_state_units": list(self.measured_state_units),
@@ -491,8 +493,15 @@ def robot_sensor_profile_from_dict(value: Mapping[str, Any]) -> RobotSensorProfi
 
     gripper = value.get("gripper")
     cameras = value.get("cameras")
-    if not isinstance(gripper, Mapping) or not isinstance(cameras, list):
-        raise InterchangeContractError("robot preparation lacks gripper/camera data")
+    ee_from_tool = value.get("ee_from_tool")
+    if (
+        not isinstance(gripper, Mapping)
+        or not isinstance(cameras, list)
+        or not isinstance(ee_from_tool, Mapping)
+    ):
+        raise InterchangeContractError(
+            "robot preparation lacks gripper/camera/tool-frame data"
+        )
     return RobotSensorProfile(
         identity=str(value.get("identity") or ""),
         bundle_sha256=str(value.get("bundle_sha256") or ""),
@@ -500,6 +509,10 @@ def robot_sensor_profile_from_dict(value: Mapping[str, Any]) -> RobotSensorProfi
         fixed_base=bool(value.get("fixed_base", False)),
         base_link=str(value.get("base_link") or ""),
         ee_link=str(value.get("ee_link") or ""),
+        ee_from_tool=Transform(
+            tuple(ee_from_tool.get("translation_m") or ()),
+            tuple(ee_from_tool.get("quaternion_xyzw") or ()),
+        ),
         arm_joint_names=tuple(value.get("arm_joint_names") or ()),
         measured_state_names=tuple(
             value.get("measured_state_names") or value.get("measured_joint_names") or ()
@@ -601,6 +614,11 @@ def robot_sensor_profile_from_resolved(
         raise InterchangeContractError(
             "explicit measured_state names and units are required"
         )
+    ee_from_tool = sensor_config.get("ee_from_tool")
+    if not isinstance(ee_from_tool, Mapping):
+        raise InterchangeContractError(
+            "explicit calibrated ee_from_tool transform is required"
+        )
     measured_state_names = tuple(measured_state.get("names") or ())
     measured_state_units = tuple(measured_state.get("units") or ())
     return RobotSensorProfile(
@@ -609,6 +627,10 @@ def robot_sensor_profile_from_resolved(
         source_sha256=str(source.get("source_sha256") or ""),
         base_link=str(embodiment.get("base_link") or ""),
         ee_link=str(embodiment.get("ee_link") or ""),
+        ee_from_tool=Transform(
+            tuple(ee_from_tool.get("translation_m") or ()),
+            tuple(ee_from_tool.get("quaternion_xyzw") or ()),
+        ),
         arm_joint_names=arm_names,
         measured_state_names=measured_state_names,
         measured_state_units=measured_state_units,

@@ -67,6 +67,7 @@ def _robot(dof: int = 7) -> RobotSensorProfile:
         source_sha256=DIGEST_B,
         base_link="base",
         ee_link="tool0" if dof == 6 else "hand",
+        ee_from_tool=Transform((0.0, 0.0, 0.1), (0.0, 0.0, 0.0, 1.0)),
         arm_joint_names=arm,
         measured_state_names=arm + ("gripper",),
         measured_state_units=("rad",) * len(arm) + ("normalized_closed",),
@@ -162,6 +163,10 @@ def test_profile_consumes_canonical_resolved_robot_without_franka_defaults() -> 
     sensor_config = {
         "fixed_base": True,
         "controller_representation": "absolute_joint_position",
+        "ee_from_tool": {
+            "translation_m": [0.0, 0.0, 0.145],
+            "quaternion_xyzw": [0.0, 0.0, 0.0, 1.0],
+        },
         "joint_limits_rad": [[-2.0, 2.0]] * 6,
         "measured_state": {
             "names": ["a1", "a2", "a3", "a4", "a5", "a6", "gripper"],
@@ -179,6 +184,7 @@ def test_profile_consumes_canonical_resolved_robot_without_franka_defaults() -> 
     profile = robot_sensor_profile_from_resolved(resolved, sensor_config=sensor_config)
     assert profile.arm_joint_names == ("a1", "a2", "a3", "a4", "a5", "a6")
     assert profile.ee_link == "tool0"
+    assert profile.ee_from_tool.translation_m == (0.0, 0.0, 0.145)
     assert profile.gripper.maximum_width_m == 0.05
     assert profile.measured_state_names[-1] == "gripper"
     assert profile.measured_state_units[-1] == "normalized_closed"
@@ -214,6 +220,34 @@ def test_resolved_robot_requires_explicit_actual_joint_limits() -> None:
     }
     with pytest.raises(InterchangeContractError, match="joint_limits_rad"):
         robot_sensor_profile_from_resolved(resolved, sensor_config={})
+
+
+def test_resolved_robot_requires_explicit_tool_frame_calibration() -> None:
+    resolved = {
+        "embodiment_digest": DIGEST_A,
+        "embodiment": {
+            "base_link": "base",
+            "ee_link": "tool0",
+            "arm_joint_names": ["a1", "a2", "a3", "a4", "a5", "a6"],
+            "gripper_joint_names": ["finger_a", "finger_b"],
+            "finger_links": ["left_finger", "right_finger"],
+            "home_qpos": [0.0] * 8,
+            "gripper_commands": {"open": 0.025, "close": 0.0},
+            "source": {
+                "source_sha256": DIGEST_B,
+                "source_tree_sha256": DIGEST_A,
+            },
+        },
+    }
+    sensor_config = {
+        "joint_limits_rad": [[-2.0, 2.0]] * 6,
+        "measured_state": {
+            "names": ["a1", "a2", "a3", "a4", "a5", "a6", "gripper"],
+            "units": ["rad"] * 6 + ["normalized_closed"],
+        },
+    }
+    with pytest.raises(InterchangeContractError, match="ee_from_tool"):
+        robot_sensor_profile_from_resolved(resolved, sensor_config=sensor_config)
 
 
 def test_six_dof_policy_cannot_be_padded_into_seven_dof_robot() -> None:

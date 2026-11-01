@@ -33,6 +33,7 @@ def _robot(dof: int) -> RobotSensorProfile:
         source_sha256=DIGEST_B,
         base_link="base",
         ee_link="tool0" if dof == 6 else "hand",
+        ee_from_tool=Transform((0.0, 0.0, 0.1), (0.0, 0.0, 0.0, 1.0)),
         arm_joint_names=arm,
         measured_state_names=arm + ("gripper",),
         measured_state_units=("rad",) * len(arm) + ("normalized_closed",),

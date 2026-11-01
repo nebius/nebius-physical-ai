@@ -189,8 +189,8 @@ def configure_policy_interchange_robot(
             )
         action.joint_names = list(robot_profile.arm_joint_names)
         action.body_name = robot_profile.ee_link
-        action.body_offset.pos = (0.0, 0.0, 0.0)
-        action.body_offset.rot = (0.0, 0.0, 0.0, 1.0)
+        action.body_offset.pos = robot_profile.ee_from_tool.translation_m
+        action.body_offset.rot = robot_profile.ee_from_tool.quaternion_xyzw
     else:
         raise ValueError(
             f"unsupported policy-interchange controller {controller_representation!r}"
@@ -219,8 +219,8 @@ def configure_policy_interchange_robot(
     )
     target = config.scene.ee_frame.target_frames[0]
     target.prim_path = spawned_prim_path(rigid_body_paths[robot_profile.ee_link])
-    target.offset.pos = (0.0, 0.0, 0.0)
-    target.offset.rot = (0.0, 0.0, 0.0, 1.0)
+    target.offset.pos = robot_profile.ee_from_tool.translation_m
+    target.offset.rot = robot_profile.ee_from_tool.quaternion_xyzw
     return {
         "joint_names": names,
         "home_qpos": list(arrays["home_qpos"]),
@@ -231,6 +231,7 @@ def configure_policy_interchange_robot(
         "usd_path": str(robot_usd_path),
         "rigid_body_prim_paths": rigid_body_paths,
         "controller_representation": controller_representation,
+        "ee_from_tool": robot_profile.ee_from_tool.to_dict(),
     }
 
 

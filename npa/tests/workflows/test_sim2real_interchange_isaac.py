@@ -63,6 +63,7 @@ from npa.workflows.sim2real.interchange_teacher_export import (
 )
 from npa.workflows.franka_rl_environment import (
     _policy_interchange_contact_prim_paths,
+    configure_policy_interchange_robot,
     configure_policy_interchange_surface_task,
     policy_interchange_timing,
 )
@@ -76,6 +77,7 @@ def _profile(dof: int = 6) -> RobotSensorProfile:
         source_sha256="b" * 64,
         base_link="base_link",
         ee_link="tool0",
+        ee_from_tool=Transform((0.0, 0.0, 0.1034), (0.0, 0.0, 0.0, 1.0)),
         arm_joint_names=arm,
         measured_state_names=arm + ("gripper",),
         measured_state_units=("rad",) * dof + ("normalized_closed",),
@@ -261,6 +263,94 @@ def test_surface_task_binds_contact_sensors_to_resolved_finger_bodies(
     )
     assert config.scene.npa_robot_contact.prim_path == "{ENV_REGEX_NS}/Robot/.*"
     assert getattr(config.scene.npa_robot_contact, "filter_prim_paths_expr", []) == []
+
+
+def test_relative_ik_and_measured_frame_use_calibrated_tool_offset(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    profile = _profile()
+    isaaclab = types.ModuleType("isaaclab")
+    sim = types.ModuleType("isaaclab.sim")
+    sim.UsdFileCfg = lambda **values: SimpleNamespace(  # type: ignore[attr-defined]
+        **values,
+        articulation_props=None,
+        rigid_props=None,
+        activate_contact_sensors=False,
+    )
+    actuators = types.ModuleType("isaaclab.actuators")
+    actuators.ImplicitActuatorCfg = lambda **values: SimpleNamespace(  # type: ignore[attr-defined]
+        **values
+    )
+    envs = types.ModuleType("isaaclab.envs")
+    envs.mdp = SimpleNamespace(
+        BinaryJointPositionActionCfg=lambda **values: SimpleNamespace(**values)
+    )
+    monkeypatch.setitem(sys.modules, "isaaclab", isaaclab)
+    monkeypatch.setitem(sys.modules, "isaaclab.sim", sim)
+    monkeypatch.setitem(sys.modules, "isaaclab.actuators", actuators)
+    monkeypatch.setitem(sys.modules, "isaaclab.envs", envs)
+    from npa.workflows.sim2real import isaac_robot_asset
+
+    monkeypatch.setattr(
+        isaac_robot_asset,
+        "resolved_rigid_body_prim_paths",
+        lambda _path, names: {name: f"Geometry/{name}" for name in names},
+    )
+    offset = SimpleNamespace(pos=None, rot=None)
+    target_offset = SimpleNamespace(pos=None, rot=None)
+    config = SimpleNamespace(
+        scene=SimpleNamespace(
+            robot=SimpleNamespace(
+                spawn=SimpleNamespace(
+                    articulation_props=None,
+                    rigid_props=None,
+                    activate_contact_sensors=False,
+                ),
+                init_state=SimpleNamespace(pos=None, rot=None, joint_pos=None),
+                actuators=None,
+            ),
+            ee_frame=SimpleNamespace(
+                prim_path=None,
+                target_frames=[SimpleNamespace(prim_path=None, offset=target_offset)],
+            ),
+        ),
+        actions=SimpleNamespace(
+            arm_action=SimpleNamespace(
+                body_name=None, body_offset=offset, joint_names=None
+            ),
+            gripper_action=None,
+        ),
+        commands=SimpleNamespace(object_pose=SimpleNamespace(body_name=None)),
+    )
+    usd = tmp_path / "robot.usd"
+    usd.touch()
+    names = [*profile.arm_joint_names, *profile.gripper.joint_names]
+    spec = {
+        "joint_names": names,
+        "home_qpos": [0.0] * len(names),
+        "kp": [100.0] * len(names),
+        "kv": [10.0] * len(names),
+        "force_lower": [-20.0] * len(names),
+        "force_upper": [20.0] * len(names),
+        "base_link": profile.base_link,
+        "ee_link": profile.ee_link,
+        "finger_links": list(profile.gripper.finger_links),
+    }
+
+    receipt = configure_policy_interchange_robot(
+        config,
+        profile,
+        spec,
+        usd,
+        controller_representation="relative_ee_pose",
+    )
+
+    expected = profile.ee_from_tool
+    assert config.actions.arm_action.body_offset.pos == expected.translation_m
+    assert config.actions.arm_action.body_offset.rot == expected.quaternion_xyzw
+    assert config.scene.ee_frame.target_frames[0].offset.pos == expected.translation_m
+    assert config.scene.ee_frame.target_frames[0].offset.rot == expected.quaternion_xyzw
+    assert receipt["ee_from_tool"] == expected.to_dict()
 
 
 def test_measured_policy_state_bounds_one_physics_step_of_joint_overshoot() -> None:

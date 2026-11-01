@@ -165,6 +165,10 @@ def _write_profile(root: Path, *, backend: str = "lerobot_smolvla") -> None:
         "sensor-config.json": {
             "fixed_base": True,
             "controller_representation": "absolute_joint_position",
+            "ee_from_tool": {
+                "translation_m": [0.0, 0.0, 0.145],
+                "quaternion_xyzw": [0.0, 0.0, 0.0, 1.0],
+            },
             "joint_limits_rad": [[-3.14, 3.14]] * 6,
             "measured_state": {
                 "names": arm + ["gripper"],
