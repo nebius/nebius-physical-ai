@@ -611,3 +611,44 @@ def test_the_real_records_provenance_pin_is_not_the_file_at_head() -> None:
         "the provenance pin now equals the working tree, which means it was "
         "overwritten with bytes that post-date the artifact it describes"
     )
+
+
+def test_the_real_records_named_commit_actually_resolves_where_that_is_decidable() -> (
+    None
+):
+    """A typo in the commit field downgrades the claim instead of failing anything.
+
+    Review found the gap by mutation: replace `script_bytes_committed_at` with an
+    unresolvable sha and the audit correctly reports "could not be checked either way"
+    -- while every test in this file still passes. So a one-character slip silently
+    converts a verified provenance claim into an unverified one, and the honest
+    `inconclusive` the audit prints is what hides it.
+
+    The assertion above deliberately holds in a shallow checkout and a full one, so this
+    cannot simply require resolution. It asks git whether the question is decidable
+    first. Here it is -- `is-shallow-repository` is false -- and CI's shallow checkout
+    skips, which is the same condition the audit itself is reasoning about rather than a
+    convenience.
+    """
+    try:
+        shallow = subprocess.run(
+            ["git", "rev-parse", "--is-shallow-repository"],
+            cwd=EVIDENCE,
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=True,
+        ).stdout.strip()
+    except (OSError, subprocess.SubprocessError) as exc:
+        pytest.skip(f"git cannot answer whether this checkout has history: {exc}")
+
+    if shallow != "false":
+        pytest.skip("shallow checkout: the named commit is absent for ordinary reasons")
+
+    result = run_audit()
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "verified against the commit the record names" in result.stdout, (
+        "the provenance claim was not checked against its own commit in a checkout "
+        "that has the history to do it, so the commit the record names does not "
+        "resolve here:\n" + result.stdout
+    )
