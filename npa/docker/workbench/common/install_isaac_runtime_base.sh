@@ -43,6 +43,7 @@ LINUX_LIBC_DEV_VERSION="${NPA_LINUX_LIBC_DEV_VERSION:-5.15.0-198.208}"
 PYTHON_VERSION="${NPA_ISAAC_PYTHON_VERSION:-3.11.17}"
 PYTHON_SOURCE_SHA256="${NPA_ISAAC_PYTHON_SOURCE_SHA256:-53cdee63ac4bf12387b7b33a53d3b1f8f4941cad73807a7b4fe91bb001ef004a}"
 PYTHON_SOURCE_BASE="${NPA_ISAAC_PYTHON_SOURCE_BASE:-https://www.python.org/ftp/python}"
+PYTHON_SOURCE_EPOCH="${NPA_ISAAC_PYTHON_SOURCE_EPOCH:-1790815728}"
 PYTHON_BUILD_JOBS="${NPA_ISAAC_PYTHON_BUILD_JOBS:-$(nproc)}"
 # cu128 wheels carry sm_120 kernels, which RTX PRO 6000 Blackwell (compute capability
 # 12.0) requires. Verified in-pod: torch._C._cuda_getArchFlags() reports
@@ -165,6 +166,12 @@ if [ "$ISAAC_PYTHON_MINOR" = 3.11 ]; then
   (
     cd "/tmp/Python-${PYTHON_VERSION}"
     command -v dpkg-buildflags >/dev/null
+    [[ "$PYTHON_SOURCE_EPOCH" =~ ^[0-9]+$ ]] || {
+      echo "NPA_ISAAC_PYTHON_SOURCE_EPOCH must be an integer" >&2
+      exit 2
+    }
+    export SOURCE_DATE_EPOCH="$PYTHON_SOURCE_EPOCH"
+    export TZ=UTC
     CFLAGS="$(dpkg-buildflags --get CFLAGS)" \
     CPPFLAGS="$(dpkg-buildflags --get CPPFLAGS)" \
     LDFLAGS="$(dpkg-buildflags --get LDFLAGS)" \
@@ -186,6 +193,17 @@ if [ "$ISAAC_PYTHON_MINOR" = 3.11 ]; then
   test "$(command -v python3.11)" = /usr/local/bin/python3.11
   test "$(python3.11 -c 'import platform; print(platform.python_version())')" = "$PYTHON_VERSION"
   python3.11 -c 'import bz2, ctypes, ensurepip, lzma, readline, sqlite3, ssl, zlib'
+  NPA_CPYTHON_SOURCE_EPOCH="$PYTHON_SOURCE_EPOCH" python3.11 - <<'PY'
+from datetime import datetime, timezone
+import os
+import sys
+
+epoch = int(os.environ["NPA_CPYTHON_SOURCE_EPOCH"])
+stamp = datetime.fromtimestamp(epoch, timezone.utc)
+expected = f"{stamp:%b} {stamp.day:2d} {stamp.year}, {stamp:%H:%M:%S}"
+if expected not in sys.version:
+    raise SystemExit(f"CPython build timestamp is not release-bound: {sys.version}")
+PY
   test -s /usr/share/doc/cpython3.11/LICENSE
   rm -rf "$PYTHON_SOURCE_ARCHIVE" "/tmp/Python-${PYTHON_VERSION}"
 elif [ "$ISAAC_PYTHON_MINOR" = 3.12 ]; then
