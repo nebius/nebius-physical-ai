@@ -1,0 +1,152 @@
+{
+  "bridged": {
+    "area_inside_the_reference": 0.0,
+    "area_misoriented_but_near": 0.004601645296945416,
+    "both": 0.004601645296945416,
+    "median_normal_disagreement_degrees": 0.5808001541290518,
+    "signed_distance": 0.0,
+    "unsigned_distance_only": 0.0,
+    "with_normal_correspondence": 0.004601645296945416
+  },
+  "does_it_threaten_any_accepted_conclusion": {
+    "gap_counts_where_the_verdict_differs": [
+      9,
+      11,
+      13
+    ],
+    "hidden_fabrication_by_gap_count": {
+      "10_teeth": 0.06631736939499025,
+      "12_teeth": 0.09363628012144777,
+      "14_teeth": 0.12278451845816196,
+      "16_teeth": 0.14799595984737127,
+      "20_teeth": 0.2028099902156024,
+      "24_teeth": 0.2507600148363536,
+      "2_teeth": 0.0036953129193222824,
+      "8_teeth": 0.04175078769809941
+    },
+    "largest_hidden_share": 0.2507600148363536,
+    "the_threshold_that_matters": 0.05,
+    "which_way_the_bias_runs_there": "The lenient measure reads below the threshold where the stricter one reads above it, so band_validity_sweep's false_positive condition -- far reading fired and fabricated_area_fraction below 0.05 -- is satisfied on rows where substantial fabrication actually exists. The sweep therefore records the tool as having cried wolf on readings that were right. The runner's note says the bias is in the tool's favour, and for the floor measurements it is: understated fabrication makes the floor look lower and the tool look more precise. For this conclusion it runs the other way. Which direction it takes depends on what is being concluded, and the note states only one of the two.",
+    "why_that_one": "band_validity_sweep calls a reading a false positive when the far reading fires and fabricated_area_fraction is below 0.05. That is the only place a conclusion turns on this measure's value."
+  },
+  "faithful": {
+    "area_inside_the_reference": 0.0,
+    "area_misoriented_but_near": 9.928497543844073e-05,
+    "both": 9.928497543844073e-05,
+    "median_normal_disagreement_degrees": 0.5091643567914725,
+    "signed_distance": 0.0,
+    "unsigned_distance_only": 0.0,
+    "with_normal_correspondence": 9.928497543844073e-05
+  },
+  "geometry": {
+    "gap": 0.009369708592763593,
+    "gap_in_voxels": 1.0,
+    "median_sample_spacing": 0.004684854296381796,
+    "reference": "two unit boxes separated by one voxel",
+    "samples": 120000,
+    "voxel": 0.009369708592763593
+  },
+  "how_large_it_gets": {
+    "10_teeth": {
+      "area_inside_the_reference": 0.0067119041103105275,
+      "area_misoriented_but_near": 0.05960546528467972,
+      "both": 0.06631736939499025,
+      "gaps": 9,
+      "median_normal_disagreement_degrees": 8.951698257118023,
+      "signed_distance": 0.0067119041103105275,
+      "unsigned_distance_only": 0.0067119041103105275,
+      "with_normal_correspondence": 0.06631736939499025
+    },
+    "12_teeth": {
+      "area_inside_the_reference": 0.01958151089156576,
+      "area_misoriented_but_near": 0.07405476922988201,
+      "both": 0.09363628012144777,
+      "gaps": 11,
+      "median_normal_disagreement_degrees": 11.047031489541062,
+      "signed_distance": 0.01958151089156576,
+      "unsigned_distance_only": 0.01958151089156576,
+      "with_normal_correspondence": 0.09363628012144777
+    },
+    "14_teeth": {
+      "area_inside_the_reference": 0.03449810453575842,
+      "area_misoriented_but_near": 0.08828641392240352,
+      "both": 0.12278451845816196,
+      "gaps": 13,
+      "median_normal_disagreement_degrees": 13.397044026058232,
+      "signed_distance": 0.03449810453575842,
+      "unsigned_distance_only": 0.03449810453575842,
+      "with_normal_correspondence": 0.12278451845816196
+    },
+    "16_teeth": {
+      "area_inside_the_reference": 0.05454098629275472,
+      "area_misoriented_but_near": 0.09345497355461652,
+      "both": 0.14799595984737127,
+      "gaps": 15,
+      "median_normal_disagreement_degrees": 14.720454322106272,
+      "signed_distance": 0.05454098629275472,
+      "unsigned_distance_only": 0.05454098629275472,
+      "with_normal_correspondence": 0.14799595984737127
+    },
+    "20_teeth": {
+      "area_inside_the_reference": 0.09824016618471622,
+      "area_misoriented_but_near": 0.10456895132415032,
+      "both": 0.2028099902156024,
+      "gaps": 19,
+      "median_normal_disagreement_degrees": 17.148371473527632,
+      "signed_distance": 0.09824103889145205,
+      "unsigned_distance_only": 0.09824103889145205,
+      "with_normal_correspondence": 0.2028099902156024
+    },
+    "24_teeth": {
+      "area_inside_the_reference": 0.12873904779905562,
+      "area_misoriented_but_near": 0.12202096703729791,
+      "both": 0.2507600148363536,
+      "gaps": 23,
+      "median_normal_disagreement_degrees": 19.055138014620695,
+      "signed_distance": 0.12873904779905562,
+      "unsigned_distance_only": 0.12873904779905562,
+      "with_normal_correspondence": 0.2507600148363536
+    },
+    "2_teeth": {
+      "area_inside_the_reference": 0.0,
+      "area_misoriented_but_near": 0.0036953129193222824,
+      "both": 0.0036953129193222824,
+      "gaps": 1,
+      "median_normal_disagreement_degrees": 1.7165026303747462,
+      "signed_distance": 0.0,
+      "unsigned_distance_only": 0.0,
+      "with_normal_correspondence": 0.0036953129193222824
+    },
+    "8_teeth": {
+      "area_inside_the_reference": 0.0012980553456122135,
+      "area_misoriented_but_near": 0.040452732352487204,
+      "both": 0.04175078769809941,
+      "gaps": 7,
+      "median_normal_disagreement_degrees": 6.612400823711323,
+      "signed_distance": 0.0012980553456122135,
+      "unsigned_distance_only": 0.0012980553456122135,
+      "with_normal_correspondence": 0.04175078769809941
+    }
+  },
+  "no_regression_on_good_surface": {
+    "difference": 9.928497543844073e-05,
+    "unsigned_distance_only": 0.0,
+    "with_normal_correspondence": 9.928497543844073e-05
+  },
+  "normal_agreement_cutoff_degrees": 60.0,
+  "sampling_seed": 20261101,
+  "the_leniency": {
+    "reading": "Poisson closed a one-voxel gap between two boxes. The surface it put there corresponds to nothing in the reference, and every point on it is within a voxel of the two facing walls, so unsigned distance to the whole reference cannot separate it from the walls themselves.",
+    "reproduces": true,
+    "what_the_current_measure_says_about_the_bridge": 0.0
+  },
+  "what_this_measures": "Four readings of two Poisson reconstructions. The bridged one reconstructs two boxes a single voxel apart, which Poisson fuses across the gap on its own; the surface spanning that gap is fabricated, because the reference has nothing there. The faithful one reconstructs a single box, where nothing is fabricated.",
+  "which_replacement_catches_it": {
+    "area_inside_the_reference_is_always_a_subset_of_the_far_area": true,
+    "both": 0.004601645296945416,
+    "normal_correspondence": 0.004601645296945416,
+    "signed_distance": 0.0,
+    "signed_distance_equals_unsigned_in_every_case": true,
+    "why_signed_distance_is_not_enough": "It is redundant here rather than inapplicable, which is a stronger result and not what was assumed before measuring. Surface inside the reference does exist in the comb cases, but every point of it is also more than a voxel from the reference, so the inside set is a subset of the far set the unsigned measure already had. Adding a signed test changes the reading by exactly zero in all ten cases here. The runner named signed distance and per-region correspondence as candidates; only the second one moves this measure."
+  }
+}

@@ -1,0 +1,61 @@
+{
+  "capability": "The ground-truth fabrication measure is lenient, and by how much",
+  "lane": "geometry",
+  "recorded_at": "2026-11-01T11:00:00Z",
+  "base_commit": "99620f9af07b5d407895b07be997dfd4452ce7bf",
+  "why_this_matters": "fabricated_area_fraction is the ground truth every validity, floor and false-positive conclusion in docs/evidence/open3d/ was scored against. runner.py records that it is lenient and leaves it open: 'A signed distance or a per-region correspondence would be stricter; neither was implemented.' A short yardstick under all of it is worth measuring before anything else is built on top.",
+  "acceptance_was_fixed_before_measuring": "program/claims/open3d-signed-fabrication-measure/CLAIM.md, written first: the leniency has to reproduce, a stricter measure has to catch the bridge, and both have to agree a genuinely faithful reconstruction is faithful. A measure that catches the bridge by also condemning good surface has improved nothing.",
+  "the_first_construction_failed_and_is_kept": {
+    "what_it_was": "A torus with a disc capping its central hole.",
+    "what_happened": "The current measure scored it at 0.2576 fabricated, which is exactly the disc's area share. It caught it perfectly.",
+    "why_the_reasoning_was_wrong": "A disc spanning the hole is only near the inner tube wall at its rim; its middle is most of a torus-radius from anything. I had asserted the opposite in the docstring before running it.",
+    "why_it_is_still_in_the_file": "A construction that fails to exercise an effect is not evidence the effect is absent. Deleting it would leave the record implying the second construction was the first idea."
+  },
+  "the_leniency_reproduces": {
+    "construction": "Two unit boxes one voxel apart. Poisson fuses them across the gap on its own, so the bridge is the real failure mode rather than a surface added by hand.",
+    "what_the_current_measure_says": 0.0,
+    "reading": "Exactly zero. Not understated -- zero, on a mesh where surface demonstrably spans a gap the reference has nothing in. Every point of that bridge is within a voxel of the two facing walls, and unsigned distance to the whole reference cannot tell it from the walls themselves.",
+    "what_normal_correspondence_says": 0.004601645296945416
+  },
+  "signed_distance_was_the_obvious_fix_and_it_is_redundant": {
+    "result": "Identical to the unsigned reading in all ten cases, to the digit.",
+    "why_not_what_i_assumed": "I expected it to be inapplicable because a bridge sits in free space. In fact surface inside the reference does exist in the comb cases, up to 12.9 percent of the area -- but every point of it is also more than a voxel away, so the inside set is a subset of the far set the unsigned measure already had. Redundant, not inapplicable, which is a stronger statement. My own test caught the assumption."
+  },
+  "normal_correspondence_is_the_one_that_works": {
+    "definition": "A reconstructed point counts as corresponding to the reference only if its own normal agrees with the reference normal at the point it is nearest to, within 60 degrees.",
+    "why_the_cutoff_is_permissive_on_purpose": "Poisson normals on correct surface wander by a degree or two and the bridges this catches are near-perpendicular, so nothing sits close to the cutoff. Median disagreement on the faithful control is 0.509 degrees.",
+    "false_alarm_on_the_control": 9.928497543844073e-05,
+    "the_control_is_the_hard_case": "A single box reconstructed the same way. Poisson rounds its sharp edges, which is exactly where a normal-based test would be expected to misfire, and it does not."
+  },
+  "it_changes_verdicts_and_not_just_numbers": {
+    "the_threshold": 0.05,
+    "gap_counts_where_the_two_measures_disagree": [
+      9,
+      11,
+      13
+    ],
+    "worked_example": "At 13 closed gaps the current measure reads 0.0345 and the stricter one 0.1227. One is below the 0.05 that decides a false positive and the other is above it.",
+    "largest_understatement_measured": "32-fold, at 7 gaps: 0.0013 against 0.0418.",
+    "robust_to_the_nondeterminism": "The band [9, 11, 13] reproduced exactly across independent runs, so the conclusion is stable even though Poisson moves the digits."
+  },
+  "which_way_the_bias_actually_runs": "The lenient measure reads below the threshold where the stricter one reads above it, so band_validity_sweep's false_positive condition -- far reading fired and fabricated_area_fraction below 0.05 -- is satisfied on rows where substantial fabrication actually exists. The sweep therefore records the tool as having cried wolf on readings that were right. The runner's note says the bias is in the tool's favour, and for the floor measurements it is: understated fabrication makes the floor look lower and the tool look more precise. For this conclusion it runs the other way. Which direction it takes depends on what is being concluded, and the note states only one of the two.",
+  "what_this_does_not_claim": "That any committed conclusion is wrong. The divergence was produced on constructed comb geometry chosen to maximise the effect, and no real scene in docs/evidence/open3d/ has twelve one-voxel gaps. What is established is that the measure can be wrong by enough to change a verdict, which was previously recorded as a possibility and is now a measurement. Rescoring the committed evidence under the stricter measure is a separate piece of work and needs review's agreement, because it changes accepted numbers.",
+  "nothing_gates_on_this": "fabricated_area_fraction is a validation instrument used by the evidence harnesses, not a product gate. No shipped behaviour changes here, and this adds a harness and a report rather than touching npa/src.",
+  "tests": {
+    "file": "npa/tests/workbench/test_open3d_fabrication_measure.py",
+    "count": 11,
+    "note": "Pinned from the committed report, because the harness needs Open3D and the sample geometry and CI has neither. Conclusions pinned exactly, the four least-significant figures with tolerances, since Poisson is nondeterministic.",
+    "mutations_applied": {
+      "claim the leniency reproduces while the measure caught it": "3 failed",
+      "drop a gap count from the published divergence band": "2 failed",
+      "make signed distance differ from unsigned": "1 failed",
+      "inflate the control so the stricter measure condemns good surface": "1 failed",
+      "overstate the largest hidden share": "1 failed",
+      "delete the failed first construction from the harness": "1 failed"
+    }
+  },
+  "visual_evaluation": {
+    "status": "not_applicable",
+    "reason": "No renderable artifact. The result is a table of area fractions under four definitions, and the evidence that it is right is a control that stays at 0.0001 while the test case moves to 0.0046."
+  }
+}
