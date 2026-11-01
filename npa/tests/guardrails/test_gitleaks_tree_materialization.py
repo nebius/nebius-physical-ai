@@ -1628,6 +1628,161 @@ def test_exact_path_view_preserves_binary_content_anchors(
 @pytest.mark.skipif(
     shutil.which("gitleaks") is None, reason="gitleaks is not installed"
 )
+@pytest.mark.parametrize("encoding", ["utf-16le", "utf-32be"])
+def test_exact_path_transcoding_preserves_absolute_content_anchor(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    encoding: str,
+) -> None:
+    """Keep source-offset-zero decoded text at exact-path byte zero."""
+    repo = _repo(tmp_path)
+    (repo / ".gitleaks.toml").write_text(
+        "[extend]\n"
+        "useDefault = true\n\n"
+        "[[rules]]\n"
+        'id = "unicode-start-only"\n'
+        'description = "Unicode start anchor control"\n'
+        "regex = '''^NPA_UNICODE_START_[A-Z0-9]{24}'''\n"
+        "path = '''^keys/key\\.pem$'''\n",
+        encoding="utf-8",
+    )
+    (repo / "safe.txt").write_text("safe base\n", encoding="utf-8")
+    base = _commit(repo, "clean base")
+    token = "NPA_UNICODE_START_" + ("A1" * 12)
+    key = repo / "keys/key.pem"
+    key.parent.mkdir()
+    key.write_bytes(token.encode(encoding))
+    candidate = _commit(repo, "absolute Unicode anchor")
+    scanner = shutil.which("gitleaks")
+    assert scanner is not None
+
+    assert tree_scan.main(_runner_arguments(repo, candidate, base, scanner)) == 1
+    output = capsys.readouterr()
+    assert token not in output.out
+    assert token not in output.err
+    assert "unicode-start-only" in output.err
+
+
+@pytest.mark.skipif(
+    shutil.which("gitleaks") is None, reason="gitleaks is not installed"
+)
+def test_localized_transcoding_preserves_absolute_content_anchor(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Keep a decoded byte-zero run anchored when later bytes are binary."""
+    repo = _repo(tmp_path)
+    (repo / ".gitleaks.toml").write_text(
+        "[extend]\n"
+        "useDefault = true\n\n"
+        "[[rules]]\n"
+        'id = "localized-unicode-start-only"\n'
+        'description = "Localized Unicode start anchor control"\n'
+        "regex = '''^NPA_LOCAL_START_[A-Z0-9]{24}'''\n"
+        "path = '''^keys/key\\.pem$'''\n",
+        encoding="utf-8",
+    )
+    (repo / "safe.txt").write_text("safe base\n", encoding="utf-8")
+    base = _commit(repo, "clean base")
+    token = "NPA_LOCAL_START_" + ("A1" * 12)
+    key = repo / "keys/key.pem"
+    key.parent.mkdir()
+    key.write_bytes(token.encode("utf-16le") + (bytes(range(1, 256)) * 8))
+    assert materializer._whole_unicode_encoding(key) is None
+    candidate = _commit(repo, "localized absolute Unicode anchor")
+    scanner = shutil.which("gitleaks")
+    assert scanner is not None
+
+    assert tree_scan.main(_runner_arguments(repo, candidate, base, scanner)) == 1
+    output = capsys.readouterr()
+    assert token not in output.out
+    assert token not in output.err
+    assert "localized-unicode-start-only" in output.err
+
+
+@pytest.mark.skipif(
+    shutil.which("gitleaks") is None, reason="gitleaks is not installed"
+)
+@pytest.mark.parametrize("encoding", ["utf-16le", "utf-32be"])
+def test_historical_exact_path_transcoding_preserves_absolute_content_anchor(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    encoding: str,
+) -> None:
+    """Keep an earlier tree's decoded byte-zero text under its exact path."""
+    repo = _repo(tmp_path)
+    (repo / ".gitleaks.toml").write_text(
+        "[extend]\n"
+        "useDefault = true\n\n"
+        "[[rules]]\n"
+        'id = "historical-unicode-start-only"\n'
+        'description = "Historical Unicode start anchor control"\n'
+        "regex = '''^NPA_HISTORY_START_[A-Z0-9]{24}'''\n"
+        "path = '''^keys/key\\.pem$'''\n",
+        encoding="utf-8",
+    )
+    (repo / "safe.txt").write_text("safe base\n", encoding="utf-8")
+    base = _commit(repo, "clean base")
+    token = "NPA_HISTORY_START_" + ("A1" * 12)
+    key = repo / "keys/key.pem"
+    key.parent.mkdir()
+    key.write_bytes(token.encode(encoding))
+    _commit(repo, "historical absolute Unicode anchor")
+    key.unlink()
+    candidate = _commit(repo, "delete historical Unicode carrier")
+    scanner = shutil.which("gitleaks")
+    assert scanner is not None
+
+    assert tree_scan.main(_runner_arguments(repo, candidate, base, scanner)) == 1
+    output = capsys.readouterr()
+    assert token not in output.out
+    assert token not in output.err
+    assert "historical-unicode-start-only" in output.err
+
+
+@pytest.mark.skipif(
+    shutil.which("gitleaks") is None, reason="gitleaks is not installed"
+)
+@pytest.mark.parametrize("encoding", ["utf-16le", "utf-32be"])
+def test_archive_exact_path_transcoding_preserves_absolute_content_anchor(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    encoding: str,
+) -> None:
+    """Keep decoded archive-member byte zero at exact logical-path byte zero."""
+    repo = _repo(tmp_path)
+    (repo / ".gitleaks.toml").write_text(
+        "[extend]\n"
+        "useDefault = true\n\n"
+        "[[rules]]\n"
+        'id = "archive-unicode-start-only"\n'
+        'description = "Archive Unicode start anchor control"\n'
+        "regex = '''^NPA_ARCHIVE_START_[A-Z0-9]{24}'''\n"
+        "path = '''^payload\\.tar!keys/key\\.pem$'''\n",
+        encoding="utf-8",
+    )
+    (repo / "safe.txt").write_text("safe base\n", encoding="utf-8")
+    base = _commit(repo, "clean base")
+    token = "NPA_ARCHIVE_START_" + ("A1" * 12)
+    content = token.encode(encoding)
+    member = tarfile.TarInfo("keys/key.pem")
+    member.size = len(content)
+    with tarfile.open(repo / "payload.tar", "w", format=tarfile.PAX_FORMAT) as archive:
+        archive.addfile(member, io.BytesIO(content))
+    candidate = _commit(repo, "archive absolute Unicode anchor")
+    scanner = shutil.which("gitleaks")
+    assert scanner is not None
+
+    assert tree_scan.main(_runner_arguments(repo, candidate, base, scanner)) == 1
+    output = capsys.readouterr()
+    assert token not in output.out
+    assert token not in output.err
+    assert "archive-unicode-start-only" in output.err
+
+
+@pytest.mark.skipif(
+    shutil.which("gitleaks") is None, reason="gitleaks is not installed"
+)
 def test_archive_member_starting_angle_bracket_retains_exact_path(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],

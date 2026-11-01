@@ -572,12 +572,14 @@ class _ArchiveMemberProbeWriter:
                 )
                 os.link(self.raw_path, self.raw_exact_path_target)
             if self.transformed_exact_path_target is not None:
-                self.transformed_exact_path_target.parent.mkdir(
-                    mode=0o700,
-                    parents=True,
-                    exist_ok=True,
+                transformed_exact_bytes, _transformed_materialized = (
+                    materializer.materialize_transformed_exact_path(
+                        self.raw_path,
+                        self.transformed_exact_path_target,
+                    )
                 )
-                os.link(self.wrapper_path, self.transformed_exact_path_target)
+            else:
+                transformed_exact_bytes = 0
             self.raw_path.unlink()
             before_files = self.counts.fragment_window_files
             before_bytes = self.counts.fragment_window_bytes
@@ -623,7 +625,9 @@ class _ArchiveMemberProbeWriter:
                 else 0
             )
             transformed_bytes = (
-                wrapper_bytes if self.transformed_exact_path_target is not None else 0
+                transformed_exact_bytes
+                if self.transformed_exact_path_target is not None
+                else 0
             )
             self.counts.archive_member_probe_bytes += (
                 (wrapper_copies * wrapper_bytes) + raw_bytes + transformed_bytes

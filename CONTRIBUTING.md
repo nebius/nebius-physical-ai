@@ -525,10 +525,14 @@ exposes raw policy blobs at inert scan paths. Every blob, path, and commit body
 also receives isolated neutral and logical-path scanner-safe text/Unicode
 wrappers so binary bytes remain visible, path-constrained rules still apply,
 and a rule match cannot span unrelated objects. Separate collision-free scan
-roots expose both original raw bytes and transformed wrappers at their exact
-source-relative paths. The independent raw and transformed domains preserve
-absolute content anchors and path-constrained Unicode/archive matches without
-letting either representation replace the other. Historical file/directory prefix
+roots expose both original raw bytes and source-start-preserving transformed
+projections at their exact source-relative paths. A complete decoded Unicode
+file, or a localized decoded run beginning at source byte zero, begins at byte
+zero of its transformed projection; later localized runs are separated without
+creating a false absolute-start match. The independent raw and transformed
+domains therefore preserve absolute content anchors and path-constrained
+Unicode/archive matches without letting either representation replace the
+other. Historical file/directory prefix
 transitions are placed in different exact-path roots instead of becoming an
 unrepresentable collision. Each exact-path root is scanned both as
 an isolated filesystem source and as a generated forced-text Git commit. The
@@ -577,12 +581,13 @@ only a short binary marker. The patch plus changed-blob upper bound must fit
 1 GiB per pass, and both invocations share a 2-GiB aggregate native-history
 input ceiling. NUL-delimited raw-diff metadata is bounded to 64 MiB per commit
 and 512 MiB in aggregate before blob sizes are queried.
-It also scans localized UTF-16/32 text, disables inline `gitleaks:allow`
+It also scans complete and localized UTF-16/32 text, disables inline `gitleaks:allow`
 suppression, and runs private binary/archive/decode controls. Those controls
 pass only when findings identify all three distinct binary, archive-member, and
 decoded carrier paths; duplicate findings from one carrier cannot satisfy the
 check. Each bounded archive member receives neutral and logical-path
-raw/Unicode wrappers plus an encoded-span probe. ZIP and TAR members retain the
+raw/Unicode wrappers, a source-start-preserving transformed exact-path
+projection, plus an encoded-span probe. ZIP and TAR members retain the
 pinned `outer-archive!member` identity; standalone gzip, bzip2, and xz streams
 retain their outer path. Member names are always literal, including names that
 begin with `<`; synthetic structure and compressed-stream labels use separate

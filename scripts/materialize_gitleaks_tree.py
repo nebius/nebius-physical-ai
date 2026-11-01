@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import codecs
 import hashlib
+import heapq
 import json
 import mmap
 import os
@@ -778,6 +779,93 @@ def _append_unicode(path: Path, output: BinaryIO) -> int:
     return len(boundary) + _decode_unicode(path, encoding, output)
 
 
+def _write_localized_unicode_projection(path: Path, output: BinaryIO) -> int:
+    """Write every localized Unicode run without displacing a byte-zero run."""
+    if path.stat().st_size == 0:
+        return 0
+    written = 0
+    first_at_zero: bytes | None = None
+    with (
+        path.open("rb") as stream,
+        mmap.mmap(
+            stream.fileno(),
+            0,
+            access=mmap.ACCESS_READ,
+        ) as content,
+    ):
+        if content.find(b"\0") < 0:
+            return 0
+        iterators = [
+            (iter(pattern.finditer(content)), encoding)
+            for pattern, encoding in _UNICODE_RUNS
+        ]
+        pending: list[tuple[int, int, int, re.Match[bytes], str]] = []
+        for index, (matches, encoding) in enumerate(iterators):
+            match = next(matches, None)
+            if match is not None:
+                heapq.heappush(
+                    pending,
+                    (match.start(), match.end(), index, match, encoding),
+                )
+        while pending:
+            _start, _end, index, match, encoding = heapq.heappop(pending)
+            matches, _ = iterators[index]
+            following = next(matches, None)
+            if following is not None:
+                heapq.heappush(
+                    pending,
+                    (
+                        following.start(),
+                        following.end(),
+                        index,
+                        following,
+                        encoding,
+                    ),
+                )
+            decoded = match.group().decode(encoding, errors="strict").encode("utf-8")
+            if match.start() == 0:
+                if first_at_zero is None:
+                    output.write(decoded)
+                    written += len(decoded)
+                    first_at_zero = decoded
+                elif decoded != first_at_zero:
+                    raise SnapshotError(
+                        "Ambiguous byte-zero Unicode runs cannot preserve anchors"
+                    )
+                continue
+            output.write(b" ")
+            output.write(decoded)
+            written += len(decoded) + 1
+    return written
+
+
+def _write_unicode_projection(path: Path, output: BinaryIO) -> int:
+    """Write a transformed exact-path view with source-start semantics."""
+    encoding = _whole_unicode_encoding(path)
+    if encoding is None:
+        return _write_localized_unicode_projection(path, output)
+    try:
+        _decode_unicode(path, encoding, None)
+    except (UnicodeDecodeError, UnicodeEncodeError) as exc:
+        raise SnapshotError("Recognized Unicode text is malformed") from exc
+    return _decode_unicode(path, encoding, output)
+
+
+def materialize_transformed_exact_path(
+    source: Path,
+    target: Path,
+) -> tuple[int, bool]:
+    """Create a decoded exact-path view, or hardlink unchanged raw bytes."""
+    target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    with _open_target(target) as output:
+        written = _write_unicode_projection(source, output)
+    if written:
+        return written, True
+    target.unlink()
+    os.link(source, target)
+    return source.stat().st_size, False
+
+
 def _raw_scan_path(
     object_id: bytes,
     raw_path: bytes,
@@ -1001,11 +1089,18 @@ def _write_scan_blob(
     context_target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     os.link(wrapper_target, context_target)
     if exact_path_targets is not None:
-        raw_exact_target, wrapper_exact_target = exact_path_targets
+        raw_exact_target, transformed_exact_target = exact_path_targets
         raw_exact_target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-        wrapper_exact_target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         os.link(raw_target, raw_exact_target)
-        os.link(wrapper_target, wrapper_exact_target)
+        transformed_exact_bytes, transformed_materialized = (
+            materialize_transformed_exact_path(
+                raw_target,
+                transformed_exact_target,
+            )
+        )
+    else:
+        transformed_exact_bytes = 0
+        transformed_materialized = False
     wrapper_bytes = (
         len(SCAN_PREFIX)
         + len(path_payload)
@@ -1014,10 +1109,15 @@ def _write_scan_blob(
         + transcoded
     )
     exact_path_copies = int(exact_path_targets is not None)
-    wrapper_copies = 2 + exact_path_copies
+    wrapper_copies = 2
     raw_copies = 1 + exact_path_copies
-    scan_bytes = (raw_copies * size) + (wrapper_copies * wrapper_bytes)
-    return scan_bytes, transcoded, size + wrapper_bytes
+    scan_bytes = (
+        (raw_copies * size) + (wrapper_copies * wrapper_bytes) + transformed_exact_bytes
+    )
+    materialized_bytes = size + wrapper_bytes
+    if transformed_materialized:
+        materialized_bytes += transformed_exact_bytes
+    return scan_bytes, transcoded, materialized_bytes
 
 
 def _record_scan_blob(
