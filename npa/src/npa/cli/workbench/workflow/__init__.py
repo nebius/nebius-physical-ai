@@ -11054,41 +11054,51 @@ def preflight_images_cmd(
         )
         for image, service_account_names in service_account_names_by_image.items()
     }
-    checks = check_image_pulls_with_credentials(
-        images,
-        mint=True,
-        pull_secrets_by_image=pull_secrets_by_image,
-        pull_secret_sets_by_image=pull_secret_sets_by_image,
-        service_account_names_by_image=service_account_names_by_image,
-        pod_placements_by_image=pod_placements_by_image,
-        operator_images=operator_images,
-        kubernetes_images=kubernetes_images,
+    with _workflow_owned_preflight_service_accounts(
+        spec=spec,
+        run_id=run_id,
+        service_account_names={
+            name for names in service_account_names_by_image.values() for name in names
+        },
         namespace=target_namespace,
         context=target_context,
         kubeconfig=target_kubeconfig,
-        target_pull_timeout_seconds=(
-            image_bootstrap_timeout_seconds
-            if image_pull_timeout_seconds is None
-            else image_pull_timeout_seconds
-        ),
-    )
-    failed = [check for check in checks if not check.ok]
-    contract_checks: list[dict[str, object]] = []
-    if not failed:
-        contract_checks = _preflight_image_bootstrap_contracts(
-            images=images,
-            pull_checks=checks,
-            context=target_context,
+    ):
+        checks = check_image_pulls_with_credentials(
+            images,
+            mint=True,
+            pull_secrets_by_image=pull_secrets_by_image,
+            pull_secret_sets_by_image=pull_secret_sets_by_image,
+            service_account_names_by_image=service_account_names_by_image,
+            pod_placements_by_image=pod_placements_by_image,
+            operator_images=operator_images,
+            kubernetes_images=kubernetes_images,
             namespace=target_namespace,
+            context=target_context,
             kubeconfig=target_kubeconfig,
-            pull_secrets_by_image=bootstrap_pull_secrets_by_image,
-            service_accounts_by_image=service_accounts_by_image,
-            pod_placements_by_image={
-                image: (placements[0] if placements else {})
-                for image, placements in pod_placements_by_image.items()
-            },
-            observation_timeout_seconds=image_bootstrap_timeout_seconds,
+            target_pull_timeout_seconds=(
+                image_bootstrap_timeout_seconds
+                if image_pull_timeout_seconds is None
+                else image_pull_timeout_seconds
+            ),
         )
+        failed = [check for check in checks if not check.ok]
+        contract_checks: list[dict[str, object]] = []
+        if not failed:
+            contract_checks = _preflight_image_bootstrap_contracts(
+                images=images,
+                pull_checks=checks,
+                context=target_context,
+                namespace=target_namespace,
+                kubeconfig=target_kubeconfig,
+                pull_secrets_by_image=bootstrap_pull_secrets_by_image,
+                service_accounts_by_image=service_accounts_by_image,
+                pod_placements_by_image={
+                    image: (placements[0] if placements else {})
+                    for image, placements in pod_placements_by_image.items()
+                },
+                observation_timeout_seconds=image_bootstrap_timeout_seconds,
+            )
     if json_output:
         typer.echo(
             json.dumps(

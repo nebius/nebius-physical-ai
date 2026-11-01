@@ -2270,6 +2270,75 @@ def test_preflight_images_accepts_the_same_config_vars_as_submit(mocker) -> None
     assert set(checked_images) == {digest_image}
 
 
+def test_preflight_images_materializes_its_workflow_owned_accounts(mocker) -> None:
+    """The standalone command must use the same exact-owned lifecycle as submit."""
+    from npa.orchestration.skypilot.registry_preflight import KubernetesPullTarget
+    from npa.workflows.sim2real.runtime_prerequisites import resource_identities
+
+    digest_image = f"cr.example.invalid/npa@sha256:{'a' * 64}"
+    expected_run_id = "sim2real-preflight"
+    identities = resource_identities(expected_run_id)
+    observed: dict[str, object] = {}
+
+    def lifecycle(**kwargs):
+        observed.update(kwargs)
+        return nullcontext()
+
+    mocker.patch(
+        "npa.cli.workbench.workflow._workflow_owned_preflight_service_accounts",
+        side_effect=lifecycle,
+    )
+    mocker.patch(
+        "npa.orchestration.skypilot.registry_preflight.check_image_pulls_with_credentials",
+        return_value=[],
+    )
+    mocker.patch(
+        "npa.cli.workbench.workflow._preflight_image_bootstrap_contracts",
+        return_value=[],
+    )
+    mocker.patch(
+        "npa.orchestration.skypilot.registry_preflight.resolve_kubernetes_pull_target",
+        return_value=KubernetesPullTarget(
+            namespace="target-namespace",
+            kubeconfig_path="/private/kubeconfig",
+        ),
+    )
+    args = [
+        "workbench",
+        "workflow",
+        "preflight-images",
+        str(SIM2REAL_SPEC),
+        "--assume-decision",
+        "promote_checkpoint",
+        "--infra",
+        "k8s/target-context",
+        "--var",
+        "source_sha=" + "a" * 40,
+        "--var",
+        "runtime_prerequisites_mode=workflow_owned",
+    ]
+    for name in (
+        "controller_image",
+        "cosmos3_image",
+        "envgen_image",
+        "isaac_image",
+        "viewer_image",
+    ):
+        args.extend(["--var", f"{name}={digest_image}"])
+
+    result = runner.invoke(app, args)
+
+    assert result.exit_code == 0, result.output
+    assert observed["run_id"] == expected_run_id
+    assert observed["namespace"] == "target-namespace"
+    assert observed["context"] == "target-context"
+    assert observed["kubeconfig"] == "/private/kubeconfig"
+    assert set(observed["service_account_names"]) == {
+        identities["base_service_account"],
+        identities["adapted_service_account"],
+    }
+
+
 def test_image_pull_execution_paths_preserve_each_rendered_target() -> None:
     requirements = {
         "vm": ImagePullRequirements(requires_operator=True),
