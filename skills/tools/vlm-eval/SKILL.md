@@ -135,7 +135,12 @@ objects and duplicate keys, while requiring literal boolean `success`, a finite
 numeric `score` in [0, 1], and a nonempty string `rationale`. Invalid verdict
 fields fail without coercion or clamping. Both real parsers also require the
 provider-support array and preserve it without trimming, normalization,
-deduplication, or synthesis. Current parser versions are
+deduplication, or synthesis. Each member must contain a code point that is
+neither whitespace under `str.isspace()` nor Unicode general category `Cf`;
+members containing only whitespace and format controls are rejected, while
+embedded format controls in otherwise nonblank text are retained unchanged.
+This narrow machine rule is not an exhaustive rendering or semantic-substance
+check. Current parser versions are
 `npa_vlm_eval_hosted_json_v2` and `npa_vlm_eval_compatible_json_v3`, with the
 framing suffix when applicable. Retained hosted-v1 and self-hosted-v2 reports
 predate this contract and return `loop_back` with

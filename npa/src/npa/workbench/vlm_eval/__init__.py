@@ -22,6 +22,7 @@ import subprocess
 import tempfile
 import time
 from typing import TYPE_CHECKING, Any, Callable, Iterator, Sequence
+import unicodedata
 
 import httpx
 import numpy as np
@@ -1906,6 +1907,15 @@ def _load_hosted_verdict(text: Any) -> tuple[dict[str, Any], bool]:
     return payload, deframed
 
 
+def _provider_support_member_is_blank(value: str) -> bool:
+    """Return whether support has only whitespace and Unicode format controls."""
+
+    return not any(
+        not character.isspace() and unicodedata.category(character) != "Cf"
+        for character in value
+    )
+
+
 def _validate_verdict_fields(
     payload: dict[str, Any], response_label: str
 ) -> tuple[bool, float, str, tuple[str, ...]]:
@@ -1933,11 +1943,15 @@ def _validate_verdict_fields(
     if (
         not isinstance(support, list)
         or not support
-        or any(not isinstance(item, str) or not item.strip() for item in support)
+        or any(
+            not isinstance(item, str) or _provider_support_member_is_blank(item)
+            for item in support
+        )
     ):
         raise VlmEvalError(
             f"{response_label} VLM response provider_observable_support must be "
-            "a nonempty array of nonempty strings"
+            "a nonempty array whose members each contain a non-whitespace, "
+            "non-format code point"
         )
     return provider_success, float(score), rationale, tuple(support)
 
@@ -2320,10 +2334,12 @@ def _result_from_structured(
 ) -> VlmEvalResult:
     support = structured.provider_observable_support
     if not isinstance(support, tuple) or any(
-        not isinstance(item, str) or not item.strip() for item in support
+        not isinstance(item, str) or _provider_support_member_is_blank(item)
+        for item in support
     ):
         raise VlmEvalError(
-            "Validated provider_observable_support must be a tuple of nonempty strings"
+            "Validated provider_observable_support must be a tuple whose members "
+            "each contain a non-whitespace, non-format code point"
         )
     if provider_call_made and not support:
         raise VlmEvalError(

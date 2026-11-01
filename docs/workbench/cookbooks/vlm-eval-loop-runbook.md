@@ -128,8 +128,12 @@ substitution. The `self-hosted` backend retains compatible JSON framing:
 it can extract embedded JSON and accept duplicate keys, but requires a literal
 boolean `success`, a finite numeric `score` in [0, 1], and a nonempty string
 `rationale`, plus a nonempty `provider_observable_support` array containing only
-nonblank strings. It never coerces these fields, clamps a model score, or repairs
-support; every real backend requires exact `stop` completion before parsing.
+nonblank strings. A support member is machine-blank exactly when every code point
+is whitespace according to `str.isspace()` or has Unicode general category `Cf`;
+format controls embedded in otherwise nonblank text are accepted and retained
+unchanged. This is not an exhaustive rendering or semantic-substance check. The
+parser never coerces these fields, clamps a model score, or repairs support;
+every real backend requires exact `stop` completion before parsing.
 Compatible framing is not hosted strict-JSON conformance. The live provenance
 lane below checks its framing separately.
 The promotion gate rejects compatibility-only results, requiring a completed,

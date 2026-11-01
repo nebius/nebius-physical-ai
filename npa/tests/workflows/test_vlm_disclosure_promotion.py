@@ -258,6 +258,31 @@ def test_promotion_rejects_deduplicated_serialized_support(called_report):
     )
 
 
+def test_promotion_rejects_format_only_provider_support(called_report):
+    report, output = called_report
+    provider = report["evidence"]["provider"]
+    raw = json.loads(provider["raw_response"])
+    content = json.loads(raw["choices"][0]["message"]["content"])
+    blank_support = [" \t\u200b\ufeff\u200d\n"]
+    content["provider_observable_support"] = blank_support
+    raw["choices"][0]["message"]["content"] = json.dumps(content, ensure_ascii=False)
+    provider["raw_response"] = json.dumps(
+        raw, ensure_ascii=False, separators=(",", ":"), sort_keys=True
+    )
+    provider["raw_response_sha256"] = vlm_eval._sha256_text(provider["raw_response"])
+    report["provider_observable_support"] = blank_support
+
+    assert vlm_grade_block_details(report) == {
+        "reason": "vlm_provider_evidence_invalid",
+        "evidence_reason": "provider_verdict_invalid",
+    }
+    (output / vlm_eval.RESULT_FILENAME).write_text(json.dumps(report))
+    assert (
+        data_factory_stages.grade_gate(str(output), str(output / "decision.json"))
+        == "loop_back"
+    )
+
+
 def test_promotion_classifies_old_three_field_parser_before_reparse(called_report):
     report, _ = called_report
     provider = report["evidence"]["provider"]

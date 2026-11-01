@@ -16,6 +16,12 @@ _VALID_SUPPORT = (
     "Frame 2 visibly shows the same red square on the right — café.",
     "Frame 2 visibly shows the same red square on the right — café.",
 )
+_FORMAT_ONLY_SUPPORT = (
+    "\u200b",
+    "\ufeff",
+    "\u200d",
+    " \t\u200b\ufeff\u200d\n",
+)
 
 
 def _payload(support: object = _VALID_SUPPORT) -> dict[str, object]:
@@ -92,9 +98,33 @@ def test_real_parsers_reject_missing_or_malformed_support(
 ) -> None:
     with pytest.raises(
         vlm_eval.VlmEvalError,
-        match="provider_observable_support must be a nonempty array of nonempty strings",
+        match=(
+            "provider_observable_support must be a nonempty array whose members "
+            "each contain a non-whitespace, non-format code point"
+        ),
     ):
         _parse(_payload(support), backend)
+
+
+@pytest.mark.parametrize("backend", ["hosted", "self-hosted"])
+@pytest.mark.parametrize(
+    "member",
+    _FORMAT_ONLY_SUPPORT,
+    ids=["zero-width-space", "byte-order-mark", "zero-width-joiner", "mixed"],
+)
+def test_real_parsers_reject_format_only_support(backend: str, member: str) -> None:
+    with pytest.raises(
+        vlm_eval.VlmEvalError,
+        match="non-whitespace, non-format code point",
+    ):
+        _parse(_payload([member]), backend)
+
+
+@pytest.mark.parametrize("backend", ["hosted", "self-hosted"])
+def test_real_parsers_preserve_embedded_format_control(backend: str) -> None:
+    member = "Frame\u200d 1 visibly shows the gripper."
+    parsed = _parse(_payload([member]), backend)
+    assert parsed.provider_observable_support == (member,)
 
 
 def _structured(
@@ -144,6 +174,19 @@ def test_real_result_rejects_empty_support() -> None:
         _result_from_structured(_structured(()), provider_call_made=True)
 
 
+@pytest.mark.parametrize(
+    "member",
+    _FORMAT_ONLY_SUPPORT,
+    ids=["zero-width-space", "byte-order-mark", "zero-width-joiner", "mixed"],
+)
+def test_direct_result_rejects_format_only_support(member: str) -> None:
+    with pytest.raises(
+        vlm_eval.VlmEvalError,
+        match="non-whitespace, non-format code point",
+    ):
+        _result_from_structured(_structured((member,)), provider_call_made=True)
+
+
 def test_no_call_result_rejects_fabricated_support() -> None:
     with pytest.raises(
         vlm_eval.VlmEvalError,
@@ -161,7 +204,10 @@ def test_result_boundary_requires_immutable_support_tuple() -> None:
     )
     with pytest.raises(
         vlm_eval.VlmEvalError,
-        match="must be a tuple of nonempty strings",
+        match=(
+            "must be a tuple whose members each contain a non-whitespace, "
+            "non-format code point"
+        ),
     ):
         _result_from_structured(structured, provider_call_made=True)
 
