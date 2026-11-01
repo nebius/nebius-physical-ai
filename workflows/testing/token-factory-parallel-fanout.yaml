@@ -97,11 +97,16 @@ states:
     needs: [caption-shards]
     resources: cpu
     run:
-      shell: >
-        python3 -c "from npa.workflows.fanout_join import join_shards;
-        join_shards(shards_uri='{{config.captions_uri}}',
-        report_uri='{{config.join_report_uri}}', shards='{{config.shards}}',
-        run_id='{{run.id}}')"
+      argv:
+        - python3
+        - -c
+        - >-
+          import sys; from npa.workflows.fanout_join import join_shards;
+          join_shards(shards_uri=sys.argv[1], report_uri=sys.argv[2], shards=sys.argv[3], run_id=sys.argv[4])
+        - "{{config.captions_uri}}"
+        - "{{config.join_report_uri}}"
+        - "{{config.shards}}"
+        - "{{run.id}}"
     inputs:
       - uri: "{{config.captions_uri}}"
         schema: npa.token_factory.captions.v1

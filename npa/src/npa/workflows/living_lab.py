@@ -556,11 +556,14 @@ _GPU_RESOURCE = {
 }
 
 _ZONE_SHARD_TEMPLATE = """set -euo pipefail
-ZONE="{{config.zone_name}}"
-RUN_URI="{{config.run_prefix_uri}}"
-DATASET_ID="{{config.dataset_id}}"
-SCENE="{{config.scene}}"
-VARIANT="{{config.variant}}"
+decode_b64() { printf '%s' "$1" | base64 --decode; }
+ZONE="$(decode_b64 '{{config.zone_name|base64}}')"
+RUN_URI="$(decode_b64 '{{config.run_prefix_uri|base64}}')"
+DATASET_ID="$(decode_b64 '{{config.dataset_id|base64}}')"
+SCENE="$(decode_b64 '{{config.scene|base64}}')"
+VARIANT="$(decode_b64 '{{config.variant|base64}}')"
+RIG_TRANSLATION_OFFSET="$(decode_b64 '{{config.rig_translation_offset|base64}}')"
+RIG_ROTATION_OFFSET="$(decode_b64 '{{config.rig_rotation_offset|base64}}')"
 ZU="${RUN_URI}zones/${ZONE}/"
 NC="${ZU}ncore/"
 RC="${ZU}reconstruction/"
@@ -664,7 +667,7 @@ export USDZ METRICS_PATH
 test -n "${USDZ}"
 
 echo "=== zone $ZONE: render novel views (rig-offset, not training views) ==="
-npa workbench nurec render --artifact-path "${USDZ}" --output-dir /tmp/render-out --camera-id "${CAMERA}" --renderer default --rig-translation-offset "{{config.rig_translation_offset}}" --rig-rotation-offset "{{config.rig_rotation_offset}}" --no-replicate-training-views --output-uri "${NV}" --output json >/tmp/nurec-render.json
+npa workbench nurec render --artifact-path "${USDZ}" --output-dir /tmp/render-out --camera-id "${CAMERA}" --renderer default --rig-translation-offset "${RIG_TRANSLATION_OFFSET}" --rig-rotation-offset "${RIG_ROTATION_OFFSET}" --no-replicate-training-views --output-uri "${NV}" --output json >/tmp/nurec-render.json
 
 echo "=== zone $ZONE: visualize (reports/sim2real.rrd for the agent panel) ==="
 npa workbench nurec visualize --input-uri "${ZU}" --output-uri "${RRD}" --output json >/tmp/nurec-viz.json
@@ -834,14 +837,22 @@ def build_living_lab_workflow_spec(
             "needs": ["living-lab-zones"],
             "resources": "cpu",
             "run": {
-                "shell": (
-                    'python3 -c "from npa.workflows.living_lab import '
-                    "join_living_lab_zones; join_living_lab_zones("
-                    "zones_uri='{{config.zones_uri}}', "
-                    "report_uri='{{config.report_uri}}', "
-                    "panorama_uri='{{config.panorama_uri}}', "
-                    "shards='{{config.zones}}', run_id='{{run.id}}')\""
-                )
+                "argv": [
+                    "python3",
+                    "-c",
+                    (
+                        "import sys; from npa.workflows.living_lab import "
+                        "join_living_lab_zones; join_living_lab_zones("
+                        "zones_uri=sys.argv[1], report_uri=sys.argv[2], "
+                        "panorama_uri=sys.argv[3], shards=sys.argv[4], "
+                        "run_id=sys.argv[5])"
+                    ),
+                    "{{config.zones_uri}}",
+                    "{{config.report_uri}}",
+                    "{{config.panorama_uri}}",
+                    "{{config.zones}}",
+                    "{{run.id}}",
+                ]
             },
             "outputs": [
                 {

@@ -520,7 +520,9 @@ states:
   work:
     description: Do the work.
     run:
-      shell: "echo work {{run.id}}"
+      shell: >-
+        value="$(printf '%s' '{{run.id|base64}}' | base64 --decode)"
+        echo work "$value"
     resources: cpu
 
   gate:
@@ -528,7 +530,9 @@ states:
     writesDecision: true
     needs: [work]
     run:
-      shell: "echo gate {{config.decision_uri}}"
+      shell: >-
+        value="$(printf '%s' '{{config.decision_uri|base64}}' | base64 --decode)"
+        echo gate "$value"
     resources: cpu
     outputs:
       - uri: "{{config.decision_uri}}"
@@ -593,7 +597,9 @@ states:
       decision_uri: >-
         s3://{{config.bucket}}/{{config.prefix}}/iteration-{{loop.refine}}/decision.json
     run:
-      shell: "echo gate {{config.decision_uri}}"
+      shell: >-
+        value="$(printf '%s' '{{config.decision_uri|base64}}' | base64 --decode)"
+        echo gate "$value"
     resources: cpu
     outputs:
       - uri: "{{config.prefix}}/gate-report.json"

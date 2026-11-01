@@ -53,9 +53,13 @@ states:
     resources: gang
     multiNodeMode: sharded
     run:
-      shell: >
-        python3 -c "from npa.workflows.multi_node_probe import report_node;
-        report_node('{{config.nodes_uri}}')"
+      argv:
+        - python3
+        - -c
+        - >-
+          import sys; from npa.workflows.multi_node_probe import report_node;
+          report_node(*sys.argv[1:])
+        - "{{config.nodes_uri}}"
     outputs:
       - uri: "{{config.nodes_uri}}"
         schema: npa.multi_node.node_report.v1
@@ -66,9 +70,15 @@ states:
     needs: [report-nodes]
     resources: single
     run:
-      shell: >
-        python3 -c "from npa.workflows.multi_node_probe import verify_nodes;
-        verify_nodes('{{config.nodes_uri}}', '{{config.report_uri}}', '{{config.node_count}}')"
+      argv:
+        - python3
+        - -c
+        - >-
+          import sys; from npa.workflows.multi_node_probe import verify_nodes;
+          verify_nodes(*sys.argv[1:])
+        - "{{config.nodes_uri}}"
+        - "{{config.report_uri}}"
+        - "{{config.node_count}}"
     outputs:
       - uri: "{{config.report_uri}}multi_node_report.json"
         schema: npa.multi_node.verify_report.v1

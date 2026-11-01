@@ -36,6 +36,10 @@ from npa.cli.agent_workflow import (
 )
 from npa.cli.main import app
 from npa.orchestration.npa_workflow.blueprints import resolve_npa_workflow_spec
+from npa.orchestration.npa_workflow.tokens import (
+    validate_argv_code_token_safety,
+    validate_shell_token_safety,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 EXAMPLE_YAML = REPO_ROOT / "workflows/testing/sim2real-two-step-agent.yaml"
@@ -1452,10 +1456,13 @@ def test_deployment_review_draft_is_runnable_and_chains_real_artifacts() -> None
     assert draft["plan"]["ok"] is True
     assert draft["runnable"] is True
     spec = yaml.safe_load(draft["yaml"])
-    assert (
-        "token_factory_deployment_input"
-        in spec["states"]["prepare-prompts"]["run"]["shell"]
-    )
+    assert spec["states"]["prepare-prompts"]["run"]["argv"] == [
+        "python3",
+        "-m",
+        "npa.workflows.token_factory_deployment_input",
+        "--output-uri",
+        "{{config.prompts_uri}}",
+    ]
     assert spec["states"]["prepare-prompts"]["outputs"] == [
         {
             "uri": "{{config.prompts_uri}}",
@@ -1510,6 +1517,24 @@ def test_every_agent_template_toolref_resolves_catalog() -> None:
 
     unknown = sorted(set(emitted) - set(TOOL_CATALOG))
     assert unknown == []
+
+
+def test_every_agent_template_keeps_tokens_out_of_command_source() -> None:
+    """Generated templates must not bypass the workflow source-boundary checks."""
+
+    for template in _TEMPLATES:
+        yaml_text = generate_workflow_yaml(template)
+        validation = validate_workflow_yaml_text(yaml_text)
+        assert validation["ok"] is True, f"{template}: {validation.get('error')}"
+        spec = yaml.safe_load(yaml_text)
+        for state in spec["states"].values():
+            run = state.get("run") or {}
+            shell = run.get("shell")
+            argv = run.get("argv")
+            if isinstance(shell, str):
+                validate_shell_token_safety(shell)
+            if isinstance(argv, list):
+                validate_argv_code_token_safety(argv)
 
 
 def test_generate_workflow_yaml_aliases() -> None:

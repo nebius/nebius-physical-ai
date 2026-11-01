@@ -8,6 +8,7 @@ asserted for real-component / GPU-routing invariants.
 
 from __future__ import annotations
 
+import base64
 import json
 from pathlib import Path
 
@@ -74,6 +75,28 @@ def _zone_identity(zone_name: str) -> tuple[str, str]:
     """Derive (scene, variant) from a zone name like ``huerstholz-auto-a``."""
     parts = zone_name.split("-")
     return parts[0], parts[1]
+
+
+def _resolved_zone_shell() -> str:
+    """Return one generated shard after resolving its base64-safe tokens."""
+
+    shell = living_lab.build_living_lab_workflow_spec()["states"][
+        "zone-toro-standard-b"
+    ]["run"]["shell"]
+    zone_cfg = {
+        "config.zone_name": "toro-standard-b",
+        "config.dataset_id": "nvidia/PhysicalAI-NuRec-PPISP",
+        "config.scene": "toro",
+        "config.variant": "standard",
+        "config.run_prefix_uri": "s3://bucket/prefix/",
+        "config.nurec_image": "nvcr.io/nvidia/nre/nre-ga:26.04",
+        "config.rig_translation_offset": "0,0,0",
+        "config.rig_rotation_offset": "120,0,0",
+    }
+    for token, value in zone_cfg.items():
+        encoded = base64.b64encode(value.encode("utf-8")).decode("ascii")
+        shell = shell.replace("{{" + token + "|base64}}", encoded)
+    return shell
 
 
 def _write_zone(
@@ -661,21 +684,7 @@ esac
         encoding="utf-8",
     )
 
-    shell = living_lab.build_living_lab_workflow_spec()["states"][
-        "zone-toro-standard-b"
-    ]["run"]["shell"]
-    zone_cfg = {
-        "config.zone_name": "toro-standard-b",
-        "config.dataset_id": "nvidia/PhysicalAI-NuRec-PPISP",
-        "config.scene": "toro",
-        "config.variant": "standard",
-        "config.run_prefix_uri": "s3://bucket/prefix/",
-        "config.nurec_image": "nvcr.io/nvidia/nre/nre-ga:26.04",
-        "config.rig_translation_offset": "0,0,0",
-        "config.rig_rotation_offset": "120,0,0",
-    }
-    for tok, val in zone_cfg.items():
-        shell = shell.replace("{{" + tok + "}}", val)
+    shell = _resolved_zone_shell()
     script = tmp_path / "shard.sh"
     script.write_text(shell, encoding="utf-8")
 
@@ -732,21 +741,7 @@ def test_provenance_gate_catches_wrong_content_echoing_requested_labels(
     import subprocess
     import sys
 
-    shell = living_lab.build_living_lab_workflow_spec()["states"][
-        "zone-toro-standard-b"
-    ]["run"]["shell"]
-    zone_cfg = {
-        "config.zone_name": "toro-standard-b",
-        "config.dataset_id": "nvidia/PhysicalAI-NuRec-PPISP",
-        "config.scene": "toro",
-        "config.variant": "standard",
-        "config.run_prefix_uri": "s3://bucket/prefix/",
-        "config.nurec_image": "nvcr.io/nvidia/nre/nre-ga:26.04",
-        "config.rig_translation_offset": "0,0,0",
-        "config.rig_rotation_offset": "120,0,0",
-    }
-    for tok, val in zone_cfg.items():
-        shell = shell.replace("{{" + tok + "}}", val)
+    shell = _resolved_zone_shell()
 
     # Extract the provenance gate heredoc body (between the <<'PY' and PY lines).
     marker = "<<'PY'"
@@ -796,21 +791,7 @@ def test_provenance_gate_passes_when_observed_matches(tmp_path: Path) -> None:
     import subprocess
     import sys
 
-    shell = living_lab.build_living_lab_workflow_spec()["states"][
-        "zone-toro-standard-b"
-    ]["run"]["shell"]
-    zone_cfg = {
-        "config.zone_name": "toro-standard-b",
-        "config.dataset_id": "nvidia/PhysicalAI-NuRec-PPISP",
-        "config.scene": "toro",
-        "config.variant": "standard",
-        "config.run_prefix_uri": "s3://bucket/prefix/",
-        "config.nurec_image": "nvcr.io/nvidia/nre/nre-ga:26.04",
-        "config.rig_translation_offset": "0,0,0",
-        "config.rig_rotation_offset": "120,0,0",
-    }
-    for tok, val in zone_cfg.items():
-        shell = shell.replace("{{" + tok + "}}", val)
+    shell = _resolved_zone_shell()
 
     marker = "<<'PY'"
     start = shell.index(marker) + len(marker)

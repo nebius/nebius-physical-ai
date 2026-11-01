@@ -266,8 +266,29 @@ def _parse_state(
         argv = _string_list(
             name, "run.argv", run_raw.get("argv"), present="argv" in run_raw
         )
+        if argv:
+            from npa.orchestration.npa_workflow.tokens import (
+                TokenError,
+                validate_argv_code_token_safety,
+            )
+
+            try:
+                validate_argv_code_token_safety(argv)
+            except TokenError as exc:
+                raise NpaWorkflowError(f"state {name}: {exc}") from exc
+        shell = _optional_string(name, "run.shell", run_raw, "shell")
+        if shell:
+            from npa.orchestration.npa_workflow.tokens import (
+                TokenError,
+                validate_shell_token_safety,
+            )
+
+            try:
+                validate_shell_token_safety(shell)
+            except TokenError as exc:
+                raise NpaWorkflowError(f"state {name}: {exc}") from exc
         run = RunSpec(
-            shell=_optional_string(name, "run.shell", run_raw, "shell"),
+            shell=shell,
             argv=argv,
         )
 

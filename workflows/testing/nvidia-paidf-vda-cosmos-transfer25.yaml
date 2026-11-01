@@ -655,10 +655,16 @@ states:
       decision_uri: "{{config.scores_uri}}iteration-{{loop.grade}}/decision.json"
     resources: cpu
     run:
-      shell: >
-        python3 -c "from npa.workflows.data_factory_stages import grade_gate;
-        grade_gate('{{config.scores_uri}}', '{{config.decision_uri}}',
-        '{{config.grade_threshold}}', '{{config.refinement_uri}}')"
+      argv:
+        - python3
+        - -c
+        - >-
+          import sys; from npa.workflows.data_factory_stages import grade_gate;
+          grade_gate(*sys.argv[1:])
+        - "{{config.scores_uri}}"
+        - "{{config.decision_uri}}"
+        - "{{config.grade_threshold}}"
+        - "{{config.refinement_uri}}"
     outputs:
       - uri: "{{config.decision_uri}}"
         schema: npa.sim2real.threshold_decision.v1
@@ -807,14 +813,23 @@ states:
       augmented_frames_uri: "{{config.selection_uri}}iteration-{{loop.grade}}/"
     resources: cpu
     run:
-      shell: >
-        npa workbench token-factory caption
-        --input-path "{{config.augmented_frames_uri}}"
-        --output-path "{{config.labeled_augmented_uri}}"
-        --model "{{config.caption_model}}"
-        --max-images "{{config.max_images}}"
-        --max-tokens "{{config.max_tokens}}"
-        --output json
+      argv:
+        - npa
+        - workbench
+        - token-factory
+        - caption
+        - --input-path
+        - "{{config.augmented_frames_uri}}"
+        - --output-path
+        - "{{config.labeled_augmented_uri}}"
+        - --model
+        - "{{config.caption_model}}"
+        - --max-images
+        - "{{config.max_images}}"
+        - --max-tokens
+        - "{{config.max_tokens}}"
+        - --output
+        - json
     outputs:
       - uri: "{{config.labeled_augmented_uri}}captions.json"
         schema: npa.token_factory.captions.v1
@@ -894,11 +909,17 @@ states:
     needs: [visualize]
     resources: cpu
     run:
-      shell: >
-        python3 -c "from npa.workflows.data_factory_stages import finalize;
-        finalize('{{config.run_root_uri}}', '{{config.finalize_report_uri}}',
-        upstream_variant='cosmos-transfer2.5', run_id='{{run.id}}',
-        selection_uri='{{config.selection_uri}}iteration-{{loop.grade}}/')"
+      argv:
+        - python3
+        - -c
+        - >-
+          import sys; from npa.workflows.data_factory_stages import finalize;
+          finalize(sys.argv[1], sys.argv[2], upstream_variant=sys.argv[3], run_id=sys.argv[4], selection_uri=sys.argv[5])
+        - "{{config.run_root_uri}}"
+        - "{{config.finalize_report_uri}}"
+        - cosmos-transfer2.5
+        - "{{run.id}}"
+        - "{{config.selection_uri}}iteration-{{loop.grade}}/"
     outputs:
       - uri: "{{config.finalize_report_uri}}"
         schema: npa.sim2real.e2e_report.v1

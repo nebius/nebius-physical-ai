@@ -242,7 +242,7 @@ states:
     next: consume
   consume:
     run:
-      shell: cat {{state.produce.uri}}
+      argv: [cat, "{{state.produce.uri}}"]
     terminal: true
 """.strip()
         + "\n",
@@ -251,7 +251,7 @@ states:
     spec = load_spec(path)
     plan = build_plan(spec, run_id="state-token-run")
     consume = next(step for step in plan.steps if step.state == "consume")
-    assert consume.shell == "cat s3://example-bucket/artifact.json"
+    assert consume.argv == ["cat", "s3://example-bucket/artifact.json"]
 
 
 def test_execution_step_limit_guard(monkeypatch) -> None:

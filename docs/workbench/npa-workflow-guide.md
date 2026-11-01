@@ -748,9 +748,17 @@ They are optional and additive, so every pre-v0.0.1 spec is unaffected.
 - Prefer `toolRef`; use `run.shell` only when no catalog entry exists.
 - Decision states that write threshold JSON must set `writesDecision: true`.
 
-`run.shell` resolves `config.*` tokens into `bash -c` commands. The non-login
-shell inherits the prepared stage environment; treat spec files as trusted
-authored input.
+`run.shell` is executed with `bash -c`; `run.argv` is preferred because each
+resolved token is one argument. To keep a config value from changing shell
+syntax, `run.shell` accepts only `{{...|base64}}` tokens. Decode each token into
+a quoted variable (for example, `value=$(printf '%s' '{{config.value|base64}}'
+| base64 --decode)`) before passing `"$value"` to a command. The non-login shell
+inherits the prepared stage environment; the workflow author still owns the
+shell program itself.
+
+The same boundary applies to interpreter source in `run.argv` (for example,
+`python3 -c`): keep the source literal and pass tokens as later arguments for
+the program to read, never inside evaluated source text.
 
 ### Python environments in custom stages
 

@@ -33,7 +33,7 @@ For **new creative pipelines**, also load `skills/workflows/generate-npa-workflo
 - **apiVersion:** `npa.workflow/v0.0.1` only (beta).
 - **kind:** `Workflow`
 - **States:** declarative nodes with `run` (shell/argv), `toolRef`, `sequence`, or `parallel`.
-- **Tokens:** `{{config.key}}`, `{{run.id}}`, `{{run.prefix}}`, `{{state.NAME.uri}}` — no Jinja, no eval.
+- **Tokens:** `{{config.key}}`, `{{run.id}}`, `{{run.prefix}}`, `{{state.NAME.uri}}` — no Jinja, no eval. Prefer `run.argv`; a `run.shell` token must use `|base64` and be decoded into a quoted shell variable before use, because it is rendered into `bash -c` source. Keep `python -c` and other evaluated interpreter source literal; pass token values as later argv entries.
 - **Predicates:** closed set: `promote_checkpoint`, `loop_back`.
 - **Loops:** `loop.max: "{{config.attr}}"` or integer; `loop.until` for dynamic exit.
 - **Condition-only loops:** a sequence may omit `loop.max` when it declares
@@ -103,7 +103,7 @@ transfers, follow
 | Null collections, floating-point counts, truthy strings, duplicate states | `validate-spec` |
 | Forward `{{state.*}}` refs | Allowed at validate; resolved during plan/execute |
 | Execution depth | Guarded at `--execute` (no stack blowups) |
-| `run.shell` | Resolves config tokens; spec authors are trusted (injection risk if config is untrusted) |
+| `run.shell` | Rejects direct template tokens. It permits only `\|base64` token transforms, which must be decoded into quoted shell variables; use `run.argv` for direct argument passing. |
 
 ## Commands
 
@@ -206,11 +206,14 @@ Tmux full matrix (all npa.workflow YAMLs, real S3, credential leak checks):
    shape offline with `plan-spec --waves`. See repo-root `DESIGN.md`.
 5. Cross-stage data uses S3 URIs in `config` — tools are stateless.
 6. Group config: runtime knobs first, then `*_uri` keys under `config.prefix`.
-7. A `run.shell` state may import an npa module for logic that needs the package
-   (npa is pip-installed in the task): `python3 -c "from npa.workflows.<mod>
-   import <fn>; <fn>('{{config.a}}', '{{config.b}}')"` — prefer this over inlining
-   heavy logic. Put testable logic in a real module (e.g.
-   `npa/src/npa/workflows/data_factory_viz.py`) with a unit test.
+7. Use `run.argv` when a state imports an npa module for logic that needs the
+   package (npa is pip-installed in the task). Keep the interpreter source
+   literal and pass token values as later arguments, for example:
+   `python3 -c "import sys; from npa.workflows.<mod> import <fn>; <fn>(*sys.argv[1:])" "{{config.a}}" "{{config.b}}"`.
+   Reserve `run.shell` for actual shell syntax; its only permitted token form is
+   `\|base64`, decoded into quoted shell variables before use. Put testable logic
+   in a real module (e.g. `npa/src/npa/workflows/data_factory_viz.py`) with a unit
+   test.
 8. A `toolRef` argv template must match the tool's **actual CLI option names**
    (e.g. `--input-uri`/`--output-uri`, not `--input-path`) and include required
    flags like `--run-id`; a mismatch validates/plans fine but crashes on real

@@ -94,9 +94,14 @@ states:
     description: "Stub: describe a future merge of shard outputs into one frame index."
     needs: [synth-fanout]
     run:
-      shell: >
-        echo "index {{config.synth_shards}} cosmos-transfer shards ->
-        {{config.frames_index_uri}}"
+      argv:
+        - echo
+        - index
+        - "{{config.synth_shards}}"
+        - cosmos-transfer
+        - shards
+        - ->
+        - "{{config.frames_index_uri}}"
     outputs:
       - uri: "{{config.frames_index_uri}}"
         schema: npa.sim2real.augmented_frames.v1

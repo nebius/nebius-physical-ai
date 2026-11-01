@@ -102,8 +102,15 @@ Most states name a `toolRef` from
 command the engine resolves and runs. This keeps option names and required flags
 auditable against the real CLI.
 
-Use `run.argv` or `run.shell` only when there is no cataloged capability. Put
-substantial logic in a tested package module and keep the state command small.
+Use `run.argv` or `run.shell` only when there is no cataloged capability. Prefer
+`run.argv`: each resolved token remains one process argument. Put substantial
+logic in a tested package module and keep the state command small. `run.shell`
+is an escape hatch executed with `bash -c`; it may contain only
+`{{...|base64}}` tokens. Decode each one into a quoted shell variable before
+use, so a config value cannot become shell syntax.
+Likewise, keep interpreter snippets such as `python3 -c` literal: put resolved
+values in later `argv` entries and read them from the interpreter's argument
+list rather than interpolating a token into evaluated source.
 
 | Field | Purpose |
 | --- | --- |
