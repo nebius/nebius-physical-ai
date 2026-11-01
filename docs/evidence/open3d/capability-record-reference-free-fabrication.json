@@ -37,7 +37,7 @@
   "this_does_not_contradict_1006": "#1006 found normal correspondence works against a reference surface, and that stands. The difference is the reference: with one, a bridge is compared against the surface it should have belonged to; without one, against whatever happens to be nearby.",
   "regression_guards": {
     "file": "npa/tests/workbench/test_open3d_reference_free_fabrication.py",
-    "count": 17,
+    "count": 20,
     "what_they_hold": "The verdict is recomputed from the published rows and compared against the recorded pass counts, so the report never asserts its own validity. The overlap, the inversion, the climb with sparsity, gate 1's margin, and the validity of every reference actually measured are each recomputed.",
     "mutations_caught": [
       "the narrow slot suddenly reads 0.6: 4 tests fail",
@@ -61,7 +61,22 @@
         "a criterion renamed so the block no longer matches: fails twice"
       ]
     },
-    "what_these_tests_do_not_do": "Re-run the geometry. They validate the committed record, which is the right split while Open3D is not installable everywhere, but it means the suite protects the document's integrity rather than reproducing the measurement. Review raised this and I agree with the framing; the harness is the reproduction path and it takes five minutes on CPU."
+    "what_these_tests_do_not_do": "Re-run the geometry. They validate the committed record, which is the right split while Open3D is not installable everywhere, but it means the suite protects the document's integrity rather than reproducing the measurement. Review raised this and I agree with the framing; the harness is the reproduction path and it takes five minutes on CPU.",
+    "what_count_means": "collected test cases, not test functions",
+    "a_fourth_copy_review_found_in_this_record": {
+      "the_gap": "After the three copies inside reference-free-fabrication.json were bound, the verdict still existed a fourth time as prose in this record: \"Candidate A meets 1 of 5 criteria; candidate B meets 2 of 5. Both rejected.\" Nothing read it.",
+      "demonstrated_not_argued": "Review replaced it with \"4 of 5 ... 5 of 5. Both accepted.\" and all 137 tests across the three Open3D test files passed. Reproduced here before fixing: 137 passed.",
+      "why_it_is_worse_than_the_others": "This is the artifact a reader opens first, so a rejection silently becoming an acceptance here misleads more people than the same drift inside the report.",
+      "the_fix": "The numerals in the sentence are parsed and compared against the counts recomputed from the published rows, and the verdict word is held to them. The class is closed too: every figure this record quotes with four or more decimals is checked against the report, with the three that come from measurements the report does not carry pinned as a named exception set rather than waved through by a count.",
+      "a_near_miss_in_the_fix_itself": "The guard-count test first counted `^def test_` and read 17, which matched the record's 17 and passed. The record's number means collected cases; three tests are parametrized over the two candidates, so the file held 14 functions and ran 17 cases. The guard agreed for the wrong reason. It now expands parametrize and its count was checked against pytest's own collection.",
+      "mutations_now_caught": [
+        "review's exact inversion, 1 of 5 and 2 of 5 to 4 of 5 and 5 of 5 with both accepted: fails",
+        "only the numerals inverted, leaving the word rejected: fails",
+        "only the word changed from rejected to accepted: fails",
+        "a figure the prose quotes drifting from the report row it came from: fails",
+        "a guard added or removed without updating the stated count: fails"
+      ]
+    }
   },
   "limitations": "Two candidate readings, three inventing geometries, two sampling densities, one reconstruction method (Poisson at depth 7) and one normal-agreement cutoff. This rejects these candidates on these constructions; it does not prove no reference-free reading can work. What it does establish is that the obvious one cannot, and why.",
   "visual_evaluation": {
