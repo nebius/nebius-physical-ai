@@ -7,9 +7,10 @@
 # Dockerfile does COPY + RUN. This also avoids inventing an extra npa-isaac-base image
 # that a build-your-own customer would have to build first.
 #
-# WHAT THIS BAKES (all freely redistributable, all from PyPI / Docker Hub / Ubuntu):
+# WHAT THIS BAKES (all freely redistributable, from PyPI / Docker Hub / Ubuntu /
+# python.org):
 #   * python3.11 (Isaac requires exactly 3.11: both isaacsim and isaaclab declare
-#     `Requires-Python: ==3.11.*`, and Ubuntu 22.04 ships 3.10, hence deadsnakes)
+#     `Requires-Python: ==3.11.*`, while Ubuntu 22.04 ships 3.10)
 #   * a python3.11 venv with PyTorch and the COMPLETE OSS dependency closure that Isaac
 #     Sim / Isaac Lab need at run time
 #   * the runtime-fetch bootstrap, its hash-pinned wheel manifest, and the
@@ -39,8 +40,10 @@ UBUNTU_SNAPSHOT="${NPA_UBUNTU_SNAPSHOT:-20261018T000000Z}"
 UBUNTU_SUITE="${NPA_UBUNTU_SUITE:-jammy}"
 ISAAC_PYTHON_MINOR="${NPA_ISAAC_PYTHON_MINOR:-3.11}"
 LINUX_LIBC_DEV_VERSION="${NPA_LINUX_LIBC_DEV_VERSION:-5.15.0-198.208}"
-PYTHON_VERSION="${NPA_ISAAC_PYTHON_VERSION:-3.11.17-1+jammy1}"
-DEADSNAKES_POOL="${NPA_DEADSNAKES_POOL:-https://ppa.launchpadcontent.net/deadsnakes/ppa/ubuntu/pool/main/p/python3.11}"
+PYTHON_VERSION="${NPA_ISAAC_PYTHON_VERSION:-3.11.17}"
+PYTHON_SOURCE_SHA256="${NPA_ISAAC_PYTHON_SOURCE_SHA256:-53cdee63ac4bf12387b7b33a53d3b1f8f4941cad73807a7b4fe91bb001ef004a}"
+PYTHON_SOURCE_BASE="${NPA_ISAAC_PYTHON_SOURCE_BASE:-https://www.python.org/ftp/python}"
+PYTHON_BUILD_JOBS="${NPA_ISAAC_PYTHON_BUILD_JOBS:-$(nproc)}"
 # cu128 wheels carry sm_120 kernels, which RTX PRO 6000 Blackwell (compute capability
 # 12.0) requires. Verified in-pod: torch._C._cuda_getArchFlags() reports
 # "sm_70 sm_75 sm_80 sm_86 sm_90 sm_100 sm_120".
@@ -98,6 +101,27 @@ system_packages=(
   libxt6 \
   vulkan-tools
 )
+if [ "$ISAAC_PYTHON_MINOR" = 3.11 ]; then
+  # Build exact upstream CPython bytes rather than depending on a superseded PPA
+  # publication that Launchpad deletes after its bounded retention window.
+  system_packages+=(
+    build-essential
+    libbz2-dev
+    libexpat1-dev
+    libffi-dev
+    libgdbm-compat-dev
+    libgdbm-dev
+    liblzma-dev
+    libncursesw5-dev
+    libreadline-dev
+    libsqlite3-dev
+    libssl-dev
+    tk-dev
+    uuid-dev
+    xz-utils
+    zlib1g-dev
+  )
+fi
 if [ -n "$LINUX_LIBC_DEV_VERSION" ]; then
   system_packages+=("linux-libc-dev=${LINUX_LIBC_DEV_VERSION}")
 elif [ "$UBUNTU_SUITE" = jammy ]; then
@@ -126,31 +150,35 @@ fi
 test ! -e /opt/nvidia/nsight-compute
 command -v nvcc >/dev/null
 
-# Isaac needs python3.11 exactly; Ubuntu 22.04 ships 3.10. Do not add the
-# moving deadsnakes apt repository. Fetch the reviewed version's immutable
-# package paths and verify every byte against the SHA-256 recorded in the PPA
-# Packages index before apt resolves their Ubuntu dependencies from the fixed
+# Isaac needs python3.11 exactly; Ubuntu 22.04 ships 3.10. Build the reviewed
+# CPython release from python.org's stable release archive and verify the source
+# before extraction. Build dependencies still come from the fixed Ubuntu
 # snapshot above.
 if [ "$ISAAC_PYTHON_MINOR" = 3.11 ]; then
-  install -d -m 0755 /tmp/npa-python311
-  while IFS='|' read -r filename digest; do
-    curl --fail --location --retry 3 \
-      "${DEADSNAKES_POOL}/${filename}" \
-      --output "/tmp/npa-python311/${filename}"
-    printf '%s  %s\n' "$digest" "/tmp/npa-python311/${filename}" | sha256sum --check --strict
-  done <<'PYTHON311_DEBS'
-libpython3.11_3.11.17-1+jammy1_amd64.deb|37cf74d9a83c16aaff5212ba16a387ddfa6475c3d949c82e63e32269f3e11652
-libpython3.11-dev_3.11.17-1+jammy1_amd64.deb|ddfb00db5ad8a98a41b78d54801eeb9bdd166b45c9125d25e11ab854e2597df3
-libpython3.11-minimal_3.11.17-1+jammy1_amd64.deb|c43729651a145caa062c62dac63259512fac11e023a55a8666bc449e1af77c36
-libpython3.11-stdlib_3.11.17-1+jammy1_amd64.deb|e1f406d5f6a3b368aac2088dfdc0ae69a7d28ec2d71d2ed423396673b3b95a58
-python3.11_3.11.17-1+jammy1_amd64.deb|8f7452c61dcf1da97fd7adcfdaa71051329e2cbf8b85b1db1f39f3059c67198b
-python3.11-dev_3.11.17-1+jammy1_amd64.deb|345a09eb7f5de4ddd4f9c9041aecc7166ba2a7de96bf9a3b07039929a8366c84
-python3.11-minimal_3.11.17-1+jammy1_amd64.deb|dfef050f38aa2cd310b262712c7673a51dc08869f625abefcb3e5fcdc0f7b410
-python3.11-venv_3.11.17-1+jammy1_amd64.deb|0572285b02976487ee908ce58b865ec608ad181618b820ea22671d9ee02874a2
-PYTHON311_DEBS
-  apt-get install -y --no-install-recommends /tmp/npa-python311/*.deb
-  test "$(dpkg-query -W -f='${Version}' python3.11)" = "$PYTHON_VERSION"
-  rm -rf /tmp/npa-python311
+  PYTHON_SOURCE_ARCHIVE="/tmp/Python-${PYTHON_VERSION}.tgz"
+  curl --fail --location --retry 3 \
+    "${PYTHON_SOURCE_BASE}/${PYTHON_VERSION}/Python-${PYTHON_VERSION}.tgz" \
+    --output "$PYTHON_SOURCE_ARCHIVE"
+  printf '%s  %s\n' "$PYTHON_SOURCE_SHA256" "$PYTHON_SOURCE_ARCHIVE" \
+    | sha256sum --check --strict
+  tar --extract --gzip --file "$PYTHON_SOURCE_ARCHIVE" \
+    --directory /tmp --no-same-owner
+  (
+    cd "/tmp/Python-${PYTHON_VERSION}"
+    ./configure \
+      --prefix=/usr/local \
+      --enable-option-checking=fatal \
+      --enable-shared \
+      --with-ensurepip=install \
+      --with-system-expat
+    make -j "$PYTHON_BUILD_JOBS"
+    make altinstall
+  )
+  ldconfig
+  test "$(command -v python3.11)" = /usr/local/bin/python3.11
+  test "$(python3.11 -c 'import platform; print(platform.python_version())')" = "$PYTHON_VERSION"
+  python3.11 -c 'import bz2, ctypes, ensurepip, lzma, readline, sqlite3, ssl, tkinter, zlib'
+  rm -rf "$PYTHON_SOURCE_ARCHIVE" "/tmp/Python-${PYTHON_VERSION}"
 elif [ "$ISAAC_PYTHON_MINOR" = 3.12 ]; then
   # Isaac Sim 6 / Isaac Lab 3 require Python 3.12. The 3.x image uses the
   # digest-pinned Ubuntu 24.04 CUDA base and the immutable Noble snapshot, so

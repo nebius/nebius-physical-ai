@@ -185,6 +185,12 @@ metadata and updates its `RECORD`; released code and package versions stay
 intact. The repair rejects unknown metadata, any other MoviePy version, or any
 Pillow version string other than literal `13.0.0`. A successful source or
 dependency check does not qualify an existing or replacement image digest.
+The shared Jammy bootstrap builds CPython 3.11.17 from the exact hash-checked
+python.org release archive. It does not depend on Deadsnakes PPA package
+retention: Launchpad eventually deletes superseded PPA publications. Compiler
+and library inputs remain selected from the fixed Ubuntu snapshot, and the
+build verifies the archive before extraction and exercises the required
+standard-library extension modules before creating the runtime virtualenv.
 
 The Sim2Real controller and Rerun viewer builds use the October 2, 2026 Debian
 snapshot and explicitly install `perl-base=5.40.1-6+deb13u1` to remove the three
