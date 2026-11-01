@@ -1093,35 +1093,15 @@ def load_runtime_lock(
     """Load and exactly validate the checked-in runtime lock.
 
     Args:
-        path: Optional explicit strict lock path. The packaged JSON resource
-            permits its repository-formatting terminal newline.
+        path: Optional explicit strict lock path.
     Returns:
         Strict lock data, original bytes, and complete-file SHA-256.
     Raises:
         MolmoActInferenceError: The file or any lock fact is invalid.
     """
 
-    if path is None:
-        try:
-            raw_bytes, _ = _read_absolute_regular(RUNTIME_LOCK_PATH)
-            parse_bytes = (
-                raw_bytes[:-1]
-                if raw_bytes.endswith(b"\n") and not raw_bytes.endswith(b"\n\n")
-                else raw_bytes
-            )
-            parsed = read_strict_json(parse_bytes, error_code="MOLMOACT_LOCK_INVALID")
-            record = ValidatedMachineRecord(
-                data=parsed.data,
-                raw_bytes=raw_bytes,
-                sha256=hashlib.sha256(raw_bytes).hexdigest(),
-                path=str(RUNTIME_LOCK_PATH),
-            )
-        except (OSError, TypeError, ValueError) as exc:
-            raise MolmoActInferenceError(
-                "MOLMOACT_LOCK_INVALID", "packaged runtime lock is invalid"
-            ) from exc
-    else:
-        record = read_strict_json(path, error_code="MOLMOACT_LOCK_INVALID")
+    source = RUNTIME_LOCK_PATH if path is None else path
+    record = read_strict_json(source, error_code="MOLMOACT_LOCK_INVALID")
     validate_runtime_lock(record.data)
     return record
 
@@ -2512,7 +2492,6 @@ def _action_token_grammar(
         len(tokens) != 7
         or any(not token for token in tokens)
         or any("[" in token or "]" in token for token in tokens)
-        or not any(any(ord(character) > 127 for character in token) for token in tokens)
         or any(
             numeric.fullmatch(token) or token in {"NaN", "Infinity", "-Infinity"}
             for token in tokens
@@ -2590,12 +2569,27 @@ def _plain_sequence(value: Any) -> Any:
     return value
 
 
+def _strict_structure_equal(actual: Any, expected: Any) -> bool:
+    if type(actual) is not type(expected):
+        return False
+    if isinstance(expected, list):
+        return len(actual) == len(expected) and all(
+            _strict_structure_equal(actual_item, expected_item)
+            for actual_item, expected_item in zip(actual, expected, strict=True)
+        )
+    return bool(actual == expected)
+
+
 def _sole_parser_value(value: Any, expected: Any, code: str, detail: str) -> None:
     try:
         parsed = _plain_sequence(value)
     except BaseException as exc:
         raise MolmoActInferenceError(code, detail) from exc
-    if not isinstance(parsed, list) or len(parsed) != 1 or parsed[0] != expected:
+    if (
+        not isinstance(parsed, list)
+        or len(parsed) != 1
+        or not _strict_structure_equal(parsed[0], expected)
+    ):
         raise MolmoActInferenceError(code, detail)
 
 
@@ -3443,6 +3437,10 @@ def _link_publication(
         raise MolmoActInferenceError(
             "MOLMOACT_OUTPUT_DURABILITY", "output parent changed before commit"
         )
+    if state.temp_inode is None:
+        raise MolmoActInferenceError(
+            "MOLMOACT_OUTPUT_DURABILITY", "temporary publication identity is absent"
+        )
     _fault(fault, "before_link")
     try:
         os.link(
@@ -3452,10 +3450,20 @@ def _link_publication(
             dst_dir_fd=state.parent.descriptor,
             follow_symlinks=False,
         )
-    except FileExistsError as exc:
-        raise MolmoActInferenceError(
-            "MOLMOACT_OUTPUT_COLLISION", "destination won a publication race"
-        ) from exc
+    except BaseException as exc:
+        try:
+            observed = _entry_inode(state.parent.descriptor, state.destination_name)
+        except BaseException:
+            state.linked = True
+            raise
+        if observed == state.temp_inode:
+            state.linked = True
+            raise
+        if observed is not None or isinstance(exc, FileExistsError):
+            raise MolmoActInferenceError(
+                "MOLMOACT_OUTPUT_COLLISION", "destination won a publication race"
+            ) from exc
+        raise
     state.linked = True
     _fault(fault, "after_link")
 
@@ -3823,8 +3831,9 @@ def run_inference(
         now=now,
     )
     try:
-        payload = _execute_in_scratch(context, scratch_parent)
-        return publish_result(output_path, build_result_envelope(payload))
+        with network_tripwire():
+            payload = _execute_in_scratch(context, scratch_parent)
+            return publish_result(output_path, build_result_envelope(payload))
     finally:
         for snapshot in context.snapshots:
             snapshot.close()

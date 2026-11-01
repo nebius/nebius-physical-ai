@@ -274,10 +274,64 @@ def _private_directory(path: Path) -> Path:
     return path
 
 
-def _generated_text(*, quoted: bool = False) -> str:
+def _content_identity(payload: bytes, identity_kind: str) -> str:
+    if identity_kind == "git_blob_sha1":
+        digest = hashlib.sha1(usedforsecurity=False)
+        digest.update(b"blob " + str(len(payload)).encode("ascii") + b"\x00")
+    else:
+        assert identity_kind in {"lfs_sha256", "sha256"}
+        digest = hashlib.sha256()
+    digest.update(payload)
+    return digest.hexdigest()
+
+
+def _synthetic_consumer_view(
+    tmp_path: Path,
+) -> tuple[Path, dict[str, Any], str, SimpleNamespace]:
+    lock = deepcopy(contract.load_runtime_lock().data)
+    layout = lock["consumer_view_layout"]
+    root = _private_directory(tmp_path / "consumer-view")
+    for relative in layout["directories"]:
+        if relative != ".":
+            (root / relative).mkdir(parents=True, exist_ok=True)
+
+    payloads: dict[str, bytes] = {}
+    for item in layout["files"]:
+        if item["kind"] != "cache_copy":
+            payloads[item["path"]] = (
+                b""
+                if item["kind"] == "generated_empty"
+                else f"synthetic:{item['path']}\n".encode()
+            )
+    for item in layout["files"]:
+        if item["kind"] == "cache_copy":
+            payloads[item["path"]] = payloads[item["source_path"]]
+
+    for item in layout["files"]:
+        payload = payloads[item["path"]]
+        item["size"] = len(payload)
+        item["identity"] = _content_identity(payload, item["identity_kind"])
+        destination = root / item["path"]
+        destination.write_bytes(payload)
+        destination.chmod(0o444)
+    for relative in sorted(
+        layout["directories"], key=lambda value: value.count("/"), reverse=True
+    ):
+        (root if relative == "." else root / relative).chmod(0o555)
+
+    details = root.stat()
+    major = os.major(details.st_dev)
+    minor = os.minor(details.st_dev)
+    mountinfo = f"42 1 {major}:{minor} / {root} ro,nosuid - tmpfs tmpfs ro\n"
+    return root, lock, mountinfo, SimpleNamespace(f_flag=os.ST_RDONLY)
+
+
+def _generated_text(
+    *, quoted: bool = False, tokens: tuple[str, ...] = ACTION_TOKENS
+) -> str:
     depth = "<DEPTH_START>" + "<DEPTH_1>" * 100 + "<DEPTH_END>"
-    tokens = [f"'{token}'" if quoted else token for token in ACTION_TOKENS]
-    return f"{depth} [[1,2],[3,4]] [{','.join(tokens)}]"
+    rendered = [f"'{token}'" if quoted else token for token in tokens]
+    return f"{depth} [[1,2],[3,4]] [{','.join(rendered)}]"
 
 
 class _Tokenizer:
@@ -402,6 +456,19 @@ def test_all_frozen_snapshot_vectors_have_exact_counts() -> None:
     assert [item["path"] for item in lock["consumer_view_layout"]["files"]] == sorted(
         item["path"] for item in lock["consumer_view_layout"]["files"]
     )
+
+
+def test_runtime_lock_uses_the_strict_reader_without_terminal_bytes(
+    tmp_path: Path,
+) -> None:
+    raw = contract.RUNTIME_LOCK_PATH.read_bytes()
+    assert raw.endswith(b"}")
+    assert not raw.endswith((b"\n", b"\r", b"\t", b" "))
+    hostile = tmp_path / "runtime-lock-with-newline.json"
+    _write_private(hostile, raw + b"\n")
+    with pytest.raises(contract.MolmoActInferenceError) as caught:
+        contract.load_runtime_lock(hostile)
+    assert caught.value.code == "MOLMOACT_LOCK_INVALID"
 
 
 def test_compact_manifest_and_payload_digest_vectors() -> None:
@@ -913,6 +980,93 @@ def test_mountinfo_observation_rejects_each_writable_or_device_mismatch(
         root.chmod(0o755)
 
 
+def test_consumer_view_verifies_exact_37_entries_and_cache_copies(
+    tmp_path: Path,
+) -> None:
+    root, lock, mountinfo, statvfs_result = _synthetic_consumer_view(tmp_path)
+    observation = contract.verify_consumer_view(
+        root,
+        lock,
+        mountinfo_text=mountinfo,
+        statvfs_result=statvfs_result,
+    )
+    assert observation.mount_id == 42
+    assert len(lock["consumer_view_layout"]["files"]) == 37
+    assert (
+        sum(
+            1
+            for item in lock["consumer_view_layout"]["files"]
+            if item["kind"] == "cache_copy"
+        )
+        == 4
+    )
+
+
+@pytest.mark.parametrize("fault", ["extra", "bytes"])
+def test_consumer_view_rejects_extra_and_byte_faults(
+    tmp_path: Path, fault: str
+) -> None:
+    root, lock, mountinfo, statvfs_result = _synthetic_consumer_view(tmp_path)
+    if fault == "extra":
+        root.chmod(0o755)
+        extra = root / "unexpected"
+        extra.write_bytes(b"x")
+        extra.chmod(0o444)
+        root.chmod(0o555)
+    else:
+        item = next(
+            item
+            for item in lock["consumer_view_layout"]["files"]
+            if item["kind"] == "payload" and item["size"] > 0
+        )
+        target = root / item["path"]
+        payload = target.read_bytes()
+        target.chmod(0o644)
+        target.write_bytes(bytes([payload[0] ^ 1]) + payload[1:])
+        target.chmod(0o444)
+
+    with pytest.raises(contract.MolmoActInferenceError) as caught:
+        contract.verify_consumer_view(
+            root,
+            lock,
+            mountinfo_text=mountinfo,
+            statvfs_result=statvfs_result,
+        )
+    assert caught.value.code in {
+        "MOLMOACT_INPUT_IDENTITY",
+        "MOLMOACT_SNAPSHOT_SHAPE",
+        "MOLMOACT_GIT_BLOB_IDENTITY",
+        "MOLMOACT_LFS_IDENTITY",
+    }
+
+
+def test_consumer_view_rejects_individually_valid_but_different_cache_copy(
+    tmp_path: Path,
+) -> None:
+    root, lock, mountinfo, statvfs_result = _synthetic_consumer_view(tmp_path)
+    item = next(
+        item
+        for item in lock["consumer_view_layout"]["files"]
+        if item["kind"] == "cache_copy"
+    )
+    target = root / item["path"]
+    payload = target.read_bytes()
+    changed = bytes([payload[0] ^ 1]) + payload[1:]
+    target.chmod(0o644)
+    target.write_bytes(changed)
+    target.chmod(0o444)
+    item["identity"] = _content_identity(changed, item["identity_kind"])
+
+    with pytest.raises(contract.MolmoActInferenceError) as caught:
+        contract.verify_consumer_view(
+            root,
+            lock,
+            mountinfo_text=mountinfo,
+            statvfs_result=statvfs_result,
+        )
+    assert caught.value.code == "MOLMOACT_SNAPSHOT_SHAPE"
+
+
 def test_generated_only_grammar_and_tokenizer_injection() -> None:
     model = _ParserModel()
     tokenizer = _Tokenizer()
@@ -924,6 +1078,38 @@ def test_generated_only_grammar_and_tokenizer_injection() -> None:
     assert result["trace"] == [[1, 2], [3, 4]]
     assert result["action_token_ids"] == [999, 998, 997, 996, 995, 994, 993]
     assert result["action_values"] == [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
+
+
+def test_generated_action_tokens_accept_ascii_when_identity_known() -> None:
+    tokens = ("act_a", "act_b", "act_c", "act_d", "act_e", "act_f", "act_g")
+    tokenizer = SimpleNamespace(
+        vocab_size=1000,
+        unk_token_id=0,
+        convert_tokens_to_ids=lambda token: 999 - tokens.index(token),
+    )
+    result = contract.validate_generated_text(
+        _generated_text(tokens=tokens),
+        model=_ParserModel(),
+        tokenizer=tokenizer,
+    )
+    assert result["action_tokens"] == list(tokens)
+    assert result["action_token_ids"] == [999, 998, 997, 996, 995, 994, 993]
+
+
+@pytest.mark.parametrize("coerced", [True, 1.0])
+def test_upstream_trace_rejects_type_coercion(coerced: object) -> None:
+    class CoerciveTraceModel(_ParserModel):
+        def parse_trace(self, text: str) -> list[list[list[object]]]:
+            del text
+            return [[[coerced, 2], [3, 4]]]
+
+    with pytest.raises(contract.MolmoActInferenceError) as caught:
+        contract.validate_generated_text(
+            _generated_text(),
+            model=CoerciveTraceModel(),
+            tokenizer=_Tokenizer(),
+        )
+    assert caught.value.code == "MOLMOACT_TRACE_GRAMMAR"
 
 
 def test_generated_action_tokens_accept_one_matching_quote_layer() -> None:
@@ -1408,6 +1594,57 @@ def test_offline_ordering_and_scratch_cleanup_are_child_contained(
     assert {key: os.environ.get(key) for key in keys} == parent_environment
 
 
+def test_network_tripwire_covers_runtime_envelope_and_publication(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original_getaddrinfo = socket.getaddrinfo
+    events: list[str] = []
+
+    def require_tripwire(stage: str) -> None:
+        try:
+            socket.getaddrinfo(None, 0)
+        except contract.MolmoActInferenceError as exc:
+            assert exc.code == "MOLMOACT_NETWORK_ATTEMPT"
+        else:
+            raise AssertionError(f"network tripwire absent during {stage}")
+        events.append(stage)
+
+    snapshot = SimpleNamespace(close=lambda: events.append("close"))
+    context = SimpleNamespace(snapshots=[snapshot])
+    monkeypatch.setattr(contract, "_check_heavy_preimports", lambda: None)
+    monkeypatch.setattr(contract, "_preflight_inference", lambda **kwargs: context)
+
+    def execute(current: object, scratch: object) -> dict[str, object]:
+        assert current is context
+        assert scratch == "/scratch"
+        require_tripwire("runtime")
+        return {"payload": True}
+
+    def envelope(payload: object) -> dict[str, object]:
+        assert payload == {"payload": True}
+        require_tripwire("envelope")
+        return {"envelope": True}
+
+    def publish(output: object, value: object) -> dict[str, object]:
+        assert output == "/output"
+        assert value == {"envelope": True}
+        require_tripwire("publication")
+        return {"receipt": True}
+
+    monkeypatch.setattr(contract, "_execute_in_scratch", execute)
+    monkeypatch.setattr(contract, "build_result_envelope", envelope)
+    monkeypatch.setattr(contract, "publish_result", publish)
+    assert contract.run_inference(
+        decision_path="/decision",
+        isolation_receipt_path="/isolation",
+        consumer_view="/consumer",
+        scratch_parent="/scratch",
+        output_path="/output",
+    ) == {"receipt": True}
+    assert events == ["runtime", "envelope", "publication", "close"]
+    assert socket.getaddrinfo is original_getaddrinfo
+
+
 def test_publication_uses_real_openat2_and_canonical_readback(tmp_path: Path) -> None:
     parent = _private_directory(tmp_path / "output")
     destination = parent / "result.json"
@@ -1589,6 +1826,39 @@ def test_wrong_linked_inode_never_returns_a_receipt(
     assert destination.read_bytes() == b"decoy"
     destination.unlink()
     decoy.unlink()
+    assert not list(parent.glob(".molmoact-*.tmp"))
+
+
+def test_exception_after_successful_link_cleans_the_committed_inode(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    parent = _private_directory(tmp_path / "output")
+    destination = parent / "result.json"
+    original_link = os.link
+
+    def link_then_raise(
+        source: str,
+        target: str,
+        *,
+        src_dir_fd: int,
+        dst_dir_fd: int,
+        follow_symlinks: bool,
+    ) -> None:
+        original_link(
+            source,
+            target,
+            src_dir_fd=src_dir_fd,
+            dst_dir_fd=dst_dir_fd,
+            follow_symlinks=follow_symlinks,
+        )
+        raise OSError("injected post-commit interruption")
+
+    monkeypatch.setattr(contract.os, "link", link_then_raise)
+    with pytest.raises(contract.MolmoActInferenceError) as caught:
+        contract.publish_result(destination, _result_envelope())
+    assert caught.value.code == "MOLMOACT_OUTPUT_DURABILITY"
+    assert caught.value.context["final_state"] == "absent"
+    assert not destination.exists()
     assert not list(parent.glob(".molmoact-*.tmp"))
 
 
