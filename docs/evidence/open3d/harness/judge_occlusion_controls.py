@@ -10,10 +10,25 @@ D1-D3 rows without a model change confounding the comparison.
 
 Two labels per frame, for different jobs:
 
-`pale_surface_present` is the image-dependency probe. The frames differ by 51,864 pixels
-and the retained surface accounts for 46,562 pale pixels in one and 11,463 in the other,
-so a model actually reading pixels has to answer it differently for the two. A model that
-answers identically is not demonstrating image input, whatever its name says.
+`pale_surface_present` was written as the image-dependency probe, on the reasoning that
+the frames differ by 51,864 pixels and the retained surface accounts for 46,562 pale
+pixels in one and 11,463 in the other, so a model reading pixels had to answer it
+differently for the two.
+
+That inference is wrong, and a reviewer disproved it with a call rather than an argument:
+a fifth model varied `subject_visibility` across the pair -- so it demonstrably read both
+images -- and still answered `pale` identically. The premise said that case could not
+exist.
+
+It is wrong because the field asks whether a large smooth pale surface *is present*, not
+whether there is more of one. 11,463 pale pixels is a visible patch, so `yes` is
+defensible for both frames and the expected `no` was a threshold judgement dressed as a
+ground truth.
+
+The probe that does survive is the one that does not depend on any single field being
+right: a model returning byte-identical values on *every* field for two different images
+shows no evidence of image sensitivity, while one that varies any field has demonstrated
+it. That is the discriminator used below, and it separates the same two groups.
 
 `verdict` is the question the pane exists to answer: can a reviewer assess the surface
 this view was built to show.

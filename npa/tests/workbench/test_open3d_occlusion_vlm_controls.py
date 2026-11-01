@@ -217,18 +217,32 @@ def test_a_model_that_answered_the_probe_identically_is_not_counted_as_seeing(
     probe = summary["image_dependency_probe"]
     assert set(probe) == EXPECTED_MODELS
 
-    tracked = {model for model, row in probe.items() if row["changed_correctly"]}
-    assert tracked, "no model's answer tracked the pixels; the probe found nothing"
-    for model, row in probe.items():
-        if model in tracked:
-            assert row["occluded"] == "yes" and row["unoccluded"] == "no", row
-        else:
-            assert "no evidence" in row["reading"], row
-
-    assert "weaker evidence" in summary["probe_limitation"]
+    # Keyed on whether *any* field moved, not on one field having an expected value.
+    # The first version asked `pale_surface_present` to be yes-then-no, which a reviewer
+    # disproved as a necessity: a fifth model varied another field, so it read both
+    # images, and still answered pale identically. Presence is defensible in both frames.
+    tracked = {model for model, row in probe.items() if row["read_the_images"]}
+    assert tracked, "no judge varied any field; the probe found nothing"
     assert len(tracked) < len(EXPECTED_MODELS), (
-        "all four tracked the pixels, so the limitation text is now wrong"
+        "every judge varied something, so the limitation this records no longer applies"
     )
+
+    for model, row in probe.items():
+        varied = row["fields_that_varied_across_the_pair"]
+        # The label has to follow from the fields, not sit beside them.
+        assert bool(varied) == row["read_the_images"], (model, row)
+        for field in varied:
+            assert (
+                row["per_field"][field]["occluded"]
+                != row["per_field"][field]["unoccluded"]
+            ), (model, field, row["per_field"])
+        for field, values in row["per_field"].items():
+            if field not in varied:
+                assert values["occluded"] == values["unoccluded"], (
+                    model,
+                    field,
+                    values,
+                )
 
 
 def test_the_point_radius_is_the_products_own_and_the_reason_is_recorded(
@@ -291,3 +305,93 @@ def test_the_finding_is_tied_to_v3s_result_rather_than_announced_alone(
     assert summary["limits"].startswith("Two frames")
     assert summary["confusion"]["false_accepts"] == 4
     assert summary["confusion"]["false_rejects"] == 0
+
+
+def test_the_mechanism_claim_counts_only_judges_with_evidence_of_reading(
+    summary,
+) -> None:
+    """The headline said four; the evidence beside it supports two.
+
+    `the_finding` originally added that all four "correctly reported the pale occluding
+    surface as present, so they saw it", which does not survive the probe limitation
+    recorded in the same file: two judges returned byte-identical answers for two
+    different images, so nothing in their calls shows they saw anything. Review found the
+    two statements contradicting each other.
+
+    The accept count is still four -- that is what the confusion matrix measures. What
+    narrows to two is the claim about *why* they accepted.
+    """
+    probe = summary["image_dependency_probe"]
+    evidenced = {model for model, row in probe.items() if row["read_the_images"]}
+
+    assert summary["confusion"]["false_accepts"] == len(probe), (
+        "the accept count comes from the calls, not from the probe"
+    )
+    assert len(evidenced) == 2, evidenced
+    assert "so they saw it" not in summary["the_finding"]
+
+    narrowed = summary["how_many_judges_the_mechanism_claim_rests_on"]
+    assert str(len(evidenced)) in narrowed.split(",")[0].lower() or "two" in (
+        narrowed.split(",")[0].lower()
+    ), narrowed
+
+
+def test_the_weakest_judge_in_that_pair_is_named_with_its_one_field(
+    summary,
+) -> None:
+    """Two judges is not two equal judges, and the difference is worth stating.
+
+    DeepSeek V4.1 Flash varies exactly one field, and it is the contested one; its answer
+    moves in the defensible direction, which is real evidence, but it is one field. Kimi
+    K3 varies two including `subject_visibility` and is the only judge whose evidence of
+    reading does not rest on the field the correction questions.
+
+    Review's note says DeepSeek varied two. It varied one, and the difference is the
+    whole point of recording this, so the count is asserted against the probe rather
+    than repeated from prose.
+    """
+    probe = summary["image_dependency_probe"]
+    varied = {
+        model: row["fields_that_varied_across_the_pair"]
+        for model, row in probe.items()
+        if row["read_the_images"]
+    }
+    assert sorted(len(v) for v in varied.values()) == [1, 2], varied
+
+    weakest = min(varied, key=lambda model: len(varied[model]))
+    assert varied[weakest] == ["pale_surface_present"], varied
+
+    # The record writes models by display name and the probe keys them by slug, so the
+    # two are compared with separators normalised rather than by requiring one spelling.
+    def spoken(name: str) -> str:
+        return name.rsplit("/", 1)[-1].replace("-", " ").lower()
+
+    assert spoken(weakest) in spoken(summary["where_the_discriminator_is_weakest"]), (
+        weakest,
+        summary["where_the_discriminator_is_weakest"][:120],
+    )
+
+    strongest = max(varied, key=lambda model: len(varied[model]))
+    assert "subject_visibility" in varied[strongest], varied
+
+
+def test_the_frozen_plan_hash_says_where_it_is_retained(summary) -> None:
+    """A frozen-criteria hash that names no file is unusable to the reader it exists for.
+
+    It matters most here precisely because A2 failed: the hash is how a reviewer confirms
+    the criteria predate the result rather than taking that on trust. Review checked and
+    found it matches no file at any of the three commits.
+
+    It is the hash of the claim document in the program's private claim directory, which
+    is deliberately not committed. So the record now says that, and reproduces the frozen
+    criteria inline so the content is reviewable without the directory.
+    """
+    assert len(summary["frozen_plan_sha256"]) == 64
+    retention = summary["frozen_plan_retention"]
+    assert "not committed" in retention or "deliberately not" in retention
+
+    # The point of the disclosure is that the criteria are readable here instead.
+    frozen = summary["acceptance_as_frozen"]
+    assert frozen, summary.keys()
+    text = json.dumps(frozen)
+    assert "A2" in text and "A5" in text, text[:200]
