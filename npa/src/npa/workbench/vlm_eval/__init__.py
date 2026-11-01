@@ -3659,6 +3659,30 @@ def _selected_video_frames(
     timestamps: Sequence[float | None],
 ) -> list[SelectedFrame]:
     extracted = sorted(output_dir.glob("frame-*.png"), key=_video_output_frame_number)
+    if source_count is None:
+        if len(source_indices) != 0:
+            raise VlmEvalError(
+                "Video source indices require a known source frame count; "
+                "sampling provenance cannot be verified"
+            )
+    else:
+        if source_count <= 0:
+            raise VlmEvalError(
+                "Video source frame count must be positive when known; "
+                "sampling provenance cannot be verified"
+            )
+        if any(index < 0 or index >= source_count for index in source_indices):
+            raise VlmEvalError(
+                "Video source frame index falls outside the known source frame count; "
+                "sampling provenance cannot be verified"
+            )
+        if any(
+            right <= left for left, right in zip(source_indices, source_indices[1:])
+        ):
+            raise VlmEvalError(
+                "Video source frame indices must be strictly increasing and unique; "
+                "sampling provenance cannot be verified"
+            )
     if source_count is not None and len(extracted) != len(source_indices):
         raise VlmEvalError(
             "Video extraction did not produce every selected source frame; "
