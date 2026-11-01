@@ -624,26 +624,68 @@ def test_the_real_records_named_commit_actually_resolves_where_that_is_decidable
     converts a verified provenance claim into an unverified one, and the honest
     `inconclusive` the audit prints is what hides it.
 
-    The assertion above deliberately holds in a shallow checkout and a full one, so this
-    cannot simply require resolution. It asks git whether the question is decidable
-    first. Here it is -- `is-shallow-repository` is false -- and CI's shallow checkout
-    skips, which is the same condition the audit itself is reasoning about rather than a
-    convenience.
+    My first version asked `git rev-parse --is-shallow-repository`, assuming an absent
+    commit means a shallow clone. CI disproved it: the checkout reports `false` and still
+    does not have the commit, so the gate enforced where it could not decide and failed
+    the shard. Not-shallow and holds-this-object are different questions.
+
+    The real defect was underneath. The record pinned a commit that lives only on two
+    lane branches -- byte-identical bytes, but absent from main and from this branch, so
+    no reviewer of this PR could resolve it and neither could CI. A provenance pin that
+    only its author can check is not much of a pin. It is now pinned to the main commit
+    carrying the same bytes, verified by sha256 rather than assumed.
+
+    That repair is what lets this require ancestry rather than mere presence: the named
+    commit must be in the history of the artifact's own branch, not merely somewhere in
+    the object store.
+
+    Shallowness is still asked, but for what it actually tells us. A missing object and
+    a shallow clone produce the same git error, so absence alone decides nothing -- that
+    was the first bug. In a *complete* checkout, though, absence is a real answer: the
+    commit is not in anything this repository fetched, which a typo and a foreign-branch
+    pin both look like, and both are defects for a claim that has to be verifiable here.
+    Only shallow-and-absent is genuinely undecidable, and only that skips.
     """
+    committed_at = json.loads(
+        (EVIDENCE / "capability-record-provenance-bound-preview.json").read_text()
+    )["generator"]["script_bytes_committed_at"]
+
     try:
+        probe = subprocess.run(
+            ["git", "merge-base", "--is-ancestor", committed_at, "HEAD"],
+            cwd=EVIDENCE,
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        pytest.skip(f"git cannot answer the ancestry question here: {exc}")
+
+    # 0 ancestor, 1 present but not an ancestor, anything else git declining to answer
+    # because it has no such object.
+    if probe.returncode not in (0, 1):
         shallow = subprocess.run(
             ["git", "rev-parse", "--is-shallow-repository"],
             cwd=EVIDENCE,
             capture_output=True,
             text=True,
             timeout=60,
-            check=True,
+            check=False,
         ).stdout.strip()
-    except (OSError, subprocess.SubprocessError) as exc:
-        pytest.skip(f"git cannot answer whether this checkout has history: {exc}")
+        if shallow != "false":
+            pytest.skip(
+                f"shallow checkout and no {committed_at[:12]}: a truncated history and "
+                "a commit that does not exist are the same error here"
+            )
 
-    if shallow != "false":
-        pytest.skip("shallow checkout: the named commit is absent for ordinary reasons")
+    assert probe.returncode == 0, (
+        f"the record pins its script bytes at {committed_at[:12]}, which is not an "
+        "ancestor of this branch in a checkout that holds complete history, so nobody "
+        "reviewing this branch can resolve it. A typo looks exactly like this, and so "
+        f"does a commit that exists only on some other branch. git said: "
+        f"{probe.stderr.strip() or 'it is present but not an ancestor'}"
+    )
 
     result = run_audit()
     assert result.returncode == 0, result.stdout + result.stderr
