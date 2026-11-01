@@ -14,7 +14,6 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-
 from npa.clients.storage import StorageClient
 from npa.workflows.sim2real.artifact_upload import (
     upload_run_artifacts,  # noqa: F401 - public engine import surface
@@ -31,6 +30,9 @@ from npa.workflows.sim2real.constants import (
     SCHEMA_HELDOUT_REPORT,
     SCHEMA_RL_SIGNAL,
     SCHEMA_VLM_EVAL,
+)
+from npa.workflows.sim2real.feedback_validation import (
+    strict_feedback_score as _strict_feedback_score,
 )
 from npa.workflows.sim2real.models import (
     Sim2RealLoopConfig,
@@ -1267,8 +1269,11 @@ def _apply_reference_adapter_heldout_gate(
     base = _inner_loop_progress_score(inner_evidence)
     for index, (item, env) in enumerate(zip(per_env, envs, strict=False)):
         cal_score = _reference_adapter_env_score(base, env, index)
-        sim_success = bool(item.get("success"))
-        sim_score = float(item.get("score", 0.0))
+        sim_success = require_sim2real_boolean(
+            item.get("success", False),
+            field=f"reference adapter per_env[{index}].success",
+        )
+        sim_score = _strict_feedback_score(item.get("score", 0.0))
         details = dict(item.get("details") or {})
         details["sim_success"] = sim_success
         details["sim_score"] = round(sim_score, 6)
@@ -1360,7 +1365,7 @@ def _normalize_vlm_evaluation(
 ) -> dict[str, Any]:
     if "score" not in payload:
         raise Sim2RealLoopError("VLM component output must include score")
-    score = max(0.0, min(1.0, float(payload["score"])))
+    score = max(0.0, min(1.0, _strict_feedback_score(payload["score"])))
     success = require_sim2real_boolean(
         payload.get("success", score >= config.threshold),
         field="VLM component output success",

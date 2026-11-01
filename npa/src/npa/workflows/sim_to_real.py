@@ -58,6 +58,7 @@ from npa.workflows.feedback import (
     byo_feedback_contract,
     collect_feedback,
     get_feedback_source,
+    parse_feedback_score,
     parse_feedback_type,
 )
 from npa.workflows.lerobot_dataset import (
@@ -742,14 +743,20 @@ def parse_feedback_result(
     missing = [key for key in ("success", "score", "rationale") if key not in payload]
     if missing:
         raise SimToRealError(f"feedback missing required keys: {', '.join(missing)}")
-    score = float(payload["score"])
+    success = payload["success"]
+    if not isinstance(success, bool):
+        raise SimToRealError("feedback success must be a JSON boolean")
+    try:
+        score = parse_feedback_score(payload["score"])
+    except FeedbackSourceError as exc:
+        raise SimToRealError(str(exc)) from exc
     if not 0.0 <= score <= 1.0:
         raise SimToRealError(f"feedback score must be in [0, 1], got {score}")
     rationale = str(payload["rationale"]).strip()
     if not rationale:
         raise SimToRealError("feedback rationale must not be empty")
     return FeedbackResult(
-        success=bool(payload["success"]),
+        success=success,
         score=score,
         rationale=rationale,
         critique=str(payload.get("critique", "")),

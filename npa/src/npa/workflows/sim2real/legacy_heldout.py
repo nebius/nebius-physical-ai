@@ -10,7 +10,6 @@ import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-
 from npa.clients.storage import StorageClient
 from npa.workflows.sim2real.artifact_upload import (
     upload_run_artifacts,  # noqa: F401 - public engine import surface
@@ -29,6 +28,9 @@ from npa.workflows.sim2real.constants import (
     SIM_BACKEND_GENESIS,
     SIM_BACKEND_ISAAC,
     SIM_BACKENDS,
+)
+from npa.workflows.sim2real.feedback_validation import (
+    strict_feedback_score as _strict_feedback_score,
 )
 from npa.workflows.sim2real.models import (
     Sim2RealLoopConfig,
@@ -511,7 +513,13 @@ def _normalize_heldout_report(
         if not isinstance(item, dict):
             item = {"score": item}
         score = max(
-            0.0, min(1.0, float(item.get("score", item.get("success_score", 0.0))))
+            0.0,
+            min(
+                1.0,
+                _strict_feedback_score(
+                    item.get("score", item.get("success_score", 0.0))
+                ),
+            ),
         )
         success = require_sim2real_boolean(
             item.get("success", score >= config.threshold),
