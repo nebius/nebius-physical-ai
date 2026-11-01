@@ -261,9 +261,9 @@ test -z "$(find "$ISAAC_VENV" -type f -path '*/imageio_ffmpeg/binaries/ffmpeg*' 
 # weakening Isaac Lab's declared runtime contract.
 "$ISAAC_VENV/bin/python" -m pip uninstall --yes wheel
 if [ "$ISAAC_PYTHON_MINOR" = 3.11 ] && grep -qiE '^moviepy==' "$OSS_DEPS_FILE"; then
-  # MoviePy's upstream source supports Pillow 12; its released metadata still
-  # caps Pillow below the security fix. Bind the compatibility patch to exact
-  # metadata bytes and retain the real Pillow 12.3 installation and RECORD.
+  # MoviePy 2.2.1 passes its complete upstream suite on Pillow 13.0.0, but its
+  # released metadata still caps Pillow below 12. Bind the compatibility patch
+  # to exact metadata bytes and retain the real Pillow 13 installation and RECORD.
   # LeIsaac's selected closure deliberately excludes MoviePy. Other versions
   # still invoke the repair so its exact-version check rejects unknown bytes.
   "$ISAAC_VENV/bin/python" "${COMMON_DIR}/moviepy_pillow_compat.py"
