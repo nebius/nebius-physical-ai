@@ -4,7 +4,18 @@ import pytest
 
 from npa.clients.token_factory import TokenFactoryChatProfile
 from npa.live_verification.vlm_audit_controls import PAIRED_MODELS
+from npa.orchestration.npa_workflow.catalog import TOOL_CATALOG
 from npa.workbench import vlm_eval
+
+
+CATALOG_PAIR = tuple(
+    TOOL_CATALOG["workbench.vlm_eval.compare_judges"].config_defaults[key]
+    for key in ("primary_vlm_model", "secondary_vlm_model")
+)
+SHARED_FAILURE_PAIR = (
+    "openbmb/MiniCPM-V-4_5",
+    "google/gemma-3-27b-it",
+)
 
 
 def test_scheduled_pair_intentionally_uses_common_not_scalar_profile_body():
@@ -28,6 +39,47 @@ def test_scheduled_pair_intentionally_uses_common_not_scalar_profile_body():
     assert vlm_eval._assert_model_only_request_difference(
         requests
     ) == vlm_eval._sha256_json(common)
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_shared_in_image_failure_pair_is_rejected_before_preparation(
+    monkeypatch, tmp_path, reverse
+):
+    def unexpected(*_args, **_kwargs):
+        pytest.fail("measured shared-failure pair reached a preparation boundary")
+
+    for name in ("_materialized_input", "_resolve_api_key", "_post_comparison_request"):
+        monkeypatch.setattr(vlm_eval, name, unexpected)
+    models = list(SHARED_FAILURE_PAIR)
+    if reverse:
+        models.reverse()
+    output = tmp_path / "report"
+    request = vlm_eval.VlmJudgeComparisonRequest(
+        input_path=str(tmp_path / "input"),
+        output_path=str(output),
+        primary_model=models[0],
+        secondary_model=models[1],
+    )
+
+    with pytest.raises(vlm_eval.VlmEvalError, match="six-attack calibration"):
+        vlm_eval.compare_vlm_judges(request)
+
+    assert not output.exists()
+
+
+@pytest.mark.parametrize(
+    "pair",
+    [
+        pytest.param(CATALOG_PAIR, id="catalog-default"),
+        pytest.param(PAIRED_MODELS, id="scheduled-audit"),
+        pytest.param(("vendor/vision-a", "vendor/vision-b"), id="unrelated-generic"),
+    ],
+)
+@pytest.mark.parametrize("reverse", [False, True])
+def test_shared_failure_policy_preserves_unrelated_compatible_pairs(pair, reverse):
+    models = tuple(reversed(pair)) if reverse else pair
+
+    assert vlm_eval._comparison_models(*models) == models
 
 
 @pytest.mark.parametrize("kimi_first", [True, False])

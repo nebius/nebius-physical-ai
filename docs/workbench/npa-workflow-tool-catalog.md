@@ -289,4 +289,7 @@ value leaves model selection to the CLI default for the chosen backend; an
 explicit value is passed as `--model`, including legacy dedicated model IDs.
 The audit-only `workbench.vlm_eval.compare_judges` primitive passes distinct
 `config.primary_vlm_model` and `config.secondary_vlm_model` values and never
-averages their outcomes.
+averages their outcomes. It rejects the exact MiniCPM-V-4_5 plus
+gemma-3-27b-it pair because a retained six-attack calibration found shared
+false-pass modes on V1, V3, and V6. Other compatible pairs remain available;
+this measured deny rule does not qualify either model or cover unseen attacks.
