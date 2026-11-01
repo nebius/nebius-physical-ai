@@ -371,6 +371,31 @@ def main() -> int:
                 )
             ],
         },
+        "what_adding_open3d_to_ci_would_cost": {
+            "why_this_is_here": (
+                "The reviewer offered the fix rather than the complaint: Open3D installs "
+                "on a plain CPU runner in about thirty seconds, so the dormant guard is "
+                "'one line in a test extra away from running'. The timing is right -- 35s "
+                "measured here. The footprint is the part worth stating before anyone "
+                "spends it."
+            ),
+            "measured": {
+                "open3d": "862 MB installed, 0.20.0, 35s",
+                "open3d_cpu": (
+                    "311 MB installed, 0.20.0, and it carries both APIs this instrument "
+                    "needs (RaycastingScene, KDTreeFlann). Resolves on 3.12, which CI "
+                    "uses, and on 3.14."
+                ),
+            },
+            "why_this_lane_did_not_make_the_change": (
+                "CI installs `npa[dev,adapter,encord]` against `npa/ci/requirements.txt`, "
+                "checked by `npa/scripts/ci_requirements.py --check`. Adding a 311 MB "
+                "dependency there is paid by every shard of every lane, for one test "
+                "belonging to this one, and it touches a gate all lanes share. That is a "
+                "decision to hand over with the numbers attached, not one to take "
+                "unilaterally from inside an evidence PR."
+            ),
+        },
         "what_is_still_not_bound": (
             "The shadow defence is behavioural, so it needs Open3D, so it is still absent "
             "from CI -- measured, not assumed: the shadow mutation passes in the CI state. "
