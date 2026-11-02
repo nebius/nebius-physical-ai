@@ -18,7 +18,34 @@ own question and method in its module docstring.
 | It does under-call below a sensitivity floor, so a low reading is a lower bound | `floor-across-geometry-and-sampling.json` |
 | The floor is set by the voxel-to-sample-spacing ratio, not by geometry, sampling or mesh resolution | `floor-vs-voxel-multiple.json`, `floor-vs-resolution.json` |
 | Even sampling zeroes the headline fraction, so its failure is a capture-time artefact | `poisson-procedure-and-overcall-audit.json` |
+| Neither declared remedy for run-to-run movement works: seeding the sampling reduces it without removing it, and thread count is not the cause | `declared-reproducibility-causes.json` |
 | The crop's per-cell answer reproduces even though the reconstruction under it does not | `crop-decision-stability.json` |
+
+### The multiway optimization was a step nobody could check had run
+
+`pose-graph-optimization.json`. `global_optimization` is the entire difference between multiway
+registration and chaining pairwise transforms, and it mutates the graph in place: it moves node
+poses and it prunes loop closures below the confidence threshold. The record serialized the graph
+afterwards, so neither effect survived — a pruned edge was simply absent from the list, and nothing
+stated the correction.
+
+On the fragments the pipeline runs on, the optimizer corrects nothing worth acting on: 4.7e-06 of a
+metres-wide scene on the upstream demo fragments, and exactly 0.0 through `run_multiway` on the
+synthetic fragments the smoke writes. That is the right answer — the pairwise estimates already
+agree — and it is also why the step was only ever exercised where it could not fail. The run now
+publishes the submitted and pruned edge counts and the per-node correction, so the two cases are
+distinguishable.
+
+Two things in the record are there because they nearly went wrong. The control induces a 0.5 pose
+error and watches the optimizer undo it, because without it a measured zero cannot be told from a
+probe that cannot read poses — which is what a zero on every case first looked like. And the loop
+construction is measured twice, standalone and through `run_multiway`, because they disagree: one
+pruned edge at the harness's constants, three at the manifest's. The second is the figure a test may
+assert on, so both are kept rather than averaged. The voxel size is not the difference — both are
+0.05. What differs is the correspondence distance (0.075 against 0.02) and the estimation path,
+since the product initialises with RANSAC/FPFH and refines at full resolution where the harness runs
+identity-initialised ICP on the downsampled clouds.
+
 
 ## The crop decides the same thing twice, and the reconstruction does not
 
@@ -82,31 +109,6 @@ therefore withdraws the conclusion it used to state here, that displacement does
 grow with the capture. The no-flip counts and the per-case
 cut-to-displacement ratios are unaffected: at 2.187e-03 m the tail observation still
 dominates both cuts.
-
-### The multiway optimization was a step nobody could check had run
-
-`pose-graph-optimization.json`. `global_optimization` is the entire difference between multiway
-registration and chaining pairwise transforms, and it mutates the graph in place: it moves node
-poses and it prunes loop closures below the confidence threshold. The record serialized the graph
-afterwards, so neither effect survived — a pruned edge was simply absent from the list, and nothing
-stated the correction.
-
-On the fragments the pipeline runs on, the optimizer corrects nothing worth acting on: 4.7e-06 of a
-metres-wide scene on the upstream demo fragments, and exactly 0.0 through `run_multiway` on the
-synthetic fragments the smoke writes. That is the right answer — the pairwise estimates already
-agree — and it is also why the step was only ever exercised where it could not fail. The run now
-publishes the submitted and pruned edge counts and the per-node correction, so the two cases are
-distinguishable.
-
-Two things in the record are there because they nearly went wrong. The control induces a 0.5 pose
-error and watches the optimizer undo it, because without it a measured zero cannot be told from a
-probe that cannot read poses — which is what a zero on every case first looked like. And the loop
-construction is measured twice, standalone and through `run_multiway`, because they disagree: one
-pruned edge at the harness's constants, three at the manifest's. The second is the figure a test may
-assert on, so both are kept rather than averaged. The voxel size is not the difference — both are
-0.05. What differs is the correspondence distance (0.075 against 0.02) and the estimation path,
-since the product initialises with RANSAC/FPFH and refines at full resolution where the harness runs
-identity-initialised ICP on the downsampled clouds.
 
 ## Reproducing
 
@@ -299,6 +301,41 @@ what changed is the conclusion drawn from them, the classification's name, and t
 cube now runs as a ground-truth control in the functional smoke, on the over-call side that a sweep of
 even sampling cannot reach.
 
+## Two limitations that sent a reader to the wrong knob
+
+`declared-reproducibility-causes.json` examines `limitations[3]` of two capability records. Both told a
+reader which knob stops a number moving: seed the 300k-point sampling
+(`capability-record-distance-bands.json`), or pin the container thread count
+(`capability-record-support-crop.json`). Neither settles the figure, and neither record is at fault —
+the reconstruction's own non-determinism was measured afterwards. What this harness isolates is
+that the points and the normals entering reconstruction are byte-identical, which leaves the Poisson
+solver and the density crop after it; `poisson-figure-reproducibility.json`, which names the
+mechanism, is in a separate pull request and may not be in this tree yet.
+
+Measured on the construction the first record names, reporting both figures from the same meshes.
+Seeding does make the input bit-identical, hashed to prove it, and it is the dominant cause: unseeded,
+the unsupported-area fraction's spread over four repeats spans 9.5e-04 to 5.6e-03 across seven runs, the same order
+as that record's own 0.0046 gap, straddling it rather than bounding it. Seeded, the spread falls to
+5.3e-06 to 2.3e-05 — and the fraction still takes four distinct values in four runs. Surface area with
+the input fixed has a relative spread spanning 2.3e-06 to 3.6e-06 across those runs, inside the second record's
+declared ~4e-06 but not comfortably; setting the thread count to 1, engaged and recorded as 16 → 1,
+does not settle it either.
+
+So one string changed in each record: the sampling claim now says what seeding achieves and what it
+leaves, and the thread-count claim no longer names a cause the measurement rules out. Every figure in
+both records is untouched. A third site carried the same misdirection and mattered more — the
+`_assert_support_crop_kept_the_observations` docstring in `npa/src/npa/smoke/test_open3d_functional.py`,
+which is where the ~4e-06 figure comes from, told the next maintainer not to tighten the tolerances
+"without pinning the thread count". That reads as a knob that would let them, and there is none.
+
+The spread of the spread is the part worth keeping in mind: the unseeded spread itself ranges over a
+factor of six across runs, so a sentence derived from one run of four repeats was falsified by the
+next. Comparisons are therefore made against every run observed. One series was retained late and says
+so in the record — a reviewer went looking for a figure the first corrected sentence quoted, could not
+find it, and was right that nobody including its author could reconstruct it. The corrected sentences
+now quote ranges over retained runs, and a test requires each figure in them to be the end of a series
+the evidence keeps, because these capability records are pinned by nothing else.
+
 ## Results that are retained but do not support anything
 
 `band-false-negative-sweep.json` is marked inconclusive and is kept for that reason. Occluding a
@@ -387,6 +424,50 @@ with the explicit job id drained only the active job, and the supported cleanup 
 removed the owned controller, with its absence independently confirmed. One defect does remain
 there: cleanup reported degraded local metadata, because the ownership record it went to remove
 named a different cluster.
+
+## What the random seed buys, and what it does not
+
+`register-seed-determinism.json`, from `harness/register_seed_determinism.py`. `_seeded` said
+it made RANSAC repeatable and the skill told readers a rerun repeats. With the seed, the input
+and the process all held fixed, 16 repeats return **16 distinct transformations**, so the
+`aligned_sha256` the report publishes per pair is a digest of that run and never matches the
+last one. A reviewer comparing two runs' hashes sees a mismatch every time, with nothing saying
+that is expected.
+
+The answer is nonetheless stable, which is why this survived: the repeats disagree by about a
+trillionth of a voxel on a well-conditioned pair and under a thousandth on a deliberately
+ambiguous one. `icp.fitness` is identical across every repeat in all three cases, so a consumer
+watching *that* figure sees a perfectly steady pipeline. Not every published figure is steady:
+`icp.inlier_rmse` takes 16, 8 and 15 distinct values across the sixteen repeats of the three
+cases, so it moves visibly and is also published per pair.
+
+The seed is not what is loose. Taken alone, normal estimation, FPFH and point-to-point ICP each
+return identical bytes every time; the shipped **point-to-plane** ICP does not, while being
+handed provably identical points, normals, pose and distance. **This needs no contrived
+surface:** it happens on `DemoICPPointClouds`, the capture every accepted record in this
+directory is built from, which is where a reviewer found it after reading an earlier version of
+this paragraph claim it took a near-degenerate pair. RANSAC global registration is not
+bit-reproducible alone either, on those same two cases and from fixed clouds and fixed features:
+2 distinct results of 16 on the ripple, 4 on the demo scan. So a fixed seed does not make the
+RANSAC repeat.
+
+An earlier version of this paragraph read "only on a well-conditioned constructed bowl is that
+call reproducible, which is what makes this conditioning rather than a broken solver". The
+record's own numbers do not support it. On the bowl every stage alone is bit-identical while the
+composed pipeline returns 16 distinct results, and the only further stochastic surface in
+`_register_pair` is that same point-to-plane call — so it is non-reproducible on the bowl too.
+What differed was the start pose: the stage-alone cell was handed a +0.8 m translation the
+harness constructs, roughly sixteen voxels out at an ICP correspondence distance of one and a
+half, which may be a call with nothing to converge to. The record now starts the same call from
+the pipeline's own coarse pose and publishes each call's fitness and correspondence count.
+
+Held to one thread through Open3D's own API, that call and the whole pipeline become
+bit-reproducible — measured on the constructed ripple and on the demo capture, rather than
+generalised from the construction alone. `OMP_NUM_THREADS` does not reach it, which is the lever
+a reader of the thread-count finding in `capability-record-support-crop.json` would try first;
+that is now measured in a child process started under the variable rather than asserted, because
+asserting it was the same defect this record is about. One thread is a measured trade, not a
+recommendation: the cost in parallelism is not measured here.
 
 `ATTRIBUTION.md` covers the data all of this is computed from. The published capture renders
 Open3D's `DemoICPPointClouds`, which is Redwood's augmented ICL-NUIM `living-room1` -- a
