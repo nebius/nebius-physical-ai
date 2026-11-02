@@ -96,6 +96,98 @@ def _result_summary(result) -> dict[str, Any]:
     }
 
 
+#: The measured case where every seed agreed and every seed was wrong, published with
+#: the measurement rather than described beside it. `docs/evidence/open3d/
+#: registration-ambiguity.json` is where it was measured; these are its figures.
+AGREEMENT_COUNTEREXAMPLE = {
+    "construction": "a square prism, invariant under 90 degrees about z",
+    "seeds": 6,
+    "seeds_agreed_within_voxels": 0.13,
+    "every_seed_was_wrong_by_voxels": 32.7,
+    "evidence": "docs/evidence/open3d/registration-ambiguity.json",
+}
+
+
+def _transform_displacement(first, second, points) -> float:
+    """RMS distance between where two transforms send the same points.
+
+    Transforms are compared through the cloud rather than by subtracting matrices,
+    because a rotation and a translation are not in the same units and a small angle
+    on a large object is not a small error. This answers the question a consumer has:
+    if I use alignment A instead of alignment B, how far does my data move.
+    """
+
+    import numpy as np
+
+    first = np.asarray(first, dtype=float)
+    second = np.asarray(second, dtype=float)
+    points = np.asarray(points, dtype=float)
+    moved_first = points @ first[:3, :3].T + first[:3, 3]
+    moved_second = points @ second[:3, :3].T + second[:3, 3]
+    return float(np.sqrt(((moved_first - moved_second) ** 2).sum(axis=1).mean()))
+
+
+def _agreement(attempts: list[dict[str, Any]], points, voxel: float) -> dict[str, Any]:
+    """How far apart the alignments found under different seeds actually are.
+
+    `fitness` and `inlier_rmse` come from ICP's own result, computed against the
+    correspondences ICP chose, so they describe how well the alignment it settled on
+    explains the points it used. They cannot distinguish a correct alignment from a
+    confidently wrong one. Measured on a rotationally symmetric pair, six seeds held
+    `inlier_rmse` at 0.0123 to 0.0125 -- a quarter of a voxel -- while landing between
+    8 and 25 voxels from the truth, in different places.
+
+    Disagreement here is therefore proof that the published fitness is not evidence of
+    accuracy. Agreement is **not** proof of the converse: on a pair with a 90-degree
+    symmetry, six seeds agreed to 0.13 voxels and all six were 32.7 voxels from the
+    truth, because they all took the same wrong branch. See
+    `docs/evidence/open3d/registration-ambiguity.json`.
+    """
+
+    import numpy as np
+
+    worst = 0.0
+    worst_pair: list[int] = []
+    for i in range(len(attempts)):
+        for j in range(i + 1, len(attempts)):
+            moved = _transform_displacement(
+                attempts[i]["transformation"], attempts[j]["transformation"], points
+            )
+            if moved > worst:
+                worst, worst_pair = (
+                    moved,
+                    [
+                        attempts[i]["seed"],
+                        attempts[j]["seed"],
+                    ],
+                )
+    fitness = [float(attempt["icp"]["fitness"]) for attempt in attempts]
+    rmse = [float(attempt["icp"]["inlier_rmse"]) for attempt in attempts]
+    return {
+        "seeds": [int(attempt["seed"]) for attempt in attempts],
+        "worst_pairwise_displacement": worst,
+        "worst_pairwise_displacement_voxels": worst / voxel if voxel > 0 else None,
+        "worst_disagreeing_seeds": worst_pair,
+        "fitness_spread": float(np.max(fitness) - np.min(fitness)),
+        "inlier_rmse_spread": float(np.max(rmse) - np.min(rmse)),
+        "fitness_by_seed": fitness,
+        "inlier_rmse_by_seed": rmse,
+        # Carried as numbers and not only as a sentence. A sentence can be inverted
+        # with one word and still contain every phrase a guard greps for -- which is
+        # how the first version of this block could have been turned into its own
+        # opposite without failing anything. The relation between these two figures is
+        # the claim, and it is checkable.
+        "agreement_is_not_correctness": {
+            "measured_counterexample": AGREEMENT_COUNTEREXAMPLE,
+            "so": (
+                "Disagreement here proves that fitness and inlier_rmse are not "
+                "accuracy. Agreement proves nothing, because the seeds can agree on "
+                "the same wrong branch of a symmetry."
+            ),
+        },
+    }
+
+
 def _register_pair(o3d, source, target, manifest: RegistrationManifest):
     """Upstream global registration followed by upstream ICP refinement."""
 
@@ -215,6 +307,37 @@ def run_stage_demo(
     }
 
 
+def _measure_agreement(
+    o3d,
+    source,
+    target,
+    manifest: RegistrationManifest,
+    first: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Re-register the pair under further seeds and report how far apart they land.
+
+    The whole pair is re-registered rather than the RANSAC step alone, even though the
+    seed only reaches RANSAC. A consumer who reruns this command reruns all of it, and
+    Open3D reduces over correspondences in thread-scheduling order, so repeating only
+    the seeded part would report a smaller movement than a rerun actually has.
+
+    Returns `None` when the manifest did not ask for this, so a report keeps exactly
+    the shape and cost it had before.
+    """
+
+    if manifest.agreement_seeds <= 0:
+        return None
+    attempts = [{"seed": manifest.random_seed, **first}]
+    for offset in range(1, manifest.agreement_seeds + 1):
+        seed = (manifest.random_seed + offset) % (2**31 - 1)
+        o3d.utility.random.seed(seed)
+        attempts.append({"seed": seed, **_register_pair(o3d, source, target, manifest)})
+    # Reset the generator so the pairs that follow are seeded as the manifest says,
+    # rather than inheriting whatever the last agreement attempt left behind.
+    _seeded(o3d, manifest)
+    return _agreement(attempts, source.points, manifest.voxel_size)
+
+
 def run_register(payload: dict[str, Any], output: Path, run_id: str) -> dict[str, Any]:
     """Register consecutive fragment pairs and publish each aligned cloud."""
 
@@ -231,6 +354,9 @@ def run_register(payload: dict[str, Any], output: Path, run_id: str) -> dict[str
         source = _read_cloud(o3d, paths[source_id])
         target = _read_cloud(o3d, paths[target_id])
         measured = _register_pair(o3d, source, target, manifest)
+        agreement = _measure_agreement(o3d, source, target, manifest, measured)
+        if agreement is not None:
+            measured["agreement"] = agreement
         pair_id = f"{source_id}__{target_id}"
         aligned = aligned_dir / f"{pair_id}.ply"
         # Write the source in the target's frame: that is the thing the

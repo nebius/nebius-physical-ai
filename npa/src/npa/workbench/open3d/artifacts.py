@@ -147,6 +147,104 @@ def validate_pair(row: Any) -> None:
         raise Open3dError("aligned cloud must carry a sha256 digest")
     if not _finite_number(row["wall_seconds"]) or row["wall_seconds"] < 0:
         raise Open3dError("wall_seconds must be a nonnegative duration")
+    _validate_agreement(row)
+
+
+_AGREEMENT_FIELDS = (
+    "seeds",
+    "worst_pairwise_displacement",
+    "worst_pairwise_displacement_voxels",
+    "worst_disagreeing_seeds",
+    "fitness_spread",
+    "inlier_rmse_spread",
+    "fitness_by_seed",
+    "inlier_rmse_by_seed",
+    "agreement_is_not_correctness",
+)
+
+
+def _validate_agreement(row: Any) -> None:
+    """Check the multi-seed agreement block against the attempts it summarizes.
+
+    Opt-in, so a row without it is a row from a manifest that did not ask for it and
+    is left alone. A row that carries the key with nothing in it is a different thing
+    and is an error: `None` would otherwise be indistinguishable from not having asked.
+
+    What this can check is internal consistency. It cannot check that the alignment is
+    correct -- nothing in the report can, which is the finding this block exists to
+    publish rather than a gap in it.
+    """
+
+    if "agreement" not in row:
+        return
+    block = row["agreement"]
+    if not isinstance(block, dict) or not set(_AGREEMENT_FIELDS) <= set(block):
+        raise Open3dError("registration agreement block is missing measurements")
+    seeds = block["seeds"]
+    if not isinstance(seeds, list) or len(seeds) < 2:
+        raise Open3dError("agreement needs at least two seeds to compare")
+    if len(set(seeds)) != len(seeds):
+        raise Open3dError("agreement seeds must be distinct, or they repeat one run")
+    for key in ("fitness_by_seed", "inlier_rmse_by_seed"):
+        values = block[key]
+        if not isinstance(values, list) or len(values) != len(seeds):
+            raise Open3dError(f"{key} must carry one value per seed")
+        if not all(_finite_number(value) for value in values):
+            raise Open3dError(f"{key} must be finite numbers")
+    for key, series in (
+        ("fitness_spread", "fitness_by_seed"),
+        ("inlier_rmse_spread", "inlier_rmse_by_seed"),
+    ):
+        values = [float(value) for value in block[series]]
+        if not _finite_number(block[key]) or float(block[key]) < 0:
+            raise Open3dError(f"{key} must be a nonnegative spread")
+        if abs(float(block[key]) - (max(values) - min(values))) > 1e-12:
+            raise Open3dError(f"{key} does not match the per-seed values beside it")
+    worst = block["worst_pairwise_displacement"]
+    if not _finite_number(worst) or float(worst) < 0:
+        raise Open3dError("worst_pairwise_displacement must be a nonnegative distance")
+    pair = block["worst_disagreeing_seeds"]
+    if float(worst) > 0:
+        if not isinstance(pair, list) or len(pair) != 2:
+            raise Open3dError("a nonzero disagreement must name the two seeds it is")
+        if not set(pair) <= set(seeds):
+            raise Open3dError("worst_disagreeing_seeds names a seed that was not run")
+    voxels = block["worst_pairwise_displacement_voxels"]
+    if voxels is not None and not _finite_number(voxels):
+        raise Open3dError("worst_pairwise_displacement_voxels must be finite or null")
+    _validate_counterexample(block["agreement_is_not_correctness"])
+
+
+def _validate_counterexample(limitation: Any) -> None:
+    """The limitation is a relation between two measured numbers, so check the relation.
+
+    A consumer who reads agreement as correctness is the failure this measurement
+    invites, so the block has to carry the case where agreement was high and every
+    seed was wrong. Carried as a sentence it could be inverted by one word and still
+    satisfy any phrase a guard looks for. Carried as figures, the claim is that the
+    error dwarfs the agreement, and that either holds or it does not.
+    """
+
+    if not isinstance(limitation, dict) or "measured_counterexample" not in limitation:
+        raise Open3dError(
+            "the agreement block must carry the measured case where every seed agreed "
+            "and every seed was wrong"
+        )
+    case = limitation["measured_counterexample"]
+    required = ("seeds_agreed_within_voxels", "every_seed_was_wrong_by_voxels")
+    if not isinstance(case, dict) or not set(required) <= set(case):
+        raise Open3dError("the counterexample must carry both of its measurements")
+    agreed, wrong = (float(case[key]) for key in required)
+    if not all(_finite_number(case[key]) for key in required):
+        raise Open3dError("the counterexample's measurements must be finite")
+    if agreed <= 0 or wrong <= 0:
+        raise Open3dError("the counterexample's measurements must be positive")
+    if wrong < 10.0 * agreed:
+        raise Open3dError(
+            f"the counterexample is not one: the seeds agreed within {agreed} voxels "
+            f"and were wrong by {wrong}, which does not show that agreement and "
+            "correctness are different things"
+        )
 
 
 def read_journal(path: Path) -> list[dict[str, Any]]:

@@ -68,6 +68,11 @@ class RegistrationManifest(StrictModel):
     icp_distance_factor: float = Field(default=0.4, gt=0.0, le=100.0)
     #: `open3d.utility.random.seed` value, so a rerun repeats the same RANSAC.
     random_seed: int = Field(default=0, ge=0, le=2**31 - 1)
+    #: Extra seeds to re-register each pair under, to measure whether the alignment is
+    #: the only one that fits. Zero, the default, leaves the existing behaviour and
+    #: cost exactly as they were. Each extra seed costs one more full registration of
+    #: the pair, which is the whole of the added cost.
+    agreement_seeds: int = Field(default=0, ge=0, le=16)
     ransac_max_iteration: int = Field(default=100_000, ge=1_000, le=10_000_000)
     ransac_confidence: float = Field(default=0.999, gt=0.0, lt=1.0)
     #: Provenance only when `prepare --stage-demo-fragments` sourced the scans.

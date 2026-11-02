@@ -17,6 +17,7 @@ own question and method in its module docstring.
 | The reading never over-calls: no zero-error reconstruction reads as an invented shell | `poisson-procedure-and-overcall-audit.json`, `band-validity-sweep.json` |
 | It does under-call below a sensitivity floor, so a low reading is a lower bound | `floor-across-geometry-and-sampling.json` |
 | The floor is set by the voxel-to-sample-spacing ratio, not by geometry, sampling or mesh resolution | `floor-vs-voxel-multiple.json`, `floor-vs-resolution.json` |
+| The registration `fitness`/`inlier_rmse` a consumer reads cannot tell a correct alignment from a confidently wrong one; re-registering under further seeds can, except when every seed takes the same wrong branch | `registration-ambiguity.json` |
 | Even sampling zeroes the headline fraction, so its failure is a capture-time artefact | `poisson-procedure-and-overcall-audit.json` |
 
 ## Reproducing
@@ -187,6 +188,35 @@ so it does not depend on the audit's nearest-neighbour adapter. The zero-error c
 what changed is the conclusion drawn from them, the classification's name, and the note's wording. The
 cube now runs as a ground-truth control in the functional smoke, on the over-call side that a sweep of
 even sampling cannot reach.
+
+## The registration numbers are not an accuracy
+
+`registration-ambiguity.json`. `register` publishes `icp.fitness` and `icp.inlier_rmse`
+for every pair, both from Open3D's own `RegistrationResult`, computed against the
+correspondences ICP chose. They say how well the alignment ICP settled on explains the
+points it used. A consumer reading `inlier_rmse 0.0124` at `voxel_size 0.05` concludes
+the alignment is good to a quarter of a voxel.
+
+On a cylinder band — rotationally symmetric, so a whole family of alignments fits — six
+seeds hold `inlier_rmse` between 0.0123 and 0.0125 and land between 8 and 25 voxels from
+the truth, in different places. The published number is stable while the answer is not,
+and nothing in the report says so. Re-registering under further seeds does: those six
+runs disagree with each other by 18 voxels, which is visible without knowing the truth.
+
+Agreement is not the converse, and the record carries the case that shows it rather than
+noting it. On a square prism — invariant under 90 degrees about z — six seeds agree to
+0.13 voxels and every one of them is 32.7 voxels from the truth. They all took the same
+wrong branch. So disagreement proves the published fitness is not accuracy; agreement
+proves nothing.
+
+The control is the pair every accepted record here was built from. Six seeds agree to
+five millionths of a unit, 0.00001 voxels, so the measure is quiet on working data. No
+threshold is derived from three cases.
+
+Off by default: `agreement_seeds` is 0 and a report then has exactly the shape and cost
+it had before. Each extra seed is one more full registration of the pair — the whole
+pair, not the RANSAC step alone, because a consumer who reruns the command reruns all of
+it and Open3D's reductions are thread-ordered.
 
 ## Results that are retained but do not support anything
 
