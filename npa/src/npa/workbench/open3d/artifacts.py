@@ -458,10 +458,17 @@ def validate_support(report: Any, *, voxel_size: float) -> None:
     _validate_coverage_cost(report, coverage, float(factor))
 
 
+#: Distinguishes "this record predates the coverage pair" from "this record published
+#: the pair as nothing". Only the first is exempt.
+_ABSENT = object()
+
+
 def _validate_coverage_cost(report: Any, coverage: dict, factor: float) -> None:
     """Check what the crop cost coverage against the coverage pair it sits beside.
 
-    Reports written before this pair existed do not carry it, and are left alone. What
+    Reports written before this pair existed do not carry it, and are left alone. A
+    report that carries the keys with nothing in them is not one of those: it is a new
+    report declining to measure, and it is an error. What
     this does check is the one direction the crop can move coverage: removing surface
     cannot bring a sample closer to it, so coverage can only fall, and a sample covered
     afterwards must have been covered before. That makes the abandonment count equal to
@@ -469,10 +476,17 @@ def _validate_coverage_cost(report: Any, coverage: dict, factor: float) -> None:
     do.
     """
 
-    cost = report.get("coverage_cost_of_crop")
-    before = report.get("coverage_before_crop")
-    if cost is None and before is None:
+    # A sentinel rather than `None`, because `report.get(k)` gives `None` both for an
+    # old record that predates this pair and for a new one that published the keys
+    # carrying nothing, and those deserve opposite answers. Keyed on `None` the
+    # exemption was a switch: emitting both as `None` kept the keys present, satisfied
+    # the guard that reads them, and skipped every check below.
+    cost = report.get("coverage_cost_of_crop", _ABSENT)
+    before = report.get("coverage_before_crop", _ABSENT)
+    if cost is _ABSENT and before is _ABSENT:
         return
+    cost = None if cost is _ABSENT else cost
+    before = None if before is _ABSENT else before
     for name, block, keys in (
         ("coverage_before_crop", before, ("fraction_within_voxel", "samples")),
         (

@@ -295,6 +295,34 @@ def test_a_report_written_before_the_cost_block_existed_still_validates() -> Non
 
 
 @pytest.mark.parametrize(
+    "hollow",
+    [
+        {"coverage_cost_of_crop": None},
+        {"coverage_before_crop": None},
+        {"coverage_cost_of_crop": None, "coverage_before_crop": None},
+        {"coverage_cost_of_crop": {}},
+    ],
+    ids=["cost_none", "before_none", "both_none", "cost_empty"],
+)
+def test_publishing_the_keys_with_nothing_in_them_is_not_the_same_as_not_having_them(
+    hollow: dict,
+) -> None:
+    """Absent is exempt; present and empty is an error. They are different reports.
+
+    Keyed on `None` instead of absence, the exemption above was a switch a writer
+    could throw: emitting both keys as `None` left them present, satisfied the guard
+    that reads the keys, and skipped every check here. A reviewer threw it with two
+    one-word edits and the suite stayed green. `both_none` is that case; the others
+    are the halves of it.
+    """
+
+    report = _report()
+    report.update(hollow)
+    with pytest.raises(Open3dError, match="missing coverage"):
+        validate_support(report, voxel_size=1.0)
+
+
+@pytest.mark.parametrize(
     ("what", "mutate"),
     [
         (
@@ -362,6 +390,18 @@ def test_an_inconsistent_cost_block_is_rejected(what: str, mutate) -> None:
     assert what
 
 
+def _is_empty_literal(node: ast.expr) -> bool:
+    """A value that occupies the key without measuring anything."""
+
+    if isinstance(node, ast.Constant):
+        return True
+    if isinstance(node, ast.Dict):
+        return not node.keys
+    if isinstance(node, (ast.List, ast.Tuple, ast.Set)):
+        return not node.elts
+    return False
+
+
 def test_the_reconstruction_still_publishes_the_pair_the_validator_reads() -> None:
     """The join between the writer and the validator, checked where Open3D is absent.
 
@@ -384,10 +424,10 @@ def test_the_reconstruction_still_publishes_the_pair_the_validator_reads() -> No
         if isinstance(node, ast.FunctionDef) and node.name == "run_reconstruct"
     )
     emitted = {
-        key.value
+        key.value: value
         for node in ast.walk(writer)
         if isinstance(node, ast.Dict)
-        for key in node.keys
+        for key, value in zip(node.keys, node.values)
         if isinstance(key, ast.Constant) and isinstance(key.value, str)
     }
     for block in ("coverage_before_crop", "coverage_cost_of_crop", "coverage"):
@@ -395,6 +435,17 @@ def test_the_reconstruction_still_publishes_the_pair_the_validator_reads() -> No
             f"run_reconstruct no longer emits {block}, and validate_support skips the "
             "coverage-cost invariant on a report that lacks the pair, so the whole "
             "check would be switched off without a failing test"
+        )
+        # Not a literal, because a key present with `None` or `{}` behind it is the
+        # same evasion one word smaller. The validator rejects that at runtime now, so
+        # this is the cheaper notice: it fails in CI rather than in a pod. Deliberately
+        # not a requirement that the value *be* a call -- a name or an expression is
+        # fine, and demanding a particular shape would break on honest refactors. The
+        # empty-container case is here because `{}` parses as a Dict, not a Constant,
+        # and the first version of this check let it straight through.
+        assert not _is_empty_literal(emitted[block]), (
+            f"run_reconstruct emits {block} as a literal, so the key is present and "
+            "carries no measurement"
         )
 
 
