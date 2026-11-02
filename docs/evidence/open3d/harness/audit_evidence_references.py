@@ -19,6 +19,12 @@ to -- a `<name>` and `<name>_sha256` pair in the same object, or a `sha256` besi
 that name no file cannot be bound, and the summary says how many there were instead of counting
 them as checked.
 
+Some of those are still checkable without a file: an equality claim a record makes side by side,
+or an input two records both hash. Those are checked. What is left over is genuinely beyond this
+directory's reach -- a run's artifacts, a module mounted from a dirty tree -- and has to say so
+in a `hashes_that_name_no_file_here` note, because a count nobody has to justify is a count that
+drifts. Declaring never substitutes for either check above.
+
 Run from the repository root:
     python3 docs/evidence/open3d/harness/audit_evidence_references.py
 
@@ -75,6 +81,23 @@ EQUALITY_TRANSFORMS = (
 #: findings. These two containers key their children by the input's own name.
 INPUT_HASH_CONTAINERS = ("input_hashes", "inputs.fragments")
 
+#: How a record declares that a hash deliberately names no file committed here and is not an
+#: equality claim either -- the bytes of a run's own artifact, or of a source file pinned at a
+#: commit the working tree has moved past. The key may sit beside the hash or at any ancestor
+#: and covers everything beneath it.
+#:
+#: Declaring never overrides binding or an equality claim: those are checked whatever a note
+#: says, so this cannot be used to excuse a stale digest. It only takes a hash out of the
+#: "nothing could check this" count, and only by saying what the bytes are.
+#:
+#: The twelve equality claims above came out of that count by being *checked*, which is the
+#: better outcome and the one to reach for first. What remains cannot be checked here at all,
+#: and was being reported as a number on a passing run: a review lane asked for it to be
+#: reduced or justified, one record was justified in prose that nothing read, and the rest
+#: stayed as they were for a month inside a count that never moved. A category nothing
+#: enforces drifts, so an undeclared one is now a finding.
+DECLARATION_KEY = "hashes_that_name_no_file_here"
+
 REFERENCE = re.compile(r"\b((?:harness|viewer-ui)/[\w./-]+)\b")
 SHA256 = re.compile(r"\A[0-9a-f]{64}\Z")
 #: A JSON key that is itself a filename, which several records use to key a hash by its file.
@@ -117,16 +140,19 @@ def resolve(value: str, run_dir: str | None) -> Path | None:
 
 
 def bound_pairs(
-    node: object, where: str = ""
-) -> tuple[list[tuple[str, str, str]], list[str]]:
+    node: object, where: str = "", declared: bool = False
+) -> tuple[list[tuple[str, str, str]], list[tuple[str, bool]]]:
     """Split every hash in a record into those bound to a named file and those not.
 
-    Returns (bound, unbound) where each bound entry is (json path, named file, claimed hash).
+    Returns (bound, unbound). A bound entry is (json path, named file, claimed hash);
+    an unbound entry is (json path, whether a `DECLARATION_KEY` note covers it).
     """
 
     bound: list[tuple[str, str, str]] = []
-    unbound: list[str] = []
+    unbound: list[tuple[str, bool]] = []
     if isinstance(node, dict):
+        note = node.get(DECLARATION_KEY)
+        declared = declared or bool(isinstance(note, str) and note.strip())
         for key, value in node.items():
             here = f"{where}.{key}" if where else key
             if isinstance(value, str) and SHA256.match(value):
@@ -147,14 +173,16 @@ def bound_pairs(
                 if isinstance(named, str) and named:
                     bound.append((here, named, value))
                 else:
-                    unbound.append(here)
+                    unbound.append((here, declared))
             else:
-                sub_bound, sub_unbound = bound_pairs(value, here)
+                sub_bound, sub_unbound = bound_pairs(value, here, declared)
                 bound += sub_bound
                 unbound += sub_unbound
     elif isinstance(node, list):
         for index, value in enumerate(node):
-            sub_bound, sub_unbound = bound_pairs(value, f"{where}[{index}]")
+            sub_bound, sub_unbound = bound_pairs(
+                value, f"{where}[{index}]", declared
+            )
             bound += sub_bound
             unbound += sub_unbound
     return bound, unbound
@@ -241,6 +269,7 @@ def main() -> int:
     equalities = 0
     unresolvable: list[str] = []
     unbound_total: list[str] = []
+    undeclared: list[str] = []
     #: input name -> (digest, "record:path"), for the cross-record agreement check.
     inputs_seen: dict[str, list[tuple[str, str, str]]] = {}
 
@@ -267,7 +296,9 @@ def main() -> int:
         bound, unbound = bound_pairs(data)
         # An equality claim is verifiable without a file, so it no longer counts as something
         # nothing could check.
-        unbound_total += [f"{record.name}:{w}" for w in unbound if w not in covered]
+        uncovered = [(w, d) for w, d in unbound if w not in covered]
+        unbound_total += [f"{record.name}:{w}" for w, _ in uncovered]
+        undeclared += [f"{record.name}:{w}" for w, d in uncovered if not d]
         for where, named, claimed in bound:
             # Resolve before exempting: a run's artifacts are often not committed here, but when
             # a run directory *is* committed its hashes are checkable like anything else, and the
@@ -304,11 +335,20 @@ def main() -> int:
                 )
         if all(claimed == first for claimed, _, _ in seen):
             equalities += len(seen)
-        unbound_total = [
-            item
-            for item in unbound_total
-            if item not in {f"{r}:{p}" for _, r, p in seen}
-        ]
+        checked_here = {f"{r}:{p}" for _, r, p in seen}
+        unbound_total = [item for item in unbound_total if item not in checked_here]
+        # A hash two records agree about is checked, so it needs no note. Dropping it from
+        # both counts and not just the printed one is the difference between a gate and a
+        # label: left in `undeclared` it would demand a declaration for something the audit
+        # had just verified.
+        undeclared = [item for item in undeclared if item not in checked_here]
+
+    findings += [
+        f"{one} is a hash that names no file here, is not an equality claim, and no "
+        f"enclosing object declares why; add a {DECLARATION_KEY!r} note saying what "
+        "these bytes are"
+        for one in undeclared
+    ]
 
     if findings:
         print(f"{len(findings)} finding(s):")
@@ -328,7 +368,10 @@ def main() -> int:
     held_elsewhere = "name a file this directory does not hold, mostly a run's own artifacts recorded by hash"
     for label, items in (
         (held_elsewhere, unresolvable),
-        ("name no file and so cannot be bound to anything", unbound_total),
+        (
+            f"name no file here and are declared as such by a {DECLARATION_KEY!r} note",
+            unbound_total,
+        ),
     ):
         if items:
             count = len(items)

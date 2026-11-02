@@ -240,6 +240,7 @@
       "2a6d901f3 Add Open3D point-cloud registration and reconstruction workbench tool"
     ],
     "evaluation_plan_hash": "dd758d06a3df6cf3793504d355f34dfefc49b32516bb0c7aed1318fffadae122",
+    "hashes_that_name_no_file_here": "evaluation_plan_hash is of the plan document the run consumed, which lived in object storage for the run and is not committed here.",
     "image_digest": "sha256:e4996abccabcd1adf467a9cee929ae624dafe8e08e80b60180eb7dec8496b8b2",
     "image_tag": "npa-open3d:0.20.0-cpu-20260918",
     "producing_tree_identity": "46ae993d10e251913fc4942fa5cf0e4fa689dfe7",

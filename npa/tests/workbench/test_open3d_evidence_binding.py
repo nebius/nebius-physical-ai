@@ -162,7 +162,134 @@ def test_the_guard_reports_what_it_could_not_check(evidence: Path) -> None:
     assert result.returncode == 0, result.stdout
     assert "bound to a named file" in result.stdout
     assert "equality claims" in result.stdout
-    assert "cannot be bound to anything" in result.stdout
+    assert "declared as such" in result.stdout
+
+
+DECLARATION = "hashes_that_name_no_file_here"
+
+
+def test_every_hash_nothing_can_check_says_what_it_is() -> None:
+    """The count that drifted, turned into a gate.
+
+    Twelve of the thirty-seven came out of this category by being checked, which is the
+    better outcome and the one to reach for first. The twenty-five that remain cannot be
+    checked here at all -- a run's artifacts, a module mounted from a dirty tree -- and were
+    a number on a passing run. A review lane asked for them to be reduced or justified; one
+    record was justified in prose that nothing read, and the rest sat unchanged for a month
+    inside a count that never moved.
+    """
+
+    result = run(EVIDENCE, AUDIT)
+    assert result.returncode == 0, result.stdout
+    assert "declared as such" in result.stdout
+
+
+def test_an_undeclared_unverifiable_hash_is_caught(evidence: Path) -> None:
+    """Removing the note is enough to fail, which is what makes it load-bearing."""
+
+    edit(
+        evidence,
+        "capability-record-standard-runtime.json",
+        lambda d: d["independent_verification_of_the_output"].pop(DECLARATION),
+    )
+    result = run(evidence, AUDIT)
+    assert result.returncode == 1
+    assert "rrd_sha256" in result.stdout
+    assert "no enclosing object declares why" in result.stdout
+
+
+def test_a_declaration_nothing_can_find_is_prose(evidence: Path) -> None:
+    """The exact shape of the month-long drift.
+
+    `replay-b18d-public-report.json` explained its twenty-two hashes all along, under a key
+    of its own. The audit reads one key, so a near-miss name left every one of them
+    undeclared while the record read as though the question had been answered.
+    """
+
+    def rename(data: dict) -> None:
+        data["hashes_are_of_the_originals"] = data.pop(DECLARATION)
+
+    edit(evidence, "replay-b18d-public-report.json", rename)
+    result = run(evidence, AUDIT)
+    assert result.returncode == 1
+    assert result.stdout.count("declares why") == 22, result.stdout
+
+
+def test_a_declaration_reaches_the_hashes_nested_beneath_it(evidence: Path) -> None:
+    """One note at the root covers twenty-two hashes several levels down.
+
+    Which is why it has to be the accurate claim rather than a convenient one: this record
+    is a sanitized copy of a run's result documents, so every hash in it is of bytes the run
+    wrote, with no branch where that stops holding.
+    """
+
+    before = run(evidence, AUDIT)
+    assert before.returncode == 0, before.stdout
+
+    def bury(data: dict) -> None:
+        data["retained_originals"][DECLARATION] = data.pop(DECLARATION)
+
+    edit(evidence, "replay-b18d-public-report.json", bury)
+    result = run(evidence, AUDIT)
+    assert result.returncode == 1
+    # The nine under `retained_originals` stay covered; the thirteen under `derived_fields`
+    # no longer are.
+    assert result.stdout.count("declares why") == 13, result.stdout
+    assert "retained_originals" not in result.stdout
+
+
+def test_an_empty_declaration_does_not_count(evidence: Path) -> None:
+    """Otherwise the cheapest way past the gate is a key with nothing in it."""
+
+    for value in ("", "   ", None, 0, {"why": "because"}):
+        edit(
+            evidence,
+            "capability-record-support-crop.json",
+            lambda d, v=value: d["provenance"].update({DECLARATION: v}),
+        )
+        result = run(evidence, AUDIT)
+        assert result.returncode == 1, (value, result.stdout)
+        assert "evaluation_plan_hash" in result.stdout, value
+
+
+def test_a_declaration_does_not_excuse_a_stale_bound_digest(evidence: Path) -> None:
+    """Declaring never overrides binding.
+
+    A note covers everything beneath it, so without this the cheapest way to hide a stale
+    digest would be one note at a record root. A hash that names a file is hashed and
+    compared whatever the note says: binding is the stronger statement and has to win.
+    """
+
+    edit(
+        evidence,
+        "delivered-frames-manifest.json",
+        lambda d: d.update({DECLARATION: "everything here is held elsewhere"}),
+    )
+    frame = next((evidence / "frames-refit").glob("*.png"))
+    frame.write_bytes(frame.read_bytes() + b"\0")
+    result = run(evidence, AUDIT)
+    assert result.returncode == 1
+    assert frame.name in result.stdout
+    assert "which is actually" in result.stdout
+
+
+def test_a_declaration_does_not_excuse_an_equality_claim(evidence: Path) -> None:
+    """Same rule for the twelve that are checked without a file.
+
+    These were the hashes a note would most plausibly be reached for, since they name no
+    file either. They are checked against each other, so a note must not take them out of
+    the comparison -- only out of the count of what nothing could check.
+    """
+
+    def diverge(data: dict) -> None:
+        data[DECLARATION] = "these name no file here"
+        verified = data["image"]["byte_verified_not_label_trusted"]
+        verified["runner_py_inside_image"] = "f" * 64
+
+    edit(evidence, "capability-record-workflow-replay.json", diverge)
+    result = run(evidence, AUDIT)
+    assert result.returncode == 1
+    assert "runner_py" in result.stdout
 
 
 def test_a_reframed_frame_cannot_be_rebound_against_stale_measurements(

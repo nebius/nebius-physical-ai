@@ -103,7 +103,8 @@
       "rrd-manifest.json": "2e919513b0cccac9439f93fd96e8297f4d8aa2ca6e445065040d117abddb2cf1",
       "status.json": "b94918c08d6fe33c96d8762c78fb30bb412724346688e1c4cddd8934059b5107",
       "validation.json": "1ac511dc8c4a2776a1f2c46565c27e4834b1a2190c4b792039d6173b7452b117"
-    }
+    },
+    "hashes_that_name_no_file_here": "rrd_sha256 is of the recording the run produced and this verification downloaded. It is 8 MB of run output, not committed here, and the same hash appears keyed by its filename in artifact_hashes below."
   },
   "housekeeping": {
     "claim": "program/gpu-claims/geometry-open3d-cpu-20260921",
