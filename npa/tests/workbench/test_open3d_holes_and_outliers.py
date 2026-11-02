@@ -208,6 +208,62 @@ def test_the_report_does_not_overclaim_on_either_figure() -> None:
     assert "real thin structure" in caveat, caveat
 
 
+def _harness():
+    """Import the harness with Open3D stubbed, so this runs where the image is not.
+
+    Everything at the harness's module scope is imports and two env-derived paths, so
+    a stub is enough to reach `publication`. The alternative was asserting against the
+    harness's source text, which would pass on a file that reads correctly and runs
+    wrong.
+    """
+    import importlib.util
+    import sys
+    import types
+
+    path = EVIDENCE / "harness" / "holes_and_outliers.py"
+    spec = importlib.util.spec_from_file_location("_holes_harness", path)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    stub = types.ModuleType("open3d")
+    stub.utility = types.SimpleNamespace()  # type: ignore[attr-defined]
+    saved = sys.modules.get("open3d")
+    sys.modules["open3d"] = stub
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        if saved is None:
+            del sys.modules["open3d"]
+        else:
+            sys.modules["open3d"] = saved
+    return module
+
+
+def test_a_failed_detector_does_not_reach_the_canonical_report_path() -> None:
+    """The printed message has to be true at the moment it prints.
+
+    It said "no hole counts are published" one line after writing them to the
+    canonical path. The exit code was right and the record would have carried
+    `detector_is_valid: false`, so a careful reader was protected -- but the path is
+    what the other harnesses and this suite read, and a reader who trusts it would
+    have found counts there.
+    """
+    harness = _harness()
+    canonical = Path("/does-not-matter/holes-and-outliers.json")
+
+    valid = {"detector_validation": {"detector_is_valid": True}}
+    assert harness.publication(valid, canonical) == (canonical, True)
+
+    invalid = {"detector_validation": {"detector_is_valid": False}}
+    destination, published = harness.publication(invalid, canonical)
+    assert published is False
+    assert destination != canonical, (
+        "a run whose detector failed its control must not land on the path every "
+        "other reader treats as the published measurement"
+    )
+    assert destination.parent == canonical.parent, destination
+    assert "invalid" in destination.name, destination
+
+
 def test_the_record_binds_its_harness_and_report_bytes() -> None:
     """Same hash-binding contract the rest of this evidence directory uses."""
     bound = _record()["provenance"]["harness_that_produced_this"]

@@ -56,7 +56,7 @@
     "harness_that_produced_this": [
       {
         "path": "harness/holes_and_outliers.py",
-        "sha256": "334c65b284e0ead328dcc7a9ea2aa3467b1f812c47e675b894ff465f397b0b4a"
+        "sha256": "0d1412fd3e26fd5649af9f43fec05e11d89b326399af45438ba002d319001e67"
       },
       {
         "path": "holes-and-outliers.json",
@@ -64,6 +64,12 @@
       }
     ],
     "inputs": "The privately retained final bundle's fused cloud and both mesh variants, not committed. Bundle root comes from OPEN3D_BUNDLE so the same script runs in the Open3D image against /data/final-bundle and locally against the retained copy.",
-    "open3d_version": "0.20.0"
+    "open3d_version": "0.20.0",
+    "harness_edited_after_the_run_that_produced_the_report": {
+      "what": "A failed sphere control used to write the report to the canonical path and then print that no hole counts were published. The decision moved into publication(), which quarantines an invalid run beside the canonical path instead.",
+      "why_the_report_was_not_regenerated": "The detector passed its control on the run that produced this report, so the edited branch is the one that did not execute and the report bytes are unchanged by it. The input bundle is also gone with the ephemeral volume, so re-running is not available.",
+      "harness_sha256_before_this_edit": "334c65b284e0ead328dcc7a9ea2aa3467b1f812c47e675b894ff465f397b0b4a",
+      "report_sha256_is_unchanged": true
+    }
   }
 }

@@ -447,12 +447,28 @@ def build() -> dict:
     }
 
 
+def publication(report: dict, out: Path) -> tuple[Path, bool]:
+    """Where this run may be written, and whether its counts are published.
+
+    Separated from `main` and kept clear of Open3D so it can be exercised where the
+    image is not. The first version wrote `out` unconditionally and then printed "no
+    hole counts are published", which was false at the moment it printed: a reader
+    who trusts the canonical path over the exit code would have found counts sitting
+    there. A failed instrument's output is quarantined beside it instead, so the
+    canonical path keeps whatever last passed its control.
+    """
+    if report["detector_validation"]["detector_is_valid"]:
+        return out, True
+    return out.with_suffix(".invalid.json"), False
+
+
 def main() -> int:
     report = build()
-    OUT.write_text(json.dumps(report, indent=2) + "\n")
-    if not report["detector_validation"]["detector_is_valid"]:
+    destination, published = publication(report, OUT)
+    destination.write_text(json.dumps(report, indent=2) + "\n")
+    if not published:
         print("Hole detector failed its sphere control; no hole counts are published.")
-        print(f"Wrote {OUT}")
+        print(f"Quarantined this run at {destination}; left {OUT} as it was")
         return 1
     candidate = report["holes"]["candidate"]
     baseline = report["holes"]["baseline"]
