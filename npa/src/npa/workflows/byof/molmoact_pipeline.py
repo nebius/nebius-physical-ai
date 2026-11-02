@@ -64,6 +64,10 @@ def finetune(config: Mapping[str, Any]) -> dict[str, Any]:
         raise MolmoActPipelineError(
             f"learning_rate must be finite, got {learning_rate!r}"
         )
+    if learning_rate <= 0:
+        raise MolmoActPipelineError(
+            f"learning_rate must be positive, got {learning_rate!r}"
+        )
     num_gpus = _positive(int(config.get("num_gpus", 1)), "num_gpus")
     return {
         "command": "finetune",

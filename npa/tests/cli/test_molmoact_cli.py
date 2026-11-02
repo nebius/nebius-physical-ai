@@ -328,6 +328,37 @@ def test_pipeline_main_rejects_nonfinite_learning_rate_before_stdout(
     assert captured.err == ""
 
 
+@pytest.mark.parametrize(
+    ("value", "message"),
+    [
+        ("0", "learning_rate must be positive, got 0.0"),
+        ("-1", "learning_rate must be positive, got -1.0"),
+    ],
+)
+def test_pipeline_main_rejects_nonpositive_learning_rate_before_stdout(
+    value: str,
+    message: str,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with pytest.raises(MolmoActPipelineError) as caught:
+        molmoact_pipeline.main(
+            [
+                "finetune",
+                "--model-id",
+                DEFAULT_MODEL_ID,
+                "--dataset-uri",
+                "s3://bucket/demos",
+                "--output-s3-uri",
+                "s3://bucket/checkpoints",
+                f"--learning-rate={value}",
+            ]
+        )
+    assert str(caught.value) == message
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == ""
+
+
 def test_pipeline_main_json_serializer_rejects_nonfinite_manifest(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
