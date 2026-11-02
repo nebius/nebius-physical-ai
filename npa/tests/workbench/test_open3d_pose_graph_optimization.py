@@ -311,6 +311,72 @@ def test_the_two_loop_measurements_are_not_reconciled_into_one_figure() -> None:
     )
 
 
+def _cases_reporting_edges(node: Any, path: str = "") -> list[tuple[str, dict]]:
+    """Every mapping anywhere in the record that reports a submitted edge count.
+
+    Found by shape rather than by listing case names, so a case added later is
+    covered without anyone remembering to add it here. Naming the cases is how the
+    gap below went unnoticed: four of five carried the arithmetic and the fifth,
+    which no test named, is the one whose figure the PR body got wrong.
+    """
+
+    found: list[tuple[str, dict]] = []
+    if isinstance(node, dict):
+        if "edges_submitted" in node:
+            found.append((path or "<root>", node))
+        for key, value in node.items():
+            found.extend(
+                _cases_reporting_edges(value, f"{path}.{key}" if path else key)
+            )
+    elif isinstance(node, list):
+        for index, value in enumerate(node):
+            found.extend(_cases_reporting_edges(value, f"{path}[{index}]"))
+    return found
+
+
+def test_every_case_conserves_its_edges() -> None:
+    """Submitted minus pruned must equal survived, in every case, with all three said.
+
+    Review set `edges_that_survived_pruning` to 99 in two cases, `edges_pruned` to 99
+    in a third, and rewrote the fourth to the body's own wrong figure, and the suite
+    stayed at 30 passed. The pose-correction half of this record was guarded and the
+    edge-survival half was not.
+    """
+
+    cases = _cases_reporting_edges(_record())
+    assert len(cases) >= 5, [name for name, _ in cases]
+    for name, case in cases:
+        missing = sorted(
+            key
+            for key in ("edges_that_survived_pruning", "edges_pruned")
+            if key not in case
+        )
+        assert not missing, f"{name} reports a submitted count without {missing}"
+        assert (
+            case["edges_submitted"] - case["edges_pruned"]
+            == case["edges_that_survived_pruning"]
+        ), f"{name} does not conserve its edges: {case}"
+        assert case["edges_pruned"] >= 0, f"{name}: {case}"
+
+
+def test_the_upstream_case_pruned_an_edge_and_says_so() -> None:
+    """The specific cell the PR body got wrong, pinned as its own claim.
+
+    The body read "3 of 3 survived" where 3 were submitted and 2 survived. It was the
+    one case whose record omitted `edges_pruned`, so there was no number to contradict
+    the sentence -- which is the mechanism this record is about, arriving in the
+    record's own prose.
+    """
+
+    upstream = _record()["demo_fragments"]
+    assert upstream["edges_submitted"] == 3, upstream
+    assert upstream["edges_that_survived_pruning"] == 2, upstream
+    assert upstream["edges_pruned"] == 1, (
+        "the upstream demo fragments prune exactly one edge; if that has changed, the "
+        "PR body and this test both need the new figure"
+    )
+
+
 def test_the_record_binds_the_harness_that_produced_it() -> None:
     """A digest nothing recomputes is decoration."""
 

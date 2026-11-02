@@ -49,6 +49,23 @@ REPEATS = 5
 reg = o3d.pipelines.registration
 
 
+def _edge_counts(submitted: int, survived: int) -> dict:
+    """All three edge counts, in every case, from one place.
+
+    Written as a helper after review found the one case that omitted `edges_pruned`
+    was also the one case whose figure the PR body got wrong -- it said "3 of 3
+    survived" where 3 were submitted and 2 survived, which is precisely the mistake
+    this record is about. A case that computes only two of the three numbers leaves
+    the third to prose.
+    """
+
+    return {
+        "edges_submitted": submitted,
+        "edges_that_survived_pruning": survived,
+        "edges_pruned": submitted - survived,
+    }
+
+
 def _optimize(graph, voxel: float = VOXEL) -> dict:
     """Run the product's optimization call and report what it changed."""
 
@@ -68,10 +85,8 @@ def _optimize(graph, voxel: float = VOXEL) -> dict:
     after = [np.asarray(node.pose).copy() for node in graph.nodes]
     deltas = [float(np.abs(a - b).max()) for a, b in zip(after, before, strict=True)]
     return {
-        "edges_submitted": submitted,
+        **_edge_counts(submitted, len(graph.edges)),
         "edges_submitted_as_loop_closures": uncertain,
-        "edges_that_survived_pruning": len(graph.edges),
-        "edges_pruned": submitted - len(graph.edges),
         "max_pose_correction_per_node": [round(value, 8) for value in deltas],
         "max_pose_correction": round(max(deltas), 8),
     }
@@ -190,8 +205,9 @@ def on_the_demo_fragments() -> dict:
         "largest_correction_as_a_share_of_scene_extent": round(
             max(corrections) / extent, 12
         ),
-        "edges_submitted": runs[0]["edges_submitted"],
-        "edges_that_survived_pruning": runs[0]["edges_that_survived_pruning"],
+        **_edge_counts(
+            runs[0]["edges_submitted"], runs[0]["edges_that_survived_pruning"]
+        ),
         "why": (
             "the pairwise estimates are mutually consistent, so the odometry chain "
             "already is the optimum and there is nothing for the optimizer to "
@@ -271,9 +287,9 @@ def through_the_product_on_a_loop() -> dict:
     return {
         "entry_point": "npa.workbench.open3d.runner.run_multiway",
         "construction": "the same four 140-degree views, written as PLY fragments",
-        "edges_submitted": snapshot["edges_submitted"],
-        "edges_pruned": snapshot["edges_submitted"]
-        - snapshot["edges_that_survived_pruning"],
+        **_edge_counts(
+            snapshot["edges_submitted"], snapshot["edges_that_survived_pruning"]
+        ),
         "max_pose_correction": snapshot["correction"],
         "correction_is_nonzero": snapshot["correction"] > 0.0,
         "published_block_matches_the_snapshot": (
@@ -352,8 +368,9 @@ def through_the_product_pipeline() -> dict:
         "fragments": "the three synthetic clouds the functional smoke writes",
         "max_pose_correction": snapshot["correction"],
         "correction_is_exactly_zero": snapshot["correction"] == 0.0,
-        "edges_submitted": snapshot["edges_submitted"],
-        "edges_that_survived_pruning": snapshot["edges_that_survived_pruning"],
+        **_edge_counts(
+            snapshot["edges_submitted"], snapshot["edges_that_survived_pruning"]
+        ),
         "edges_the_record_serialized": len(published["edges"]),
         "so": (
             "the optimizer provably moved nothing, the smoke passed, and its success "
@@ -397,7 +414,9 @@ def on_a_loop_with_overlap() -> dict:
         ),
         "nodes": 4,
         "repeats": len(runs),
-        "edges_submitted": runs[0]["edges_submitted"],
+        **_edge_counts(
+            runs[0]["edges_submitted"], runs[0]["edges_that_survived_pruning"]
+        ),
         "edges_pruned_over_repeats": [min(pruned), max(pruned)],
         "at_least_one_edge_was_pruned": min(pruned) > 0,
         "max_pose_correction_over_repeats": [

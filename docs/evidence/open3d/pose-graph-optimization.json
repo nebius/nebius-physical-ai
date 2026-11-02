@@ -6,9 +6,9 @@
     "node_offset_before": 0.5,
     "node_offset_after": 0.0,
     "edges_submitted": 1,
-    "edges_submitted_as_loop_closures": 0,
     "edges_that_survived_pruning": 1,
     "edges_pruned": 0,
+    "edges_submitted_as_loop_closures": 0,
     "max_pose_correction_per_node": [
       0.0,
       0.5
@@ -28,6 +28,7 @@
     "largest_correction_as_a_share_of_scene_extent": 9.54533e-07,
     "edges_submitted": 3,
     "edges_that_survived_pruning": 2,
+    "edges_pruned": 1,
     "why": "the pairwise estimates are mutually consistent, so the odometry chain already is the optimum and there is nothing for the optimizer to distribute. This is correct behaviour and it is also why the capability was never exercised by a case where it could fail"
   },
   "through_the_product_pipeline": {
@@ -37,6 +38,7 @@
     "correction_is_exactly_zero": true,
     "edges_submitted": 3,
     "edges_that_survived_pruning": 3,
+    "edges_pruned": 0,
     "edges_the_record_serialized": 3,
     "so": "the optimizer provably moved nothing, the smoke passed, and its success line still read that it had optimized a three-node pose graph"
   },
@@ -45,6 +47,8 @@
     "nodes": 4,
     "repeats": 5,
     "edges_submitted": 6,
+    "edges_that_survived_pruning": 5,
+    "edges_pruned": 1,
     "edges_pruned_over_repeats": [
       1,
       1
@@ -60,8 +64,9 @@
     "entry_point": "npa.workbench.open3d.runner.run_multiway",
     "construction": "the same four 140-degree views, written as PLY fragments",
     "edges_submitted": 6,
+    "edges_that_survived_pruning": 3,
     "edges_pruned": 3,
-    "max_pose_correction": 2.1739465183578943e-07,
+    "max_pose_correction": 2.1739465200232289e-07,
     "correction_is_nonzero": true,
     "published_block_matches_the_snapshot": true,
     "why_this_case_exists": "on consistent fragments the correction is 0.0 and nothing is prunable, so reading the poses after optimization rather than before, and publishing the surviving edge count as the submitted one, both produce identical output. This is the case where those two mutations are observable"
@@ -84,7 +89,7 @@
   },
   "provenance": {
     "harness": "harness/pose_graph_optimization.py",
-    "harness_sha256": "68439162751c7e51bfa0c64ecaf98820bcc61622118a8d28309e5cc1ae9507b9",
+    "harness_sha256": "eebee3a89145e5c615d377f62c92658e48650857e58800983b4082193a788b1e",
     "path_is_relative_to": "this evidence directory",
     "open3d_version": "0.20.0"
   },
