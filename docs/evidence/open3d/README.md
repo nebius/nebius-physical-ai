@@ -18,6 +18,26 @@ own question and method in its module docstring.
 | It does under-call below a sensitivity floor, so a low reading is a lower bound | `floor-across-geometry-and-sampling.json` |
 | The floor is set by the voxel-to-sample-spacing ratio, not by geometry, sampling or mesh resolution | `floor-vs-voxel-multiple.json`, `floor-vs-resolution.json` |
 | Even sampling zeroes the headline fraction, so its failure is a capture-time artefact | `poisson-procedure-and-overcall-audit.json` |
+| The crop now reports how close it came to deciding otherwise, so a caller can tell whether the published reproducibility applies to their scan | `crop-margin-live.json` |
+
+## The crop tells you whether its own answer will hold on your scan
+
+The support crop is a threshold on a per-vertex distance, and the reconstruction under it
+is not reproducible. So whether its verdicts survive a rerun is a fact about the caller's
+geometry rather than a property of the rule — `crop-decision-stability.json` says exactly
+that, and names the ratio as the thing to re-check elsewhere.
+
+`runner.py` computed that ratio inside the crop and threw it away. It now reports it:
+the closest any vertex sits to the cut, the near-threshold population in three nested
+bands, and a verdict against two measured displacement scales — the worst of 46 pair
+comparisons, and one independent observation two hundred times larger that did not
+reproduce. Two scales because one cannot say what the measurements say: on this record's
+own input a handful of vertices sit inside the first and a couple of hundred inside the
+second, which is why 46 pair comparisons all agreed while nothing is guaranteed by
+construction.
+
+It costs nothing — the distance array is the one the crop already thresholded. It
+establishes nothing about whether the reconstruction is correct, and the field says so.
 
 ## Reproducing
 

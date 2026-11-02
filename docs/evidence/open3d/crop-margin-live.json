@@ -1,0 +1,98 @@
+{
+  "what_this_measures": "That the support crop's decision margin is reported by the product's own reconstruct stage, and what it says on the record's own input. The figure existed inside the crop before this and was discarded, so a user could not tell whether the published reproducibility applied to their scan.",
+  "why_it_matters": "The crop is a threshold on a per-vertex distance and the reconstruction under it is not reproducible. Whether its verdicts reproduce is therefore a fact about the caller's geometry, not a property of the rule, and crop-decision-stability.json says so explicitly: the condition to re-check elsewhere is the ratio, not the verdict.",
+  "executed": "npa.workbench.open3d.runner.run_multiway then run_reconstruct, the entry points the workflow calls; no mirrored copy of the stage",
+  "input": "open3d.data DemoICPPointClouds, three fragments, voxel 0.05",
+  "displacement_scales_the_verdict_uses": {
+    "routine_m": 1e-05,
+    "worst_recorded_m": 0.002187
+  },
+  "per_support_factor": {
+    "support_distance_factor_1.0": {
+      "unsupported_vertices_removed": 3677,
+      "crop_margin": {
+        "applies": true,
+        "threshold_m": 0.05,
+        "closest_vertex_to_the_threshold_m": 4.888607696089398e-06,
+        "closest_as_a_fraction_of_the_threshold": 9.777215392178795e-05,
+        "vertices_within": {
+          "0.01_of_the_threshold": {
+            "count": 52,
+            "fraction": 0.002824091674360506
+          },
+          "0.1_of_the_threshold": {
+            "count": 556,
+            "fraction": 0.03019605713354695
+          },
+          "0.5_of_the_threshold": {
+            "count": 4663,
+            "fraction": 0.2532449899527508
+          }
+        },
+        "reproducibility": {
+          "verdict": "not_guaranteed",
+          "routine_displacement_m": 1e-05,
+          "vertices_within_the_routine_displacement": 2,
+          "worst_recorded_displacement_m": 0.002187,
+          "vertices_within_the_worst_recorded_displacement": 238,
+          "fraction_within_the_worst_recorded": 0.012925650355726933,
+          "what_that_means": "2 vertices sit closer to the threshold than vertices routinely move between runs (1e-05 m, the worst of 46 pair comparisons), so a rerun may return a different verdict for them and move the counts derived from it by up to that many vertices. May, not will: being inside the displacement makes a vertex able to cross, not likely to. A denser capture shortens the distances themselves. Changing --support-distance-factor moves the cut rather than the geometry, so it changes which vertices sit near it and is not reliably a reduction -- re-run and read this figure again.",
+          "measured_by": "docs/evidence/open3d/crop-decision-stability.json: 46 pair comparisons at two capture densities for the routine figure, and one independent unreproduced observation for the worst recorded"
+        },
+        "what_this_does_not_establish": "That the reconstruction is correct. A vertex far from the cut can still be in the wrong place, and a reproducible verdict on an invented surface is still a verdict on an invented surface. This says only whether re-running would decide differently."
+      }
+    },
+    "support_distance_factor_0.87": {
+      "unsupported_vertices_removed": 4044,
+      "crop_margin": {
+        "applies": true,
+        "threshold_m": 0.043500000000000004,
+        "closest_vertex_to_the_threshold_m": 5.453413983932953e-07,
+        "closest_as_a_fraction_of_the_threshold": 1.2536583871110236e-05,
+        "vertices_within": {
+          "0.01_of_the_threshold": {
+            "count": 54,
+            "fraction": 0.0029327105849128333
+          },
+          "0.1_of_the_threshold": {
+            "count": 433,
+            "fraction": 0.02351599413457883
+          },
+          "0.5_of_the_threshold": {
+            "count": 6346,
+            "fraction": 0.3446478031825341
+          }
+        },
+        "reproducibility": {
+          "verdict": "not_guaranteed",
+          "routine_displacement_m": 1e-05,
+          "vertices_within_the_routine_displacement": 1,
+          "worst_recorded_displacement_m": 0.002187,
+          "vertices_within_the_worst_recorded_displacement": 209,
+          "fraction_within_the_worst_recorded": 0.011350676152718188,
+          "what_that_means": "1 vertex sits closer to the threshold than vertices routinely move between runs (1e-05 m, the worst of 46 pair comparisons), so a rerun may return a different verdict for it and move the counts derived from it by up to that many vertices. May, not will: being inside the displacement makes a vertex able to cross, not likely to. A denser capture shortens the distances themselves. Changing --support-distance-factor moves the cut rather than the geometry, so it changes which vertices sit near it and is not reliably a reduction -- re-run and read this figure again.",
+          "measured_by": "docs/evidence/open3d/crop-decision-stability.json: 46 pair comparisons at two capture densities for the routine figure, and one independent unreproduced observation for the worst recorded"
+        },
+        "what_this_does_not_establish": "That the reconstruction is correct. A vertex far from the cut can still be in the wrong place, and a reproducible verdict on an invented surface is still a verdict on an invented surface. This says only whether re-running would decide differently."
+      }
+    },
+    "support_distance_factor_0.0": {
+      "unsupported_vertices_removed": 0,
+      "crop_margin": {
+        "applies": false,
+        "why_not": "support cropping is disabled, so there is no threshold for anything to sit near"
+      }
+    }
+  },
+  "what_the_result_shows": "On this input the verdict is not_guaranteed at both enabled factors, from a handful of vertices inside the routine displacement out of eighteen thousand. That is consistent with the 46 pair comparisons that found no cell changing its verdict: a vertex inside the displacement is able to cross, not likely to. The first version of this field had a single threshold and reported the same scan as not_guaranteed on the strength of the unreproduced outlier alone, which is a warning a reader would learn to ignore.",
+  "what_this_does_not_establish": "Anything about whether the reconstruction is correct. Every figure here concerns whether a rerun would decide differently, and a reproducible verdict on an invented surface is still a verdict on an invented surface.",
+  "reproducibility": {
+    "command": "npa/.venv/bin/python docs/evidence/open3d/harness/crop_margin_live.py",
+    "note": "Registration and reconstruction are both nondeterministic, so the counts move between runs. The verdict and the orders of magnitude are what reproduce."
+  },
+  "provenance": {
+    "harness": "harness/crop_margin_live.py",
+    "harness_sha256": "e219a69c9bed3d07a223da1e43142e2dad529413c52a84c04583714332357eed",
+    "path_is_relative_to": "this evidence directory"
+  }
+}

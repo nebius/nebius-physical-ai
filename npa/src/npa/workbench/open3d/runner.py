@@ -391,6 +391,163 @@ def _sample_distances(o3d, cloud, vertices):
     )
 
 
+#: How far a Poisson vertex moves between two runs on byte-identical input, in metres.
+#: The crop is a threshold on a per-vertex distance and the reconstruction underneath it
+#: is not reproducible (`docs/evidence/open3d/crop-decision-stability.json`, and the two
+#: limitations in `capability-record-support-crop.json`), so a vertex nearer to the cut
+#: than vertices move can change its own verdict on a rerun.
+#:
+#: Two scales, because one number cannot say what the measurements say. 46 pair
+#: comparisons at two capture densities put the worst at 1.0e-05 m, with zero cell
+#: verdicts changing. Separately, one independent pair reached 2.187e-03 m -- 200 times
+#: that -- and did not reproduce in three further attempts on a coordinate-identical
+#: file.
+#:
+#: Collapsing them loses the distinction a user needs. Against the routine scale the
+#: question is what a rerun will do; against the outlier it is what a rerun could do at
+#: the worst displacement anyone has recorded. The record's own input has vertices
+#: inside the second and effectively none inside the first, which is precisely why it
+#: reproduced 46 times out of 46.
+#:
+#: Both are measurements. Raising either weakens every verdict derived from it, so
+#: change them only against a larger measured displacement.
+POISSON_VERTEX_DISPLACEMENT_ROUTINE_M = 1.0e-05
+POISSON_VERTEX_DISPLACEMENT_BOUND_M = 2.187e-03
+
+#: Fractions of the support threshold at which the near-threshold population is counted.
+#: A distribution rather than one number, because "how many vertices are near the cut"
+#: has no single meaning and the shape is what tells a reader whether their scan is the
+#: comfortable case.
+CROP_MARGIN_BANDS = (0.01, 0.1, 0.5)
+
+
+def _crop_reproducibility(
+    at_routine: int, at_bound: int, vertices: int, closest: float
+) -> dict[str, Any]:
+    """Three outcomes, because two measured scales admit a case between them.
+
+    A single bound forced the choice between alarming every caller with the
+    unreproduced outlier and hiding it. The middle verdict is the one the evidence
+    actually supports for the recorded input: nothing within the displacement that
+    recurs, something within the one that did not, and 46 pair comparisons agreeing.
+    """
+
+    routine = POISSON_VERTEX_DISPLACEMENT_ROUTINE_M
+    bound = POISSON_VERTEX_DISPLACEMENT_BOUND_M
+
+    if at_routine:
+        verdict = "not_guaranteed"
+        meaning = (
+            f"{at_routine} {'vertex sits' if at_routine == 1 else 'vertices sit'} "
+            f"closer to the threshold than vertices routinely move between runs "
+            f"({routine:g} m, the worst of 46 pair comparisons), so a rerun may return "
+            f"a different verdict for {'it' if at_routine == 1 else 'them'} and move "
+            "the counts derived from it by up to that many vertices. May, not will: "
+            "being inside the displacement makes a vertex able to cross, not likely to. "
+            "A denser capture shortens the distances themselves. Changing "
+            "--support-distance-factor moves the cut rather than the geometry, so it "
+            "changes which vertices sit near it and is not reliably a reduction -- "
+            "re-run and read this figure again."
+        )
+    elif at_bound:
+        verdict = "reproducible_at_the_routine_displacement"
+        meaning = (
+            "No vertex sits within the displacement that recurs "
+            f"({routine:g} m, the worst of 46 pair comparisons), so a rerun is expected "
+            f"to return the same verdicts -- and {at_bound} "
+            f"{'vertex does sit' if at_bound == 1 else 'vertices do sit'} within the "
+            f"largest displacement ever recorded for this reconstruction ({bound:g} m, "
+            "observed once and not reproduced in three further attempts). So the "
+            "verdicts are reproducible in practice and not reproducible by "
+            "construction. For a decision that must not move, treat those vertices as "
+            "undetermined."
+        )
+    else:
+        verdict = "reproducible"
+        meaning = (
+            "Every vertex sits further from the threshold than the largest displacement "
+            f"ever recorded for this reconstruction ({bound:g} m), so no rerun can move "
+            "one across the cut. The closest came within "
+            f"{closest:.3g} m, a factor of {closest / bound:.0f} clear."
+        )
+
+    return {
+        "verdict": verdict,
+        "routine_displacement_m": routine,
+        "vertices_within_the_routine_displacement": at_routine,
+        "worst_recorded_displacement_m": bound,
+        "vertices_within_the_worst_recorded_displacement": at_bound,
+        "fraction_within_the_worst_recorded": (at_bound / vertices)
+        if vertices
+        else 0.0,
+        "what_that_means": meaning,
+        "measured_by": (
+            "docs/evidence/open3d/crop-decision-stability.json: 46 pair comparisons at "
+            "two capture densities for the routine figure, and one independent "
+            "unreproduced observation for the worst recorded"
+        ),
+    }
+
+
+def _crop_margin(distances, limit: float) -> dict[str, Any]:
+    """How close did the crop come to deciding something else?
+
+    The crop's own reproducibility is a ratio, not a property: it holds when the
+    geometry sits far from the cut relative to how far vertices move between runs. That
+    ratio is a fact about the user's scan, and before this it was computed inside the
+    crop and discarded -- the one quantity that decides whether the published
+    reproducibility applies to their capture.
+
+    Costs nothing: `distances` is the array the crop already thresholded.
+
+    What this does not establish: nothing here says the reconstruction is correct. A
+    vertex can sit a comfortable distance from the cut and still be in the wrong place,
+    and a reproducible verdict on an invented surface is still a verdict on an invented
+    surface. This answers only whether re-running would change the answer.
+    """
+
+    import numpy as np
+
+    if limit <= 0.0 or not len(distances):
+        return {
+            "applies": False,
+            "why_not": (
+                "support cropping is disabled, so there is no threshold for anything to "
+                "sit near"
+            ),
+        }
+
+    gap = np.abs(np.asarray(distances, dtype=float) - limit)
+    closest = float(gap.min())
+    routine = POISSON_VERTEX_DISPLACEMENT_ROUTINE_M
+    bound = POISSON_VERTEX_DISPLACEMENT_BOUND_M
+    at_routine = int((gap < routine).sum())
+    at_bound = int((gap < bound).sum())
+
+    return {
+        "applies": True,
+        "threshold_m": float(limit),
+        "closest_vertex_to_the_threshold_m": closest,
+        "closest_as_a_fraction_of_the_threshold": float(closest / limit),
+        "vertices_within": {
+            f"{share:g}_of_the_threshold": {
+                "count": int((gap < share * limit).sum()),
+                "fraction": float((gap < share * limit).mean()),
+            }
+            for share in CROP_MARGIN_BANDS
+        },
+        "reproducibility": _crop_reproducibility(
+            at_routine, at_bound, int(len(gap)), closest
+        ),
+        "what_this_does_not_establish": (
+            "That the reconstruction is correct. A vertex far from the cut can still be "
+            "in the wrong place, and a reproducible verdict on an invented surface is "
+            "still a verdict on an invented surface. This says only whether re-running "
+            "would decide differently."
+        ),
+    }
+
+
 #: Below this share of the pre-crop unsupported area lying past three voxels, what the crop
 #: removed sat near the support threshold rather than far from any observation.
 #:
@@ -685,11 +842,13 @@ def run_reconstruct(
         raise Open3dError("Open3D could not write the uncropped mesh")
     before = _support(o3d, mesh, cloud, voxel)
     unsupported_removed = 0
+    crop_margin = _crop_margin(None, 0.0)
     if request.support_distance_factor > 0.0:
         limit = voxel * request.support_distance_factor
         distances = _sample_distances(o3d, cloud, np.asarray(mesh.vertices))
         crop = distances > limit
         unsupported_removed = int(crop.sum())
+        crop_margin = _crop_margin(distances, limit)
         mesh.remove_vertices_by_mask(crop)
         if not mesh.has_triangles():
             raise Open3dError(
@@ -719,6 +878,9 @@ def run_reconstruct(
         "support": _support(o3d, mesh, cloud, voxel),
         "coverage": _coverage(o3d, mesh, cloud, voxel),
         "crop_justification": _crop_justification(before, unsupported_removed, mesh),
+        # How close the crop came to deciding otherwise. The reconstruction under it is
+        # not reproducible, so this is what says whether that reaches the user's result.
+        "crop_margin": crop_margin,
         "cloud_extent": [
             float(value) for value in cloud.get_axis_aligned_bounding_box().get_extent()
         ],
