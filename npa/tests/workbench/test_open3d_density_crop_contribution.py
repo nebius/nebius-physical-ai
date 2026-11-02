@@ -77,13 +77,26 @@ def test_a_report_predating_the_contribution_block_validates() -> None:
     validate_density_crop_contribution({"low_density_vertices_removed": 518})
 
 
-def test_a_contribution_published_as_nothing_is_rejected() -> None:
-    """Absent predates the block; an empty mapping published a measurement as nothing."""
+@pytest.mark.parametrize("nothing", [{}, None], ids=["empty mapping", "null"])
+def test_a_contribution_published_as_nothing_is_rejected(nothing) -> None:
+    """Absent predates the block. Both of these published the measurement as nothing.
+
+    `None` used to pass while `{}` was refused -- the less alarming shape guarded and
+    the one the sentinel's own comment names let through. That collapsed the two
+    facts the sentinel exists to separate, so a report could say it had measured the
+    contribution and supply nothing.
+    """
 
     with pytest.raises(Open3dError, match="non-empty mapping"):
         validate_density_crop_contribution(
-            {"low_density_vertices_removed": 1, "density_crop_contribution": {}}
+            {"low_density_vertices_removed": 1, "density_crop_contribution": nothing}
         )
+
+
+def test_a_report_without_the_block_is_the_only_shape_that_skips_the_check() -> None:
+    """The sentinel's distinction, asserted rather than described."""
+
+    validate_density_crop_contribution({"low_density_vertices_removed": 1})
 
 
 @pytest.mark.parametrize(
@@ -209,15 +222,25 @@ def test_the_grid_records_where_the_crop_starts_doing_harm() -> None:
 
     rows = _record()["grid"]
     assert len(rows) >= 9, rows
+    # At the shipped support distance, not at any support distance. Two rows clear
+    # 0.20 -- the shipped factor at -785 triangles and a wider one at -8980 -- and an
+    # `any` over both let either carry the argument alone. The finding is about the
+    # configuration the product ships, so the cost has to be shown there: the shipped
+    # row could have gone to zero with this test still green.
+    from npa.workbench.open3d.schemas import ReconstructRequest
+
+    shipped_support = ReconstructRequest.model_fields["support_distance_factor"].default
     supported = [
         row
         for row in rows
-        if row["support_distance_factor"] > 0.0 and row["density_quantile"] >= 0.20
+        if row["support_distance_factor"] == shipped_support
+        and row["density_quantile"] >= 0.20
     ]
     assert supported, rows
-    assert any(row["triangles_versus_no_density_crop"] < 0 for row in supported), (
-        "the aggressive quantile no longer removes supported surface, so the grid no "
-        f"longer shows the cost it exists to show: {supported}"
+    assert all(row["triangles_versus_no_density_crop"] < 0 for row in supported), (
+        "the aggressive quantile no longer removes supported surface at the shipped "
+        f"support distance, so the grid no longer shows the cost it exists to show: "
+        f"{supported}"
     )
     at_defaults = [
         row

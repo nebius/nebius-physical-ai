@@ -36,10 +36,13 @@ run now publishes how much of the removal was the density crop's own.
 The control carries the weight: with support cropping off the density crop is the only filter and
 removes 1023 triangles and 6.72 m² of surface, so "it changed nothing" at the defaults is overlap
 with the next filter rather than a measurement that cannot see a crop. Two further readings are
-recorded against the obvious misreadings — the crop is strongly selective (Spearman −0.72 of
-density against distance to the cloud), so this is not a filter trimming at random; and pushed to
-the 0.20 quantile it removes nearly nine thousand triangles of *supported* surface, so the answer
-is not to raise the quantile until it contributes.
+recorded against the obvious misreadings. The crop is strongly selective — Spearman −0.70 of
+density against distance to the cloud, and at the shipped quantile the vertices it removes sit 51×
+farther from any observed point than the ones it keeps — so this is not a filter trimming at
+random. And pushed to the 0.20 quantile it removes 785 triangles and 0.34 m² of *supported*
+surface, about 1.9% of the delivered mesh, so raising the quantile buys a contribution by
+deleting surface the scan does support. The sweep's widest support distance loses 8980 triangles
+the same way, which is the worst case rather than the shipped one.
 
 ## Reproducing
 

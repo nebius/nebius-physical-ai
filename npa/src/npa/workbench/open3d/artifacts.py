@@ -417,8 +417,11 @@ def validate_density_crop_contribution(report: Any) -> None:
     if not isinstance(report, dict):
         raise Open3dError("density-crop check needs the reconstruction report")
     contribution = report.get("density_crop_contribution", _ABSENT)
-    if contribution is _ABSENT or contribution is None:
+    if contribution is _ABSENT:
         return
+    # `None` is refused and absence is not, which is the whole reason for the
+    # sentinel above. Collapsing them here would have let a report publish the
+    # measurement as nothing while the less alarming empty mapping was refused.
     if not isinstance(contribution, dict) or not contribution:
         raise Open3dError(
             "density_crop_contribution must be a non-empty mapping when present"
