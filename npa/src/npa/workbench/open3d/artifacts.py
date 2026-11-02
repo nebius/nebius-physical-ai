@@ -455,6 +455,86 @@ def validate_support(report: Any, *, voxel_size: float) -> None:
         raise Open3dError(
             "surface remains farther from the scan than the support limit allows"
         )
+    _validate_coverage_cost(report, coverage, float(factor))
+
+
+def _validate_coverage_cost(report: Any, coverage: dict, factor: float) -> None:
+    """Check what the crop cost coverage against the coverage pair it sits beside.
+
+    Reports written before this pair existed do not carry it, and are left alone. What
+    this does check is the one direction the crop can move coverage: removing surface
+    cannot bring a sample closer to it, so coverage can only fall, and a sample covered
+    afterwards must have been covered before. That makes the abandonment count equal to
+    the drop, and a report where those disagree is describing something the crop cannot
+    do.
+    """
+
+    cost = report.get("coverage_cost_of_crop")
+    before = report.get("coverage_before_crop")
+    if cost is None and before is None:
+        return
+    for name, block, keys in (
+        ("coverage_before_crop", before, ("fraction_within_voxel", "samples")),
+        (
+            "coverage_cost_of_crop",
+            cost,
+            (
+                "samples",
+                "samples_covered_before_crop",
+                "samples_abandoned_by_crop",
+                "coverage_is_bit_identical",
+            ),
+        ),
+    ):
+        if not isinstance(block, dict) or not set(keys) <= set(block):
+            raise Open3dError(f"reconstruction report is missing {name} measurements")
+    if not (coverage["samples"] == before["samples"] == cost["samples"]):
+        raise Open3dError(
+            "the coverage pair and its cost must measure the same samples"
+        )
+    samples = int(coverage["samples"])
+    fraction_before = before["fraction_within_voxel"]
+    if not _finite_number(fraction_before) or not 0.0 <= float(fraction_before) <= 1.0:
+        raise Open3dError("coverage fraction must be a fraction in [0, 1]")
+    if float(coverage["fraction_within_voxel"]) > float(fraction_before) + 1e-9:
+        raise Open3dError(
+            "coverage rose across the crop, which removing surface cannot do"
+        )
+    covered_before = round(float(fraction_before) * samples)
+    covered_after = round(float(coverage["fraction_within_voxel"]) * samples)
+    for key in ("samples_covered_before_crop", "samples_abandoned_by_crop"):
+        value = cost[key]
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise Open3dError(f"{key} must be a nonnegative count")
+    if cost["samples_covered_before_crop"] != covered_before:
+        raise Open3dError(
+            "the cost block disagrees with coverage_before_crop about how many "
+            "samples the surface explained"
+        )
+    if cost["samples_abandoned_by_crop"] != covered_before - covered_after:
+        raise Open3dError(
+            "abandoned samples must account for the whole drop in coverage"
+        )
+    if cost["coverage_is_bit_identical"] is not (covered_before == covered_after):
+        raise Open3dError(
+            "the cost block disagrees with the coverage pair about whether coverage "
+            "moved"
+        )
+    worst = cost.get("worst_abandoned_sample_voxels_from_surface")
+    if cost["samples_abandoned_by_crop"]:
+        if not _finite_number(worst) or float(worst) < 1.0:
+            raise Open3dError(
+                "an abandoned sample is by definition more than one voxel from the "
+                "surface, so the worst of them cannot be nearer than that"
+            )
+    elif worst is not None:
+        raise Open3dError(
+            "no sample was abandoned, so there is no worst abandoned sample"
+        )
+    if factor <= 0.0 and cost["samples_abandoned_by_crop"]:
+        raise Open3dError(
+            "the crop was disabled, so it cannot have abandoned any sample"
+        )
 
 
 def verify_rerun_recording(path: Path) -> None:
