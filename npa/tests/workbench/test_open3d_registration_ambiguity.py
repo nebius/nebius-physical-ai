@@ -361,6 +361,42 @@ def test_an_inconsistent_agreement_block_is_rejected(what: str, mutate) -> None:
         validate_pair(row)
 
 
+@pytest.mark.parametrize(
+    "value",
+    [None, [], "0.13", "many", {}, True],
+    ids=["null", "list", "numeric_string", "word", "dict", "bool"],
+)
+def test_a_counterexample_measurement_that_is_not_a_number_is_rejected_as_one(
+    value,
+) -> None:
+    """As `Open3dError`, not as whatever `float()` happens to raise.
+
+    A reviewer found the guard for this ran *after* the `float()` unpack, so `None`
+    escaped as `TypeError` -- which the CLI's `(Open3dError, ValueError)` does not
+    catch -- and `null` is the likeliest real shape for a measurement that was not
+    taken. The correct check was already written; it ran second.
+    """
+
+    row = good_row()
+    case = row["agreement"]["agreement_is_not_correctness"]["measured_counterexample"]
+    case["every_seed_was_wrong_by_voxels"] = value
+    with pytest.raises(Open3dError, match="finite numbers"):
+        validate_pair(row)
+
+
+def test_a_counterexample_exactly_on_the_boundary_is_rejected() -> None:
+    """The guard makes the claim hard to satisfy, so the boundary is the strict side."""
+
+    row = good_row()
+    case = row["agreement"]["agreement_is_not_correctness"]["measured_counterexample"]
+    case["seeds_agreed_within_voxels"] = 1.0
+    case["every_seed_was_wrong_by_voxels"] = 10.0
+    with pytest.raises(Open3dError, match="not one"):
+        validate_pair(row)
+    case["every_seed_was_wrong_by_voxels"] = 10.000001
+    validate_pair(row)
+
+
 def test_every_rejection_says_something_different() -> None:
     """Ten identical messages would be one check wearing ten hats."""
 

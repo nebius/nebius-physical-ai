@@ -234,12 +234,19 @@ def _validate_counterexample(limitation: Any) -> None:
     required = ("seeds_agreed_within_voxels", "every_seed_was_wrong_by_voxels")
     if not isinstance(case, dict) or not set(required) <= set(case):
         raise Open3dError("the counterexample must carry both of its measurements")
-    agreed, wrong = (float(case[key]) for key in required)
+    # Before the float() below, not after. Unpacking forced the conversion first, so
+    # `float(None)` raised TypeError -- which the CLI's `(Open3dError, ValueError)` does
+    # not catch -- before the guard written to reject exactly that was consulted. JSON
+    # `null` is the likeliest real shape for a measurement that was not taken.
     if not all(_finite_number(case[key]) for key in required):
-        raise Open3dError("the counterexample's measurements must be finite")
+        raise Open3dError("the counterexample's measurements must be finite numbers")
+    agreed, wrong = (float(case[key]) for key in required)
     if agreed <= 0 or wrong <= 0:
         raise Open3dError("the counterexample's measurements must be positive")
-    if wrong < 10.0 * agreed:
+    # Strictly more than ten times, so a case sitting exactly on the boundary is
+    # rejected. This guard exists to make the claim hard to satisfy, and the measured
+    # figures clear it by a factor of twenty-five.
+    if wrong <= 10.0 * agreed:
         raise Open3dError(
             f"the counterexample is not one: the seeds agreed within {agreed} voxels "
             f"and were wrong by {wrong}, which does not show that agreement and "
