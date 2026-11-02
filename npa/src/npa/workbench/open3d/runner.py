@@ -260,6 +260,31 @@ def run_register(payload: dict[str, Any], output: Path, run_id: str) -> dict[str
     return report
 
 
+def _point_displacement(points, before, after) -> float:
+    """How far a pose change moves the points it applies to, in their own units.
+
+    The alternative, and what this code published first, was the largest absolute
+    change in a pose matrix *entry*. That is not a distance: a 4x4 pose mixes unitless
+    rotation coefficients with a translation in scene units, so dividing it by a scene
+    extent gives a figure that depends on the units the scene is written in. A pure
+    90-degree rotation changes a rotation entry by 1 whether the scene is 10 metres or
+    the same 10000 millimetres across, so the published share read 0.1 or 0.0001 for
+    identical geometry.
+
+    This is a length, so dividing it by the extent -- also a length -- gives the same
+    number for the same geometry at any scale, which is what a reader comparing two
+    runs is relying on.
+    """
+
+    import numpy as np
+
+    if not len(points):
+        return 0.0
+    shift = np.asarray(after, dtype=float) - np.asarray(before, dtype=float)
+    moved_by = np.asarray(points, dtype=float) @ shift[:3, :3].T + shift[:3, 3]
+    return float(np.linalg.norm(moved_by, axis=1).max())
+
+
 def run_multiway(payload: dict[str, Any], output: Path, run_id: str) -> dict[str, Any]:
     """Upstream multiway registration: full pairwise graph, then optimization."""
 
@@ -320,12 +345,27 @@ def run_multiway(payload: dict[str, Any], output: Path, run_id: str) -> dict[str
         edge_prune_threshold=0.25,
         reference_node=0,
     )
+    # Read before optimizing. `global_optimization` mutates the graph in place and
+    # prunes loop closures below the threshold, so neither the correction it applies
+    # nor the edges it rejects can be recovered from the optimized graph afterwards.
+    # Without these two figures a run that corrected real drift and a run that did
+    # nothing serialize the same shape -- and on both the demo fragments and this
+    # pipeline's own synthetic ones, what it does is nothing (4.7e-06 of a
+    # metres-wide scene, and exactly 0.0 respectively; see
+    # docs/evidence/open3d/pose-graph-optimization.json).
+    poses_before = [np.asarray(node.pose, dtype=float).copy() for node in graph.nodes]
+    edges_submitted = len(graph.edges)
+    loop_closures_submitted = sum(1 for edge in graph.edges if edge.uncertain)
     registration.global_optimization(
         graph,
         registration.GlobalOptimizationLevenbergMarquardt(),
         registration.GlobalOptimizationConvergenceCriteria(),
         option,
     )
+    corrections = [
+        float(np.abs(np.asarray(node.pose, dtype=float) - was).max())
+        for node, was in zip(graph.nodes, poses_before, strict=True)
+    ]
     # Serialize the graph Open3D actually optimized. `global_optimization` may
     # prune edges below the threshold, so reusing the pre-optimization list would
     # publish a graph that no longer matches the poses below it.
@@ -343,8 +383,31 @@ def run_multiway(payload: dict[str, Any], output: Path, run_id: str) -> dict[str
     ]
     fused = o3d.geometry.PointCloud()
     nodes: list[dict[str, Any]] = []
+    # How far the optimization actually moved each fragment's points, in scene units.
+    #
+    # `corrections` above is the largest absolute change in a pose *matrix entry*,
+    # which is the diagnostic the earlier records in this directory were measured with
+    # and is kept under that name for them. It is not a distance: a 4x4 pose mixes
+    # unitless rotation coefficients with a translation in scene units, so the largest
+    # entry can come from either. Dividing it by the scene extent -- which this code
+    # did, and published as a share -- gives a figure that changes with the units the
+    # scene happens to be expressed in. A pure 90-degree rotation changes a rotation
+    # entry by 1 whether the scene is 10 metres or the same 10000 millimetres across,
+    # so the share came out 0.1 or 0.0001 for identical geometry.
+    #
+    # This measures the displacement the pose change applies to the fragment's own
+    # points. Both the numerator and the extent are then lengths in whatever units the
+    # cloud uses, so the ratio is the same number for the same geometry at any scale.
+    displacements: list[float] = []
     for index, key in enumerate(ordered):
         pose = np.asarray(graph.nodes[index].pose, dtype=float)
+        displacements.append(
+            _point_displacement(
+                np.asarray(clouds[key].points, dtype=float),
+                poses_before[index],
+                pose,
+            )
+        )
         moved = o3d.geometry.PointCloud(clouds[key])
         moved.transform(pose)
         fused += moved
@@ -361,6 +424,20 @@ def run_multiway(payload: dict[str, Any], output: Path, run_id: str) -> dict[str
     fused_path = output / "fused.ply"
     if not o3d.io.write_point_cloud(str(fused_path), fused_down):
         raise Open3dError("Open3D could not write the fused cloud")
+    extent = float(
+        np.linalg.norm(
+            np.asarray(fused_down.get_axis_aligned_bounding_box().get_extent())
+        )
+    )
+    if not extent > 0.0:
+        # Every fragment collapsed into one voxel. The share below divides by this, and
+        # a zero denominator has no honest numerator: publishing 0.0 would read as "the
+        # optimization moved nothing" when the truth is that the scene has no size to
+        # compare a movement against. The validator rejects such a record, so producing
+        # one would only move the failure later.
+        raise Open3dError("fused cloud has no extent to measure a displacement against")
+    largest = max(corrections) if corrections else 0.0
+    moved_the_most = max(displacements) if displacements else 0.0
     pose_graph = {
         "nodes": nodes,
         "edges": edges,
@@ -369,6 +446,25 @@ def run_multiway(payload: dict[str, Any], output: Path, run_id: str) -> dict[str
         "fused_points": len(fused_down.points),
         "fused_points_before_downsample": len(fused.points),
         "fused_sha256": _digest(fused_path),
+        "optimization": {
+            "edges_submitted": edges_submitted,
+            "loop_closures_submitted": loop_closures_submitted,
+            "edges_that_survived_pruning": len(edges),
+            "edges_pruned": edges_submitted - len(edges),
+            # Largest absolute change in a pose matrix entry. Not a distance -- see
+            # the note above the displacement loop -- and kept under this name because
+            # the records in docs/evidence/open3d were measured with it.
+            "max_pose_correction": largest,
+            "max_pose_correction_per_node": corrections,
+            # How far the pose changes moved the fragments' own points, which is a
+            # distance in the same units as the extent below it.
+            "max_point_displacement": moved_the_most,
+            "max_point_displacement_per_node": displacements,
+            # Relative, because a displacement is only small compared with something.
+            # The scene extent is the fused cloud's bounding-box diagonal.
+            "scene_extent": extent,
+            "max_point_displacement_as_share_of_extent": moved_the_most / extent,
+        },
     }
     (output / "pose_graph.json").write_bytes(canonical(pose_graph))
     (output / PAIRS_JOURNAL).write_text(
