@@ -14,7 +14,7 @@ Measured on the upstream demo scan at the shipped defaults, in
 | defaults, with the density crop     | 518 vertices removed                       |
 | of those, within the support distance | **0**                                    |
 | delivered mesh without the crop     | identical, to the triangle and to 1e-6 m2  |
-| control, support cropping disabled  | 1023 triangles and 6.72 m2 removed         |
+| control, support cropping disabled  | ~1025 triangles and ~6.72 m2 removed       |
 | pushed to the 0.20 quantile         | removes supported surface                  |
 
 The count was never wrong. Reading it as this filter's effect on the delivered
@@ -223,10 +223,12 @@ def test_the_grid_records_where_the_crop_starts_doing_harm() -> None:
     rows = _record()["grid"]
     assert len(rows) >= 9, rows
     # At the shipped support distance, not at any support distance. Two rows clear
-    # 0.20 -- the shipped factor at -785 triangles and a wider one at -8980 -- and an
-    # `any` over both let either carry the argument alone. The finding is about the
-    # configuration the product ships, so the cost has to be shown there: the shipped
-    # row could have gone to zero with this test still green.
+    # 0.20 -- the shipped factor at about -785 triangles and a wider one near -8980 --
+    # and an `any` over both let either carry the argument alone. The finding is about
+    # the configuration the product ships, so the cost has to be shown there: the
+    # shipped row could have gone to zero with this test still green. The sign is what
+    # is asserted, not the count: the count moves by about 3 between runs and sits 783
+    # from zero, which `how_stable_are_these_figures` in the record measures.
     from npa.workbench.open3d.schemas import ReconstructRequest
 
     shipped_support = ReconstructRequest.model_fields["support_distance_factor"].default
@@ -277,6 +279,74 @@ def test_the_record_declines_the_claims_it_cannot_support() -> None:
         "removes extrapolated surface" in limits["not_that_the_density_crop_is_wrong"]
     )
     assert "separate decision" in limits["not_that_it_should_be_removed"]
+
+
+def test_the_record_says_which_of_its_figures_move_between_runs() -> None:
+    """A reader regenerating this must be able to tell noise from a regression.
+
+    An independent lane reproduced every structural result here and found 31 figures
+    differing in the fourth significant digit -- including between its own two runs,
+    so this is the Poisson solve being unseeded rather than anything about a machine.
+    The record measures its own spread instead of conceding it in prose.
+    """
+
+    stability = _record()["how_stable_are_these_figures"]
+    assert stability["repeats"] >= 4, stability["repeats"]
+
+    moved = stability["moved_between_repeats"]
+    assert moved, "a stability block that found nothing moving measured nothing"
+    for field, observed in moved.items():
+        assert len(observed["values"]) == stability["repeats"], field
+        assert observed["spread"] > 0, (
+            f"{field} is listed as moving with a spread of zero, so either the repeats "
+            "are not independent solves or this field does not belong here"
+        )
+        assert observed["relative_spread"] < 0.01, (field, observed)
+
+
+def test_every_figure_the_argument_rests_on_is_the_same_in_every_repeat() -> None:
+    """The partition is the point, not the disclosure.
+
+    "Some numbers here move" would be true and useless. What a reader needs is which
+    ones, and the four that carry this record's conclusion are not among them.
+    """
+
+    stability = _record()["how_stable_are_these_figures"]
+    constant = stability["identical_in_every_repeat"]
+    record = _record()
+    shipped = record["at_the_shipped_defaults"]
+
+    assert constant["density_removed_vertices"] == shipped["density_removed_vertices"]
+    assert (
+        constant["of_those_within_the_support_distance"]
+        == shipped["of_those_within_the_support_distance"]
+    )
+    assert constant["delivered_mesh_is_identical"] is True
+    assert constant["the_density_crop_changes_the_mesh_here"] is True
+    # The control's verdict and the shipped verdict are opposite booleans, and both hold
+    # in every repeat. That pair is the whole finding: the crop works, and at the
+    # defaults its removals are the next filter's work.
+    assert (
+        record["control_support_cropping_disabled"][
+            "the_density_crop_changes_the_mesh_here"
+        ]
+        is True
+    )
+
+
+def test_the_threshold_a_test_asserts_is_nowhere_near_the_noise() -> None:
+    """The reason the moving figures are safe to publish.
+
+    One grid figure has an assertion applied to it, and the honest question is not
+    whether it wobbles but whether it could wobble across the line. It sits hundreds
+    of units away from zero with a spread of a few, measured over the same repeats.
+    """
+
+    margin = _record()["how_stable_are_these_figures"]["the_margin_the_assertions_have"]
+    assert margin["asserted"] == "that it is negative"
+    assert all(one < 0 for one in margin["values"]), margin
+    assert margin["nearest_any_repeat_came_to_zero"] > 20 * margin["spread"], margin
+    assert margin["margin_in_units_of_the_observed_spread"] > 20, margin
 
 
 def test_the_record_binds_the_harness_that_produced_it() -> None:

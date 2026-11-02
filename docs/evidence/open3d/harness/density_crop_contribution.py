@@ -43,6 +43,11 @@ POISSON_DEPTH = 9
 SHIPPED_QUANTILE = 0.02
 SHIPPED_SUPPORT_FACTOR = 1.0
 
+#: Repeats for the run-to-run stability block. Six is enough to show the scale of the
+#: variation and to put a floor under the margin the sign assertions have; it is not a
+#: confidence interval and the record does not present one.
+STABILITY_REPEATS = 6
+
 
 def _fused():
     """The upstream demo fragments, fused the way the pipeline's own record is."""
@@ -207,6 +212,114 @@ def selectivity(base, densities, tree) -> dict:
     }
 
 
+def how_stable_are_these_figures(cloud, tree) -> dict:
+    """Which numbers in this record are the same every run, and which are one draw.
+
+    An independent lane re-ran this harness, matched every structural result, and found
+    31 leaf figures differing in the fourth significant digit -- including between its
+    own two runs. Poisson reconstruction here is not deterministic and nothing seeds it.
+    That is worth measuring rather than conceding: without it, the next reader to
+    regenerate this record sees a two-triangle difference and has to guess whether it
+    is noise or a regression.
+
+    The repeats are separate calls rather than separate processes because the variation
+    is per-solve: four calls in one interpreter spread as widely as four interpreters
+    did, so a process boundary would buy nothing and cost a subprocess.
+    """
+
+    repeats = []
+    for _ in range(STABILITY_REPEATS):
+        base, densities = _poisson(cloud)
+        shipped = the_shipped_defaults(base, densities, tree)
+        control = support_cropping_disabled(base, densities, tree)
+        widest = _deliver(base, densities, tree, 0.20, SHIPPED_SUPPORT_FACTOR)
+        baseline = _deliver(base, densities, tree, 0.0, SHIPPED_SUPPORT_FACTOR)
+        repeats.append(
+            {
+                "vertices_before_any_crop": len(base.vertices),
+                "density_removed_vertices": shipped["density_removed_vertices"],
+                "of_those_within_the_support_distance": shipped[
+                    "of_those_within_the_support_distance"
+                ],
+                "delivered_mesh_is_identical": shipped["delivered_mesh_is_identical"],
+                "the_density_crop_changes_the_mesh_here": control[
+                    "the_density_crop_changes_the_mesh_here"
+                ],
+                "control_triangles_removed": control["triangles_removed"],
+                "control_surface_area_removed": control["surface_area_removed"],
+                "triangles_removed_at_quantile_020": (
+                    widest["triangles"] - baseline["triangles"]
+                ),
+            }
+        )
+
+    def spread(field: str) -> dict:
+        values = [one[field] for one in repeats]
+        low, high = min(values), max(values)
+        return {
+            "values": values,
+            "spread": round(high - low, 6),
+            "relative_spread": round((high - low) / abs(high), 6) if high else 0.0,
+        }
+
+    constant = [
+        field
+        for field in (
+            "vertices_before_any_crop",
+            "density_removed_vertices",
+            "of_those_within_the_support_distance",
+            "delivered_mesh_is_identical",
+            "the_density_crop_changes_the_mesh_here",
+        )
+        if len({one[field] for one in repeats}) == 1
+    ]
+    margin = spread("triangles_removed_at_quantile_020")
+    # The ratio is the point. A figure that wobbles by three while sitting 780 away
+    # from the only threshold anything asserts about it cannot flip that assertion,
+    # and saying so is more useful than asking a reader to trust the digits.
+    nearest = min(abs(one) for one in margin["values"])
+    return {
+        "why_this_is_here": (
+            "an independent lane reproduced every structural result here and found 31 "
+            "figures moving in the fourth significant digit, including between its own "
+            "two runs. Poisson reconstruction is not deterministic and nothing seeds it"
+        ),
+        "repeats": STABILITY_REPEATS,
+        "repeated_as": (
+            "separate solves in one interpreter, because the variation is per-solve: "
+            "repeated calls spread as widely as separate processes did"
+        ),
+        "identical_in_every_repeat": {field: repeats[0][field] for field in constant},
+        "moved_between_repeats": {
+            field: spread(field)
+            for field in ("control_triangles_removed", "control_surface_area_removed")
+        },
+        "the_margin_the_assertions_have": {
+            "figure": (
+                "triangles removed at quantile 0.20 and the shipped support distance, "
+                "the row the grid assertion is scoped to"
+            ),
+            "asserted": "that it is negative",
+            **margin,
+            "nearest_any_repeat_came_to_zero": nearest,
+            "margin_in_units_of_the_observed_spread": (
+                round(nearest / margin["spread"], 1) if margin["spread"] else None
+            ),
+        },
+        "so": (
+            "every quantity this record's argument rests on is identical in every "
+            "repeat: how many vertices the density crop removes, how many of those the "
+            "support crop would have removed anyway, whether the delivered mesh is "
+            "unchanged, and whether the control can see the crop at all. What moves is "
+            "triangle counts and surface areas, by less than half a percent. Those are "
+            "reported because they are what a mesh measurement looks like, not because "
+            "any conclusion needs their digits -- the figures elsewhere in this record "
+            "are one draw from this spread, and a reader comparing a regeneration "
+            "should expect the same scale of difference"
+        ),
+    }
+
+
 def build() -> dict:
     cloud = _fused()
     base, densities = _poisson(cloud)
@@ -227,6 +340,7 @@ def build() -> dict:
         ),
         "grid": the_grid(base, densities, tree),
         "is_the_density_crop_selective": selectivity(base, densities, tree),
+        "how_stable_are_these_figures": how_stable_are_these_figures(cloud, tree),
         "what_this_does_not_claim": {
             "not_that_the_density_crop_is_wrong": (
                 "it removes extrapolated surface and does it well. The claim is about "

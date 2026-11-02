@@ -12,15 +12,15 @@
       "density_quantile": 0.02,
       "support_distance_factor": 1.0,
       "low_density_vertices_removed": 518,
-      "triangles": 44248,
-      "surface_area": 18.294748
+      "triangles": 44250,
+      "surface_area": 18.295591
     },
     "without_the_density_crop": {
       "density_quantile": 0.0,
       "support_distance_factor": 1.0,
       "low_density_vertices_removed": 0,
-      "triangles": 44248,
-      "surface_area": 18.294748
+      "triangles": 44250,
+      "surface_area": 18.295591
     },
     "delivered_mesh_is_identical": true,
     "density_removed_vertices": 518,
@@ -33,19 +33,19 @@
       "density_quantile": 0.02,
       "support_distance_factor": 0.0,
       "low_density_vertices_removed": 518,
-      "triangles": 61644,
-      "surface_area": 37.896055
+      "triangles": 61643,
+      "surface_area": 37.889764
     },
     "without_the_density_crop": {
       "density_quantile": 0.0,
       "support_distance_factor": 0.0,
       "low_density_vertices_removed": 0,
       "triangles": 62667,
-      "surface_area": 44.615279
+      "surface_area": 44.615282
     },
     "the_density_crop_changes_the_mesh_here": true,
-    "triangles_removed": 1023,
-    "surface_area_removed": 6.719224,
+    "triangles_removed": 1024,
+    "surface_area_removed": 6.725518,
     "so": "the crop and this measurement both work. What the shipped configuration shows is overlap with the next filter, not an inert filter"
   },
   "grid": [
@@ -53,35 +53,35 @@
       "density_quantile": 0.02,
       "support_distance_factor": 0.0,
       "low_density_vertices_removed": 518,
-      "triangles": 61644,
-      "surface_area": 37.896055,
-      "triangles_versus_no_density_crop": -1023,
-      "surface_area_versus_no_density_crop": -6.719224
+      "triangles": 61643,
+      "surface_area": 37.889764,
+      "triangles_versus_no_density_crop": -1024,
+      "surface_area_versus_no_density_crop": -6.725518
     },
     {
       "density_quantile": 0.05,
       "support_distance_factor": 0.0,
       "low_density_vertices_removed": 1568,
-      "triangles": 59371,
-      "surface_area": 28.879343,
-      "triangles_versus_no_density_crop": -3296,
-      "surface_area_versus_no_density_crop": -15.735936
+      "triangles": 59370,
+      "surface_area": 28.879344,
+      "triangles_versus_no_density_crop": -3297,
+      "surface_area_versus_no_density_crop": -15.735938
     },
     {
       "density_quantile": 0.2,
       "support_distance_factor": 0.0,
       "low_density_vertices_removed": 6272,
-      "triangles": 48398,
-      "surface_area": 20.052288,
-      "triangles_versus_no_density_crop": -14269,
-      "surface_area_versus_no_density_crop": -24.562991
+      "triangles": 48397,
+      "surface_area": 20.052136,
+      "triangles_versus_no_density_crop": -14270,
+      "surface_area_versus_no_density_crop": -24.563146
     },
     {
       "density_quantile": 0.02,
       "support_distance_factor": 1.0,
       "low_density_vertices_removed": 518,
-      "triangles": 44248,
-      "surface_area": 18.294748,
+      "triangles": 44250,
+      "surface_area": 18.295591,
       "triangles_versus_no_density_crop": 0,
       "surface_area_versus_no_density_crop": 0.0
     },
@@ -89,8 +89,8 @@
       "density_quantile": 0.05,
       "support_distance_factor": 1.0,
       "low_density_vertices_removed": 1568,
-      "triangles": 44248,
-      "surface_area": 18.294748,
+      "triangles": 44250,
+      "surface_area": 18.295591,
       "triangles_versus_no_density_crop": 0,
       "surface_area_versus_no_density_crop": 0.0
     },
@@ -98,17 +98,17 @@
       "density_quantile": 0.2,
       "support_distance_factor": 1.0,
       "low_density_vertices_removed": 6272,
-      "triangles": 43463,
-      "surface_area": 17.952996,
+      "triangles": 43465,
+      "surface_area": 17.952883,
       "triangles_versus_no_density_crop": -785,
-      "surface_area_versus_no_density_crop": -0.341752
+      "surface_area_versus_no_density_crop": -0.342708
     },
     {
       "density_quantile": 0.02,
       "support_distance_factor": 3.0,
       "low_density_vertices_removed": 518,
-      "triangles": 57378,
-      "surface_area": 25.814871,
+      "triangles": 57379,
+      "surface_area": 25.814984,
       "triangles_versus_no_density_crop": 0,
       "surface_area_versus_no_density_crop": 0.0
     },
@@ -116,8 +116,8 @@
       "density_quantile": 0.05,
       "support_distance_factor": 3.0,
       "low_density_vertices_removed": 1568,
-      "triangles": 57378,
-      "surface_area": 25.814871,
+      "triangles": 57379,
+      "surface_area": 25.814984,
       "triangles_versus_no_density_crop": 0,
       "surface_area_versus_no_density_crop": 0.0
     },
@@ -125,10 +125,10 @@
       "density_quantile": 0.2,
       "support_distance_factor": 3.0,
       "low_density_vertices_removed": 6272,
-      "triangles": 48398,
-      "surface_area": 20.052288,
-      "triangles_versus_no_density_crop": -8980,
-      "surface_area_versus_no_density_crop": -5.762583
+      "triangles": 48397,
+      "surface_area": 20.052136,
+      "triangles_versus_no_density_crop": -8982,
+      "surface_area_versus_no_density_crop": -5.762848
     }
   ],
   "is_the_density_crop_selective": {
@@ -143,7 +143,7 @@
       {
         "density_quantile": 0.02,
         "vertices_removed": 518,
-        "median_distance_removed": 1.254669,
+        "median_distance_removed": 1.254671,
         "median_distance_kept": 0.024496
       },
       {
@@ -161,6 +161,61 @@
     ],
     "so": "the crop is strongly selective -- its removals sit far from any observed point -- which is the reason it duplicates the support crop rather than a reason to distrust it"
   },
+  "how_stable_are_these_figures": {
+    "why_this_is_here": "an independent lane reproduced every structural result here and found 31 figures moving in the fourth significant digit, including between its own two runs. Poisson reconstruction is not deterministic and nothing seeds it",
+    "repeats": 6,
+    "repeated_as": "separate solves in one interpreter, because the variation is per-solve: repeated calls spread as widely as separate processes did",
+    "identical_in_every_repeat": {
+      "vertices_before_any_crop": 31361,
+      "density_removed_vertices": 518,
+      "of_those_within_the_support_distance": 0,
+      "delivered_mesh_is_identical": true,
+      "the_density_crop_changes_the_mesh_here": true
+    },
+    "moved_between_repeats": {
+      "control_triangles_removed": {
+        "values": [
+          1026,
+          1024,
+          1025,
+          1025,
+          1025,
+          1024
+        ],
+        "spread": 2,
+        "relative_spread": 0.001949
+      },
+      "control_surface_area_removed": {
+        "values": [
+          6.727033,
+          6.719763,
+          6.726967,
+          6.725583,
+          6.719829,
+          6.725521
+        ],
+        "spread": 0.00727,
+        "relative_spread": 0.001081
+      }
+    },
+    "the_margin_the_assertions_have": {
+      "figure": "triangles removed at quantile 0.20 and the shipped support distance, the row the grid assertion is scoped to",
+      "asserted": "that it is negative",
+      "values": [
+        -783,
+        -784,
+        -785,
+        -785,
+        -784,
+        -785
+      ],
+      "spread": 2,
+      "relative_spread": 0.002554,
+      "nearest_any_repeat_came_to_zero": 783,
+      "margin_in_units_of_the_observed_spread": 391.5
+    },
+    "so": "every quantity this record's argument rests on is identical in every repeat: how many vertices the density crop removes, how many of those the support crop would have removed anyway, whether the delivered mesh is unchanged, and whether the control can see the crop at all. What moves is triangle counts and surface areas, by less than half a percent. Those are reported because they are what a mesh measurement looks like, not because any conclusion needs their digits -- the figures elsewhere in this record are one draw from this spread, and a reader comparing a regeneration should expect the same scale of difference"
+  },
   "what_this_does_not_claim": {
     "not_that_the_density_crop_is_wrong": "it removes extrapolated surface and does it well. The claim is about what its published removal count tells a reader when the support crop also runs",
     "not_that_it_should_be_removed": "with support cropping disabled it is the only filter and it works. Changing a default is a separate decision from reporting honestly",
@@ -168,7 +223,7 @@
   },
   "provenance": {
     "harness": "harness/density_crop_contribution.py",
-    "harness_sha256": "d902508be9fc673db94b91acbfb680a86dbda03c144d686477aeebdadce1da55",
+    "harness_sha256": "62900ca0550c9c196265efa64acc7b4b578783e9ec0e33bf9e9cabace13c43a4",
     "path_is_relative_to": "this evidence directory"
   }
 }
