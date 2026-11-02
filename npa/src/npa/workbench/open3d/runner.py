@@ -849,13 +849,19 @@ def _runner_up_plane(
     lets a reviewer see a miss: drop the winning plane's inliers, fit the remainder,
     and report how large the runner-up was relative to the winner.
 
-    No threshold is attached, on purpose. Over six clouds every ambiguous
-    construction's ratio came in above 0.95 and every determined cloud's below 0.90,
-    with no overlap -- a real separation, and still only six clouds, which is not
-    enough to place a line deciding whether a camera axis is trustworthy. The bounds
-    are stated rather than the measured extremes because the extremes move on each
-    regeneration; the ordering is the part that survives one. The number is published
-    so a reader can judge how close the competition was.
+    No threshold is attached, and the reason is stronger than caution. Over six
+    clouds the ambiguous constructions have ranked above the determined ones in every
+    regeneration, but the gap between the two groups has been as narrow as 0.05 while
+    the determined side's own top moved 0.866, 0.878, 0.904 across regenerations --
+    movement of the same size as the separation. An earlier version of this docstring
+    claimed every determined cloud came in below 0.90 and called that a real
+    separation; the next regeneration returned 0.904 and it was not.
+
+    The cloud that pushes the determined side up is the armadillo mesh, which has no
+    floor and no wall, so its second-best plane is nearly as good as its best. That is
+    the correct reading of a cloud with no dominant plane, which is exactly why this
+    ratio cannot carry a line on its own. The number is published so a reader can
+    judge how close the competition was.
     """
 
     kept = cloud.select_by_index(winner["inlier_indices"], invert=True)
@@ -874,10 +880,12 @@ def _runner_up_plane(
             None if second["weak"] else second["up"] != winner["up"]
         ),
         "no_threshold_is_applied_to_this": (
-            "Over six clouds every ambiguous construction came in above 0.95 and "
-            "every determined cloud below 0.90, with no overlap. Six clouds are not "
-            "enough to place a line that decides whether a camera axis is "
-            "trustworthy, so this is evidence for a reader, not a gate."
+            "Over six clouds the ambiguous constructions have ranked above the "
+            "determined ones every time, but by as little as 0.05, while the "
+            "determined side's top moved by about that much between regenerations. "
+            "A cloud with no dominant plane has a second-best plane nearly as good "
+            "as its best, which is correct and which puts it close to the ambiguous "
+            "band. So this is evidence for a reader, not a gate."
         ),
     }
 

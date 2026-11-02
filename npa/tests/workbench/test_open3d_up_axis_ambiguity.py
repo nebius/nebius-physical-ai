@@ -50,6 +50,7 @@ def agreeing_report(**overrides: Any) -> dict[str, Any]:
         "plane_inlier_fraction": 0.34,
         "agreement": {
             "repeats": 9,
+            "attempted_fits": 9,
             "distinct_axes": 1,
             "candidates": [{"up": [0.0, 0.0, -1.0], "chosen_by_repeats": 9}],
             "runner_up_plane": {
@@ -79,6 +80,7 @@ def ambiguous_report(**overrides: Any) -> dict[str, Any]:
         "plane_inlier_fraction": 0.506,
         "agreement": {
             "repeats": 9,
+            "attempted_fits": 9,
             "distinct_axes": 2,
             "candidates": [
                 {"up": [0.0, 0.0, 1.0], "chosen_by_repeats": 7},
@@ -505,6 +507,52 @@ def test_a_record_naming_an_axis_from_a_minority_of_fits_is_rejected() -> None:
         validate_up_axis_inference({"up_axis_inference": inference})
 
 
+def test_a_report_omitting_its_attempt_count_cannot_skip_the_majority_check() -> None:
+    """The bypass is omission, and it is the same payload the check above refuses.
+
+    When `attempted_fits` was optional this record validated: the minority rule sat
+    behind a presence test, so a producer that never emitted the field was never
+    asked the question. Every other field in the block is required, and this one
+    carries the only check that stands between one usable fit and the word
+    "measured", so optional was the wrong shape for it.
+    """
+
+    inference = {
+        "source": "largest-plane-normal-snapped-to-axis",
+        "up": [1.0, 0.0, 0.0],
+        "agreement": {
+            "repeats": 1,
+            "distinct_axes": 1,
+            "candidates": [{"up": [1.0, 0.0, 0.0], "chosen_by_repeats": 1}],
+            "agreement_is_not_meaningfulness": {
+                "measured_counterexample": _counterexample(),
+                "so": "agreement proves only that one plane dominates",
+            },
+        },
+    }
+    with pytest.raises(Open3dError, match="how many fits were attempted"):
+        validate_up_axis_inference({"up_axis_inference": inference})
+
+
+def test_both_branches_of_the_runner_state_their_attempt_count(monkeypatch) -> None:
+    """Required means the producer must supply it, so bind the two together.
+
+    Reading the source would show the field twice and say nothing about whether the
+    branch that returns reaches it. These drive the real function: a scan whose fits
+    agree and one whose fits split, which are the two returns that carry an
+    `agreement` block, and the validator is then asked to accept each.
+    """
+
+    for readings, expect in (
+        ([_strong((0.0, 0.0, 1.0))] * 9, 9),
+        ([_strong((0.0, 0.0, 1.0))] * 5 + [_strong((1.0, 0.0, 0.0))] * 4, 9),
+    ):
+        report = _drive_readings(monkeypatch, readings)
+        agreement = report["agreement"]
+        assert agreement["attempted_fits"] == expect, report
+        validate_up_axis_inference({"up_axis_inference": report})
+
+
 def test_an_agreement_report_claiming_more_repeats_than_attempts_is_rejected() -> None:
     inference = {
         "source": "largest-plane-normal-snapped-to-axis",
@@ -549,6 +597,7 @@ def test_an_unrecognised_source_is_refused_rather_than_waved_through(
         "up": [1.0, 0.0, 0.0],
         "agreement": {
             "repeats": 8,
+            "attempted_fits": 8,
             "distinct_axes": 5,
             "candidates": [
                 {"up": [1.0, 0.0, 0.0], "chosen_by_repeats": 4},
@@ -633,12 +682,18 @@ def test_the_detection_rate_the_code_states_is_the_one_the_record_measured() -> 
     assert len(rates) >= 3, rates
     for rate in rates:
         assert rate["of_runs"] == 30, rate
-        assert (
-            rate["ambiguity_detected_in_runs"] >= UP_AXIS_DETECTION_FLOOR_OF_THIRTY
-        ), (
-            "the retained sweep fell below the floor the code publishes; the figure in "
-            f"runner.py no longer describes the evidence: {rate}"
-        )
+    # The floor belongs to the shipped count and to nothing else. Its own comment in
+    # runner.py derives it from five sweeps of the shipped count, and applying it to
+    # the four-repeat row asserted something the constant never claimed: that row came
+    # back at 19 of 30 on a regeneration, correctly, because fewer fits detect less
+    # often. That is the claim RISES_WITH_FITS makes about the lower rows.
+    shipped = [one for one in rates if one["is_the_shipped_default"]]
+    assert len(shipped) == 1, rates
+    detected_at_default = shipped[0]["ambiguity_detected_in_runs"]
+    assert detected_at_default >= UP_AXIS_DETECTION_FLOOR_OF_THIRTY, (
+        "the retained sweep fell below the floor the code publishes at the shipped "
+        f"count; the figure in runner.py no longer describes the evidence: {shipped[0]}"
+    )
     detected = [one["ambiguity_detected_in_runs"] for one in rates]
     assert UP_AXIS_DETECTION_RISES_WITH_FITS is True
     assert detected == sorted(detected), (
@@ -648,7 +703,7 @@ def test_the_detection_rate_the_code_states_is_the_one_the_record_measured() -> 
     # The floor has to be worth clearing: a floor of zero would always pass, and a
     # floor at the observed figure would go stale on the next sweep, which is what
     # happened to the exact counts this replaced.
-    assert 0 < UP_AXIS_DETECTION_FLOOR_OF_THIRTY < min(detected)
+    assert 0 < UP_AXIS_DETECTION_FLOOR_OF_THIRTY < detected_at_default
 
 
 def test_the_record_publishes_a_detection_rate_rather_than_a_guarantee() -> None:
@@ -668,13 +723,19 @@ def test_the_record_publishes_a_detection_rate_rather_than_a_guarantee() -> None
     )
 
 
-def test_the_runner_up_separation_holds_as_an_ordering_not_as_two_ranges() -> None:
-    """The bound the code states, checked by direction.
+def test_the_runner_up_separation_is_an_ordering_with_a_narrow_margin() -> None:
+    """The ordering survives a regeneration. The width of it does not.
 
-    Exact ranges were quoted here first and drifted twice: 0.956-0.975 became
-    0.956-0.976 became 0.955-0.976, and the determined band's top moved from 0.877
-    to 0.866 to 0.878. The ordering is what survives a regeneration, so the claim is
-    the ordering plus bounds loose enough to mean something.
+    Exact ranges were quoted here first and drifted twice, so this became the
+    ordering plus bounds "loose enough to mean something": above 0.95 and below 0.90.
+    The next regeneration returned a determined cloud at 0.904 and broke the second
+    bound, which was the useful answer -- the margin between the groups is about 0.05
+    and the determined endpoint alone has moved 0.866, 0.878, 0.904, so a bound of
+    that kind was never loose enough and the separation is not wide.
+
+    What is asserted here is the ordering, which has held every time, and that the
+    margin is published rather than implied. Reinstating an absolute bound a third
+    time would be pinning a figure this record exists to say does not reproduce.
     """
 
     ambiguous, determined = [], []
@@ -695,34 +756,98 @@ def test_the_runner_up_separation_holds_as_an_ordering_not_as_two_ranges() -> No
         "the ambiguous and determined runner-up ratios now overlap, so the separation "
         f"the code describes no longer holds: {lowest_ambiguous} vs {highest_determined}"
     )
-    assert lowest_ambiguous > 0.95, lowest_ambiguous
-    assert highest_determined < 0.90, highest_determined
+    # How wide, not just which way round. A margin this narrow is the reason the
+    # source must not describe the two groups as well separated, and the runtime
+    # string a consumer reads is where that correction has to land.
+    margin = lowest_ambiguous - highest_determined
+    assert 0.0 < margin < 0.2, (
+        f"the margin is {margin}; if the groups have genuinely separated by more than "
+        "the endpoints move, say so in the source before asserting it here"
+    )
+    from npa.workbench.open3d import runner
+
+    source = Path(runner.__file__).read_text()
+    _, _, note = source.partition('"no_threshold_is_applied_to_this": (')
+    note, _, _ = note.partition("),")
+    assert "as little as" in note, (
+        "the note a consumer reads still describes the two groups without saying how "
+        f"narrow the gap is: {note}"
+    )
+    assert "no overlap" not in note, (
+        "the earlier claim of a clean separation is back in the note a consumer reads"
+    )
 
 
-def test_the_chance_agreement_explanation_is_withdrawn_not_asserted() -> None:
-    """The record used to explain the residual misses and now declines to.
+def test_the_chance_agreement_model_is_tested_at_power_not_asserted() -> None:
+    """The record asserted this model, then withdrew it, and now measures it.
 
-    Two of us checked that model's arithmetic and neither checked whether it was
-    admissible. It is not: the per-fit minority moves between processes, and forty
-    fits per estimate cannot separate that movement from counting noise, so the
-    record publishes the comparison and withholds the conclusion.
+    The withdrawal was justified by a per-fit minority rate that moved between
+    processes. It does not: the probe that found the movement ran its repeats in one
+    interpreter while being named for separate ones, and at forty fits per estimate
+    it could not have separated movement from counting noise in either direction.
+    The replacement spawns twelve interpreters at four hundred fits each, and the
+    assertions below are about its structure and its power rather than its numbers.
     """
 
     detection = _record()["detection_by_repeat_count"]
-    assert "withdrawn" in detection["why_it_is_not_one"], detection["why_it_is_not_one"]
+    high = detection["independence_of_the_fits"][
+        "does_the_minority_rate_vary_between_processes"
+    ]
+    assert high["each_process_is_a_fresh_interpreter"] is True, high
+    assert high["processes"] >= 12, high
+    assert high["fits_attempted_per_process"] >= 400, high
 
-    across = detection["independence_of_the_fits"]["across_processes"]
-    assert across["processes"] >= 3, across
-    assert across["fits_per_minority_estimate"] >= 40, across
-    low, high = across["per_fit_minority_range"]
-    assert low < high, "a single minority value across processes is not a range"
-    # The noise comparison is the reason the question is left open, so it has to be
-    # present and have been actually computed rather than asserted.
-    assert across["spread_in_sigmas"] == pytest.approx(
-        (high - low) / across["one_sigma_of_counting_noise_at_that_rate"], rel=0.02
-    ), across
-    assert "withdrawn rather than replaced" in across["so"]
-    assert "named rather than" in across["what_would_settle_it"]
+    # The homogeneity statistic, recomputed from the per-process counts the record
+    # publishes. Asserting the published value against itself would pass on a record
+    # that printed a constant.
+    pooled = high["pooled_per_fit_minority"]
+    rebuilt = sum(
+        (minority - pooled * usable) ** 2 / (pooled * usable * (1.0 - pooled))
+        for minority, usable in (
+            (round(rate * usable), usable)
+            for rate, usable in zip(
+                high["per_fit_minority_per_process"],
+                high["usable_fits_per_process"],
+                strict=True,
+            )
+        )
+    )
+    assert high["chi_square"] == pytest.approx(rebuilt, rel=0.02), high
+    assert high["degrees_of_freedom"] == high["processes"] - 1, high
+    # One fixed rate across processes. The earlier probe's 0.2-to-0.375 spread would
+    # be about eight sigma here, so this is a measurement with the power to disagree.
+    assert high["homogeneity_rejected"] is False, high
+    assert high["chi_square_per_degree_of_freedom"] < 3.0, high
+    assert high["one_sigma_of_counting_noise_at_that_rate"] < 0.03, high
+
+    model = high["and_does_it_predict_the_miss_rate"]
+    assert model["checks_run"] >= 3000, model
+    assert model["fits_per_check"] == 9, model
+    assert abs(model["gap_in_sigmas"]) <= 3.0, model
+    assert model["model_rejected"] is False, model
+    # Admissible, not confirmed, and the record has to keep saying which.
+    assert "not" in high["what_this_still_does_not_establish"]
+
+
+def test_the_superseded_probe_is_relabelled_rather_than_quietly_dropped() -> None:
+    """Its spread is why the high-power probe exists, so a reader should see it.
+
+    Two things were wrong with it: the name claimed separate processes it never
+    spawned, and forty fits could not decide the question. The record keeps it under
+    a name that matches what it did.
+    """
+
+    independence = _record()["detection_by_repeat_count"]["independence_of_the_fits"]
+    assert "across_processes" not in independence, (
+        "the probe that never spawned a process must not be published under that name"
+    )
+    within = independence["repeats_within_one_process"]
+    low, high_rate = within["per_fit_minority_range"]
+    assert low < high_rate, "a single minority value is not a range"
+    assert within["spread_in_sigmas"] == pytest.approx(
+        (high_rate - low) / within["one_sigma_of_counting_noise_at_that_rate"], rel=0.02
+    ), within
+    assert "one process" in within["so"], within["so"]
 
 
 def test_the_runner_up_measurement_is_published_without_a_threshold() -> None:

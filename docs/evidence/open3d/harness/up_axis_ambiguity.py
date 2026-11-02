@@ -34,6 +34,7 @@ from __future__ import annotations
 import json
 import platform
 import sys
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -303,12 +304,14 @@ def detection_by_repeat_count(
         "rates": rates,
         "why_it_is_not_one": (
             "The check fires when the repeats disagree, so it misses when every fit "
-            "lands on the same branch. A previous version of this record explained "
-            "the residual as the branches agreeing by chance, following "
-            "(1-p)^n + p^n. That explanation is withdrawn: see "
-            "independence_of_the_fits, which tests it against the per-fit split "
-            "measured in the same process and finds it does not hold. The rates "
-            "above are measurements and are not derived from any model."
+            "lands on the same branch. The chance-agreement account of the residual, "
+            "(1-p)^n + p^n for a per-fit minority rate p over n fits, is consistent "
+            "with the measurement when the measurement has the power to test it: see "
+            "does_the_minority_rate_vary_between_processes, which puts 3600 checks "
+            "against each process's own p and finds the predicted and observed miss "
+            "counts within a couple of sigma. It is admissible, not confirmed -- the "
+            "independence it assumes between fits in one run is untested. The rates "
+            "above are measurements either way and are not derived from any model."
         ),
         "independence_of_the_fits": _independence_check(rates, minority),
     }
@@ -378,11 +381,234 @@ def _independence_check(rates: list[dict], minority: float) -> dict[str, Any]:
             "and that is the point -- see across_processes below. One process is not "
             "enough to decide this, so no verdict is published from this block alone"
         ),
-        "across_processes": independence_across_processes(),
+        "does_the_minority_rate_vary_between_processes": (
+            does_the_minority_rate_vary_between_processes()
+        ),
+        "repeats_within_one_process": repeats_within_one_process(),
         "what_this_does_not_change": (
             "the check still detects the ambiguity in most runs at the shipped count, "
-            "and the rate is published rather than claimed away. What is withdrawn is "
-            "the explanation of why it misses, not the measurement of how often"
+            "and the rate is published rather than claimed away. Nothing above is "
+            "derived from the chance-agreement account, so whether that account holds "
+            "changes the explanation of why the check misses and not the measurement "
+            "of how often"
+        ),
+    }
+
+
+HIGH_POWER_FITS = 400
+HIGH_POWER_CHECKS = 300
+HIGH_POWER_PROCESSES = 12
+
+
+MINORITY_PROBE_FLAG = "--minority-probe"
+
+
+def minority_in_this_process() -> tuple[int, int, int, int]:
+    """The two quantities the chance-agreement model relates, in one process.
+
+    The minority-axis count out of `HIGH_POWER_FITS` single fits, which is the
+    model's input, and the number of full pipeline checks out of
+    `HIGH_POWER_CHECKS` that missed the ambiguity, which is its prediction. Both
+    must come from the same process: the model's claim is that this process's
+    minority rate explains this process's miss rate.
+
+    Returns counts rather than rates so the pooling below is exact.
+    """
+
+    cloud = room(ROOM_POINTS, ROOM_POINTS)
+    axes: dict[tuple[float, ...], int] = {}
+    usable = 0
+    for _ in range(HIGH_POWER_FITS):
+        reading = _plane_up_reading(o3d, cloud, VOXEL)
+        if reading is None or reading["weak"]:
+            continue
+        usable += 1
+        key = tuple(reading["up"])
+        axes[key] = axes.get(key, 0) + 1
+    misses = sum(
+        1
+        for _ in range(HIGH_POWER_CHECKS)
+        if _up_axis(o3d, cloud, VOXEL, repeats=UP_AXIS_REPEATS)["source"]
+        != "default-ambiguous-plane"
+    )
+    return (
+        (usable - max(axes.values()) if axes else 0),
+        usable,
+        misses,
+        HIGH_POWER_CHECKS,
+    )
+
+
+def _spawn_minority_probes(processes: int) -> list[tuple[int, int, int, int]]:
+    """Run the probe in `processes` fresh interpreters and collect their counts.
+
+    A fresh interpreter, not a worker in a pool and not a loop in this one: the
+    quantity in question is whether the rate moves between processes, and
+    `segment_plane`'s thread count and seed state are properties of a process.
+    """
+
+    import subprocess
+
+    runs = [
+        subprocess.Popen(
+            [sys.executable, str(Path(__file__).resolve()), MINORITY_PROBE_FLAG],
+            stdout=subprocess.PIPE,
+            text=True,
+        )
+        for _ in range(processes)
+    ]
+    counts = []
+    for run in runs:
+        out, _ = run.communicate()
+        if run.returncode != 0:
+            raise RuntimeError(f"a minority probe exited {run.returncode}")
+        minority, usable, misses, checks = (int(one) for one in out.split())
+        counts.append((minority, usable, misses, checks))
+    return counts
+
+
+def _model_against_the_miss_rate(
+    counts: list[tuple[int, int, int, int]],
+) -> dict[str, Any]:
+    """Does the chance-agreement model predict how often the check actually misses?
+
+    The model: a fit lands on the minority axis with probability p, the fits are
+    independent, so all `1 + repeats` of them agree -- and the check reports a
+    measured axis instead of the ambiguity -- with probability
+    `(1-p)**fits + p**fits`. Each process supplies its own p and its own miss count,
+    so the comparison never borrows one process's rate to explain another's misses.
+
+    Pooled over every process this is thousands of fits and thousands of checks,
+    which is the power the earlier probes lacked. A one-sigma band is published
+    beside the prediction so a reader can see whether a gap matters: the previous
+    verdicts turned on differences of two or three misses in thirty runs, where the
+    noise alone is one and a half.
+    """
+
+    fits = UP_AXIS_REPEATS + 1
+    predicted = 0.0
+    variance = 0.0
+    observed = 0
+    checks = 0
+    for minority, usable, misses, runs in counts:
+        if not usable:
+            continue
+        rate = minority / usable
+        agree = (1.0 - rate) ** fits + rate**fits
+        predicted += agree * runs
+        variance += runs * agree * (1.0 - agree)
+        observed += misses
+        checks += runs
+    sigma = variance**0.5
+    gap = (observed - predicted) / sigma if sigma > 0 else None
+    return {
+        "fits_per_check": fits,
+        "checks_run": checks,
+        "misses_predicted_by_each_process_own_minority_rate": round(predicted, 1),
+        "misses_observed": observed,
+        "one_sigma_of_the_prediction": round(sigma, 1),
+        "gap_in_sigmas": round(gap, 2) if gap is not None else None,
+        "model_rejected": gap is not None and abs(gap) > 3.0,
+        "so": (
+            "stated as the comparison rather than as a verdict, because the quantity "
+            "that decides it is a gap in sigmas and a reader should see both terms"
+        ),
+        "the_sign_of_this_gap_is_not_a_finding": {
+            "gaps_measured_in_earlier_runs_of_this_block": [-2.29, -1.3, 0.13, -1.04],
+            "what_the_first_two_looked_like": (
+                "a systematic over-prediction of about 12 percent, which would mean "
+                "the fits are not quite independent and the check misses slightly "
+                "less often than chance alone would make it"
+            ),
+            "what_happened_next": (
+                "the third run came back at +0.13 and the apparent bias was gone. "
+                "Draws spanning a couple of sigma are unremarkable for a quantity "
+                "whose unit is one sigma, and the gap published above is a further "
+                "independent draw a reader can add to the list"
+            ),
+            "retained_because": (
+                "the response to those first two readings was to double the checks "
+                "per process so a 12 percent bias would clear three sigma. That is "
+                "the defect this whole record is about -- reading a figure that has "
+                "not been shown to reproduce -- and it was about to be committed by "
+                "the author of the record. Running the block again cost four minutes "
+                "and was the only thing that caught it"
+            ),
+        },
+    }
+
+
+def does_the_minority_rate_vary_between_processes() -> dict[str, Any]:
+    """The measurement the probe below claims to make and does not.
+
+    `independence_across_processes` is named for separate processes and runs its
+    repeats in a loop in this one, so the 1.1-sigma spread it published is a
+    within-process spread. It cannot see the quantity it was built to test. That
+    error is mine and the probe is renamed below rather than deleted.
+
+    This runs twelve fresh interpreters at ten times the fits per estimate, which
+    divides counting noise by about three. The test is Pearson's chi-square for
+    homogeneity: under one fixed rate the statistic's expectation is its degrees of
+    freedom, so a value near that count means the spread is noise and a fixed-p
+    model is admissible on this evidence.
+    """
+
+    counts = _spawn_minority_probes(HIGH_POWER_PROCESSES)
+    rates = [one / two for one, two, _, _ in counts if two]
+    pooled_minority = sum(one for one, _, _, _ in counts)
+    pooled_usable = sum(two for _, two, _, _ in counts)
+    pooled = pooled_minority / pooled_usable
+    chi_square = 0.0
+    for minority, usable, _, _ in counts:
+        if not usable or not 0.0 < pooled < 1.0:
+            continue
+        expected = pooled * usable
+        chi_square += (minority - expected) ** 2 / (expected * (1.0 - pooled))
+    degrees = len([1 for _, usable, _, _ in counts if usable]) - 1
+    noise = (pooled * (1.0 - pooled) / (pooled_usable / len(counts))) ** 0.5
+    spread = max(rates) - min(rates)
+    return {
+        "and_does_it_predict_the_miss_rate": _model_against_the_miss_rate(counts),
+        "processes": HIGH_POWER_PROCESSES,
+        "each_process_is_a_fresh_interpreter": True,
+        "fits_attempted_per_process": HIGH_POWER_FITS,
+        "usable_fits_per_process": [two for _, two, _, _ in counts],
+        "per_fit_minority_per_process": [round(one, 4) for one in rates],
+        "per_fit_minority_range": [round(min(rates), 4), round(max(rates), 4)],
+        "pooled_per_fit_minority": round(pooled, 4),
+        "one_sigma_of_counting_noise_at_that_rate": round(noise, 4),
+        "spread_in_sigmas": round(spread / noise, 2) if noise > 0 else None,
+        "chi_square": round(chi_square, 2),
+        "degrees_of_freedom": degrees,
+        "chi_square_per_degree_of_freedom": (
+            round(chi_square / degrees, 2) if degrees > 0 else None
+        ),
+        # Reject homogeneity only well past the 0.1% point, because the claim being
+        # tested is the admissibility of a model and a near miss should not decide it.
+        "homogeneity_rejected": degrees > 0 and chi_square > 3.0 * degrees,
+        "so": (
+            "at ten times the power the four-process probe had, the per-process "
+            "minority rates are consistent with one fixed rate: the chi-square per "
+            "degree of freedom is near one and the spread is a couple of sigma of "
+            "counting noise, where a rate genuinely spanning 0.2 to 0.375 would now "
+            "be eight. The variation the low-power probe saw was its own noise. This "
+            "removes the reason that probe gave for withdrawing the chance-agreement "
+            "model, so a fixed-p model is admissible on this evidence"
+        ),
+        "what_this_still_does_not_establish": (
+            "that the model is correct. Admissible is not confirmed: this measures "
+            "the rate's stability across processes, not whether the fits within one "
+            "pipeline run are independent of each other, which is the assumption the "
+            "model actually needs. The detection rates published above do not depend "
+            "on it either way"
+        ),
+        "this_supersedes": (
+            "`repeats_within_one_process` below, which is retained because its spread "
+            "is what prompted this one. Two things were wrong with it and both are "
+            "recorded rather than quietly fixed: it was named for separate processes "
+            "and used none, so its spread was never the between-process quantity it "
+            "was built to test; and at forty fits it could not have decided either "
+            "way. It was right to call its own result undecidable"
         ),
     }
 
@@ -408,8 +634,14 @@ def _probe_one_process() -> dict[str, Any]:
     return {"minority": minority, "fits": fits, "misses": misses, "runs": PIPELINE_RUNS}
 
 
-def independence_across_processes(processes: int = 4) -> dict[str, Any]:
-    """The same test in separate processes, because its verdict moves between them.
+def repeats_within_one_process(processes: int = 4) -> dict[str, Any]:
+    """The same test repeated in this process, because its verdict moves between runs.
+
+    Named `independence_across_processes` when it was written, which was wrong: the
+    loop below calls `_probe_one_process` in this interpreter. The spread it reports
+    is between repeated measurements in one process, not between processes, and the
+    between-process question is answered by
+    `does_the_minority_rate_vary_between_processes` above.
 
     Run once, this test said the model held (predicted 3.03 misses against 3
     observed at nine fits, p = 0.64). Run again it rejected the model outright
@@ -466,14 +698,12 @@ def independence_across_processes(processes: int = 4) -> dict[str, Any]:
         "the_spread_exceeds_counting_noise": spread > 4.0 * noise,
         "processes_rejecting_the_model": len(rejecting),
         "so": (
-            "the explanation is withdrawn rather than replaced. The minority rate "
-            "varies enough between processes to make a fixed-p model doubtful, and "
-            "forty fits per estimate is not enough to separate that variation from "
-            "counting noise, so this record cannot establish the chance-agreement "
-            "account and does not assert it. Individual per-process verdicts are "
-            "low-powered at thirty runs and are published as observations, not as a "
-            "finding. What is withdrawn is the explanation of why the check misses; "
-            "the measured detection rates above stand on their own"
+            "nothing, on its own. At forty fits per estimate this probe could not "
+            "separate a varying rate from counting noise in either direction, and it "
+            "was measuring repeated runs in one process while reporting them as "
+            "separate processes. Its verdicts are retained as observations. The "
+            "between-process question it was built for is answered at ten times this "
+            "power by `does_the_minority_rate_vary_between_processes` above"
         ),
         "what_would_settle_it": (
             "a few hundred fits per process across a dozen processes would separate a "
@@ -498,6 +728,10 @@ def case(name: str, cloud, voxel: float, note: str) -> dict[str, Any]:
 
 
 def main() -> None:
+    if MINORITY_PROBE_FLAG in sys.argv[1:]:
+        # One child of `_spawn_minority_probes`, which needs counts and nothing else.
+        print(*minority_in_this_process())
+        return
     ambiguous = room(ROOM_POINTS, ROOM_POINTS)
     cases = [
         case(

@@ -488,26 +488,29 @@ def validate_up_axis_inference(recording: Any) -> None:
         raise Open3dError(
             f"the agreement report found {distinct} axes in {repeats} repeats"
         )
-    attempted = agreement.get("attempted_fits", _ABSENT)
-    if attempted is not _ABSENT:
-        if not isinstance(attempted, int) or isinstance(attempted, bool):
-            raise Open3dError("attempted_fits must be a count")
-        if attempted < repeats:
-            raise Open3dError(
-                f"the agreement report counts {repeats} repeats out of "
-                f"{attempted} attempted fits"
-            )
-        # A majority, so "the repeats agreed" cannot be satisfied by a sample of one
-        # out of nine. Without this, a scan whose fits were weak eight times in nine
-        # and strong on the draw that happened to be first was published as measured.
-        if (
-            source == "largest-plane-normal-snapped-to-axis"
-            and 2 * repeats <= attempted
-        ):
-            raise Open3dError(
-                f"the report names a measured axis from {repeats} usable fits out of "
-                f"{attempted} attempted, which is not a majority of them"
-            )
+    # Required, not optional. The check below is the only thing standing between a
+    # one-usable-fit sample and the word "measured", and an optional field is a check
+    # the producer can turn off by omission -- which is the dependency on the producer
+    # staying correct that this validator exists to remove.
+    attempted = agreement.get("attempted_fits")
+    if not isinstance(attempted, int) or isinstance(attempted, bool):
+        raise Open3dError(
+            "the agreement report does not say how many fits were attempted, so the "
+            "repeats it counts cannot be read as a majority of anything"
+        )
+    if attempted < repeats:
+        raise Open3dError(
+            f"the agreement report counts {repeats} repeats out of "
+            f"{attempted} attempted fits"
+        )
+    # A majority, so "the repeats agreed" cannot be satisfied by a sample of one out
+    # of nine. Without this, a scan whose fits were weak eight times in nine and
+    # strong on the draw that happened to be first was published as measured.
+    if source == "largest-plane-normal-snapped-to-axis" and 2 * repeats <= attempted:
+        raise Open3dError(
+            f"the report names a measured axis from {repeats} usable fits out of "
+            f"{attempted} attempted, which is not a majority of them"
+        )
     # The two claims that must not come apart: naming an axis requires the repeats to
     # have agreed, and reporting disagreement requires not naming one.
     if source == "largest-plane-normal-snapped-to-axis" and distinct != 1:
