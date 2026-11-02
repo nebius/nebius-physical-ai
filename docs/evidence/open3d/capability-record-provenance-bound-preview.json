@@ -10,6 +10,7 @@
         "sha256": "5c0138dc9e1018afe4f94dd3381cfd8f740e0d4f444340db4b45f931365d1afb"
       },
       "recording": {
+        "hashes_that_name_no_file_here": "The superseded recording, retained in the lane evidence pack and deliberately not committed -- which is the whole point of the supersedes block, and is why this hash cannot be checked from this directory.",
         "file": "point_cloud.rrd, retained in the lane evidence pack under evidence/open3d/viewer-ui/superseded-preview/ and deliberately not committed",
         "sha256": "36383fb1dce7a4becc35e60d21a52a7c4bbeec089d864c7f5a6daf589557c784"
       },
@@ -34,6 +35,7 @@
     ]
   },
   "inputs": {
+    "hashes_that_name_no_file_here": "The fused cloud and mesh this preview read, by the names the run gave them. They are that run's outputs and are not committed here.",
     "fused_ply": {
       "path": "fused.ply",
       "sha256": "da82039ebd5fd7c753179db971ff051f7e4eb3dbb0b294b07108f00c81b6c7b7"

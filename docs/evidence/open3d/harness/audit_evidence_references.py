@@ -141,14 +141,21 @@ def resolve(value: str, run_dir: str | None) -> Path | None:
 
 def bound_pairs(
     node: object, where: str = "", declared: bool = False
-) -> tuple[list[tuple[str, str, str]], list[tuple[str, bool]]]:
+) -> tuple[list[tuple[str, str, str, bool]], list[tuple[str, bool]]]:
     """Split every hash in a record into those bound to a named file and those not.
 
-    Returns (bound, unbound). A bound entry is (json path, named file, claimed hash);
-    an unbound entry is (json path, whether a `DECLARATION_KEY` note covers it).
+    Returns (bound, unbound). A bound entry is (json path, named file, claimed hash,
+    whether a `DECLARATION_KEY` note covers it); an unbound entry is (json path,
+    whether a note covers it).
+
+    Both sides carry the note because naming a file is not the same as the file being
+    here. A hash whose named file does not resolve is exactly as uncheckable as one
+    that named nothing, and until the note was threaded through this side too, adding
+    a path key that resolves to nothing moved a hash out of the gated bucket and into
+    the ungated one -- same hash, same unverifiability, no justification demanded.
     """
 
-    bound: list[tuple[str, str, str]] = []
+    bound: list[tuple[str, str, str, bool]] = []
     unbound: list[tuple[str, bool]] = []
     if isinstance(node, dict):
         note = node.get(DECLARATION_KEY)
@@ -171,7 +178,7 @@ def bound_pairs(
                     # `artifact_hashes: {"multiway/fused.ply": "<sha>"}`. The key is the binding.
                     named = key
                 if isinstance(named, str) and named:
-                    bound.append((here, named, value))
+                    bound.append((here, named, value, declared))
                 else:
                     unbound.append((here, declared))
             else:
@@ -180,9 +187,7 @@ def bound_pairs(
                 unbound += sub_unbound
     elif isinstance(node, list):
         for index, value in enumerate(node):
-            sub_bound, sub_unbound = bound_pairs(
-                value, f"{where}[{index}]", declared
-            )
+            sub_bound, sub_unbound = bound_pairs(value, f"{where}[{index}]", declared)
             bound += sub_bound
             unbound += sub_unbound
     return bound, unbound
@@ -299,7 +304,7 @@ def main() -> int:
         uncovered = [(w, d) for w, d in unbound if w not in covered]
         unbound_total += [f"{record.name}:{w}" for w, _ in uncovered]
         undeclared += [f"{record.name}:{w}" for w, d in uncovered if not d]
-        for where, named, claimed in bound:
+        for where, named, claimed, declared in bound:
             # Resolve before exempting: a run's artifacts are often not committed here, but when
             # a run directory *is* committed its hashes are checkable like anything else, and the
             # exemption used to skip them before anything looked.
@@ -311,6 +316,16 @@ def main() -> int:
                 unresolvable.append(
                     f"{record.name}:{where} -> {named} (not found here)"
                 )
+                # And it needs the same note as a hash that named nothing at all. A name
+                # the directory does not hold is not a binding: nothing reads those bytes,
+                # so the claim rests on the record's word either way. Leaving this subset
+                # ungated made the gate avoidable by adding a path key -- which is also
+                # how an accident presents, when a record cites a committed file that is
+                # later moved and is silently reclassified from verified to held
+                # elsewhere. The `(run artifact)` subset above stays exempt because its
+                # name is itself the description, which is what the note would say.
+                if not declared:
+                    undeclared.append(f"{record.name}:{where} -> {named}")
                 continue
             actual = digest(target)
             if actual != claimed:
@@ -344,7 +359,8 @@ def main() -> int:
         undeclared = [item for item in undeclared if item not in checked_here]
 
     findings += [
-        f"{one} is a hash that names no file here, is not an equality claim, and no "
+        f"{one} is a hash this directory cannot check -- it names no file here, or "
+        "names one the directory does not hold -- is not an equality claim, and no "
         f"enclosing object declares why; add a {DECLARATION_KEY!r} note saying what "
         "these bytes are"
         for one in undeclared
@@ -365,9 +381,23 @@ def main() -> int:
     # of this guard overstated what it had done. Counts by default, names on request, because a
     # gate that prints seventy lines on success stops being read.
     verbose = "--verbose" in sys.argv
-    held_elsewhere = "name a file this directory does not hold, mostly a run's own artifacts recorded by hash"
+    # Split by which of the two exemptions applies, because they are now enforced
+    # differently and one printed number covering both said less than it appeared to.
+    # A run-artifact name describes itself; a name this directory simply does not hold
+    # has to be declared, exactly like a hash that named nothing.
+    run_artifacts = [one for one in unresolvable if one.endswith("(run artifact)")]
+    not_held_here = [one for one in unresolvable if one not in set(run_artifacts)]
     for label, items in (
-        (held_elsewhere, unresolvable),
+        (
+            "name a run's own artifact by a name this directory does not hold, which is "
+            "what those names are",
+            run_artifacts,
+        ),
+        (
+            f"name a file this directory does not hold and are declared as such by a "
+            f"{DECLARATION_KEY!r} note",
+            not_held_here,
+        ),
         (
             f"name no file here and are declared as such by a {DECLARATION_KEY!r} note",
             unbound_total,

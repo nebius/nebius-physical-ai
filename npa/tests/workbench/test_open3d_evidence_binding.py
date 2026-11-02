@@ -378,3 +378,184 @@ def test_the_audit_harness_records_the_digest_of_the_bytes_it_read(
         "the audit harness must record which bytes it measured; the binder refuses to copy a "
         "measurement that cannot name its input"
     )
+
+
+def test_naming_a_file_that_is_not_here_does_not_escape_the_declaration_gate(
+    evidence: Path,
+) -> None:
+    """The bypass: a path key that resolves to nothing used to be an exemption.
+
+    The gate reached a hash only if the hash named no file at all. Naming *some*
+    string that resolves to no file routed it to the "held elsewhere" bucket instead,
+    which demanded nothing -- the same hash, the same unverifiability, no justification
+    required, and the cheapest green path was therefore to invent a filename rather
+    than to declare or to bind.
+
+    Done here to a currently declared hash, with its note removed, so the only thing
+    under test is whether the path key confers the exemption.
+    """
+
+    def plant(data: dict) -> None:
+        held = data["independent_verification_of_the_output"]
+        held.pop(DECLARATION)
+        held["artifact_hashes"]["rrd"] = "point_cloud.rrd"
+
+    edit(evidence, "capability-record-standard-runtime.json", plant)
+    result = run(evidence, AUDIT)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "point_cloud.rrd" in result.stdout
+    assert "names one the directory does not hold" in result.stdout
+
+
+def test_a_run_artifact_name_still_describes_itself(evidence: Path) -> None:
+    """And the subset that is exempt stays exempt, so the gate did not just widen.
+
+    `result.json` and the other run-artifact names say what they are by being those
+    names; a note repeating it would be ceremony. Asserting that from the committed
+    tree is vacuous now that every such hash also sits under a note, so the note is
+    removed here: `independent-verification.json`'s `hashes` map holds 21 hashes the
+    directory cannot read, 8 of which are run artifacts by name. Without the note the
+    other 13 are findings and those 8 are not, which is the boundary. Widen the gate
+    to cover them and this fails at 21.
+    """
+
+    edit(
+        evidence,
+        "independent-verification.json",
+        lambda d: d["hashes"].pop(DECLARATION),
+    )
+    result = run(evidence, AUDIT)
+    assert result.returncode == 1, result.stdout + result.stderr
+    findings = [line for line in result.stdout.splitlines() if "declares why" in line]
+    assert len(findings) == 13, result.stdout
+    for name in ("result.json", "manifest.json", "status.json"):
+        assert not any(
+            one.rsplit(" -> ", 1)[-1].startswith(name) for one in findings
+        ), f"{name} describes itself and should not need a note: {findings}"
+
+
+def test_the_declarations_cover_every_hash_the_directory_cannot_check() -> None:
+    """The accounting, against the committed tree rather than a count in prose.
+
+    Both gated buckets are empty of undeclared hashes, which is the property the audit
+    exits 1 on. Asserted here too so the number moving is visible as a diff in this
+    file rather than only as an exit code in a log nobody keeps.
+    """
+
+    result = run(EVIDENCE, AUDIT, "--verbose")
+    assert result.returncode == 0, result.stdout + result.stderr
+    declared_lines = [
+        line for line in result.stdout.splitlines() if "declared as such by" in line
+    ]
+    assert len(declared_lines) == 2, result.stdout
+    assert "54 hash(es)" in declared_lines[0], declared_lines
+    assert "25 hash(es)" in declared_lines[1], declared_lines
+
+
+def test_the_control_record_is_bound_to_the_report_it_calls_current(
+    evidence: Path,
+) -> None:
+    """`committed_sha256` was checked against its own twin and against nothing else.
+
+    The pair is compared by `EQUALITY_TRANSFORMS` and against the `identical` boolean,
+    both of which hold for any two equal strings. Regenerate the report, update the one
+    capability record that carries its digest, and this record kept a stale-but-equal
+    pair and stayed internally consistent -- the record whose entire function is "the
+    committed report is exactly what the generator produces" no longer describing the
+    committed report, with nothing to notice.
+
+    Naming the file makes `bound_pairs` hash it, so both checks now apply.
+    """
+
+    def stale(data: dict) -> None:
+        current = data["controls"]["committed_report_is_current"]
+        stale_digest = "0" * 64
+        current["committed_sha256"] = stale_digest
+        current["regenerated_sha256"] = stale_digest
+
+    edit(evidence, "derived-report-controls.json", stale)
+    result = run(evidence, AUDIT)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "committed_sha256" in result.stdout
+    assert "replay-b18d-public-report.json" in result.stdout
+
+
+def test_the_equality_claim_in_that_control_still_applies(evidence: Path) -> None:
+    """Binding it did not displace the check it already had.
+
+    Both halves are now checked two ways -- against the file and against each other --
+    and a note cannot suppress either. Breaking only the regenerated half leaves the
+    bound half correct, so this fails on the equality claim rather than on the binding.
+    """
+
+    def diverge(data: dict) -> None:
+        data["controls"]["committed_report_is_current"]["regenerated_sha256"] = "1" * 64
+
+    edit(evidence, "derived-report-controls.json", diverge)
+    result = run(evidence, AUDIT)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "regenerated_sha256" in result.stdout
+
+
+def test_the_replay_record_declares_its_hashes_under_the_key_the_audit_reads() -> None:
+    """The second near-miss key, which the review found still in place.
+
+    `capability-record-workflow-replay.json` carried
+    `artifact_hashes_are_of_the_originals` -- the same sentence as the real
+    declaration, under a name nothing reads. It survived because those hashes sat in
+    the ungated bucket, so no gate was asking. Closing that bypass made the key either
+    load-bearing or misleading, and it is now the real key, on the object it describes
+    rather than at the record root.
+    """
+
+    record = json.loads(
+        (EVIDENCE / "capability-record-workflow-replay.json").read_text()
+    )
+    assert "artifact_hashes_are_of_the_originals" not in record
+    assert DECLARATION in record["artifact_hashes"]
+    assert DECLARATION not in record, (
+        "scoped to the hashes it describes, not to the whole record: a root note also "
+        "covers every hash added later, which is the limit this gate does not close"
+    )
+
+
+def test_the_control_generator_emits_the_binding_its_record_carries() -> None:
+    """The generator cannot be run here, so the two sides are tied by source.
+
+    `derive_public_run_report_control.py` needs the run's retained artifacts, which are
+    deliberately not committed, so no test and no CI job executes it. Adding `committed`
+    to the record by hand and not to the generator would mean the next real run drops
+    the binding and the audit stops checking it -- a guard removed by a regeneration
+    that looks like a success.
+
+    Read as source rather than by import because the module reads those artifacts at
+    import-adjacent module scope.
+    """
+
+    import ast
+
+    source = (EVIDENCE / "harness" / "derive_public_run_report_control.py").read_text()
+    tree = ast.parse(source)
+    emitted: set[str] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Dict):
+            continue
+        for key, value in zip(node.keys, node.values):
+            if (
+                isinstance(key, ast.Constant)
+                and key.value == "committed_report_is_current"
+                and isinstance(value, ast.Dict)
+            ):
+                emitted = {
+                    inner.value
+                    for inner in value.keys
+                    if isinstance(inner, ast.Constant) and isinstance(inner.value, str)
+                }
+    assert emitted, "could not find the control block in the generator"
+    assert "committed" in emitted, (
+        "the generator does not name the report, so a regenerated control record would "
+        "carry a pair of digests bound to nothing"
+    )
+
+    record = json.loads((EVIDENCE / "derived-report-controls.json").read_text())
+    assert set(record["controls"]["committed_report_is_current"]) == emitted

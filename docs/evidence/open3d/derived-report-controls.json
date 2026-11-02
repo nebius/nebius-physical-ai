@@ -18,6 +18,7 @@
       "examples": []
     },
     "committed_report_is_current": {
+      "committed": "replay-b18d-public-report.json",
       "committed_sha256": "0982a5e76dc66e50589d0ea0ce110c9d8e8665b6a49a8fabb21ce73517984da1",
       "regenerated_sha256": "0982a5e76dc66e50589d0ea0ce110c9d8e8665b6a49a8fabb21ce73517984da1",
       "identical": true

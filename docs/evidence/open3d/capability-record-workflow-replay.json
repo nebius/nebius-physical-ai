@@ -127,6 +127,7 @@
     "note": "These are this run's own values, not the preview's. The aggregate preview declared 0.02 and a different inferred up; this run measured 0.05 and its own."
   },
   "shipped_recording": {
+    "hashes_that_name_no_file_here": "The recording the run produced, at the path it wrote it to inside the run directory. That directory is not committed here, so the path resolves to nothing; the committed copy of this recording is bound by its own record.",
     "path": "reports/point_cloud.rrd",
     "sha256": "b4089d51d94b832f86c024c045ed5d2e92a873d6eeaf62bcfa6d1ebcf0206436",
     "bytes": 8101326,
@@ -220,6 +221,7 @@
     "honest_summary": "This script has now been wrong four times and is the least reliable instrument in this evidence set. Every clipping verdict it produced before this fix should be read as unproven rather than as evidence."
   },
   "artifact_hashes": {
+    "hashes_that_name_no_file_here": "Every hash under artifact_hashes is of the bytes the run wrote. Those files are not in this repository, so those hashes deliberately resolve to nothing here.",
     "graph/fused.ply": "163cd17ff6fd4049ba9166616262efd059265259e2b2d36054799028abb9d761",
     "graph/pairs.jsonl": "271d1fe3cef50e51ad3f92382a172a8abafec9578c737b092e5fb0ea8546b358",
     "graph/pose_graph.json": "97645b7e0825287b51e7a037d5f76ef93de9940ce498c54c23053c127b074109",
@@ -284,7 +286,6 @@
     "nothing_was_substituted": "No placeholder bucket, path or run identifier appears in the report. An invented identifier reads as a disclosure and is not a sanitization.",
     "why_this_hash_moved": "The derived report was regenerated after its generator was given the key name the evidence audit reads for a hash that deliberately names no file. Two lines of it changed and no measurement, allowlist decision or recorded hash moved: derived-report-controls.json carries the regeneration that proves it, with 543 leaves emitted, 0 differing from the run's own documents, and the committed bytes identical to a fresh build. This hash had to follow because the binding here is checked, which is the chain working -- the mechanism that catches a frame replaced by hand caught its own author editing a bound file."
   },
-  "artifact_hashes_are_of_the_originals": "Every hash under artifact_hashes is of the bytes the run wrote. Those files are not in this repository, so those hashes deliberately resolve to nothing here.",
   "a_mistake_worth_leaving_visible": {
     "what_happened": "This evidence was published twice before it was safe. The first push committed the run's artifacts raw, carrying its object-store locations into the repository. The second replaced the bucket name only, which left the run identifier and every object key beneath it in place.",
     "who_found_it": "Independent review, both times, ahead of the owner. The repository's own confidentiality scan also refuses the first of them.",
