@@ -33,18 +33,35 @@ def _fragment(index: int, path: str) -> dict:
     }
 
 
-def _runner_origin() -> str:
+#: Where the stage lives inside the repository. The absolute path a run records is
+#: this author's checkout and does not exist anywhere else, so the identity that
+#: travels is this plus the source hash below.
+RUNNER_RELATIVE = "npa/src/npa/workbench/open3d/runner.py"
+
+
+def _runner_origin() -> dict[str, str]:
     """Which copy of the product code produced the figures below.
 
     These worktrees borrow an interpreter from a sibling checkout, so the binding that
     matters is not the executable but where `npa` was imported from. A record that
     names a relative `npa/.venv/bin/python` cannot be re-run: that path does not exist
     here.
+
+    The absolute path is kept because it is what actually happened, and it is paired
+    with the repository-relative path and the imported file's hash. Only the latter two
+    can be checked on another machine -- a reader on a CI runner can confirm the record
+    was produced from this revision of the stage, which the absolute path cannot tell
+    them.
     """
 
     from npa.workbench.open3d import runner
 
-    return str(Path(runner.__file__).resolve())
+    source = Path(runner.__file__).resolve()
+    return {
+        "absolute_path_on_the_machine_that_ran_it": str(source),
+        "repository_relative": RUNNER_RELATIVE,
+        "sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
+    }
 
 
 def _open3d_origin() -> dict[str, str]:
@@ -220,6 +237,11 @@ def main() -> int:
             "interpreter": sys.executable,
             "python": sys.version.split()[0],
             "npa_runner_imported_from": _runner_origin(),
+            "what_can_be_rechecked_elsewhere": (
+                "npa_runner_imported_from.repository_relative and .sha256. The "
+                "absolute path is this machine's and is recorded as history, not as "
+                "something another checkout can verify."
+            ),
             "open3d_imported_from": _open3d_origin(),
             "utc": datetime.datetime.now(datetime.UTC).isoformat(),
         },

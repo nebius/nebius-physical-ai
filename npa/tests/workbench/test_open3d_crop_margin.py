@@ -15,9 +15,12 @@ Needs no Open3D: `_crop_margin` takes the distance array the crop already thresh
 
 from __future__ import annotations
 
+import copy
+import hashlib
 import importlib.util
 import json
 import re
+import tempfile
 from collections.abc import Mapping
 from pathlib import Path
 from unittest.mock import patch
@@ -174,6 +177,50 @@ def test_it_says_what_it_does_not_establish() -> None:
     assert "invented surface" in said
 
 
+#: Where the stage lives in the repository, which is the part of its identity that
+#: exists on every checkout. The harness records this alongside the absolute path.
+RUNNER_RELATIVE = "npa/src/npa/workbench/open3d/runner.py"
+
+
+def _repository_root() -> Path:
+    return Path(__file__).resolve().parents[3]
+
+
+def _assert_the_record_binds_this_checkout(record: dict, root: Path) -> None:
+    """Does this record describe the stage *this* checkout has?
+
+    Identity is the repository-relative path plus the hash of the bytes that were
+    imported. The absolute path the run recorded is kept as history and deliberately
+    not required to exist: it is a path on one machine, and asserting it exists failed
+    the shared pytest shard, where no such directory is present.
+    """
+
+    origin = record["provenance"]["npa_runner_imported_from"]
+    assert origin["repository_relative"] == RUNNER_RELATIVE
+    assert origin["absolute_path_on_the_machine_that_ran_it"].endswith(
+        RUNNER_RELATIVE
+    ), "the recorded absolute path is not a path to this stage at all"
+
+    source = root / RUNNER_RELATIVE
+    assert source.exists(), f"this checkout has no {RUNNER_RELATIVE}"
+    assert hashlib.sha256(source.read_bytes()).hexdigest() == origin["sha256"], (
+        "the record was produced from different bytes of the stage than this checkout "
+        "has, so its figures do not describe this revision"
+    )
+
+
+def _live_record() -> dict:
+    return json.loads(
+        (
+            _repository_root()
+            / "docs"
+            / "evidence"
+            / "open3d"
+            / "crop-margin-live.json"
+        ).read_text()
+    )
+
+
 def test_the_record_from_the_real_stage_carries_the_margin_it_describes() -> None:
     """The figure has to reach a caller, not merely be computable.
 
@@ -184,15 +231,7 @@ def test_the_record_from_the_real_stage_carries_the_margin_it_describes() -> Non
 
     Needs no Open3D: it reads the committed record.
     """
-    record = json.loads(
-        (
-            Path(__file__).resolve().parents[3]
-            / "docs"
-            / "evidence"
-            / "open3d"
-            / "crop-margin-live.json"
-        ).read_text()
-    )
+    record = _live_record()
 
     scales = record["reference_displacements_the_comparison_uses"]
     assert scales["routine_m"] == POISSON_VERTEX_DISPLACEMENT_ROUTINE_M
@@ -202,14 +241,17 @@ def test_the_record_from_the_real_stage_carries_the_margin_it_describes() -> Non
 
     # The interpreter and the source it imported, because these worktrees have no venv
     # of their own and a record naming a relative `npa/.venv/bin/python` cannot be
-    # re-run. The runner path has to be this candidate's, not the lending worktree's.
+    # re-run. The runner has to be this candidate's, not the lending worktree's.
+    #
+    # Checked by content, not by location. The first version asserted that the
+    # recording machine's absolute path exists, which is true only on that machine:
+    # it failed the shared pytest shard, where no /home/ubuntu worktree exists. The
+    # absolute path stays in the record as history; what is verified here is that the
+    # record names this repository's stage and the bytes it imported are the bytes
+    # this checkout has.
     provenance = record["provenance"]
-    assert provenance["npa_runner_imported_from"].endswith(
-        "npa/src/npa/workbench/open3d/runner.py"
-    )
-    assert Path(provenance["npa_runner_imported_from"]).exists(), (
-        "the record names a runner source that is not on this machine"
-    )
+    _assert_the_record_binds_this_checkout(record, _repository_root())
+
     assert provenance["interpreter"].endswith("python")
     assert provenance["open3d_imported_from"]["version"]
 
@@ -664,3 +706,51 @@ def test_no_distance_measured_from_the_input_is_labelled_metres() -> None:
     # And an empty-crop message must not stamp a unit either.
     why = _crop_margin(np.array([]), 0.05, VOXEL, DEPTH)["why_not"]
     assert "m threshold" not in why, why
+
+
+def _checkout_holding(source_bytes: bytes, into: Path) -> Path:
+    """A checkout at a path the record does not name, holding the given stage bytes."""
+
+    root = into / "not-the-authors-worktree"
+    stage = root / RUNNER_RELATIVE
+    stage.parent.mkdir(parents=True)
+    stage.write_bytes(source_bytes)
+    return root
+
+
+def test_the_binding_checks_the_bytes_and_not_the_path() -> None:
+    """The control for the portability fix, driving the same checker the test uses.
+
+    Three cases, because each one catches a different way of getting this wrong:
+
+    * identical bytes under a different root must pass, or the check is still tied to
+      where the author's files happen to sit;
+    * a record whose recorded absolute path does not exist anywhere must still pass,
+      which is the CI runner's situation and the one that failed;
+    * one byte of difference must fail, or the check has no teeth and deleting it
+      would look like a fix.
+    """
+
+    record = _live_record()
+    source = (_repository_root() / RUNNER_RELATIVE).read_bytes()
+
+    with tempfile.TemporaryDirectory() as into:
+        _assert_the_record_binds_this_checkout(
+            record, _checkout_holding(source, Path(into) / "same-bytes")
+        )
+
+        absent = copy.deepcopy(record)
+        absent["provenance"]["npa_runner_imported_from"][
+            "absolute_path_on_the_machine_that_ran_it"
+        ] = f"/nonexistent-checkout/{RUNNER_RELATIVE}"
+        _assert_the_record_binds_this_checkout(
+            absent, _checkout_holding(source, Path(into) / "absent-origin")
+        )
+
+        with pytest.raises(AssertionError, match="different bytes of the stage"):
+            _assert_the_record_binds_this_checkout(
+                record,
+                _checkout_holding(
+                    source + b"\n# not the stage\n", Path(into) / "one-byte-different"
+                ),
+            )

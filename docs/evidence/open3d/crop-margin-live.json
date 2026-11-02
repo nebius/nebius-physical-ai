@@ -15,8 +15,8 @@
         "applies": true,
         "distance_units": "the input point cloud's own coordinate units, the same units as --voxel-size; not inspected or validated by this tool",
         "threshold": 0.05,
-        "closest_vertex_to_the_threshold": 9.061538256444068e-06,
-        "closest_as_a_fraction_of_the_threshold": 0.00018123076512888137,
+        "closest_vertex_to_the_threshold": 5.1057411621646676e-06,
+        "closest_as_a_fraction_of_the_threshold": 0.00010211482324329335,
         "vertices_within": {
           "within_1_percent_of_the_threshold": {
             "count": 52,
@@ -34,10 +34,10 @@
         "reference_comparison": {
           "what_this_is": "A description of this run's distances relative to two displacement figures measured on a different scene. Not a prediction about re-running this pipeline, and not a bound on how much any count would move.",
           "description": "vertices_closer_than_both_reference_displacements",
-          "vertices_closer_than_the_routine_reference": 1,
+          "vertices_closer_than_the_routine_reference": 2,
           "vertices_closer_than_the_larger_reference": 238,
           "fraction_closer_than_the_larger_reference": 0.012925650355726933,
-          "closest_vertex_distance_to_the_threshold": 9.061538256444068e-06,
+          "closest_vertex_distance_to_the_threshold": 5.1057411621646676e-06,
           "reference_displacements": {
             "routine": 1e-05,
             "largest_recorded": 0.002187,
@@ -72,16 +72,16 @@
         "applies": true,
         "distance_units": "the input point cloud's own coordinate units, the same units as --voxel-size; not inspected or validated by this tool",
         "threshold": 0.043500000000000004,
-        "closest_vertex_to_the_threshold": 2.9517086828217964e-07,
-        "closest_as_a_fraction_of_the_threshold": 6.785537201889187e-06,
+        "closest_vertex_to_the_threshold": 5.023222773223313e-07,
+        "closest_as_a_fraction_of_the_threshold": 1.1547638559134051e-05,
         "vertices_within": {
           "within_1_percent_of_the_threshold": {
             "count": 54,
             "fraction": 0.0029327105849128333
           },
           "within_10_percent_of_the_threshold": {
-            "count": 434,
-            "fraction": 0.023570303589854992
+            "count": 433,
+            "fraction": 0.02351599413457883
           },
           "within_50_percent_of_the_threshold": {
             "count": 6346,
@@ -94,7 +94,7 @@
           "vertices_closer_than_the_routine_reference": 1,
           "vertices_closer_than_the_larger_reference": 209,
           "fraction_closer_than_the_larger_reference": 0.011350676152718188,
-          "closest_vertex_distance_to_the_threshold": 2.9517086828217964e-07,
+          "closest_vertex_distance_to_the_threshold": 5.023222773223313e-07,
           "reference_displacements": {
             "routine": 1e-05,
             "largest_recorded": 0.002187,
@@ -131,7 +131,7 @@
       }
     }
   },
-  "what_the_result_shows": "Measured on this run: support_distance_factor_0.0: no threshold, so no margin (support cropping is disabled, so there is no threshold for anything to sit near); support_distance_factor_0.87: closest vertex 2.95e-07 from a 0.0435 threshold (0.000679% of it), 1 vertices closer than the routine reference and 209 closer than the larger, out of 4044 removed; support_distance_factor_1.0: closest vertex 9.06e-06 from a 0.05 threshold (0.0181% of it), 1 vertices closer than the routine reference and 238 closer than the larger, out of 3677 removed. These are counts for this run against two reference figures, nothing more. The references are sample maxima from one scene, and a rerun regenerates the vertex set rather than perturbing it, so neither these counts nor the 46 pair comparisons behind the references add up to a prediction about what a rerun would decide.",
+  "what_the_result_shows": "Measured on this run: support_distance_factor_0.0: no threshold, so no margin (support cropping is disabled, so there is no threshold for anything to sit near); support_distance_factor_0.87: closest vertex 5.02e-07 from a 0.0435 threshold (0.00115% of it), 1 vertices closer than the routine reference and 209 closer than the larger, out of 4044 removed; support_distance_factor_1.0: closest vertex 5.11e-06 from a 0.05 threshold (0.0102% of it), 2 vertices closer than the routine reference and 238 closer than the larger, out of 3677 removed. These are counts for this run against two reference figures, nothing more. The references are sample maxima from one scene, and a rerun regenerates the vertex set rather than perturbing it, so neither these counts nor the 46 pair comparisons behind the references add up to a prediction about what a rerun would decide.",
   "what_this_does_not_establish": "Anything about whether the reconstruction is correct -- a vertex far from the cut can still be in the wrong place. Nor what a rerun would decide. An earlier version of this field classified runs as reproducible in practice and offered the near-threshold counts as an error bar for future counts; both were removed, because a rerun has no vertex correspondence for either claim to be about.",
   "how_to_reproduce": {
     "command": "python docs/evidence/open3d/harness/crop_margin_live.py  # with this repository's npa/src on PYTHONPATH",
@@ -140,16 +140,21 @@
   },
   "provenance": {
     "harness": "harness/crop_margin_live.py",
-    "harness_sha256": "43499d513b017c255fd2c2680d99435064a4add76484321ebe36f86fe732feb9",
+    "harness_sha256": "092ff183c0481905f67bb8088504c6783292caafd82c9e714e20de702ca66e8d",
     "path_is_relative_to": "this evidence directory",
     "interpreter": "/home/ubuntu/npa-worktrees/cursor-open3d-occlusion/npa/.venv/bin/python",
     "python": "3.14.7",
-    "npa_runner_imported_from": "/home/ubuntu/npa-worktrees/cursor-open3d-margin/npa/src/npa/workbench/open3d/runner.py",
+    "npa_runner_imported_from": {
+      "absolute_path_on_the_machine_that_ran_it": "/home/ubuntu/npa-worktrees/cursor-open3d-margin/npa/src/npa/workbench/open3d/runner.py",
+      "repository_relative": "npa/src/npa/workbench/open3d/runner.py",
+      "sha256": "d397a91479da3b92ee009f18fe8884a76297ef83c37074035225412cd0995736"
+    },
+    "what_can_be_rechecked_elsewhere": "npa_runner_imported_from.repository_relative and .sha256. The absolute path is this machine's and is recorded as history, not as something another checkout can verify.",
     "open3d_imported_from": {
       "imported_from": "/home/ubuntu/npa-worktrees/cursor-open3d-occlusion/npa/.venv/lib/python3.14/site-packages/open3d/__init__.py",
       "resolves_to": "/home/ubuntu/npa-worktrees/cursor-open3d-reproducibility/npa/.venv/lib/python3.14/site-packages/open3d/__init__.py",
       "version": "0.20.0"
     },
-    "utc": "2026-11-02T16:25:14.678515+00:00"
+    "utc": "2026-11-02T20:20:19.110804+00:00"
   }
 }
