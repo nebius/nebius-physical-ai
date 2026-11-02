@@ -672,13 +672,34 @@
     "construction": "the Armadillo mesh sampled to 40000 points: no floor, no wall",
     "repeats_that_agreed": 40,
     "of_repeats": 40,
-    "plane_tilt_to_the_snapped_axis_degrees": 12.0,
+    "plane_tilt_to_the_snapped_axis_degrees": 10.5,
     "this_tilt_is_a_floor_the_measurement_cleared": true,
     "plane_inlier_fraction_was_at_most": 0.14,
     "evidence": "docs/evidence/open3d/up-axis-ambiguity.json"
   },
   "cost": "About 85 ms per plane fit on the 198835-point real scan, so the shipped default of 8 extra fits plus the runner-up costs roughly 0.8 s against a multi-second reconstruction.",
   "reproduce": "python docs/evidence/open3d/harness/up_axis_ambiguity.py, with npa/src on PYTHONPATH in an environment holding Open3D. The constructed rooms are seeded; the fit distributions are not reproducible by construction, which is the finding.",
+  "the_margin_rule_the_bounds_must_satisfy": {
+    "what_it_is": "A bound has to clear the nearest end of the range this record's own fits cover by a fraction of that range's width. Scaled per quantity, because a flat percentage asks as much of the inlier fraction, whose maximum moves 0.25% between runs, as of the tilt, whose minimum moves 3%.",
+    "crossing_rate_by_clearance": {
+      "0.00": 0.5,
+      "0.10": 0.263,
+      "0.20": 0.095,
+      "0.30": 0.029,
+      "0.50": 0.0
+    },
+    "crossing_rate_measured_by": "A second lane, over 20 fresh regenerations pooled with this record's 4. The 380 pairs are not independent, so the ordering is robust and the digits are not.",
+    "tolerated_crossing_rate": 0.05,
+    "floor_must_stay_above_degrees": 10.0,
+    "why_that_line": "A floor of zero degrees and a ceiling of every point in the cloud would satisfy any margin rule and say nothing. The claim is that this plane is badly tilted and thinly supported, so the floor has to stay where that is still what it says.",
+    "why_not_more_margin": "The two requirements pull opposite ways and this record's spread leaves little room between them: the fits span 9.51 degrees from a smallest 13.41, so a floor above 10 degrees cannot carry more than 0.359 of the range. Half the range -- which is where the crossing rate first reaches zero -- would put the floor at 8.66 and cost the claim its content. The residual at the level actually chosen is 2.9%, not zero."
+  },
+  "provenance": {
+    "harness": "harness/up_axis_ambiguity.py",
+    "harness_sha256": "8b18557c91cf37a3aa8f67b7117efbf3441c2b9012f55b2cf01e9617d37eaa44",
+    "path_is_relative_to": "this evidence directory",
+    "why_a_hash_when_the_figures_do_not_reproduce": "Because the two say different things. The fits are not reproducible, so a reader cannot check this record by re-running it and comparing numbers -- which makes it matter more, not less, that the code that produced it is identifiable. Without this a harness can be edited and the record left stale with nothing to notice."
+  },
   "environment": {
     "open3d_version": "0.20.0",
     "python": "3.14.7",

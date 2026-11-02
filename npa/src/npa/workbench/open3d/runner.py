@@ -792,15 +792,29 @@ UP_AXIS_REPEATS = 8
 #: smallest tilt at 14.11, 14.32, 13.74 and 13.41 degrees, so the bound sat inside the
 #: scatter and held twice before a run crossed it. Changing equality to a direction
 #: fixed the wrong half of the problem: a direction with no margin is still pinned to
-#: one draw. It is 12 degrees now, and the test no longer accepts a bound merely on
-#: the right side of the evidence -- it has to clear the nearest measurement by a
-#: tenth of the range the record's own fits cover, which the 14.0 did not.
+#: one draw. So the test requires a bound to clear the nearest measurement by a
+#: fraction of the range the record's own fits cover, which the 14.0 did not.
+#:
+#: It was then 12.0 against a tenth of that range, and a second lane's sweep over 24
+#: regenerations showed a tenth is too lax to be the rule: a bound sitting exactly
+#: there is later crossed 26.3% of the time. 12.0 survived 24 of 24 because it happened
+#: to carry 0.149 of the range rather than the 0.10 it had to. A floor that permits
+#: bounds failing a quarter of the time is not doing the job, so the requirement is
+#: 0.30 -- where that sweep puts the crossing rate at 2.9% -- and this bound moves down
+#: to 10.5 to carry it. Weaker as a claim and sound as one, which is the trade the rule
+#: exists to force.
+#:
+#: 10.5 rather than lower because the fits span 9.51 degrees from a smallest 13.41, so
+#: 0.30 of that range is the most margin available while the floor stays above the 10
+#: degrees that keep this a statement about a badly tilted plane. Half the range would
+#: put it at 8.66 and quietly cost the claim its content; the two requirements cap the
+#: fraction at 0.359 between them.
 UP_AXIS_AGREEMENT_COUNTEREXAMPLE = MappingProxyType(
     {
         "construction": "the Armadillo mesh sampled to 40000 points: no floor, no wall",
         "repeats_that_agreed": 40,
         "of_repeats": 40,
-        "plane_tilt_to_the_snapped_axis_degrees": 12.0,
+        "plane_tilt_to_the_snapped_axis_degrees": 10.5,
         "this_tilt_is_a_floor_the_measurement_cleared": True,
         "plane_inlier_fraction_was_at_most": 0.14,
         "evidence": "docs/evidence/open3d/up-axis-ambiguity.json",

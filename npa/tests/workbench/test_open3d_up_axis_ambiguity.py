@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import re
 import ast
+import hashlib
 import json
 from pathlib import Path
 from typing import Any
@@ -347,6 +348,42 @@ def test_every_rejection_says_something_different() -> None:
     assert len(messages) == len(builders), messages
 
 
+def _clearance_the_record_justifies() -> float:
+    """The *most* margin the published claim can carry, not the least that would do.
+
+    Taking the smallest sufficient level was the first attempt and it left the rule
+    defenceless in the direction that matters. Relaxing the tolerated crossing rate from
+    5% to 30% dropped the derived level from 0.30 to 0.10 with all 53 assertions still
+    green, because a shipped bound comfortably inside a strict rule is also inside a lax
+    one. No assertion about the artifact can catch a loosened gate.
+
+    Maximising instead inverts that. The level is the largest fraction the sweep measured
+    that a floor above the record's own degree line could still carry, so loosening an
+    input cannot loosen the gate: relaxing the tolerance leaves the level untouched, and
+    weakening the degree line *raises* it and fails the bound.
+
+    What the tolerance still does is reject the whole arrangement -- if the most margin
+    this claim can carry is not enough to hold the crossing rate down, that is a result
+    about the record and not a number to adjust.
+    """
+    rule = _record()["the_margin_rule_the_bounds_must_satisfy"]
+    case = next(
+        one for one in _record()["cases"] if one["cloud"] == "armadillo_sampled"
+    )
+    low, high = case["single_fit_distribution"]["branches"][0][
+        "tilt_to_snapped_axis_degrees_range"
+    ]
+    affordable = (low - rule["floor_must_stay_above_degrees"]) / (high - low)
+
+    offered = sorted(float(one) for one in rule["crossing_rate_by_clearance"])
+    within_reach = [one for one in offered if one <= affordable]
+    assert within_reach, (
+        f"every level the sweep measured asks more than the {affordable:.3f} of the "
+        "range a floor above the record's degree line can carry"
+    )
+    return within_reach[-1]
+
+
 def test_the_published_counterexample_reconstructs_from_the_record() -> None:
     """Every figure in the constant must be findable in the retained evidence.
 
@@ -374,10 +411,29 @@ def test_the_published_counterexample_reconstructs_from_the_record() -> None:
     #
     # The margin each bound needs is measured, not picked. Each branch publishes the
     # range its 40 fits covered, and a bound has to clear the nearest end of that
-    # range by a tenth of its width. A flat percentage was the first attempt and it
+    # range by a fraction of its width. A flat percentage was the first attempt and it
     # was the wrong rule: it asks as much of the inlier fraction, whose maximum has
     # moved 0.25% across four runs, as of the tilt, whose minimum has moved 3%.
-    clearance = 0.1
+    #
+    # The *level* was then wrong too, which is a separate mistake and a worse one. A
+    # floor on margin has to be set where a bound that merely satisfies it is still
+    # safe, and a second lane's sweep over 24 regenerations put numbers on that: a bound
+    # sitting exactly at a tenth is later crossed 26.3% of the time, at 0.2 it is 9.5%,
+    # at 0.3 it is 2.9%, and the k=0 control returns the 50% symmetry demands. A tenth
+    # permitted bounds that fail a quarter of the time. The floor shipped above survived
+    # 24 of 24 only because it happens to sit at 0.149 rather than at the limit the rule
+    # allowed -- the rule was not what made it safe.
+    #
+    # One k for both quantities, not two. At a tenth the crossing rates were 26.3% for
+    # the tilt and 24.5% for the inlier: scaling by each quantity's own range already
+    # equalises the risk, so a second level would be unjustified.
+    #
+    # The level is read out of the record rather than written here, and that is the
+    # point. A test cannot defend its own threshold: with 0.30 as a literal, relaxing it
+    # back to a tenth left all 53 assertions passing, because the shipped bounds clear
+    # the weaker rule too. Changing it now means editing the sweep in the evidence, and
+    # the assertions below are against that.
+    clearance = _clearance_the_record_justifies()
 
     def _clears(bound: float, nearest: float, spread: float, what: str) -> None:
         assert abs(nearest - bound) >= clearance * spread, (
@@ -409,7 +465,15 @@ def test_the_published_counterexample_reconstructs_from_the_record() -> None:
     # of every point in the cloud would clear every assertion above, and would say
     # nothing: the claim is that this plane is tilted well off the axis it implies
     # and is supported by a small minority of the points.
-    assert published["plane_tilt_to_the_snapped_axis_degrees"] >= 10.0, published
+    #
+    # The line comes from the record for the same reason the fraction does: as a literal
+    # here it could be weakened to zero with the whole suite still green.
+    worth_stating = _record()["the_margin_rule_the_bounds_must_satisfy"][
+        "floor_must_stay_above_degrees"
+    ]
+    assert published["plane_tilt_to_the_snapped_axis_degrees"] >= worth_stating, (
+        published
+    )
     assert ceiling <= 0.25, published
 
 
@@ -1105,3 +1169,77 @@ def test_the_runner_up_measurement_is_published_without_a_threshold() -> None:
         "no_threshold_is_applied_to_this" in str(_record()["what_this_does_not_claim"])
         or "gates nothing" in _record()["what_this_does_not_claim"]
     ), "the record should say the runner-up number gates nothing"
+
+
+def test_the_record_binds_the_harness_that_produced_it() -> None:
+    """A record nobody can re-run is the one that most needs its producer named.
+
+    The fit distributions here are not reproducible -- that is the finding -- so a
+    reader cannot check this file by regenerating it and comparing numbers. The usual
+    argument for a harness hash is therefore inverted and stronger: the only thing left
+    to pin is which code produced it, and without the hash the harness could be edited
+    and this file left stale with nothing anywhere to notice.
+
+    The pattern is copied from density-crop-contribution.json rather than invented.
+    """
+    provenance = _record()["provenance"]
+    assert "this evidence directory" in provenance["path_is_relative_to"]
+
+    harness = EVIDENCE / provenance["harness"]
+    assert harness.exists(), harness
+    assert (
+        hashlib.sha256(harness.read_bytes()).hexdigest() == provenance["harness_sha256"]
+    ), "the harness changed without the record being regenerated"
+
+
+def test_the_margin_rule_is_set_where_a_bound_that_merely_satisfies_it_is_safe() -> (
+    None
+):
+    """The level, which is a different question from the scale and was wrong longer.
+
+    A floor on margin is a statement about the worst bound it permits, not about the
+    bound that happens to be shipped. At a tenth of the range the worst permitted bound
+    is crossed 26.3% of the time by a later regeneration, measured by a second lane over
+    24 of them; the shipped floor survived only because it carried half again the margin
+    the rule asked for.
+
+    So this asserts the two things that made the level what it is, both of which a
+    future edit could quietly break: that the published bound carries the margin the
+    record's own sweep justifies, and that it still clears the degrees keeping this a
+    claim about a badly tilted plane. Those squeeze from opposite sides, and at this
+    record's spread they leave no room above 0.359 -- which is why the 0.5 where the
+    crossing rate first reaches zero is not available here, and why the residual is
+    2.9% rather than nothing.
+
+    That tension is asserted rather than applied as a silent cap. If a later
+    regeneration widens the spread enough that both could be satisfied at once, this
+    fails and asks for the level to be revisited, instead of relaxing itself.
+    """
+    rule = _record()["the_margin_rule_the_bounds_must_satisfy"]
+    case = next(
+        one for one in _record()["cases"] if one["cloud"] == "armadillo_sampled"
+    )
+    branch = case["single_fit_distribution"]["branches"][0]
+    low, high = branch["tilt_to_snapped_axis_degrees_range"]
+    spread = high - low
+    floor = _counterexample()["plane_tilt_to_the_snapped_axis_degrees"]
+    required = _clearance_the_record_justifies()
+
+    carried = (low - floor) / spread
+    assert carried >= required, (
+        f"the published floor {floor} carries {carried:.3f} of the {spread:.3f} range "
+        f"the record's fits span, below the {required} its sweep justifies"
+    )
+
+    rates = rule["crossing_rate_by_clearance"]
+    residual = rates[f"{required:.2f}"]
+    assert residual <= rule["tolerated_crossing_rate"], (
+        f"the most margin this claim can carry is {required}, and a bound there is "
+        f"still crossed {residual:.1%} of the time -- past the "
+        f"{rule['tolerated_crossing_rate']:.1%} this record says it will tolerate. "
+        "That is a result about the evidence, not a tolerance to raise"
+    )
+    assert rates[f"{0.0:.2f}"] > 0.4, (
+        "the sweep's zero-margin control should come out near the 50% symmetry demands; "
+        f"{rates[f'{0.0:.2f}']} means the sweep measured something else"
+    )

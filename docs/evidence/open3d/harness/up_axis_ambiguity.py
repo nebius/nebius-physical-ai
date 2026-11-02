@@ -31,10 +31,12 @@ them, so what is measured here is the code that runs in the pipeline.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import platform
 import sys
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any
 
 import numpy as np
@@ -969,6 +971,61 @@ def case(name: str, cloud, voxel: float, note: str) -> dict[str, Any]:
     }
 
 
+#: The rule the published bounds have to satisfy, kept here rather than in the test that
+#: enforces it.
+#:
+#: A test cannot defend its own threshold. Both of this record's previous guards were
+#: literals in the suite, and relaxing either one -- the margin fraction to a tenth, the
+#: ten-degree line to zero -- left every assertion passing, because the shipped bounds
+#: happen to clear the weaker version too. So the level and the line live in the record,
+#: where changing them is a change to evidence and the test can notice.
+#:
+#: `crossing_rate_by_clearance` is not mine. A second lane ran 20 fresh regenerations,
+#: pooled them with this record's 4, and measured how often a bound sitting exactly at
+#: each fraction is crossed by a later run. Their caveats travel with it: 380 pairs from
+#: 20 runs are not independent, so the ordering is solid and the digits are not, and the
+#: inlier sweep used this record's fixed range where the tilt sweep used per-run ranges.
+#: The k=0 row is the control -- symmetry demands 50% and the method returned 190/380.
+MARGIN_RULE = MappingProxyType(
+    {
+        "what_it_is": (
+            "A bound has to clear the nearest end of the range this record's own fits "
+            "cover by a fraction of that range's width. Scaled per quantity, because a "
+            "flat percentage asks as much of the inlier fraction, whose maximum moves "
+            "0.25% between runs, as of the tilt, whose minimum moves 3%."
+        ),
+        "crossing_rate_by_clearance": {
+            "0.00": 0.500,
+            "0.10": 0.263,
+            "0.20": 0.095,
+            "0.30": 0.029,
+            "0.50": 0.000,
+        },
+        "crossing_rate_measured_by": (
+            "A second lane, over 20 fresh regenerations pooled with this record's 4. "
+            "The 380 pairs are not independent, so the ordering is robust and the "
+            "digits are not."
+        ),
+        "tolerated_crossing_rate": 0.05,
+        "floor_must_stay_above_degrees": 10.0,
+        "why_that_line": (
+            "A floor of zero degrees and a ceiling of every point in the cloud would "
+            "satisfy any margin rule and say nothing. The claim is that this plane is "
+            "badly tilted and thinly supported, so the floor has to stay where that is "
+            "still what it says."
+        ),
+        "why_not_more_margin": (
+            "The two requirements pull opposite ways and this record's spread leaves "
+            "little room between them: the fits span 9.51 degrees from a smallest "
+            "13.41, so a floor above 10 degrees cannot carry more than 0.359 of the "
+            "range. Half the range -- which is where the crossing rate first reaches "
+            "zero -- would put the floor at 8.66 and cost the claim its content. The "
+            "residual at the level actually chosen is 2.9%, not zero."
+        ),
+    }
+)
+
+
 def main() -> None:
     if SWEEP_PROBE_FLAG in sys.argv[1:]:
         # One child of `rise_with_fit_count`, which needs detection counts only.
@@ -1091,12 +1148,28 @@ def main() -> None:
             "seeded; the fit distributions are not reproducible by construction, which "
             "is the finding."
         ),
+        "the_margin_rule_the_bounds_must_satisfy": dict(MARGIN_RULE),
+        "provenance": {
+            "harness": "harness/up_axis_ambiguity.py",
+            "harness_sha256": "recomputed by main()",
+            "path_is_relative_to": "this evidence directory",
+            "why_a_hash_when_the_figures_do_not_reproduce": (
+                "Because the two say different things. The fits are not reproducible, "
+                "so a reader cannot check this record by re-running it and comparing "
+                "numbers -- which makes it matter more, not less, that the code that "
+                "produced it is identifiable. Without this a harness can be edited "
+                "and the record left stale with nothing to notice."
+            ),
+        },
         "environment": {
             "open3d_version": o3d.__version__,
             "python": platform.python_version(),
             "numpy": np.__version__,
         },
     }
+    report["provenance"]["harness_sha256"] = hashlib.sha256(
+        Path(__file__).read_bytes()
+    ).hexdigest()
     json.dump(report, sys.stdout, indent=2)
     sys.stdout.write("\n")
 
