@@ -305,17 +305,40 @@ def _load_manifest(input_path: str) -> RegistrationManifest:
     because truncated JSON does not close, and it cannot detect a complete
     document that is the wrong one. It is still worth doing, since without it a
     single short read on a small file ends a registration that has not started.
+
+    The two failures are separated rather than both retried. A document that parsed
+    and then failed schema validation is complete -- that is the same reasoning as
+    above, read the other way round -- so it will fail identically on the next
+    attempt; retrying it spends two more requests and then reports a bounded-attempt
+    exhaustion for a transport that was working. A document that did not parse, or a
+    read that raised, is retried.
     """
 
     uri = uri_join(input_path, MANIFEST_FILENAME)
     failures: list[str] = []
     for attempt in range(1, FRAGMENT_READ_ATTEMPTS + 1):
         try:
-            return RegistrationManifest.model_validate(json.loads(read_bytes_uri(uri)))
-        except ValueError as exc:  # unparseable JSON, or schema rejection
+            document = json.loads(read_bytes_uri(uri))
+        except ValueError as exc:  # JSON did not parse: the stream may have ended
             failures.append(f"attempt {attempt}: {type(exc).__name__}")
+            continue
         except Exception as exc:  # transport-level: truncation, reset, timeout
             failures.append(f"attempt {attempt}: {type(exc).__name__}: {exc}")
+            continue
+        try:
+            return RegistrationManifest.model_validate(document)
+        except ValueError as exc:
+            # The document parsed, so by this function's own reasoning the stream did
+            # not end early -- truncated JSON does not close. A complete document of
+            # the wrong shape will be the wrong shape on the next read too, so this
+            # is where retrying stops: two more requests would buy nothing and the
+            # bounded-attempts message would describe a transport that was fine.
+            raise Open3dError(
+                f"{uri} parsed as JSON but is not a registration manifest, so it will "
+                "not read differently on another attempt; run "
+                "`npa workbench open3d prepare` against this prefix to write one. "
+                f"{exc}"
+            ) from exc
     raise Open3dError(
         f"{uri} could not be read as a valid registration manifest after "
         f"{FRAGMENT_READ_ATTEMPTS} attempts; run `npa workbench open3d prepare` "
@@ -336,9 +359,16 @@ def _read_fragment(fragment, attempts: int = FRAGMENT_READ_ATTEMPTS) -> bytes:
     held to `fragment.sha256`, and bytes that do not match are discarded whether
     they arrived truncated or intact. A store that has genuinely diverged from the
     manifest still fails, after a bounded number of attempts rather than forever.
+
+    Every attempt is still made in that case, because a full-length read with a wrong
+    digest could in principle be corruption in transit rather than a different
+    object, and two extra requests are cheap next to a wrong diagnosis. What the
+    recorded length buys is the diagnosis itself: see `_diagnose_fragment_read`.
     """
 
     failures: list[str] = []
+    short_reads = 0
+    complete_reads = 0
     for attempt in range(1, attempts + 1):
         try:
             payload = read_bytes_uri(fragment.uri)
@@ -347,13 +377,60 @@ def _read_fragment(fragment, attempts: int = FRAGMENT_READ_ATTEMPTS) -> bytes:
             continue
         if sha256_bytes(payload) == fragment.sha256:
             return payload
+        if len(payload) < fragment.bytes:
+            short_reads += 1
+        else:
+            complete_reads += 1
         failures.append(
-            f"attempt {attempt}: digest mismatch ({len(payload)} bytes read)"
+            f"attempt {attempt}: digest mismatch ({len(payload)} bytes read of "
+            f"{fragment.bytes} recorded)"
         )
     raise Open3dError(
         f"fragment {fragment.id} could not be read as the bytes the manifest "
-        f"recorded at prepare time after {attempts} attempts; the manifest and the "
-        "stored scan disagree, or the transport kept truncating. " + "; ".join(failures)
+        f"recorded at prepare time after {attempts} attempts. "
+        f"{_diagnose_fragment_read(short_reads, complete_reads)} " + "; ".join(failures)
+    )
+
+
+def _diagnose_fragment_read(short_reads: int, complete_reads: int) -> str:
+    """Which of the two causes the attempts point at, and what to do about it.
+
+    The message used to offer both -- "the manifest and the stored scan disagree, or
+    the transport kept truncating" -- while the manifest records the byte count that
+    separates them. The two need different actions: a diverged store has to be
+    prepared again, and a truncating transport has to be retried, so leaving the
+    reader to guess is the part worth fixing.
+
+    A read that arrives short of the recorded length is a stream that ended early. A
+    read that arrives at the recorded length with the wrong digest is an intact
+    object that is not the one `prepare` saw, and no number of retries will change
+    it. Both can happen in one set of attempts, and when they do the message says so
+    rather than picking the more convenient one.
+    """
+
+    if complete_reads and short_reads:
+        return (
+            f"{short_reads} read(s) ended early and {complete_reads} arrived at the "
+            "recorded length with the wrong digest, so the transport is unreliable "
+            "and the stored object may also differ from the manifest; re-run "
+            "`npa workbench open3d prepare` and, if it still fails, retry the stage."
+        )
+    if complete_reads:
+        return (
+            "every read arrived at the recorded length with the wrong digest, so the "
+            "stored object is intact and is not the one prepare recorded; re-run "
+            "`npa workbench open3d prepare` against this prefix. Retrying will not "
+            "help."
+        )
+    if short_reads:
+        return (
+            "every read ended short of the recorded length, so the transport "
+            "truncated the stream rather than the store holding different bytes; "
+            "retrying the stage is the action."
+        )
+    return (
+        "no attempt returned any bytes to compare, so the failures above are "
+        "transport errors rather than a disagreement about content."
     )
 
 
