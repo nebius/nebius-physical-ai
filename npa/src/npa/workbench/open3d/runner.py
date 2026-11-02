@@ -16,6 +16,7 @@ import hashlib
 import json
 import time
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any, NamedTuple
 
 from .artifacts import (
@@ -409,8 +410,13 @@ def _sample_distances(o3d, cloud, vertices):
 #: inside the second and effectively none inside the first, which is precisely why it
 #: reproduced 46 times out of 46.
 #:
-#: Both are measurements. Raising either weakens every verdict derived from it, so
-#: change them only against a larger measured displacement.
+#: Both are sample maxima: the largest value seen in a finite number of comparisons on
+#: one scene, which is not a bound on what Poisson reconstruction can do. Repeated runs
+#: of that study moved the routine figure (1.0014e-05 m, then 6.437e-06 m), so 1.0e-05 m
+#: is the largest observed across runs rather than any single run's statistic. No verdict
+#: derived from them may claim that a displacement cannot occur -- see
+#: `what_no_verdict_here_establishes`. Raising either weakens every verdict derived from
+#: it, so change them only against a larger measured displacement.
 POISSON_VERTEX_DISPLACEMENT_ROUTINE_M = 1.0e-05
 POISSON_VERTEX_DISPLACEMENT_BOUND_M = 2.187e-03
 
@@ -419,6 +425,36 @@ POISSON_VERTEX_DISPLACEMENT_BOUND_M = 2.187e-03
 #: has no single meaning and the shape is what tells a reader whether their scan is the
 #: comfortable case.
 CROP_MARGIN_BANDS = (0.01, 0.1, 0.5)
+
+#: Where the two displacement figures come from, and what kind of figure each one is.
+#:
+#: Stated by content rather than only by path. The study that produced them is published
+#: separately from this field, so a path alone would be a provenance string a reader
+#: cannot resolve from the tree in front of them.
+_DISPLACEMENT_PROVENANCE = MappingProxyType(
+    {
+        "what_was_measured": (
+            "repeated Poisson reconstructions of one fused cloud, comparing the "
+            "occupancy decision at every scene voxel between pairs of runs: 46 pair "
+            "comparisons at two capture densities for the routine figure, and one "
+            "independent observation that did not reproduce in three further attempts "
+            "for the worst recorded"
+        ),
+        "on_what_input": (
+            "one scene -- the Open3D ICP demo fragments -- at voxel 0.05 and 0.02. Both "
+            "figures are therefore properties of that scene's geometry and capture, not "
+            "of the reconstruction algorithm in general."
+        ),
+        "kind_of_figure": (
+            "sample maxima. Each is the largest value observed in a finite number of "
+            "comparisons, which is not the same as a bound on what can occur."
+        ),
+        "published_as": (
+            "crop-decision-stability.json in the Open3D evidence directory, alongside "
+            "the stability study that produced it rather than alongside this field"
+        ),
+    }
+)
 
 
 def _crop_reproducibility(
@@ -440,7 +476,7 @@ def _crop_reproducibility(
         meaning = (
             f"{at_routine} {'vertex sits' if at_routine == 1 else 'vertices sit'} "
             f"closer to the threshold than vertices routinely move between runs "
-            f"({routine:g} m, the worst of 46 pair comparisons), so a rerun may return "
+            f"({routine:g} m, the largest in 46 pair comparisons), so a rerun may return "
             f"a different verdict for {'it' if at_routine == 1 else 'them'} and move "
             "the counts derived from it by up to that many vertices. May, not will: "
             "being inside the displacement makes a vertex able to cross, not likely to. "
@@ -453,7 +489,7 @@ def _crop_reproducibility(
         verdict = "reproducible_at_the_routine_displacement"
         meaning = (
             "No vertex sits within the displacement that recurs "
-            f"({routine:g} m, the worst of 46 pair comparisons), so a rerun is expected "
+            f"({routine:g} m, the largest in 46 pair comparisons), so a rerun is expected "
             f"to return the same verdicts -- and {at_bound} "
             f"{'vertex does sit' if at_bound == 1 else 'vertices do sit'} within the "
             f"largest displacement ever recorded for this reconstruction ({bound:g} m, "
@@ -463,12 +499,16 @@ def _crop_reproducibility(
             "undetermined."
         )
     else:
-        verdict = "reproducible"
+        verdict = "reproducible_at_every_displacement_measured"
         meaning = (
-            "Every vertex sits further from the threshold than the largest displacement "
-            f"ever recorded for this reconstruction ({bound:g} m), so no rerun can move "
-            "one across the cut. The closest came within "
-            f"{closest:.3g} m, a factor of {closest / bound:.0f} clear."
+            "Every vertex sits further from the threshold than any displacement "
+            f"measured for this reconstruction ({bound:g} m, the largest of them), so "
+            "no displacement anyone has measured would move one across the cut. The "
+            f"closest came within {closest:.3g} m, a factor of {closest / bound:.0f} "
+            "clear of that figure. This is the strongest of the three verdicts and it "
+            "is still a statement about measurements, not about reruns in general: "
+            "Poisson reconstruction has no proven displacement bound, so a rerun is "
+            "not prevented from exceeding the largest figure on record."
         )
 
     return {
@@ -481,10 +521,18 @@ def _crop_reproducibility(
         if vertices
         else 0.0,
         "what_that_means": meaning,
-        "measured_by": (
-            "docs/evidence/open3d/crop-decision-stability.json: 46 pair comparisons at "
-            "two capture densities for the routine figure, and one independent "
-            "unreproduced observation for the worst recorded"
+        # dict(), not the proxy itself: this summary is serialised to a run artifact and
+        # MappingProxyType is not JSON-encodable.
+        "measured_by": dict(_DISPLACEMENT_PROVENANCE),
+        "what_no_verdict_here_establishes": (
+            "Both displacement figures are the largest values seen in a finite number "
+            "of comparisons on one scene, so they are sample maxima and not bounds. "
+            "Nothing about Poisson reconstruction prevents a run from displacing a "
+            "vertex further than either, and a scene with different geometry, scale or "
+            "noise may well do so. Read every verdict here as 'against displacements "
+            "that have been measured', including the strongest one. If a decision must "
+            "hold rather than be likely to hold, the margin is the figure to act on, "
+            "not the verdict."
         ),
     }
 

@@ -16,6 +16,8 @@ Needs no Open3D: `_crop_margin` takes the distance array the crop already thresh
 from __future__ import annotations
 
 import json
+import re
+from collections.abc import Mapping
 from pathlib import Path
 
 import numpy as np
@@ -53,10 +55,15 @@ def test_geometry_far_from_the_cut_is_reported_reproducible_with_its_distance() 
     )
 
     reproducibility = margin["reproducibility"]
-    assert reproducibility["verdict"] == "reproducible"
+    assert reproducibility["verdict"] == "reproducible_at_every_displacement_measured"
     assert reproducibility["vertices_within_the_routine_displacement"] == 0
     assert reproducibility["vertices_within_the_worst_recorded_displacement"] == 0
-    assert "no rerun can move one across the cut" in reproducibility["what_that_means"]
+    said = reproducibility["what_that_means"]
+    # Scoped to what was measured. This assertion previously required the sentence
+    # "no rerun can move one across the cut", so the test was holding the impossibility
+    # claim in place rather than catching it.
+    assert "no displacement anyone has measured would move one across the cut" in said
+    assert "not about reruns in general" in said
 
 
 def test_geometry_inside_the_displacement_bound_is_reported_not_guaranteed() -> None:
@@ -109,7 +116,10 @@ def test_the_three_verdicts_follow_the_two_measured_scales() -> None:
     ), (
         "a vertex outside the recurring displacement but inside the outlier has no middle"
     )
-    assert outside_both["reproducibility"]["verdict"] == "reproducible"
+    assert (
+        outside_both["reproducibility"]["verdict"]
+        == "reproducible_at_every_displacement_measured"
+    )
 
     # The middle verdict has to say both halves, or it is just a pass with extra words.
     said = between["reproducibility"]["what_that_means"]
@@ -197,7 +207,7 @@ def test_the_record_from_the_real_stage_carries_the_margin_it_describes() -> Non
     for margin in enabled:
         reproducibility = margin["reproducibility"]
         assert reproducibility["verdict"] in {
-            "reproducible",
+            "reproducible_at_every_displacement_measured",
             "reproducible_at_the_routine_displacement",
             "not_guaranteed",
         }
@@ -208,3 +218,115 @@ def test_the_record_from_the_real_stage_carries_the_margin_it_describes() -> Non
         ), reproducibility
         assert margin["closest_vertex_to_the_threshold_m"] >= 0.0
         assert margin["threshold_m"] > 0.0
+
+
+def test_no_verdict_claims_a_displacement_cannot_happen() -> None:
+    """The figures are sample maxima, so no verdict may be phrased as an impossibility.
+
+    The strongest verdict previously read "so no rerun can move one across the cut".
+    That is an impossibility claim derived from the largest value in a finite number of
+    comparisons on one scene, which is the shape of claim this whole record exists to
+    avoid making. Checked on every reachable verdict rather than only the strongest,
+    because the wording is generated per branch.
+    """
+    threshold = 0.05
+    cases = {
+        "inside_routine": np.array([threshold + 1.0e-07, threshold + 0.03]),
+        "inside_bound": np.array([threshold + 1.0e-04, threshold + 0.03]),
+        "outside_both": np.array([threshold + 0.03, threshold + 0.04]),
+    }
+
+    forbidden = (
+        "no rerun can",
+        "cannot move",
+        "can never",
+        "is guaranteed",
+        "guarantees",
+        "will always",
+        "proves",
+    )
+    seen = set()
+    for name, distances in cases.items():
+        reproducibility = _crop_margin(distances, threshold)["reproducibility"]
+        seen.add(reproducibility["verdict"])
+        said = reproducibility["what_that_means"].lower()
+        for phrase in forbidden:
+            assert phrase not in said, (name, phrase, said)
+
+    # Stated, not recomputed: these are the three verdicts this field may emit, and the
+    # two affirmative ones each name the scale they are scoped to rather than asserting
+    # reproducibility outright.
+    assert seen == {
+        "not_guaranteed",
+        "reproducible_at_the_routine_displacement",
+        "reproducible_at_every_displacement_measured",
+    }, seen
+
+
+def test_the_record_states_the_scope_its_figures_came_from() -> None:
+    """An applicability limit, because the figures are one scene's and the verdict is not.
+
+    A caller reconstructing different geometry gets a verdict computed from displacement
+    measured somewhere else. That is useful and it is not transferable by construction,
+    so the output has to say which it is.
+    """
+    margin = _crop_margin(np.array([0.08, 0.09]), 0.05)
+    limits = margin["reproducibility"]["what_no_verdict_here_establishes"]
+
+    assert "sample maxima" in limits
+    assert "not bounds" in limits
+    assert "one scene" in limits
+
+    provenance = margin["reproducibility"]["measured_by"]
+    assert isinstance(provenance, Mapping), (
+        "provenance is a single string, so a reader cannot tell the measurement apart "
+        "from the input it was measured on"
+    )
+    assert "one scene" in provenance["on_what_input"]
+    assert "sample maxima" in provenance["kind_of_figure"]
+    assert "46 pair comparisons" in provenance["what_was_measured"]
+
+
+def test_provenance_does_not_point_at_a_path_absent_from_the_tree() -> None:
+    """A provenance string naming a file that is not here is not provenance.
+
+    The field cited `docs/evidence/open3d/crop-decision-stability.json`, which is
+    published with the stability study and is not on this branch. A reader following the
+    citation finds nothing. Any repo-relative path this field names must resolve.
+    """
+    provenance = _crop_margin(np.array([0.08, 0.09]), 0.05)["reproducibility"][
+        "measured_by"
+    ]
+    repository = Path(__file__).resolve().parents[3]
+
+    paths = []
+    for value in provenance.values():
+        paths.extend(re.findall(r"[\w./-]+/[\w./-]+\.(?:json|py|md)", value))
+
+    for candidate in paths:
+        assert (repository / candidate).exists(), (
+            f"provenance names {candidate}, which does not exist in this tree; cite it "
+            "by content, or by a path that resolves where the reader is standing"
+        )
+
+
+def test_the_margin_survives_being_written_to_an_artifact() -> None:
+    """Every field here is serialised into a run artifact, so it has to encode.
+
+    The structured provenance was first emitted as the `MappingProxyType` constant
+    itself. `isinstance(value, Mapping)` is true of that proxy, so the shape assertions
+    above passed while the real harness died with `Object of type mappingproxy is not
+    JSON serializable` and wrote a truncated record. A test that cannot fail the way the
+    artifact fails is not a test of the artifact.
+    """
+    for distances, limit in (
+        (np.array([0.08, 0.09]), 0.05),
+        (np.array([0.05 + 1.0e-07, 0.08]), 0.05),
+        (None, 0.0),
+    ):
+        margin = _crop_margin(distances, limit)
+        round_tripped = json.loads(json.dumps(margin))
+        assert round_tripped == margin, (
+            "the margin does not survive a JSON round trip unchanged, so the artifact "
+            "a caller reads is not the value this code returned"
+        )
