@@ -277,6 +277,27 @@ removed the owned controller, with its absence independently confirmed. One defe
 there: cleanup reported degraded local metadata, because the ownership record it went to remove
 named a different cluster.
 
+## What the random seed buys, and what it does not
+
+`register-seed-determinism.json`, from `harness/register_seed_determinism.py`. `_seeded` said
+it made RANSAC repeatable and the skill told readers a rerun repeats. With the seed, the input
+and the process all held fixed, 16 repeats return **16 distinct transformations**, so the
+`aligned_sha256` the report publishes per pair is a digest of that run and never matches the
+last one. A reviewer comparing two runs' hashes sees a mismatch every time, with nothing saying
+that is expected.
+
+The answer is nonetheless stable, which is why this survived: the repeats disagree by about a
+trillionth of a voxel on a well-conditioned pair and under a thousandth on a deliberately
+ambiguous one. `icp.fitness` is identical across every repeat in both cases, so a consumer
+watching the reported agreement measures sees a perfectly steady pipeline.
+
+The seed is not what is loose. Taken alone, normal estimation, FPFH, RANSAC and point-to-point
+ICP each return identical bytes every time; the shipped **point-to-plane** ICP does not, on the
+ambiguous pair, while being handed provably identical points, normals, pose and distance. Held
+to one thread through Open3D's own API, that call and the whole pipeline become bit-reproducible
+— and `OMP_NUM_THREADS` does not reach it, which is the lever a reader of the thread-count
+finding in `capability-record-support-crop.json` would try first.
+
 `ATTRIBUTION.md` covers the data all of this is computed from. The published capture renders
 Open3D's `DemoICPPointClouds`, which is Redwood's augmented ICL-NUIM `living-room1` -- a
 synthetic scene, not a sensor capture -- under CC BY 3.0. That is a grant on the data and is
