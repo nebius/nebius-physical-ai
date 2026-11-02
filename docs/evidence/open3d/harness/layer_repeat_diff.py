@@ -70,6 +70,7 @@ def _compare(label: str, repeats: list[np.ndarray]) -> dict:
     counts = [len(one) for one in repeats]
 
     first = _rows(repeats[0])
+    distinct = [len(np.unique(_rows(one))) for one in repeats]
     against_first = []
     for index, other in enumerate(repeats[1:], start=2):
         rows = _rows(other)
@@ -81,21 +82,62 @@ def _compare(label: str, repeats: list[np.ndarray]) -> dict:
                 "points_only_in_repeat_1": only_first,
                 "points_only_in_this_repeat": only_other,
                 "shared": len(np.intersect1d(first, rows)),
+                "fraction_of_repeat_1_differing": (
+                    0.0 if not distinct[0] else round(only_first / distinct[0], 6)
+                ),
+                "fraction_of_this_repeat_differing": (
+                    0.0
+                    if not distinct[index - 1]
+                    else round(only_other / distinct[index - 1], 6)
+                ),
             }
         )
 
-    differing = [one["points_only_in_repeat_1"] for one in against_first]
+    # Both sides, because the field below promises the largest of all of them and a
+    # reader reproducing it from the other direction would otherwise get a bigger
+    # number. The subject layer's repeat-4 side is 0.022326 against 0.022291 from the
+    # repeat-1 side; immaterial to every conclusion here, and the field name still has
+    # to be true.
+    fractions = [
+        value
+        for one in against_first
+        for value in (
+            one["fraction_of_repeat_1_differing"],
+            one["fraction_of_this_repeat_differing"],
+        )
+    ]
+    differing = [
+        value
+        for one in against_first
+        for value in (one["points_only_in_repeat_1"], one["points_only_in_this_repeat"])
+    ]
     largest = max(differing) if differing else 0
     return {
         "layer": label,
         "repeats": len(repeats),
         "point_counts": counts,
+        "distinct_point_counts": distinct,
+        "duplicate_triples_per_repeat": [
+            raw - unique for raw, unique in zip(counts, distinct)
+        ],
+        "how_to_read_the_arithmetic": (
+            "point_counts are raw; the set comparisons below are on distinct "
+            "coordinate triples. So shared + points_only_in_repeat_1 reconciles with "
+            "distinct_point_counts[0], and falls short of point_counts[0] by the "
+            f"{max(raw - unique for raw, unique in zip(counts, distinct))} duplicate "
+            "triples this layer holds at most. Nothing is wrong with either figure; "
+            "they answer different questions and only one of them closes. The "
+            "duplicate count is itself a per-run figure and is stated here from this "
+            "run's measurement rather than carried over."
+        ),
         "point_count_is_stable": len(set(counts)) == 1,
         "distinct_byte_digests": len(set(digests)),
         "bit_identical_every_repeat": len(set(digests)) == 1,
         "set_difference_against_repeat_1": against_first,
-        "largest_fraction_of_points_differing": (
-            0.0 if not counts[0] else round(largest / counts[0], 6)
+        "largest_fraction_of_points_differing": max(fractions) if fractions else 0.0,
+        "which_side_that_fraction_came_from": (
+            "the larger of both sides of every pair, each against its own distinct "
+            "count"
         ),
         "the_same_points_in_another_order": (len(set(digests)) > 1 and largest == 0),
     }

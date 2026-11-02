@@ -531,6 +531,89 @@ def test_the_pixel_counts_move_because_the_geometry_does(layer_repeats) -> None:
     assert not layers["subject"]["point_count_is_stable"], layers["subject"]
 
 
+def test_the_set_arithmetic_closes_against_the_count_it_is_computed_from(
+    layer_repeats,
+) -> None:
+    """A reader auditing this record hit a figure four short and could not resolve it.
+
+    `point_counts` is raw and the set comparisons deduplicate, so shared plus
+    repeat-1-only reconciles with the distinct count and misses the raw one by the
+    number of duplicate coordinate triples. Both figures are correct and they answer
+    different questions; the record has to say which, because auditing the arithmetic
+    is how two earlier mistakes in this directory were caught.
+
+    Needs no Open3D.
+    """
+    for name, one in layer_repeats["layers"].items():
+        distinct = one["distinct_point_counts"]
+        assert len(distinct) == one["repeats"], (name, one)
+        for index, (raw, unique) in enumerate(zip(one["point_counts"], distinct)):
+            assert unique <= raw, (name, index, raw, unique)
+        assert one["duplicate_triples_per_repeat"] == [
+            raw - unique for raw, unique in zip(one["point_counts"], distinct)
+        ], (name, one)
+
+        for pair in one["set_difference_against_repeat_1"]:
+            assert pair["shared"] + pair["points_only_in_repeat_1"] == distinct[0], (
+                f"{name} repeat {pair['repeat']}: the set comparison does not "
+                "reconcile with the distinct count it was computed from, so a reader "
+                "auditing it has no figure that closes"
+            )
+
+        assert "point_counts are raw" in one["how_to_read_the_arithmetic"], name
+
+    # Each layer's note states its own duplicate count, so hold the figures to the
+    # prose. Without this the deduplication can be quietly undone: a one-triple
+    # difference in an 84,000-point denominator survives rounding to six decimals, so
+    # the fraction checks alone cannot see it. The count is generated per run rather
+    # than carried over, because it moves between runs.
+    for name, one in layer_repeats["layers"].items():
+        stated = re.search(r"by the (\d+) duplicate", one["how_to_read_the_arithmetic"])
+        assert stated, (name, one["how_to_read_the_arithmetic"])
+        assert int(stated.group(1)) == max(one["duplicate_triples_per_repeat"]), (
+            f"{name}: the note states a duplicate count the figures do not show, so "
+            "one of them is wrong"
+        )
+
+
+def test_the_largest_fraction_is_the_largest_of_both_sides(layer_repeats) -> None:
+    """The field name promises the largest of all, so it cannot be one-sided.
+
+    It was the maximum of the repeat-1 side only. For the subject layer the other side
+    of the last pair is larger, so a reader reproducing the number from that direction
+    got a bigger one than the record published -- immaterial to every conclusion in the
+    file, and still a field whose name was not true.
+
+    Needs no Open3D.
+    """
+    for name, one in layer_repeats["layers"].items():
+        pairs = one["set_difference_against_repeat_1"]
+        both_sides = [
+            value
+            for pair in pairs
+            for value in (
+                pair["fraction_of_repeat_1_differing"],
+                pair["fraction_of_this_repeat_differing"],
+            )
+        ]
+        assert one["largest_fraction_of_points_differing"] == max(
+            both_sides, default=0.0
+        ), (
+            f"{name}: the published fraction is not the largest of both sides of every "
+            "pair, which is what its name claims"
+        )
+        assert "both sides" in one["which_side_that_fraction_came_from"], name
+
+        # Each side divided by its own distinct count, not by repeat 1's.
+        for pair in pairs:
+            distinct = one["distinct_point_counts"]
+            assert pair["fraction_of_this_repeat_differing"] == pytest.approx(
+                round(
+                    pair["points_only_in_this_repeat"] / distinct[pair["repeat"] - 1], 6
+                )
+            ), (name, pair)
+
+
 def test_the_two_records_agree_on_where_the_variation_enters(
     controls, layer_repeats
 ) -> None:
