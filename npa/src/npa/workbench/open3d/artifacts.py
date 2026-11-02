@@ -509,7 +509,21 @@ def verify_rerun_recording(path: Path) -> None:
         raise Open3dError(
             f"the Rerun SDK is unavailable to decode the recording: {exc}"
         )
-    except (RuntimeError, ValueError) as exc:
+    except (OSError, RuntimeError, ValueError) as exc:
+        # OSError because the decode is a second read of the file, minutes of
+        # subprocess later: the path can be gone, unreadable, or a directory by the
+        # time `RrdReader` opens it, and pyo3 surfaces `std::io::Error` as `OSError`.
+        # Without it the function raised something `_call` does not catch
+        # ((Open3dError, ValueError)), so the CLI died with a traceback instead of the
+        # contracted message and exit 1 -- the one way this change could have made the
+        # failure contract worse rather than better.
+        #
+        # Deliberately not `BaseException`, which is what it would take to also catch
+        # a pyo3 `PanicException`. That would swallow `KeyboardInterrupt` and
+        # `SystemExit`, and a panic is a bug in the decoder rather than a condition
+        # this function can report on; it should keep its traceback. The 26-cut
+        # truncation sweep in the tests is the evidence that real corruption arrives
+        # as `RuntimeError` and not as a panic.
         raise Open3dError(f"Rerun could not decode the generated recording: {exc}")
     substantive = [name for name in logged if not name.startswith(RERUN_INTERNAL)]
     if not substantive:

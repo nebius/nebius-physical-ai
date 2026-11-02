@@ -82,7 +82,12 @@ def test_the_cli_is_resolvable_wherever_the_sdk_is_installed() -> None:
     finding it exists to close. So that combination is a failure, not a skip.
     """
 
-    pytest.importorskip("rerun")
+    # Imported, not `importorskip`. `rerun-sdk` is a core dependency, so an import
+    # failure is a packaging or ABI fault and not a reason to stand down -- and with
+    # `importorskip` here the guard skipped in precisely the case it exists to catch,
+    # taking `needs_cli` and the whole file with it into a green suite of skips.
+    import rerun  # noqa: F401
+
     assert rerun_cli() is not None, (
         "rerun imports but its CLI is not resolvable, so the verifier tests would skip"
     )
@@ -155,7 +160,11 @@ def test_an_empty_recording_is_refused(tmp_path: Path) -> None:
 
     path = tmp_path / "empty.rrd"
     path.write_bytes(b"")
-    with pytest.raises(Open3dError, match="could not decode"):
+    # Which layer catches it is not this test's claim. If `rrd verify` ever learns to
+    # reject a zero-byte file, the function's behaviour is unchanged and better, and
+    # pinning the decode layer here would turn that improvement into a red required
+    # gate. Layer attribution is the matrix test's job, and only its.
+    with pytest.raises(Open3dError, match="rejected|could not decode"):
         verify_rerun_recording(path)
 
 
@@ -167,7 +176,7 @@ def test_a_recording_truncated_to_its_header_is_refused(
 
     path = tmp_path / "header-only.rrd"
     path.write_bytes(recording.read_bytes()[:HEADER_BYTES])
-    with pytest.raises(Open3dError, match="could not decode|no data"):
+    with pytest.raises(Open3dError, match="rejected|could not decode|no data"):
         verify_rerun_recording(path)
 
 
@@ -205,7 +214,10 @@ def test_a_mostly_complete_recording_is_refused(
     payload = recording.read_bytes()
     path = tmp_path / "mostly.rrd"
     path.write_bytes(payload[: len(payload) * 90 // 100])
-    with pytest.raises(Open3dError, match="rejected"):
+    # Same reason as above, in the other direction: today only the CLI rejects a 90
+    # percent cut, but a reader that tightened its fallback would reject it too, and
+    # that is not a regression.
+    with pytest.raises(Open3dError, match="rejected|could not decode"):
         verify_rerun_recording(path)
 
 
@@ -420,3 +432,72 @@ def test_a_missing_file_does_not_pass_verification(
         pytest.skip("the Rerun CLI is not installed on this machine")
     with pytest.raises(Open3dError):
         verify_rerun_recording(tmp_path / "never-written.rrd")
+
+
+@needs_cli
+def test_an_io_error_during_the_decode_is_reported_as_an_open3d_error(
+    recording: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The decode is a second read of the file, a subprocess later.
+
+    `rrd verify` can pass and then `RrdReader` can fail on I/O rather than on
+    content: the path removed, chmod'd, or replaced by a directory in between, or an
+    unreadable mount. pyo3 surfaces `std::io::Error` as `OSError`, which was in
+    neither except clause, so `verify_rerun_recording` raised something `_call` does
+    not catch -- a traceback and a non-contract exit instead of the stderr message
+    and exit 1 this function exists to produce.
+    """
+
+    import npa.viz.recordings as recordings_module
+
+    def unreadable(path: Path):
+        raise OSError(13, "Permission denied", str(path))
+
+    monkeypatch.setattr(recordings_module, "load_recordings", unreadable)
+    with pytest.raises(Open3dError, match="could not decode"):
+        verify_rerun_recording(recording)
+
+
+@needs_cli
+def test_an_unreadable_file_on_disk_is_reported_as_an_open3d_error(
+    tmp_path: Path, recording: Path
+) -> None:
+    """The same thing without a monkeypatch: a real unreadable file.
+
+    `rrd verify` is lenient enough to be worth checking rather than assuming -- if it
+    rejects the file first this passes through the CLI branch, which is why the
+    monkeypatched test above exists alongside it.
+    """
+
+    path = tmp_path / "unreadable.rrd"
+    path.write_bytes(recording.read_bytes())
+    path.chmod(0o000)
+    try:
+        with pytest.raises(Open3dError):
+            verify_rerun_recording(path)
+    finally:
+        path.chmod(0o644)
+
+
+@needs_cli
+@pytest.mark.parametrize("escaping", [KeyboardInterrupt, SystemExit])
+def test_an_interrupt_is_not_swallowed_by_the_decode_guard(
+    recording: Path, monkeypatch: pytest.MonkeyPatch, escaping: type[BaseException]
+) -> None:
+    """The guard widened to `OSError`, deliberately not to `BaseException`.
+
+    Catching `BaseException` would also catch a pyo3 `PanicException`, which was the
+    other escape the review named -- but it would take `KeyboardInterrupt` and
+    `SystemExit` with it, and a panic is a decoder bug that should keep its traceback
+    rather than a condition this function can report on. So both have to pass
+    straight through.
+    """
+
+    import npa.viz.recordings as recordings_module
+
+    def interrupted(path: Path):
+        raise escaping()
+
+    monkeypatch.setattr(recordings_module, "load_recordings", interrupted)
+    with pytest.raises(escaping):
+        verify_rerun_recording(recording)
