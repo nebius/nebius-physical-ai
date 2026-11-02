@@ -57,13 +57,18 @@ INVOCATIONS = 5
 #: one this record exists to make. Measured by an independent review lane running this
 #: module's `_one_crop` on a 53x denser input of the same scene; not reproduced in three
 #: further attempts on a coordinate-identical file, so it is reported as an observation
-#: with an unknown rate rather than as a property. The headline margin is taken from
-#: whichever is worse, this or anything measured here.
+#: with an unknown rate rather than as a property. The ratio below is taken against
+#: whichever displacement is worse, this or anything measured here.
 TAIL_OBSERVED_ELSEWHERE = MappingProxyType(
     {
         "displacement_m": 2.187e-03,
         "cut_m": 0.05,
-        "margin_factor": 0.05 / 2.187e-03,
+        # Published under the name `margin_factor` before 2026-11-02. Same formula,
+        # renamed: `cut_m / displacement_m` compares two lengths and is not a factor
+        # by which a decision clears anything. See
+        # `what_the_cut_to_separation_ratio_is_not` below.
+        "cut_over_displacement": 0.05 / 2.187e-03,
+        "cut_over_displacement_is": "cut_m / displacement_m",
         "cells_that_flipped_there": 0,
         "reproduced_in_three_further_attempts": False,
         "measured_by": (
@@ -72,10 +77,11 @@ TAIL_OBSERVED_ELSEWHERE = MappingProxyType(
         ),
         "why_it_is_kept": (
             "Dropping an unreproduced outlier because it is inconvenient is how a "
-            "margin claim becomes a median claim. It is three orders of magnitude from "
-            "everything else and it is still 20x short of the cut, so it tightens the "
-            "stated safety factor without touching the verdict -- which is the honest "
-            "shape of the result."
+            "stated bound becomes a median. It is three orders of magnitude from "
+            "everything else and still 20x smaller than the cut, and no cell changed "
+            "its verdict where it was observed -- so it lowers the cut-to-separation "
+            "ratio this record reports without contradicting any verdict that was "
+            "actually checked."
         ),
     }
 )
@@ -295,29 +301,38 @@ def _how_far_the_movers_move(o3d, runs: list[dict], limit: float) -> dict:
     a sub-micron wobble against a 5 cm cut is safe by a factor nobody needs to think
     about, and a wobble of the same order as the cut would be luck.
 
-    Measured as the distance from each vertex of one repeat to the nearest vertex of
-    another, which is the displacement interpretation that does not require the two
-    vertex sets to correspond.
+    Measured as the nearest-neighbour distance between two repeats' vertex sets, in
+    both directions. That is a *lower bound* on how far any individual vertex moved,
+    not the movement itself: the two sets are not in correspondence, so a vertex that
+    travelled can be charged the distance to whichever other-repeat vertex happens to
+    sit nearest. The generated sentences used to call it "the largest distance any
+    vertex moved", which is a stronger quantity than this measures, in a record whose
+    value is the precision of its margin language. It was also computed in one
+    direction only, which misses a vertex present in one repeat and absent from the
+    other.
     """
 
     import numpy as np
 
-    reference = o3d.geometry.PointCloud()
-    reference.points = o3d.utility.Vector3dVector(
-        np.asarray(runs[0]["uncropped_mesh"].vertices)
-    )
-    tree = o3d.geometry.KDTreeFlann(reference)
+    def one_way(source, target) -> np.ndarray:
+        cloud = o3d.geometry.PointCloud()
+        cloud.points = o3d.utility.Vector3dVector(target)
+        tree = o3d.geometry.KDTreeFlann(cloud)
+        return np.array(
+            [
+                float(np.sqrt(tree.search_knn_vector_3d(vertex, 1)[2][0]))
+                for vertex in source
+            ]
+        )
 
+    first = np.asarray(runs[0]["uncropped_mesh"].vertices)
     worst = 0.0
     per_repeat = []
     for number, one in enumerate(runs[1:], start=2):
         vertices = np.asarray(one["uncropped_mesh"].vertices)
-        nearest = np.array(
-            [
-                float(np.sqrt(tree.search_knn_vector_3d(vertex, 1)[2][0]))
-                for vertex in vertices
-            ]
-        )
+        forward = one_way(vertices, first)
+        backward = one_way(first, vertices)
+        nearest = np.concatenate([forward, backward])
         worst = max(worst, float(nearest.max()))
         per_repeat.append(
             {
@@ -325,25 +340,36 @@ def _how_far_the_movers_move(o3d, runs: list[dict], limit: float) -> dict:
                 "median_displacement_m": float(np.median(nearest)),
                 "p99_displacement_m": float(np.percentile(nearest, 99)),
                 "max_displacement_m": float(nearest.max()),
+                "measured": (
+                    "symmetric nearest-neighbour distance between this repeat's "
+                    "vertex set and repeat 1's, a lower bound on per-vertex movement"
+                ),
             }
         )
 
     pair_worsts = np.array([one["max_displacement_m"] for one in per_repeat])
-    known = min(limit / worst, TAIL_OBSERVED_ELSEWHERE["margin_factor"])
+    # Against *this* case's cut. `TAIL_OBSERVED_ELSEWHERE["cut_over_displacement"]` is
+    # a ratio computed against the 5 cm cut, and taking the smaller of the two ratios
+    # carried that cut into cases with a different one: at the 2 cm cut it published
+    # 22.9x where 0.02 / 2.187e-03 = 9.1x is what the formula gives. The displacement
+    # is the portable quantity; the ratio is not. Correcting the arithmetic does not
+    # make the result a decision margin -- see the ratio's own disclaimer below.
+    worst_known = max(worst, TAIL_OBSERVED_ELSEWHERE["displacement_m"])
+    ratio = limit / worst_known
 
     return {
         "per_repeat": per_repeat,
         "the_distribution_of_the_per_pair_worst": {
             "why_a_distribution_and_not_one_number": (
-                "The margin is computed from `worst`, which makes `worst` the quantity "
-                "the safety claim rests on -- and it is a tail statistic. A handful of "
+                "The reported ratio is computed from `worst`, which makes `worst` the "
+                "quantity it rests on -- and it is a tail statistic. A handful of "
                 "repeats describes the middle of its distribution, not the case the "
                 "margin has to survive. An independent lane hit one per-pair worst "
                 "three orders of magnitude above its neighbours and could not "
                 "reproduce it in three further attempts on the identical file, which "
                 "is exactly the shape a four-repeat run cannot see. So the pairs are "
-                "reported as a distribution and the headline margin is taken from the "
-                "worst value known anywhere rather than from the worst seen here."
+                "reported as a distribution and the headline ratio is taken against "
+                "the worst value known anywhere rather than the worst seen here."
             ),
             "pairs_compared": int(pair_worsts.size),
             "min_m": float(pair_worsts.min()),
@@ -356,19 +382,61 @@ def _how_far_the_movers_move(o3d, runs: list[dict], limit: float) -> dict:
         },
         "worst_displacement_m": worst,
         "the_threshold_it_would_have_to_cross_m": limit,
-        "margin_factor": float(limit / worst) if worst else None,
+        # Both ratios were published as `margin_factor` and
+        # `margin_at_the_worst_displacement_known_anywhere` before 2026-11-02. Same
+        # formulas, renamed: see `what_the_cut_to_separation_ratio_is_not`.
+        "cut_over_the_worst_separation_here": float(limit / worst) if worst else None,
         "the_tail_observed_elsewhere": dict(TAIL_OBSERVED_ELSEWHERE),
-        "margin_at_the_worst_displacement_known_anywhere": float(known),
+        "the_worst_displacement_known_anywhere_m": float(worst_known),
+        "cut_over_the_worst_separation_known_anywhere": float(ratio),
+        "how_that_ratio_is_computed": (
+            "the_threshold_it_would_have_to_cross_m divided by "
+            "the_worst_displacement_known_anywhere_m"
+        ),
+        "what_the_cut_to_separation_ratio_is_not": {
+            "it_is_not_a_decision_margin": (
+                "The crop keeps a vertex when its distance to the cloud is at most the "
+                "cut, so what decides a verdict is the distance from that vertex to "
+                "the cut -- |distance - cut| -- and not the cut itself. A vertex at "
+                f"0.049999 m against a {TAIL_OBSERVED_ELSEWHERE['cut_m']} m cut is one "
+                "micron from flipping, and the "
+                f"{TAIL_OBSERVED_ELSEWHERE['displacement_m']:.3g} m observation above "
+                "flips it, even though the cut is "
+                f"{TAIL_OBSERVED_ELSEWHERE['cut_over_displacement']:.1f}x that "
+                "movement. So this ratio does not say a decision clears its boundary "
+                "by that factor, and no figure in this record says how close to the "
+                "cut the vertices that matter actually sit."
+            ),
+            "what_it_is": (
+                "A comparison of two lengths: how large this case's cut is relative to "
+                "the largest separation observed between two repeats' vertex sets. It "
+                "is useful for the scale it gives and it is not a safety factor."
+            ),
+            "what_does_support_the_verdict": (
+                "The finite observation, which is in "
+                "`the_per_cell_decision_a_user_reads`: across the pairs compared here, "
+                "no cell changed its verdict. That is a count of what happened on "
+                "these repeats, not a guarantee about another run."
+            ),
+            "what_would_be_needed_for_a_real_margin": (
+                "Per-vertex distance-to-boundary clearance under a stated vertex "
+                "correspondence, with the cardinality assumption declared. Neither is "
+                "measured here, and this record does not substitute the ratio for it."
+            ),
+        },
         "what_that_means": (
             "A vertex only changes the answer by crossing the support threshold or "
             "landing in another cell. Across "
-            f"{pair_worsts.size} pairs here the largest any vertex moved was "
-            f"{worst:.3g} m against a {limit} m cut. Taking instead the worst value "
-            "known anywhere, including the unreproduced observation above, the "
-            f"decision still clears its threshold by {known:.0f}x. That is the figure "
-            "to re-check on a scan whose geometry sits closer to the cut, and it is "
-            "deliberately the conservative one: no cell changed its verdict at either "
-            "displacement."
+            f"{pair_worsts.size} pairs here the largest nearest-neighbour distance "
+            f"between two repeats' vertex sets was {worst:.3g} m against a {limit} m "
+            "cut, and no cell changed its verdict in any of those pairs. Taking the "
+            "worst displacement known anywhere, including the unreproduced observation "
+            f"above, which is {worst_known:.3g} m, this case's cut is {ratio:.1f}x that "
+            "separation. That ratio is a comparison of two lengths and not a clearance: "
+            "a vertex already sitting a micron inside the cut flips under a movement "
+            "far smaller than the cut, so what is established here is the no-flip "
+            "count above and the scale of the movement relative to the cut -- not that "
+            "a rerun would decide the same way."
         ),
     }
 
@@ -398,24 +466,29 @@ def _whether_that_is_benign(moved: float, straddling: float, displacement: dict)
     worst = displacement["worst_displacement_m"]
     limit = displacement["the_threshold_it_would_have_to_cross_m"]
     pairs = displacement["the_distribution_of_the_per_pair_worst"]["pairs_compared"]
-    known = displacement["margin_at_the_worst_displacement_known_anywhere"]
+    ratio = displacement["cut_over_the_worst_separation_known_anywhere"]
     if moved == 0:
         return (
             f"Yes, and by a measured margin rather than by luck. Around {straddling:.0f} "
             "vertices per repeat sit within 10% of the cut, which is where a sharp "
             "threshold on a continuous quantity is vulnerable, and none of them "
-            f"crossed. Over {pairs} pairs the largest distance any vertex moved was "
-            f"{worst:.3g} m against a {limit} m cut. The margin is quoted from the "
-            "worst displacement known anywhere rather than from that, because the "
-            "statistic has a tail an earlier four-repeat run could not see: on the "
-            f"worst value on record the decision clears the cut by {known:.0f}x, which "
-            "is the number to re-check on another scan. Not this verdict, and not the "
-            "typical case."
+            f"crossed. Over {pairs} pairs the largest nearest-neighbour distance "
+            f"between two repeats' vertex sets was {worst:.3g} m against a {limit} m "
+            "cut -- a lower bound on how far any vertex moved, since the two sets are "
+            "not in correspondence -- and no cell changed its verdict in any of them. "
+            "The ratio this record reports is taken against the worst displacement "
+            "known anywhere rather than that, because the statistic has a tail an "
+            f"earlier four-repeat run could not see: the cut is {ratio:.1f}x that "
+            "displacement. Read that as scale and not as clearance. The decision "
+            "boundary is at |distance - cut|, which nothing here measures, so a vertex "
+            "already near the cut can flip under a movement far smaller than it. What "
+            "transfers to another scan is the method and the no-flip count, not a "
+            "factor."
         )
     return (
         f"Partly. Around {straddling:.0f} vertices per repeat sit within 10% of the "
-        f"cut and the largest movement between repeats is {worst:.3g} m against a "
-        f"{limit} m cut. A flip count of the same order as that band is a threshold "
+        f"cut and the largest nearest-neighbour distance between repeats is "
+        f"{worst:.3g} m against a {limit} m cut. A flip count of the same order as that band is a threshold "
         "behaving as a threshold; one much larger is a different problem."
     )
 
@@ -484,7 +557,10 @@ _SCALING_READINGS = MappingProxyType(
             "The displacement grew, but by appreciably less than the capture did. Two "
             "densities cannot separate partial scaling from a fixed artefact plus "
             "noise, so neither reading is supported and this record does not claim "
-            "one. A third density would settle it."
+            "one. A third density would not settle it either: see the retained ratios "
+            "below, where repeat runs of these same two settings have landed in "
+            "different bands, so the quantity varies between runs and not only "
+            "between densities."
         ),
         "indeterminate": (
             "The two densities are too close together for their ratio to establish "
@@ -494,12 +570,52 @@ _SCALING_READINGS = MappingProxyType(
 )
 
 
+#: The same figure from earlier runs of this harness, carried for the same reason as
+#: the displacement ratios below and with the same limitation: this harness does not
+#: append to it, so it is the history someone wrote down rather than a log. It exists
+#: because the figure is constant across every repeat *within* a run and still moved
+#: between runs, and a record whose headline is "exactly reproducible under the crop"
+#: has to say which of those two things it measured.
+PHANTOM_FIGURE_ON_EARLIER_RUNS = MappingProxyType(
+    {
+        # Three runs at the scene voxel read 733, 734, 733; two at the fine voxel read
+        # 920 then 919. Within each run every repeat agreed.
+        0.05: (733, 734),
+        0.02: (920, 919),
+    }
+)
+
+
+#: The placeholder every provenance block carries until `main` substitutes the real
+#: digest. Named rather than written twice, because two of the three blocks used to
+#: ship with the literal still in them: the audit only inspects 64-hex values, so it
+#: neither verified nor counted the placeholder, and the binding test read the
+#: top-level block alone.
+_TO_BE_FILLED_IN = "recomputed below"
+
+
 RATIOS_OBSERVED_ON_EARLIER_RUNS = MappingProxyType(
     {
-        "displacement_denser_over_sparser": (0.548387,),
-        "vertices_denser_over_sparser": (4.293651,),
-        "band_each_time": ("shrinks",),
-        "measured_at": ("commit 9c492ad33a of this harness, same host, same inputs",),
+        # 0.888889 is attested by README.md at this commit ("0.8889 on the next two")
+        # and was dropped from this constant rather than re-measured, which is the
+        # hazard the docstring below describes. Its vertices ratio was not recorded.
+        #
+        # 2.121212 is the uncomfortable one, and it is retained for that reason: a run
+        # during this repair measured 1.67e-05 m at the fine voxel against 7.87e-06 m
+        # at the scene voxel, which is the denser case moving *further* and lands in a
+        # different band from every other run. Dropping it would have left the record
+        # concluding "every retained run lands in fixed/shrinks" over a list curated to
+        # make that true. The margins are unaffected -- the tail observed elsewhere,
+        # 2.187e-03 m, still dominates both cuts -- so what it costs is the scaling
+        # scaling conclusion, not the observed verdicts.
+        "displacement_denser_over_sparser": (0.548387, 0.888889, 2.121212),
+        "vertices_denser_over_sparser": (4.293651, None, 4.262256),
+        "band_each_time": ("shrinks", "shrinks", "partial"),
+        "measured_at": (
+            "commit 9c492ad33a of this harness, same host, same inputs",
+            "attested in README.md, not re-measured here",
+            "2026-11-02T19:50Z on this host, same inputs, REPEATS=24",
+        ),
     }
 )
 """The same quantity from an earlier run of this harness, kept rather than overwritten.
@@ -526,14 +642,22 @@ def _is_the_ratio_reproducible(vertex_ratio: float, displacement_ratio: float) -
 
     return {
         "the_ratio_is_not": (
-            "Every displacement ratio this harness has produced: "
+            # "Every ... this harness has produced" over a frozen literal the harness
+            # never appends to. Each run replaced the current value and discarded the
+            # previous one unless a human edited the constant, so the sentence was an
+            # absolute claim over a curated list -- the same shape as the defect the
+            # update section says it is fixing, one level up. It says what it is now.
+            f"The {len(every)} displacement ratios this record retains, of however "
+            "many runs there have been: "
             + ", ".join(f"{one:.4f}" for one in sorted(every))
-            + ". It is a ratio of two maxima, so it carries both tails and moves "
+            + ". The earlier ones are carried in a constant this harness does not "
+            "append to, so this is the history someone wrote down, not a log. It is "
+            "a ratio of two maxima, so it carries both tails and moves "
             "between runs by more than its own distance from the band edges. Do not "
             "quote it as a measurement of how displacement scales with density."
         ),
         "the_band_is": (
-            f"Every run so far lands in {'/'.join(sorted(bands))}, and the readings for "
+            f"Every retained run lands in {'/'.join(sorted(bands))}, and the readings for "
             "shrinks and fixed support the same conclusion -- displacement that does "
             "not grow with the capture, so the margin is set by the cut. That is what "
             "this comparison establishes."
@@ -542,8 +666,15 @@ def _is_the_ratio_reproducible(vertex_ratio: float, displacement_ratio: float) -
             f"{'/'.join(sorted(bands))}. This comparison establishes nothing until "
             "that is resolved."
         ),
-        "every_displacement_ratio_observed": [float(one) for one in sorted(every)],
+        "the_displacement_ratios_this_record_retains": [
+            float(one) for one in sorted(every)
+        ],
         "runs_this_is_drawn_from": len(every),
+        "the_history_is_not_append_only": (
+            "this harness writes the current run's ratio and carries the earlier ones "
+            "from a hand-maintained constant, so a run whose ratio is not added to "
+            "that constant leaves no trace here"
+        ),
     }
 
 
@@ -557,6 +688,16 @@ def _what_density_establishes(
     rather than deriving it from them is how that survives review of the figures.
     """
 
+    # The reading below is one run's. Where the retained runs disagree about which
+    # band they are in, this sentence has to say so rather than state the conclusion
+    # that `is_this_ratio_itself_reproducible` withdraws two fields later -- a reader
+    # who stops at the first of those two has been told the opposite of the record's
+    # own verdict.
+    retained_bands = {
+        _how_displacement_scales(vertex_ratio, one)
+        for one in RATIOS_OBSERVED_ON_EARLIER_RUNS["displacement_denser_over_sparser"]
+    } | {_how_displacement_scales(vertex_ratio, displacement_ratio)}
+
     if displacement_ratio > 1.0:
         direction = f"{displacement_ratio:.2f}x further"
     elif displacement_ratio < 1.0:
@@ -566,9 +707,24 @@ def _what_density_establishes(
 
     band = _how_displacement_scales(vertex_ratio, displacement_ratio)
 
+    reading = _SCALING_READINGS[band]
+    if not retained_bands <= {"shrinks", "fixed"}:
+        reading = (
+            f"{reading} That is this run's reading only: the retained runs do not "
+            f"agree on which band this is -- {'/'.join(sorted(retained_bands))} -- so "
+            "`is_this_ratio_itself_reproducible` withdraws the conclusion and this "
+            "sentence cannot be read as establishing it. What survives every run is "
+            "the margin, which is quoted against the worst displacement known anywhere "
+            "rather than against either of these."
+        )
+
     return (
         f"A {vertex_ratio:.1f}x denser mesh moved its vertices {direction}. "
-        f"{_SCALING_READINGS[band]} "
+        f"{reading} "
+        "Both meshes come from the same capture at two downsample voxels, and the cut "
+        "and the normal radius move with the voxel, so this is two operating points "
+        "rather than a density axis -- it does not establish that density is what "
+        "changed the displacement. "
         f"A reader can compute their own margin: voxel * support_distance_factor over "
         f"about {worst:.1g} m."
     )
@@ -620,8 +776,8 @@ def _tail_bound(cases: dict) -> dict:
             "that, so whatever produced it is rare rather than routine. It does not "
             "settle that it cannot happen, and a bound is not an absence -- it was "
             "observed once under this same rule. The published margin therefore stays "
-            "the conservative one. Raising repeats further would tighten this bound; "
-            "it would not change which number the safety claim should quote."
+            "the conservative one. Raising repeats further would describe that tail "
+            "better; it would not turn the cut-to-separation ratio into a clearance."
         ),
     }
 
@@ -640,7 +796,7 @@ def _spread(values: list[float]) -> dict:
     }
 
 
-def _two_arms(fixed: dict, rebuilt: dict) -> str:
+def _two_arms(fixed: dict, rebuilt: dict, voxel: float) -> str:
     """Attribute the residual, which neither arm can do alone.
 
     The fixed-cloud arm varies Poisson only; the rebuilt arm varies registration too.
@@ -649,10 +805,31 @@ def _two_arms(fixed: dict, rebuilt: dict) -> str:
     """
 
     moving = rebuilt["phantom_cells_removed"]
+    here = fixed["values"][0] if fixed["values"] else float("nan")
+    observed = sorted({here, *PHANTOM_FIGURE_ON_EARLIER_RUNS.get(voxel, ())})
+    if len(observed) > 1:
+        across_runs = (
+            f" Across the {len(observed)} values this record retains from separate "
+            f"harness runs the figure is not one number -- "
+            f"{', '.join(f'{one:.0f}' for one in observed)}, a span of "
+            f"{max(observed) - min(observed):.0f} cell(s) -- so the constancy below is "
+            "a within-run property, and two of these records compared against each "
+            "other should be expected to differ by about that much."
+        )
+    else:
+        across_runs = (
+            f" The runs this record retains all read {here:.0f}, though it does not "
+            "retain every run there has been."
+        )
     if fixed["distinct"] == 1 and moving["spread"] > 0:
         return (
-            f"The published figure is exactly reproducible under the crop and is not "
-            f"exactly reproducible end to end. Holding the fused cloud fixed, all "
+            "This harness's own phantom-cells-removed figure is exactly reproducible "
+            "across repeats under the crop and is not exactly reproducible end to end. It is not the "
+            "published number re-measured: this harness fuses its own cloud, and "
+            "`what_this_does_not_establish` in this same case says the figures are not "
+            "comparable to the record's published values -- so whether it lands on the "
+            "733 in downstream-consumer.json is a coincidence to note rather than a "
+            f"reproduction of it.{across_runs} Holding the fused cloud fixed, all "
             f"{len(fixed['values'])} repeats return {fixed['values'][0]:.0f} -- one "
             f"value, despite every repeat reconstructing a different mesh. Rebuilding "
             f"it, the figure moves across {moving['distinct']} values spanning "
@@ -872,7 +1049,12 @@ def _one_case(o3d, voxel: float) -> dict:
                     ]
                 ),
                 "with_the_fused_cloud_rebuilt_instead": rebuilt,
-                "what_the_two_arms_together_show": _two_arms(fixed_arm, rebuilt),
+                "the_same_figure_on_retained_earlier_runs": [
+                    float(one) for one in PHANTOM_FIGURE_ON_EARLIER_RUNS.get(voxel, ())
+                ],
+                "what_the_two_arms_together_show": _two_arms(
+                    fixed_arm, rebuilt, voxel
+                ),
             },
             "what_a_user_may_rely_on": _what_a_user_may_rely_on(moved, agreement),
             "whether_that_is_benign": _whether_that_is_benign(
@@ -897,7 +1079,7 @@ def _one_case(o3d, voxel: float) -> dict:
             },
             "provenance": {
                 "harness": "harness/crop_decision_stability.py",
-                "harness_sha256": "recomputed below",
+                "harness_sha256": _TO_BE_FILLED_IN,
                 "path_is_relative_to": "this evidence directory",
             },
         }
@@ -949,6 +1131,21 @@ def main() -> int:
                 "exists to find out, because that is the first thing a reader with a "
                 "real capture would ask."
             ),
+            "what_differs_between_the_two_cases": (
+                "The same capture, not a second one. Both cases fuse the same three "
+                f"upstream Redwood fragments; the density difference comes from "
+                f"`voxel_down_sample` at {VOXELS[0]} against {VOXELS[1]}, which is a "
+                "downsample parameter. And changing that voxel moves four things at "
+                "once: the fused-cloud density, the normal-estimation radius "
+                "(voxel * 2.0), the crop threshold itself (voxel * "
+                f"{SUPPORT_DISTANCE_FACTOR}, so {VOXELS[0] * SUPPORT_DISTANCE_FACTOR} "
+                f"against {VOXELS[1] * SUPPORT_DISTANCE_FACTOR} m) and the cell size "
+                "the per-cell verdicts are compared on. So this bounds the margin at "
+                "two operating points of the product's own configuration. It does not "
+                "isolate capture density, and the displacement ratio below cannot be "
+                "attributed to density alone. Isolating it would need the voxel held "
+                "while the input changes, which is a different experiment."
+            ),
             "both_ratios_are": f"{denser} divided by {sparser}, the denser over the sparser",
             "vertices_per_case": densities,
             "worst_displacement_per_case_m": displacements,
@@ -984,14 +1181,30 @@ def main() -> int:
         },
         "provenance": {
             "harness": "harness/crop_decision_stability.py",
-            "harness_sha256": "recomputed below",
+            "harness_sha256": _TO_BE_FILLED_IN,
             "path_is_relative_to": "this evidence directory",
         },
     }
 
-    record["provenance"]["harness_sha256"] = hashlib.sha256(
-        Path(__file__).read_bytes()
-    ).hexdigest()
+    digest = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
+
+    def fill(node: object) -> None:
+        """Substitute every provenance block, not only the top-level one."""
+
+        if isinstance(node, dict):
+            if node.get("harness_sha256") == _TO_BE_FILLED_IN:
+                node["harness_sha256"] = digest
+            for value in node.values():
+                fill(value)
+        elif isinstance(node, list):
+            for value in node:
+                fill(value)
+
+    fill(record)
+    assert _TO_BE_FILLED_IN not in json.dumps(record), (
+        "a provenance block was left unsubstituted, which publishes a placeholder "
+        "where a binding should be"
+    )
     json.dump(record, sys.stdout, indent=2)
     sys.stdout.write("\n")
     return 0
