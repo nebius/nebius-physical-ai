@@ -37,10 +37,48 @@ import json
 import sys
 import tempfile
 from pathlib import Path
+from types import MappingProxyType
 
 import numpy as np
 
-REPEATS = 4
+#: Raised from 4 after an independent lane showed why 4 is not enough. The margin is
+#: computed from the worst per-pair displacement, and that statistic has a tail: their
+#: sweep hit one pair three orders of magnitude above its neighbours and then failed to
+#: reproduce it three times on the byte-identical file. Four repeats give three pairs,
+#: which can only describe the middle of a distribution like that. 24 give 23.
+REPEATS = 24
+
+#: Rebuilds of the fused cloud, for the arm that lets registration vary too. Fewer than
+#: REPEATS because each one re-runs multiway registration, and the question it answers
+#: is coarser: does the published figure move at all.
+INVOCATIONS = 5
+
+#: The tail event itself, kept rather than dropped, because the claim it bounds is the
+#: one this record exists to make. Measured by an independent review lane running this
+#: module's `_one_crop` on a 53x denser input of the same scene; not reproduced in three
+#: further attempts on a coordinate-identical file, so it is reported as an observation
+#: with an unknown rate rather than as a property. The headline margin is taken from
+#: whichever is worse, this or anything measured here.
+TAIL_OBSERVED_ELSEWHERE = MappingProxyType(
+    {
+        "displacement_m": 2.187e-03,
+        "cut_m": 0.05,
+        "margin_factor": 0.05 / 2.187e-03,
+        "cells_that_flipped_there": 0,
+        "reproduced_in_three_further_attempts": False,
+        "measured_by": (
+            "an independent review lane, on a 53x denser input of the same scene, "
+            "driving this module's _one_crop with the product modules stubbed"
+        ),
+        "why_it_is_kept": (
+            "Dropping an unreproduced outlier because it is inconvenient is how a "
+            "margin claim becomes a median claim. It is three orders of magnitude from "
+            "everything else and it is still 20x short of the cut, so it tightens the "
+            "stated safety factor without touching the verdict -- which is the honest "
+            "shape of the result."
+        ),
+    }
+)
 
 #: The record's own input and voxel: three upstream Redwood fragments at 0.05.
 #: Two densities. A margin measured on a sparse cloud says nothing about a real
@@ -167,6 +205,25 @@ def _cells(points: np.ndarray, origin: np.ndarray, size: float) -> set:
     return set(map(tuple, index))
 
 
+def _grid(cloud) -> tuple[np.ndarray, float]:
+    """The consumer's cell centres and support radius for one cloud.
+
+    One function because both arms need it and the first version of the second arm
+    open-coded it slightly differently -- truncating where this rounds -- which moved
+    the figure by about 50 cells and briefly looked like a finding about registration.
+    """
+
+    box = cloud.get_axis_aligned_bounding_box()
+    origin = np.asarray(box.get_min_bound())
+    dims = np.round(np.asarray(box.get_extent()) / CELL).astype(int)
+    index = (
+        np.array(np.meshgrid(*[np.arange(one) for one in dims], indexing="ij"))
+        .reshape(3, -1)
+        .T
+    )
+    return origin + (index + 0.5) * CELL, SUPPORT_RADIUS_FACTOR * CELL
+
+
 def _occupancy(o3d, mesh, cloud, centres: np.ndarray, radius: float) -> dict:
     """The published consumer's own computation, on one repeat's mesh."""
 
@@ -271,17 +328,47 @@ def _how_far_the_movers_move(o3d, runs: list[dict], limit: float) -> dict:
             }
         )
 
+    pair_worsts = np.array([one["max_displacement_m"] for one in per_repeat])
+    known = min(limit / worst, TAIL_OBSERVED_ELSEWHERE["margin_factor"])
+
     return {
         "per_repeat": per_repeat,
+        "the_distribution_of_the_per_pair_worst": {
+            "why_a_distribution_and_not_one_number": (
+                "The margin is computed from `worst`, which makes `worst` the quantity "
+                "the safety claim rests on -- and it is a tail statistic. A handful of "
+                "repeats describes the middle of its distribution, not the case the "
+                "margin has to survive. An independent lane hit one per-pair worst "
+                "three orders of magnitude above its neighbours and could not "
+                "reproduce it in three further attempts on the identical file, which "
+                "is exactly the shape a four-repeat run cannot see. So the pairs are "
+                "reported as a distribution and the headline margin is taken from the "
+                "worst value known anywhere rather than from the worst seen here."
+            ),
+            "pairs_compared": int(pair_worsts.size),
+            "min_m": float(pair_worsts.min()),
+            "median_m": float(np.median(pair_worsts)),
+            "p90_m": float(np.percentile(pair_worsts, 90)),
+            "max_m": float(pair_worsts.max()),
+            "spread_max_over_median": float(pair_worsts.max() / np.median(pair_worsts))
+            if np.median(pair_worsts)
+            else None,
+        },
         "worst_displacement_m": worst,
         "the_threshold_it_would_have_to_cross_m": limit,
         "margin_factor": float(limit / worst) if worst else None,
+        "the_tail_observed_elsewhere": dict(TAIL_OBSERVED_ELSEWHERE),
+        "margin_at_the_worst_displacement_known_anywhere": float(known),
         "what_that_means": (
             "A vertex only changes the answer by crossing the support threshold or "
-            "landing in another cell. The largest distance any vertex moved between "
-            f"repeats is {worst:.3g} m against a {limit} m cut, so the decision is "
-            "stable by a wide margin rather than by luck -- and the margin is the "
-            "figure to re-check on a scan whose geometry sits closer to the cut."
+            "landing in another cell. Across "
+            f"{pair_worsts.size} pairs here the largest any vertex moved was "
+            f"{worst:.3g} m against a {limit} m cut. Taking instead the worst value "
+            "known anywhere, including the unreproduced observation above, the "
+            f"decision still clears its threshold by {known:.0f}x. That is the figure "
+            "to re-check on a scan whose geometry sits closer to the cut, and it is "
+            "deliberately the conservative one: no cell changed its verdict at either "
+            "displacement."
         ),
     }
 
@@ -310,15 +397,20 @@ def _whether_that_is_benign(moved: float, straddling: float, displacement: dict)
 
     worst = displacement["worst_displacement_m"]
     limit = displacement["the_threshold_it_would_have_to_cross_m"]
+    pairs = displacement["the_distribution_of_the_per_pair_worst"]["pairs_compared"]
+    known = displacement["margin_at_the_worst_displacement_known_anywhere"]
     if moved == 0:
         return (
             f"Yes, and by a measured margin rather than by luck. Around {straddling:.0f} "
             "vertices per repeat sit within 10% of the cut, which is where a sharp "
             "threshold on a continuous quantity is vulnerable, and none of them "
-            f"crossed: the largest distance any vertex moved between repeats is "
-            f"{worst:.3g} m against a {limit} m cut, four orders of magnitude smaller "
-            "than the band it would have to traverse. The condition to re-check on "
-            "another scan is that ratio, not this verdict."
+            f"crossed. Over {pairs} pairs the largest distance any vertex moved was "
+            f"{worst:.3g} m against a {limit} m cut. The margin is quoted from the "
+            "worst displacement known anywhere rather than from that, because the "
+            "statistic has a tail an earlier four-repeat run could not see: on the "
+            f"worst value on record the decision clears the cut by {known:.0f}x, which "
+            "is the number to re-check on another scan. Not this verdict, and not the "
+            "typical case."
         )
     return (
         f"Partly. Around {straddling:.0f} vertices per repeat sit within 10% of the "
@@ -326,6 +418,58 @@ def _whether_that_is_benign(moved: float, straddling: float, displacement: dict)
         f"{limit} m cut. A flip count of the same order as that band is a threshold "
         "behaving as a threshold; one much larger is a different problem."
     )
+
+
+def _tail_bound(cases: dict) -> dict:
+    """What 46 pairs can and cannot say about an event seen once somewhere else.
+
+    The honest answer has two halves. The tail did not reproduce, which bounds its rate
+    from above and is worth stating as a number. And a bound is not an absence: the
+    event happened, so the published margin stays the conservative one regardless of
+    what this run saw.
+    """
+
+    pairs = sum(
+        one["did_the_reconstruction_vary_at_all"]["and_how_far_it_moved"][
+            "the_distribution_of_the_per_pair_worst"
+        ]["pairs_compared"]
+        for one in cases.values()
+    )
+    here = max(
+        one["did_the_reconstruction_vary_at_all"]["and_how_far_it_moved"][
+            "the_distribution_of_the_per_pair_worst"
+        ]["max_m"]
+        for one in cases.values()
+    )
+    there = TAIL_OBSERVED_ELSEWHERE["displacement_m"]
+
+    # One-sided 95% upper bound on a per-pair rate given zero events, 1 - 0.05 ** (1/n).
+    # Stated as the method rather than a bare number so a reader can check it.
+    rate_bound = 1.0 - 0.05 ** (1.0 / pairs) if pairs else None
+
+    return {
+        "pairs_compared_here": pairs,
+        "worst_displacement_here_m": here,
+        "the_event_being_looked_for_m": there,
+        "how_many_times_larger_that_event_is": float(there / here),
+        "did_it_recur": False,
+        "upper_bound_on_its_per_pair_rate": rate_bound,
+        "how_that_bound_was_computed": (
+            f"Zero occurrences in {pairs} pairs. One-sided 95% upper bound on a "
+            "per-pair rate is 1 - 0.05 ** (1 / n), which assumes the pairs are "
+            "independent draws -- they share a fused cloud within a case, so treat it "
+            "as indicative rather than exact."
+        ),
+        "what_this_does_and_does_not_settle": (
+            f"The distribution here is tight: the worst of {pairs} pairs is "
+            f"{here:.3g} m and the event looked for is {there / here:.0f}x larger than "
+            "that, so whatever produced it is rare rather than routine. It does not "
+            "settle that it cannot happen, and a bound is not an absence -- it was "
+            "observed once under this same rule. The published margin therefore stays "
+            "the conservative one. Raising repeats further would tighten this bound; "
+            "it would not change which number the safety claim should quote."
+        ),
+    }
 
 
 def _spread(values: list[float]) -> dict:
@@ -342,6 +486,97 @@ def _spread(values: list[float]) -> dict:
     }
 
 
+def _two_arms(fixed: dict, rebuilt: dict) -> str:
+    """Attribute the residual, which neither arm can do alone.
+
+    The fixed-cloud arm varies Poisson only; the rebuilt arm varies registration too.
+    The difference between their spreads is what says which stage the movement belongs
+    to, and it is the sentence a reader of the published figure actually needs.
+    """
+
+    moving = rebuilt["phantom_cells_removed"]
+    if fixed["distinct"] == 1 and moving["spread"] > 0:
+        return (
+            f"The published figure is exactly reproducible under the crop and is not "
+            f"exactly reproducible end to end. Holding the fused cloud fixed, all "
+            f"{len(fixed['values'])} repeats return {fixed['values'][0]:.0f} -- one "
+            f"value, despite every repeat reconstructing a different mesh. Rebuilding "
+            f"it, the figure moves across {moving['distinct']} values spanning "
+            f"{moving['spread']:.0f} cell(s). So the residual belongs to the "
+            "registration upstream, which is separately known not to be reproducible, "
+            "and not to the crop or the reconstruction under it. A reader quoting the "
+            "figure should quote it with that spread; a reader comparing two crop "
+            "settings on one fused cloud can quote it exactly."
+        )
+    if fixed["distinct"] == 1 and moving["spread"] == 0:
+        return (
+            "The published figure reproduces under both arms, so neither the "
+            "reconstruction nor the registration moves it on this input."
+        )
+    return (
+        f"The figure is not exactly reproducible even with the fused cloud held fixed: "
+        f"{fixed['distinct']} values spanning {fixed['spread']:.0f} cell(s) across "
+        f"{len(fixed['values'])} repeats, against {moving['spread']:.0f} when "
+        "registration varies too. The reconstruction alone moves it, so the crop's "
+        "per-cell agreement does not carry all the way to this number."
+    )
+
+
+def _across_invocations(o3d, voxel: float, times: int) -> dict:
+    """The same question with the fused cloud rebuilt, which is the user's situation.
+
+    Everything else here holds the fused cloud fixed so that Poisson is the only thing
+    varying -- without that the result is unattributable. But a user does not re-read
+    one fused cloud; they run the stage, and registration is itself not reproducible
+    (#1033). So the published figure has to be checked the second way too, or the record
+    would answer a question nobody asks.
+
+    This exists because the first version of this record claimed the downstream figure
+    came back "exactly 733 every run" on the strength of the fixed-cloud arm, and a
+    later invocation returned 734.
+    """
+
+    figures, clouds, vertices = [], set(), []
+    for _ in range(times):
+        with tempfile.TemporaryDirectory() as scratch:
+            fused = _fused_cloud(o3d, Path(scratch))
+            clouds.add(hashlib.sha256(fused.read_bytes()).hexdigest())
+            run = _one_crop(o3d, fused)
+
+        cloud = run["cloud"]
+        centres, radius = _grid(cloud)
+
+        before = _occupancy(o3d, run["uncropped_mesh"], cloud, centres, radius)
+        after = _occupancy(o3d, run["cropped_mesh"], cloud, centres, radius)
+        figures.append(
+            before["phantom_obstacle_cells"] - after["phantom_obstacle_cells"]
+        )
+        vertices.append(run["vertices"])
+
+    spread = _spread([float(one) for one in figures])
+    return {
+        "why_this_arm_exists": (
+            "The fixed-cloud arm isolates Poisson, which is what makes its result "
+            "attributable. It is not what a user runs. Here the fused cloud is rebuilt "
+            "every time, so registration varies as well, and the question is whether "
+            "the published per-cell figure survives that."
+        ),
+        "invocations": times,
+        "distinct_fused_clouds": len(clouds),
+        "vertices_per_invocation": vertices,
+        "phantom_cells_removed": spread,
+        "what_it_shows": (
+            f"{spread['distinct']} distinct value(s) across {times} invocations, "
+            f"{sorted({int(one) for one in figures})}, a spread of "
+            f"{spread['spread']:.0f} cell(s) on a figure of about "
+            f"{np.median(figures):.0f} -- {spread['spread'] / np.median(figures):.2%} "
+            "of it. This arm lets registration vary as well, so it does not attribute "
+            "that spread to anything on its own; compare it with the fixed-cloud arm "
+            "above."
+        ),
+    }
+
+
 def _one_case(o3d, voxel: float) -> dict:
     """Everything for one voxel size: the control, the decision, the consumer."""
 
@@ -351,16 +586,8 @@ def _one_case(o3d, voxel: float) -> dict:
         runs = [_one_crop(o3d, fused) for _ in range(REPEATS)]
 
         cloud = runs[0]["cloud"]
-        box = cloud.get_axis_aligned_bounding_box()
-        origin = np.asarray(box.get_min_bound())
-        dims = np.round(np.asarray(box.get_extent()) / CELL).astype(int)
-        index = (
-            np.array(np.meshgrid(*[np.arange(one) for one in dims], indexing="ij"))
-            .reshape(3, -1)
-            .T
-        )
-        centres = origin + (index + 0.5) * CELL
-        radius = SUPPORT_RADIUS_FACTOR * CELL
+        origin = np.asarray(cloud.get_axis_aligned_bounding_box().get_min_bound())
+        centres, radius = _grid(cloud)
 
         consumer = [
             {
@@ -374,6 +601,15 @@ def _one_case(o3d, voxel: float) -> dict:
             }
             for number, one in enumerate(runs, start=1)
         ]
+
+        fixed_arm = _spread(
+            [
+                one["baseline_uncropped"]["phantom_obstacle_cells"]
+                - one["candidate_cropped"]["phantom_obstacle_cells"]
+                for one in consumer
+            ]
+        )
+        rebuilt = _across_invocations(o3d, voxel, INVOCATIONS)
 
         # Per-cell verdicts, at the scene voxel, which is the form the question is
         # actually asked in: is *this part* of my mesh supported.
@@ -474,19 +710,15 @@ def _one_case(o3d, voxel: float) -> dict:
             "where_the_movers_sit": near,
             "the_published_downstream_figure": {
                 "per_repeat": consumer,
-                "phantom_cells_removed_by_the_crop": _spread(
-                    [
-                        one["baseline_uncropped"]["phantom_obstacle_cells"]
-                        - one["candidate_cropped"]["phantom_obstacle_cells"]
-                        for one in consumer
-                    ]
-                ),
+                "phantom_cells_removed_by_the_crop": fixed_arm,
                 "precision_after_the_crop": _spread(
                     [
                         one["candidate_cropped"]["precision_wrt_observation"]
                         for one in consumer
                     ]
                 ),
+                "with_the_fused_cloud_rebuilt_instead": rebuilt,
+                "what_the_two_arms_together_show": _two_arms(fixed_arm, rebuilt),
             },
             "what_a_user_may_rely_on": _what_a_user_may_rely_on(moved, agreement),
             "whether_that_is_benign": _whether_that_is_benign(
@@ -547,6 +779,7 @@ def main() -> int:
             "registration cannot contribute."
         ),
         "cases": cases,
+        "does_the_tail_reproduce_here": _tail_bound(cases),
         "does_the_margin_survive_a_denser_capture": {
             "why_this_is_asked": (
                 "The first case is a sparse fused cloud, and a margin measured there is "

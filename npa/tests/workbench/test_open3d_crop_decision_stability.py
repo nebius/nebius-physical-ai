@@ -119,6 +119,97 @@ def test_the_margin_is_measured_and_not_the_verdict_itself(key: str) -> None:
     )
 
 
+@pytest.mark.parametrize("key", _case_keys())
+def test_the_margin_is_quoted_from_the_tail_and_not_from_the_middle(key: str) -> None:
+    """The margin's input is a tail statistic, which an independent lane demonstrated.
+
+    Their sweep hit one per-pair worst three orders of magnitude above its neighbours
+    and then failed to reproduce it three times on a byte-identical file. A margin
+    computed from a handful of repeats therefore describes the middle of a distribution
+    and not the case it has to survive, so the headline figure has to be the worst value
+    known anywhere -- including an observation this run did not reproduce.
+    """
+    far = _case(key)["did_the_reconstruction_vary_at_all"]["and_how_far_it_moved"]
+    distribution = far["the_distribution_of_the_per_pair_worst"]
+    elsewhere = far["the_tail_observed_elsewhere"]
+
+    assert distribution["pairs_compared"] >= 20, (
+        f"{distribution['pairs_compared']} pairs cannot describe the tail of a "
+        "statistic whose known worst case is three orders of magnitude from its median"
+    )
+    for field in ("min_m", "median_m", "p90_m", "max_m"):
+        assert distribution[field] > 0.0, (field, distribution)
+
+    # Retained rather than dropped: it is the observation that bounds the claim.
+    assert elsewhere["reproduced_in_three_further_attempts"] is False
+    assert elsewhere["cells_that_flipped_there"] == 0
+    assert elsewhere["margin_factor"] == pytest.approx(
+        elsewhere["cut_m"] / elsewhere["displacement_m"], rel=1e-9
+    )
+
+    quoted = far["margin_at_the_worst_displacement_known_anywhere"]
+    assert quoted == pytest.approx(
+        min(far["margin_factor"], elsewhere["margin_factor"]), rel=1e-9
+    ), (
+        "the headline margin is not the worst of what was measured here and what was "
+        "measured elsewhere, so it describes the comfortable case"
+    )
+    assert quoted > 1.0, (
+        f"at the worst displacement on record the margin is {quoted}, so a vertex "
+        "could reach the cut and the decision is not stable by construction"
+    )
+
+
+def test_the_unreproduced_tail_is_bounded_rather_than_dismissed() -> None:
+    """Zero occurrences is a rate bound, and a rate bound is not an absence.
+
+    Both halves have to be in the record. Reporting only the bound turns an observed
+    event into a non-event; reporting only the event discards what 46 pairs establish
+    about how rare it is.
+    """
+    bound = _record()["does_the_tail_reproduce_here"]
+
+    assert bound["did_it_recur"] is False
+    assert bound["pairs_compared_here"] >= 40, bound
+    assert 0.0 < bound["upper_bound_on_its_per_pair_rate"] < 0.2, bound
+    assert bound["upper_bound_on_its_per_pair_rate"] == pytest.approx(
+        1.0 - 0.05 ** (1.0 / bound["pairs_compared_here"]), rel=1e-9
+    ), "the bound does not follow from the pair count it claims to be computed from"
+    assert bound["how_many_times_larger_that_event_is"] > 1.0, bound
+    assert "a bound is not an absence" in bound["what_this_does_and_does_not_settle"]
+
+
+@pytest.mark.parametrize("key", _case_keys())
+def test_the_published_figure_is_checked_the_way_a_user_runs_it(key: str) -> None:
+    """One arm attributes, the other is the user's situation. Both are required.
+
+    Holding the fused cloud fixed is what makes the result attributable to Poisson, and
+    it is not what anyone runs. The first version of this record quoted the figure as
+    exactly reproducible on the strength of that arm alone, and a later invocation
+    returned a different number.
+    """
+    downstream = _case(key)["the_published_downstream_figure"]
+    fixed = downstream["phantom_cells_removed_by_the_crop"]
+    rebuilt = downstream["with_the_fused_cloud_rebuilt_instead"]
+
+    assert rebuilt["invocations"] >= 3, rebuilt
+    assert rebuilt["distinct_fused_clouds"] == rebuilt["invocations"], (
+        "the rebuilt arm did not actually rebuild: two invocations produced the same "
+        "fused cloud, so registration was not varying and this arm adds nothing"
+    )
+
+    # The attribution sentence has to follow from what the two arms measured.
+    together = downstream["what_the_two_arms_together_show"]
+    moving = rebuilt["phantom_cells_removed"]
+    if fixed["distinct"] == 1 and moving["spread"] > 0:
+        assert "not exactly reproducible end to end" in together, together
+        assert "belongs to the" in together and "registration" in together, together
+    elif fixed["distinct"] > 1:
+        assert "not exactly reproducible even with the fused cloud held fixed" in (
+            together
+        ), together
+
+
 def test_the_margin_is_set_by_the_cut_and_not_by_the_capture() -> None:
     """The generalisation, and the first thing a reader with a real capture would ask.
 
@@ -172,6 +263,28 @@ def test_the_record_binds_the_harness_that_produced_it() -> None:
     assert (
         hashlib.sha256(harness.read_bytes()).hexdigest() == provenance["harness_sha256"]
     ), "the harness changed without the record being regenerated"
+
+
+def test_the_two_arms_cannot_drift_onto_different_grids() -> None:
+    """A real defect, caught late, worth a guard rather than a comment.
+
+    The second arm open-coded the consumer's cell grid and truncated where the first
+    rounds. The two arms were then measuring different grids, the figure moved by about
+    fifty cells, and it read as a finding about registration until the arithmetic was
+    checked. One builder now serves both, so the guard is that there is only one.
+    """
+    harness = EVIDENCE / _record()["provenance"]["harness"]
+    source = harness.read_text()
+
+    assert source.count("np.meshgrid") == 1, (
+        "the cell grid is constructed in more than one place, which is exactly how the "
+        "two arms came to measure different grids"
+    )
+    assert source.count("def _grid(") == 1
+    assert source.count("= _grid(cloud)") == 2, (
+        "both arms should obtain the grid from the shared builder; one of them is "
+        "building its own again"
+    )
 
 
 @pytest.mark.parametrize("key", _case_keys())

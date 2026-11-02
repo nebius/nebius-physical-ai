@@ -7,23 +7,23 @@
       "input": {
         "dataset": "open3d.data DemoICPPointClouds, the record's own input",
         "voxel_size": 0.05,
-        "fused_cloud_sha256": "9e3d4094d19463cf1cf12bb72c19d68e344899ef05f9530a947f9198a08c7e49",
+        "fused_cloud_sha256": "89c6db269a7bc5bc34912084a408ee455e198c5131c6bfc8f138da7da84e1912",
         "fused_once_and_reused": true
       },
       "crop_rule": "a vertex is unsupported when its distance to the fused cloud exceeds voxel * 1.0 = 0.05",
-      "repeats": 4,
+      "repeats": 24,
       "did_the_reconstruction_vary_at_all": {
         "why_this_is_first": "A stable decision means nothing if nothing upstream moved. The same mistake sank a thread experiment on this record: the lever never engaged, so the result measured nothing. Read this block before any figure below it.",
         "distinct_fused_clouds": 1,
         "distinct_normal_sets": 1,
-        "distinct_poisson_meshes": 4,
+        "distinct_poisson_meshes": 24,
         "poisson_varied_between_repeats": true,
         "and_whether_that_is_only_reordering": {
           "per_repeat": [
             {
               "repeat": 2,
-              "vertices_in_repeat_1_only": 2327,
-              "vertices_in_this_repeat_only": 2327,
+              "vertices_in_repeat_1_only": 2145,
+              "vertices_in_this_repeat_only": 2145,
               "vertex_counts": [
                 18413,
                 18413
@@ -31,8 +31,8 @@
             },
             {
               "repeat": 3,
-              "vertices_in_repeat_1_only": 2232,
-              "vertices_in_this_repeat_only": 2232,
+              "vertices_in_repeat_1_only": 2212,
+              "vertices_in_this_repeat_only": 2212,
               "vertex_counts": [
                 18413,
                 18413
@@ -40,15 +40,195 @@
             },
             {
               "repeat": 4,
-              "vertices_in_repeat_1_only": 2151,
-              "vertices_in_this_repeat_only": 2151,
+              "vertices_in_repeat_1_only": 2202,
+              "vertices_in_this_repeat_only": 2202,
+              "vertex_counts": [
+                18413,
+                18413
+              ]
+            },
+            {
+              "repeat": 5,
+              "vertices_in_repeat_1_only": 2120,
+              "vertices_in_this_repeat_only": 2120,
+              "vertex_counts": [
+                18413,
+                18413
+              ]
+            },
+            {
+              "repeat": 6,
+              "vertices_in_repeat_1_only": 2331,
+              "vertices_in_this_repeat_only": 2331,
+              "vertex_counts": [
+                18413,
+                18413
+              ]
+            },
+            {
+              "repeat": 7,
+              "vertices_in_repeat_1_only": 2539,
+              "vertices_in_this_repeat_only": 2539,
+              "vertex_counts": [
+                18413,
+                18413
+              ]
+            },
+            {
+              "repeat": 8,
+              "vertices_in_repeat_1_only": 1930,
+              "vertices_in_this_repeat_only": 1930,
+              "vertex_counts": [
+                18413,
+                18413
+              ]
+            },
+            {
+              "repeat": 9,
+              "vertices_in_repeat_1_only": 2242,
+              "vertices_in_this_repeat_only": 2242,
+              "vertex_counts": [
+                18413,
+                18413
+              ]
+            },
+            {
+              "repeat": 10,
+              "vertices_in_repeat_1_only": 2022,
+              "vertices_in_this_repeat_only": 2022,
+              "vertex_counts": [
+                18413,
+                18413
+              ]
+            },
+            {
+              "repeat": 11,
+              "vertices_in_repeat_1_only": 2180,
+              "vertices_in_this_repeat_only": 2180,
+              "vertex_counts": [
+                18413,
+                18413
+              ]
+            },
+            {
+              "repeat": 12,
+              "vertices_in_repeat_1_only": 2314,
+              "vertices_in_this_repeat_only": 2314,
+              "vertex_counts": [
+                18413,
+                18413
+              ]
+            },
+            {
+              "repeat": 13,
+              "vertices_in_repeat_1_only": 2006,
+              "vertices_in_this_repeat_only": 2006,
+              "vertex_counts": [
+                18413,
+                18413
+              ]
+            },
+            {
+              "repeat": 14,
+              "vertices_in_repeat_1_only": 2016,
+              "vertices_in_this_repeat_only": 2016,
+              "vertex_counts": [
+                18413,
+                18413
+              ]
+            },
+            {
+              "repeat": 15,
+              "vertices_in_repeat_1_only": 2188,
+              "vertices_in_this_repeat_only": 2188,
+              "vertex_counts": [
+                18413,
+                18413
+              ]
+            },
+            {
+              "repeat": 16,
+              "vertices_in_repeat_1_only": 2213,
+              "vertices_in_this_repeat_only": 2213,
+              "vertex_counts": [
+                18413,
+                18413
+              ]
+            },
+            {
+              "repeat": 17,
+              "vertices_in_repeat_1_only": 2310,
+              "vertices_in_this_repeat_only": 2310,
+              "vertex_counts": [
+                18413,
+                18413
+              ]
+            },
+            {
+              "repeat": 18,
+              "vertices_in_repeat_1_only": 2263,
+              "vertices_in_this_repeat_only": 2263,
+              "vertex_counts": [
+                18413,
+                18413
+              ]
+            },
+            {
+              "repeat": 19,
+              "vertices_in_repeat_1_only": 2159,
+              "vertices_in_this_repeat_only": 2159,
+              "vertex_counts": [
+                18413,
+                18413
+              ]
+            },
+            {
+              "repeat": 20,
+              "vertices_in_repeat_1_only": 2265,
+              "vertices_in_this_repeat_only": 2265,
+              "vertex_counts": [
+                18413,
+                18413
+              ]
+            },
+            {
+              "repeat": 21,
+              "vertices_in_repeat_1_only": 2400,
+              "vertices_in_this_repeat_only": 2400,
+              "vertex_counts": [
+                18413,
+                18413
+              ]
+            },
+            {
+              "repeat": 22,
+              "vertices_in_repeat_1_only": 2137,
+              "vertices_in_this_repeat_only": 2137,
+              "vertex_counts": [
+                18413,
+                18413
+              ]
+            },
+            {
+              "repeat": 23,
+              "vertices_in_repeat_1_only": 2186,
+              "vertices_in_this_repeat_only": 2186,
+              "vertex_counts": [
+                18413,
+                18413
+              ]
+            },
+            {
+              "repeat": 24,
+              "vertices_in_repeat_1_only": 2105,
+              "vertices_in_this_repeat_only": 2105,
               "vertex_counts": [
                 18413,
                 18413
               ]
             }
           ],
-          "largest_set_difference": 2327,
+          "largest_set_difference": 2539,
           "verdict": "genuinely different vertex positions"
         },
         "and_how_far_it_moved": {
@@ -56,31 +236,190 @@
             {
               "repeat": 2,
               "median_displacement_m": 0.0,
-              "p99_displacement_m": 4.76837158203125e-07,
-              "max_displacement_m": 4.5299530029296875e-06
+              "p99_displacement_m": 3.5762786865234375e-07,
+              "max_displacement_m": 2.7418136596679688e-06
             },
             {
               "repeat": 3,
               "median_displacement_m": 0.0,
               "p99_displacement_m": 4.76837158203125e-07,
-              "max_displacement_m": 6.079673767089844e-06
+              "max_displacement_m": 4.76837158203125e-06
             },
             {
               "repeat": 4,
               "median_displacement_m": 0.0,
+              "p99_displacement_m": 4.76837158203125e-07,
+              "max_displacement_m": 6.9141387939453125e-06
+            },
+            {
+              "repeat": 5,
+              "median_displacement_m": 0.0,
+              "p99_displacement_m": 4.76837158203125e-07,
+              "max_displacement_m": 5.9604644775390625e-06
+            },
+            {
+              "repeat": 6,
+              "median_displacement_m": 0.0,
+              "p99_displacement_m": 4.76837158203125e-07,
+              "max_displacement_m": 4.827976226806641e-06
+            },
+            {
+              "repeat": 7,
+              "median_displacement_m": 0.0,
+              "p99_displacement_m": 4.76837158203125e-07,
+              "max_displacement_m": 5.662441253662109e-06
+            },
+            {
+              "repeat": 8,
+              "median_displacement_m": 0.0,
+              "p99_displacement_m": 2.384185791015625e-07,
+              "max_displacement_m": 2.0265579223632812e-06
+            },
+            {
+              "repeat": 9,
+              "median_displacement_m": 0.0,
+              "p99_displacement_m": 4.76837158203125e-07,
+              "max_displacement_m": 2.562999725341797e-06
+            },
+            {
+              "repeat": 10,
+              "median_displacement_m": 0.0,
               "p99_displacement_m": 3.5762786865234375e-07,
-              "max_displacement_m": 3.337860107421875e-06
+              "max_displacement_m": 2.86102294921875e-06
+            },
+            {
+              "repeat": 11,
+              "median_displacement_m": 0.0,
+              "p99_displacement_m": 4.76837158203125e-07,
+              "max_displacement_m": 5.7220458984375e-06
+            },
+            {
+              "repeat": 12,
+              "median_displacement_m": 0.0,
+              "p99_displacement_m": 4.76837158203125e-07,
+              "max_displacement_m": 3.5762786865234375e-06
+            },
+            {
+              "repeat": 13,
+              "median_displacement_m": 0.0,
+              "p99_displacement_m": 3.5762786865234375e-07,
+              "max_displacement_m": 2.6226043701171875e-06
+            },
+            {
+              "repeat": 14,
+              "median_displacement_m": 0.0,
+              "p99_displacement_m": 3.5762786865234375e-07,
+              "max_displacement_m": 2.86102294921875e-06
+            },
+            {
+              "repeat": 15,
+              "median_displacement_m": 0.0,
+              "p99_displacement_m": 4.76837158203125e-07,
+              "max_displacement_m": 4.5299530029296875e-06
+            },
+            {
+              "repeat": 16,
+              "median_displacement_m": 0.0,
+              "p99_displacement_m": 4.76837158203125e-07,
+              "max_displacement_m": 4.0531158447265625e-06
+            },
+            {
+              "repeat": 17,
+              "median_displacement_m": 0.0,
+              "p99_displacement_m": 4.76837158203125e-07,
+              "max_displacement_m": 5.7220458984375e-06
+            },
+            {
+              "repeat": 18,
+              "median_displacement_m": 0.0,
+              "p99_displacement_m": 4.76837158203125e-07,
+              "max_displacement_m": 4.0531158447265625e-06
+            },
+            {
+              "repeat": 19,
+              "median_displacement_m": 0.0,
+              "p99_displacement_m": 4.76837158203125e-07,
+              "max_displacement_m": 5.0067901611328125e-06
+            },
+            {
+              "repeat": 20,
+              "median_displacement_m": 0.0,
+              "p99_displacement_m": 4.76837158203125e-07,
+              "max_displacement_m": 5.9604644775390625e-06
+            },
+            {
+              "repeat": 21,
+              "median_displacement_m": 0.0,
+              "p99_displacement_m": 4.76837158203125e-07,
+              "max_displacement_m": 1.0013580322265625e-05
+            },
+            {
+              "repeat": 22,
+              "median_displacement_m": 0.0,
+              "p99_displacement_m": 4.76837158203125e-07,
+              "max_displacement_m": 4.023313522338867e-06
+            },
+            {
+              "repeat": 23,
+              "median_displacement_m": 0.0,
+              "p99_displacement_m": 4.76837158203125e-07,
+              "max_displacement_m": 3.427267074584961e-06
+            },
+            {
+              "repeat": 24,
+              "median_displacement_m": 0.0,
+              "p99_displacement_m": 4.76837158203125e-07,
+              "max_displacement_m": 4.5299530029296875e-06
             }
           ],
-          "worst_displacement_m": 6.079673767089844e-06,
+          "the_distribution_of_the_per_pair_worst": {
+            "why_a_distribution_and_not_one_number": "The margin is computed from `worst`, which makes `worst` the quantity the safety claim rests on -- and it is a tail statistic. A handful of repeats describes the middle of its distribution, not the case the margin has to survive. An independent lane hit one per-pair worst three orders of magnitude above its neighbours and could not reproduce it in three further attempts on the identical file, which is exactly the shape a four-repeat run cannot see. So the pairs are reported as a distribution and the headline margin is taken from the worst value known anywhere rather than from the worst seen here.",
+            "pairs_compared": 23,
+            "min_m": 2.0265579223632812e-06,
+            "median_m": 4.5299530029296875e-06,
+            "p90_m": 5.9604644775390625e-06,
+            "max_m": 1.0013580322265625e-05,
+            "spread_max_over_median": 2.210526315789474
+          },
+          "worst_displacement_m": 1.0013580322265625e-05,
           "the_threshold_it_would_have_to_cross_m": 0.05,
-          "margin_factor": 8224.125490196078,
-          "what_that_means": "A vertex only changes the answer by crossing the support threshold or landing in another cell. The largest distance any vertex moved between repeats is 6.08e-06 m against a 0.05 m cut, so the decision is stable by a wide margin rather than by luck -- and the margin is the figure to re-check on a scan whose geometry sits closer to the cut."
+          "margin_factor": 4993.219047619048,
+          "the_tail_observed_elsewhere": {
+            "displacement_m": 0.002187,
+            "cut_m": 0.05,
+            "margin_factor": 22.86236854138089,
+            "cells_that_flipped_there": 0,
+            "reproduced_in_three_further_attempts": false,
+            "measured_by": "an independent review lane, on a 53x denser input of the same scene, driving this module's _one_crop with the product modules stubbed",
+            "why_it_is_kept": "Dropping an unreproduced outlier because it is inconvenient is how a margin claim becomes a median claim. It is three orders of magnitude from everything else and it is still 20x short of the cut, so it tightens the stated safety factor without touching the verdict -- which is the honest shape of the result."
+          },
+          "margin_at_the_worst_displacement_known_anywhere": 22.86236854138089,
+          "what_that_means": "A vertex only changes the answer by crossing the support threshold or landing in another cell. Across 23 pairs here the largest any vertex moved was 1e-05 m against a 0.05 m cut. Taking instead the worst value known anywhere, including the unreproduced observation above, the decision still clears its threshold by 23x. That is the figure to re-check on a scan whose geometry sits closer to the cut, and it is deliberately the conservative one: no cell changed its verdict at either displacement."
         }
       },
       "the_aggregate_the_record_reports": {
         "removed_vertex_count": {
           "values": [
+            3677.0,
+            3677.0,
+            3677.0,
+            3677.0,
+            3677.0,
+            3677.0,
+            3677.0,
+            3677.0,
+            3677.0,
+            3677.0,
+            3677.0,
+            3677.0,
+            3677.0,
+            3677.0,
+            3677.0,
+            3677.0,
+            3677.0,
+            3677.0,
+            3677.0,
+            3677.0,
             3677.0,
             3677.0,
             3677.0,
@@ -95,6 +434,26 @@
             0.19969586705045347,
             0.19969586705045347,
             0.19969586705045347,
+            0.19969586705045347,
+            0.19969586705045347,
+            0.19969586705045347,
+            0.19969586705045347,
+            0.19969586705045347,
+            0.19969586705045347,
+            0.19969586705045347,
+            0.19969586705045347,
+            0.19969586705045347,
+            0.19969586705045347,
+            0.19969586705045347,
+            0.19969586705045347,
+            0.19969586705045347,
+            0.19969586705045347,
+            0.19969586705045347,
+            0.19969586705045347,
+            0.19969586705045347,
+            0.19969586705045347,
+            0.19969586705045347,
+            0.19969586705045347,
             0.19969586705045347
           ],
           "distinct": 1,
@@ -103,6 +462,26 @@
         },
         "total_vertices": {
           "values": [
+            18413.0,
+            18413.0,
+            18413.0,
+            18413.0,
+            18413.0,
+            18413.0,
+            18413.0,
+            18413.0,
+            18413.0,
+            18413.0,
+            18413.0,
+            18413.0,
+            18413.0,
+            18413.0,
+            18413.0,
+            18413.0,
+            18413.0,
+            18413.0,
+            18413.0,
+            18413.0,
             18413.0,
             18413.0,
             18413.0,
@@ -137,9 +516,269 @@
           "cells_both_called_unsupported": 2293,
           "jaccard": 1.0,
           "cells_whose_verdict_flipped": 0
+        },
+        {
+          "repeat": 5,
+          "removed_cells_in_repeat_1": 2293,
+          "removed_cells_here": 2293,
+          "cells_both_called_unsupported": 2293,
+          "jaccard": 1.0,
+          "cells_whose_verdict_flipped": 0
+        },
+        {
+          "repeat": 6,
+          "removed_cells_in_repeat_1": 2293,
+          "removed_cells_here": 2293,
+          "cells_both_called_unsupported": 2293,
+          "jaccard": 1.0,
+          "cells_whose_verdict_flipped": 0
+        },
+        {
+          "repeat": 7,
+          "removed_cells_in_repeat_1": 2293,
+          "removed_cells_here": 2293,
+          "cells_both_called_unsupported": 2293,
+          "jaccard": 1.0,
+          "cells_whose_verdict_flipped": 0
+        },
+        {
+          "repeat": 8,
+          "removed_cells_in_repeat_1": 2293,
+          "removed_cells_here": 2293,
+          "cells_both_called_unsupported": 2293,
+          "jaccard": 1.0,
+          "cells_whose_verdict_flipped": 0
+        },
+        {
+          "repeat": 9,
+          "removed_cells_in_repeat_1": 2293,
+          "removed_cells_here": 2293,
+          "cells_both_called_unsupported": 2293,
+          "jaccard": 1.0,
+          "cells_whose_verdict_flipped": 0
+        },
+        {
+          "repeat": 10,
+          "removed_cells_in_repeat_1": 2293,
+          "removed_cells_here": 2293,
+          "cells_both_called_unsupported": 2293,
+          "jaccard": 1.0,
+          "cells_whose_verdict_flipped": 0
+        },
+        {
+          "repeat": 11,
+          "removed_cells_in_repeat_1": 2293,
+          "removed_cells_here": 2293,
+          "cells_both_called_unsupported": 2293,
+          "jaccard": 1.0,
+          "cells_whose_verdict_flipped": 0
+        },
+        {
+          "repeat": 12,
+          "removed_cells_in_repeat_1": 2293,
+          "removed_cells_here": 2293,
+          "cells_both_called_unsupported": 2293,
+          "jaccard": 1.0,
+          "cells_whose_verdict_flipped": 0
+        },
+        {
+          "repeat": 13,
+          "removed_cells_in_repeat_1": 2293,
+          "removed_cells_here": 2293,
+          "cells_both_called_unsupported": 2293,
+          "jaccard": 1.0,
+          "cells_whose_verdict_flipped": 0
+        },
+        {
+          "repeat": 14,
+          "removed_cells_in_repeat_1": 2293,
+          "removed_cells_here": 2293,
+          "cells_both_called_unsupported": 2293,
+          "jaccard": 1.0,
+          "cells_whose_verdict_flipped": 0
+        },
+        {
+          "repeat": 15,
+          "removed_cells_in_repeat_1": 2293,
+          "removed_cells_here": 2293,
+          "cells_both_called_unsupported": 2293,
+          "jaccard": 1.0,
+          "cells_whose_verdict_flipped": 0
+        },
+        {
+          "repeat": 16,
+          "removed_cells_in_repeat_1": 2293,
+          "removed_cells_here": 2293,
+          "cells_both_called_unsupported": 2293,
+          "jaccard": 1.0,
+          "cells_whose_verdict_flipped": 0
+        },
+        {
+          "repeat": 17,
+          "removed_cells_in_repeat_1": 2293,
+          "removed_cells_here": 2293,
+          "cells_both_called_unsupported": 2293,
+          "jaccard": 1.0,
+          "cells_whose_verdict_flipped": 0
+        },
+        {
+          "repeat": 18,
+          "removed_cells_in_repeat_1": 2293,
+          "removed_cells_here": 2293,
+          "cells_both_called_unsupported": 2293,
+          "jaccard": 1.0,
+          "cells_whose_verdict_flipped": 0
+        },
+        {
+          "repeat": 19,
+          "removed_cells_in_repeat_1": 2293,
+          "removed_cells_here": 2293,
+          "cells_both_called_unsupported": 2293,
+          "jaccard": 1.0,
+          "cells_whose_verdict_flipped": 0
+        },
+        {
+          "repeat": 20,
+          "removed_cells_in_repeat_1": 2293,
+          "removed_cells_here": 2293,
+          "cells_both_called_unsupported": 2293,
+          "jaccard": 1.0,
+          "cells_whose_verdict_flipped": 0
+        },
+        {
+          "repeat": 21,
+          "removed_cells_in_repeat_1": 2293,
+          "removed_cells_here": 2293,
+          "cells_both_called_unsupported": 2293,
+          "jaccard": 1.0,
+          "cells_whose_verdict_flipped": 0
+        },
+        {
+          "repeat": 22,
+          "removed_cells_in_repeat_1": 2293,
+          "removed_cells_here": 2293,
+          "cells_both_called_unsupported": 2293,
+          "jaccard": 1.0,
+          "cells_whose_verdict_flipped": 0
+        },
+        {
+          "repeat": 23,
+          "removed_cells_in_repeat_1": 2293,
+          "removed_cells_here": 2293,
+          "cells_both_called_unsupported": 2293,
+          "jaccard": 1.0,
+          "cells_whose_verdict_flipped": 0
+        },
+        {
+          "repeat": 24,
+          "removed_cells_in_repeat_1": 2293,
+          "removed_cells_here": 2293,
+          "cells_both_called_unsupported": 2293,
+          "jaccard": 1.0,
+          "cells_whose_verdict_flipped": 0
         }
       ],
       "where_the_movers_sit": [
+        {
+          "vertices_within_10pc_of_the_limit": 556,
+          "as_fraction_of_all_vertices": 0.03019605713354695,
+          "removed_vertices": 3677
+        },
+        {
+          "vertices_within_10pc_of_the_limit": 556,
+          "as_fraction_of_all_vertices": 0.03019605713354695,
+          "removed_vertices": 3677
+        },
+        {
+          "vertices_within_10pc_of_the_limit": 556,
+          "as_fraction_of_all_vertices": 0.03019605713354695,
+          "removed_vertices": 3677
+        },
+        {
+          "vertices_within_10pc_of_the_limit": 556,
+          "as_fraction_of_all_vertices": 0.03019605713354695,
+          "removed_vertices": 3677
+        },
+        {
+          "vertices_within_10pc_of_the_limit": 556,
+          "as_fraction_of_all_vertices": 0.03019605713354695,
+          "removed_vertices": 3677
+        },
+        {
+          "vertices_within_10pc_of_the_limit": 556,
+          "as_fraction_of_all_vertices": 0.03019605713354695,
+          "removed_vertices": 3677
+        },
+        {
+          "vertices_within_10pc_of_the_limit": 556,
+          "as_fraction_of_all_vertices": 0.03019605713354695,
+          "removed_vertices": 3677
+        },
+        {
+          "vertices_within_10pc_of_the_limit": 556,
+          "as_fraction_of_all_vertices": 0.03019605713354695,
+          "removed_vertices": 3677
+        },
+        {
+          "vertices_within_10pc_of_the_limit": 556,
+          "as_fraction_of_all_vertices": 0.03019605713354695,
+          "removed_vertices": 3677
+        },
+        {
+          "vertices_within_10pc_of_the_limit": 556,
+          "as_fraction_of_all_vertices": 0.03019605713354695,
+          "removed_vertices": 3677
+        },
+        {
+          "vertices_within_10pc_of_the_limit": 556,
+          "as_fraction_of_all_vertices": 0.03019605713354695,
+          "removed_vertices": 3677
+        },
+        {
+          "vertices_within_10pc_of_the_limit": 556,
+          "as_fraction_of_all_vertices": 0.03019605713354695,
+          "removed_vertices": 3677
+        },
+        {
+          "vertices_within_10pc_of_the_limit": 556,
+          "as_fraction_of_all_vertices": 0.03019605713354695,
+          "removed_vertices": 3677
+        },
+        {
+          "vertices_within_10pc_of_the_limit": 556,
+          "as_fraction_of_all_vertices": 0.03019605713354695,
+          "removed_vertices": 3677
+        },
+        {
+          "vertices_within_10pc_of_the_limit": 556,
+          "as_fraction_of_all_vertices": 0.03019605713354695,
+          "removed_vertices": 3677
+        },
+        {
+          "vertices_within_10pc_of_the_limit": 556,
+          "as_fraction_of_all_vertices": 0.03019605713354695,
+          "removed_vertices": 3677
+        },
+        {
+          "vertices_within_10pc_of_the_limit": 556,
+          "as_fraction_of_all_vertices": 0.03019605713354695,
+          "removed_vertices": 3677
+        },
+        {
+          "vertices_within_10pc_of_the_limit": 556,
+          "as_fraction_of_all_vertices": 0.03019605713354695,
+          "removed_vertices": 3677
+        },
+        {
+          "vertices_within_10pc_of_the_limit": 556,
+          "as_fraction_of_all_vertices": 0.03019605713354695,
+          "removed_vertices": 3677
+        },
+        {
+          "vertices_within_10pc_of_the_limit": 556,
+          "as_fraction_of_all_vertices": 0.03019605713354695,
+          "removed_vertices": 3677
+        },
         {
           "vertices_within_10pc_of_the_limit": 556,
           "as_fraction_of_all_vertices": 0.03019605713354695,
@@ -222,10 +861,330 @@
               "precision_wrt_observation": 0.9291581108829569,
               "recall_of_observed_cells": 0.9607218683651805
             }
+          },
+          {
+            "repeat": 5,
+            "baseline_uncropped": {
+              "occupied_cells": 2684,
+              "phantom_obstacle_cells": 871,
+              "precision_wrt_observation": 0.6754843517138599,
+              "recall_of_observed_cells": 0.9623142250530785
+            },
+            "candidate_cropped": {
+              "occupied_cells": 1948,
+              "phantom_obstacle_cells": 138,
+              "precision_wrt_observation": 0.9291581108829569,
+              "recall_of_observed_cells": 0.9607218683651805
+            }
+          },
+          {
+            "repeat": 6,
+            "baseline_uncropped": {
+              "occupied_cells": 2684,
+              "phantom_obstacle_cells": 871,
+              "precision_wrt_observation": 0.6754843517138599,
+              "recall_of_observed_cells": 0.9623142250530785
+            },
+            "candidate_cropped": {
+              "occupied_cells": 1948,
+              "phantom_obstacle_cells": 138,
+              "precision_wrt_observation": 0.9291581108829569,
+              "recall_of_observed_cells": 0.9607218683651805
+            }
+          },
+          {
+            "repeat": 7,
+            "baseline_uncropped": {
+              "occupied_cells": 2684,
+              "phantom_obstacle_cells": 871,
+              "precision_wrt_observation": 0.6754843517138599,
+              "recall_of_observed_cells": 0.9623142250530785
+            },
+            "candidate_cropped": {
+              "occupied_cells": 1948,
+              "phantom_obstacle_cells": 138,
+              "precision_wrt_observation": 0.9291581108829569,
+              "recall_of_observed_cells": 0.9607218683651805
+            }
+          },
+          {
+            "repeat": 8,
+            "baseline_uncropped": {
+              "occupied_cells": 2684,
+              "phantom_obstacle_cells": 871,
+              "precision_wrt_observation": 0.6754843517138599,
+              "recall_of_observed_cells": 0.9623142250530785
+            },
+            "candidate_cropped": {
+              "occupied_cells": 1948,
+              "phantom_obstacle_cells": 138,
+              "precision_wrt_observation": 0.9291581108829569,
+              "recall_of_observed_cells": 0.9607218683651805
+            }
+          },
+          {
+            "repeat": 9,
+            "baseline_uncropped": {
+              "occupied_cells": 2684,
+              "phantom_obstacle_cells": 871,
+              "precision_wrt_observation": 0.6754843517138599,
+              "recall_of_observed_cells": 0.9623142250530785
+            },
+            "candidate_cropped": {
+              "occupied_cells": 1948,
+              "phantom_obstacle_cells": 138,
+              "precision_wrt_observation": 0.9291581108829569,
+              "recall_of_observed_cells": 0.9607218683651805
+            }
+          },
+          {
+            "repeat": 10,
+            "baseline_uncropped": {
+              "occupied_cells": 2684,
+              "phantom_obstacle_cells": 871,
+              "precision_wrt_observation": 0.6754843517138599,
+              "recall_of_observed_cells": 0.9623142250530785
+            },
+            "candidate_cropped": {
+              "occupied_cells": 1948,
+              "phantom_obstacle_cells": 138,
+              "precision_wrt_observation": 0.9291581108829569,
+              "recall_of_observed_cells": 0.9607218683651805
+            }
+          },
+          {
+            "repeat": 11,
+            "baseline_uncropped": {
+              "occupied_cells": 2684,
+              "phantom_obstacle_cells": 871,
+              "precision_wrt_observation": 0.6754843517138599,
+              "recall_of_observed_cells": 0.9623142250530785
+            },
+            "candidate_cropped": {
+              "occupied_cells": 1948,
+              "phantom_obstacle_cells": 138,
+              "precision_wrt_observation": 0.9291581108829569,
+              "recall_of_observed_cells": 0.9607218683651805
+            }
+          },
+          {
+            "repeat": 12,
+            "baseline_uncropped": {
+              "occupied_cells": 2684,
+              "phantom_obstacle_cells": 871,
+              "precision_wrt_observation": 0.6754843517138599,
+              "recall_of_observed_cells": 0.9623142250530785
+            },
+            "candidate_cropped": {
+              "occupied_cells": 1948,
+              "phantom_obstacle_cells": 138,
+              "precision_wrt_observation": 0.9291581108829569,
+              "recall_of_observed_cells": 0.9607218683651805
+            }
+          },
+          {
+            "repeat": 13,
+            "baseline_uncropped": {
+              "occupied_cells": 2684,
+              "phantom_obstacle_cells": 871,
+              "precision_wrt_observation": 0.6754843517138599,
+              "recall_of_observed_cells": 0.9623142250530785
+            },
+            "candidate_cropped": {
+              "occupied_cells": 1948,
+              "phantom_obstacle_cells": 138,
+              "precision_wrt_observation": 0.9291581108829569,
+              "recall_of_observed_cells": 0.9607218683651805
+            }
+          },
+          {
+            "repeat": 14,
+            "baseline_uncropped": {
+              "occupied_cells": 2684,
+              "phantom_obstacle_cells": 871,
+              "precision_wrt_observation": 0.6754843517138599,
+              "recall_of_observed_cells": 0.9623142250530785
+            },
+            "candidate_cropped": {
+              "occupied_cells": 1948,
+              "phantom_obstacle_cells": 138,
+              "precision_wrt_observation": 0.9291581108829569,
+              "recall_of_observed_cells": 0.9607218683651805
+            }
+          },
+          {
+            "repeat": 15,
+            "baseline_uncropped": {
+              "occupied_cells": 2684,
+              "phantom_obstacle_cells": 871,
+              "precision_wrt_observation": 0.6754843517138599,
+              "recall_of_observed_cells": 0.9623142250530785
+            },
+            "candidate_cropped": {
+              "occupied_cells": 1948,
+              "phantom_obstacle_cells": 138,
+              "precision_wrt_observation": 0.9291581108829569,
+              "recall_of_observed_cells": 0.9607218683651805
+            }
+          },
+          {
+            "repeat": 16,
+            "baseline_uncropped": {
+              "occupied_cells": 2684,
+              "phantom_obstacle_cells": 871,
+              "precision_wrt_observation": 0.6754843517138599,
+              "recall_of_observed_cells": 0.9623142250530785
+            },
+            "candidate_cropped": {
+              "occupied_cells": 1948,
+              "phantom_obstacle_cells": 138,
+              "precision_wrt_observation": 0.9291581108829569,
+              "recall_of_observed_cells": 0.9607218683651805
+            }
+          },
+          {
+            "repeat": 17,
+            "baseline_uncropped": {
+              "occupied_cells": 2684,
+              "phantom_obstacle_cells": 871,
+              "precision_wrt_observation": 0.6754843517138599,
+              "recall_of_observed_cells": 0.9623142250530785
+            },
+            "candidate_cropped": {
+              "occupied_cells": 1948,
+              "phantom_obstacle_cells": 138,
+              "precision_wrt_observation": 0.9291581108829569,
+              "recall_of_observed_cells": 0.9607218683651805
+            }
+          },
+          {
+            "repeat": 18,
+            "baseline_uncropped": {
+              "occupied_cells": 2684,
+              "phantom_obstacle_cells": 871,
+              "precision_wrt_observation": 0.6754843517138599,
+              "recall_of_observed_cells": 0.9623142250530785
+            },
+            "candidate_cropped": {
+              "occupied_cells": 1948,
+              "phantom_obstacle_cells": 138,
+              "precision_wrt_observation": 0.9291581108829569,
+              "recall_of_observed_cells": 0.9607218683651805
+            }
+          },
+          {
+            "repeat": 19,
+            "baseline_uncropped": {
+              "occupied_cells": 2684,
+              "phantom_obstacle_cells": 871,
+              "precision_wrt_observation": 0.6754843517138599,
+              "recall_of_observed_cells": 0.9623142250530785
+            },
+            "candidate_cropped": {
+              "occupied_cells": 1948,
+              "phantom_obstacle_cells": 138,
+              "precision_wrt_observation": 0.9291581108829569,
+              "recall_of_observed_cells": 0.9607218683651805
+            }
+          },
+          {
+            "repeat": 20,
+            "baseline_uncropped": {
+              "occupied_cells": 2684,
+              "phantom_obstacle_cells": 871,
+              "precision_wrt_observation": 0.6754843517138599,
+              "recall_of_observed_cells": 0.9623142250530785
+            },
+            "candidate_cropped": {
+              "occupied_cells": 1948,
+              "phantom_obstacle_cells": 138,
+              "precision_wrt_observation": 0.9291581108829569,
+              "recall_of_observed_cells": 0.9607218683651805
+            }
+          },
+          {
+            "repeat": 21,
+            "baseline_uncropped": {
+              "occupied_cells": 2684,
+              "phantom_obstacle_cells": 871,
+              "precision_wrt_observation": 0.6754843517138599,
+              "recall_of_observed_cells": 0.9623142250530785
+            },
+            "candidate_cropped": {
+              "occupied_cells": 1948,
+              "phantom_obstacle_cells": 138,
+              "precision_wrt_observation": 0.9291581108829569,
+              "recall_of_observed_cells": 0.9607218683651805
+            }
+          },
+          {
+            "repeat": 22,
+            "baseline_uncropped": {
+              "occupied_cells": 2684,
+              "phantom_obstacle_cells": 871,
+              "precision_wrt_observation": 0.6754843517138599,
+              "recall_of_observed_cells": 0.9623142250530785
+            },
+            "candidate_cropped": {
+              "occupied_cells": 1948,
+              "phantom_obstacle_cells": 138,
+              "precision_wrt_observation": 0.9291581108829569,
+              "recall_of_observed_cells": 0.9607218683651805
+            }
+          },
+          {
+            "repeat": 23,
+            "baseline_uncropped": {
+              "occupied_cells": 2684,
+              "phantom_obstacle_cells": 871,
+              "precision_wrt_observation": 0.6754843517138599,
+              "recall_of_observed_cells": 0.9623142250530785
+            },
+            "candidate_cropped": {
+              "occupied_cells": 1948,
+              "phantom_obstacle_cells": 138,
+              "precision_wrt_observation": 0.9291581108829569,
+              "recall_of_observed_cells": 0.9607218683651805
+            }
+          },
+          {
+            "repeat": 24,
+            "baseline_uncropped": {
+              "occupied_cells": 2684,
+              "phantom_obstacle_cells": 871,
+              "precision_wrt_observation": 0.6754843517138599,
+              "recall_of_observed_cells": 0.9623142250530785
+            },
+            "candidate_cropped": {
+              "occupied_cells": 1948,
+              "phantom_obstacle_cells": 138,
+              "precision_wrt_observation": 0.9291581108829569,
+              "recall_of_observed_cells": 0.9607218683651805
+            }
           }
         ],
         "phantom_cells_removed_by_the_crop": {
           "values": [
+            733.0,
+            733.0,
+            733.0,
+            733.0,
+            733.0,
+            733.0,
+            733.0,
+            733.0,
+            733.0,
+            733.0,
+            733.0,
+            733.0,
+            733.0,
+            733.0,
+            733.0,
+            733.0,
+            733.0,
+            733.0,
+            733.0,
+            733.0,
             733.0,
             733.0,
             733.0,
@@ -240,15 +1199,61 @@
             0.9291581108829569,
             0.9291581108829569,
             0.9291581108829569,
+            0.9291581108829569,
+            0.9291581108829569,
+            0.9291581108829569,
+            0.9291581108829569,
+            0.9291581108829569,
+            0.9291581108829569,
+            0.9291581108829569,
+            0.9291581108829569,
+            0.9291581108829569,
+            0.9291581108829569,
+            0.9291581108829569,
+            0.9291581108829569,
+            0.9291581108829569,
+            0.9291581108829569,
+            0.9291581108829569,
+            0.9291581108829569,
+            0.9291581108829569,
+            0.9291581108829569,
+            0.9291581108829569,
+            0.9291581108829569,
             0.9291581108829569
           ],
           "distinct": 1,
           "spread": 0.0,
           "relative_spread": 0.0
-        }
+        },
+        "with_the_fused_cloud_rebuilt_instead": {
+          "why_this_arm_exists": "The fixed-cloud arm isolates Poisson, which is what makes its result attributable. It is not what a user runs. Here the fused cloud is rebuilt every time, so registration varies as well, and the question is whether the published per-cell figure survives that.",
+          "invocations": 5,
+          "distinct_fused_clouds": 5,
+          "vertices_per_invocation": [
+            18413,
+            18413,
+            18413,
+            18408,
+            18424
+          ],
+          "phantom_cells_removed": {
+            "values": [
+              733.0,
+              733.0,
+              733.0,
+              734.0,
+              730.0
+            ],
+            "distinct": 3,
+            "spread": 4.0,
+            "relative_spread": 0.0054600054600054595
+          },
+          "what_it_shows": "3 distinct value(s) across 5 invocations, [730, 733, 734], a spread of 4 cell(s) on a figure of about 733 -- 0.55% of it. This arm lets registration vary as well, so it does not attribute that spread to anything on its own; compare it with the fixed-cloud arm above."
+        },
+        "what_the_two_arms_together_show": "The published figure is exactly reproducible under the crop and is not exactly reproducible end to end. Holding the fused cloud fixed, all 24 repeats return 733 -- one value, despite every repeat reconstructing a different mesh. Rebuilding it, the figure moves across 3 values spanning 4 cell(s). So the residual belongs to the registration upstream, which is separately known not to be reproducible, and not to the crop or the reconstruction under it. A reader quoting the figure should quote it with that spread; a reader comparing two crop settings on one fused cloud can quote it exactly."
       },
       "what_a_user_may_rely_on": "The per-cell unsupported mask, not only the aggregate. Every repeat agreed on every cell -- Jaccard 1.0, no cell changed its verdict -- so the answer to 'which parts of my mesh are unsupported' is reproducible on this input even though the reconstruction it is computed from is not.",
-      "whether_that_is_benign": "Yes, and by a measured margin rather than by luck. Around 556 vertices per repeat sit within 10% of the cut, which is where a sharp threshold on a continuous quantity is vulnerable, and none of them crossed: the largest distance any vertex moved between repeats is 6.08e-06 m against a 0.05 m cut, four orders of magnitude smaller than the band it would have to traverse. The condition to re-check on another scan is that ratio, not this verdict.",
+      "whether_that_is_benign": "Yes, and by a measured margin rather than by luck. Around 556 vertices per repeat sit within 10% of the cut, which is where a sharp threshold on a continuous quantity is vulnerable, and none of them crossed. Over 23 pairs the largest distance any vertex moved was 1e-05 m against a 0.05 m cut. The margin is quoted from the worst displacement known anywhere rather than from that, because the statistic has a tail an earlier four-repeat run could not see: on the worst value on record the decision clears the cut by 23x, which is the number to re-check on another scan. Not this verdict, and not the typical case.",
       "what_this_does_not_establish": "Nothing about the cause inside Poisson, which #1024 covers, and nothing about whether the crop rule is the right rule. The figures are not comparable to the record's published values: this harness mirrors the reconstruct-and-crop stage rather than running the full six-stage workflow, and its fused cloud is its own.",
       "reproducibility": {
         "command": "npa/.venv/bin/python docs/evidence/open3d/harness/crop_decision_stability.py",
@@ -266,48 +1271,228 @@
       "input": {
         "dataset": "open3d.data DemoICPPointClouds, the record's own input",
         "voxel_size": 0.02,
-        "fused_cloud_sha256": "b62aa554f53b7d7d9161da1ab79f070326f8db8731da212ad84cf48f25776c45",
+        "fused_cloud_sha256": "a360c5b0259a6f448f61ffacb9df79874b18de683cd442c4df0cc5ca9bd1af4e",
         "fused_once_and_reused": true
       },
       "crop_rule": "a vertex is unsupported when its distance to the fused cloud exceeds voxel * 1.0 = 0.02",
-      "repeats": 4,
+      "repeats": 24,
       "did_the_reconstruction_vary_at_all": {
         "why_this_is_first": "A stable decision means nothing if nothing upstream moved. The same mistake sank a thread experiment on this record: the lever never engaged, so the result measured nothing. Read this block before any figure below it.",
         "distinct_fused_clouds": 1,
         "distinct_normal_sets": 1,
-        "distinct_poisson_meshes": 4,
+        "distinct_poisson_meshes": 24,
         "poisson_varied_between_repeats": true,
         "and_whether_that_is_only_reordering": {
           "per_repeat": [
             {
               "repeat": 2,
-              "vertices_in_repeat_1_only": 3628,
-              "vertices_in_this_repeat_only": 3628,
+              "vertices_in_repeat_1_only": 3895,
+              "vertices_in_this_repeat_only": 3895,
               "vertex_counts": [
-                78548,
-                78548
+                79071,
+                79071
               ]
             },
             {
               "repeat": 3,
-              "vertices_in_repeat_1_only": 4476,
-              "vertices_in_this_repeat_only": 4476,
+              "vertices_in_repeat_1_only": 3850,
+              "vertices_in_this_repeat_only": 3850,
               "vertex_counts": [
-                78548,
-                78548
+                79071,
+                79071
               ]
             },
             {
               "repeat": 4,
-              "vertices_in_repeat_1_only": 3536,
-              "vertices_in_this_repeat_only": 3536,
+              "vertices_in_repeat_1_only": 4686,
+              "vertices_in_this_repeat_only": 4686,
               "vertex_counts": [
-                78548,
-                78548
+                79071,
+                79071
+              ]
+            },
+            {
+              "repeat": 5,
+              "vertices_in_repeat_1_only": 4435,
+              "vertices_in_this_repeat_only": 4435,
+              "vertex_counts": [
+                79071,
+                79071
+              ]
+            },
+            {
+              "repeat": 6,
+              "vertices_in_repeat_1_only": 4568,
+              "vertices_in_this_repeat_only": 4568,
+              "vertex_counts": [
+                79071,
+                79071
+              ]
+            },
+            {
+              "repeat": 7,
+              "vertices_in_repeat_1_only": 4418,
+              "vertices_in_this_repeat_only": 4418,
+              "vertex_counts": [
+                79071,
+                79071
+              ]
+            },
+            {
+              "repeat": 8,
+              "vertices_in_repeat_1_only": 3775,
+              "vertices_in_this_repeat_only": 3776,
+              "vertex_counts": [
+                79071,
+                79071
+              ]
+            },
+            {
+              "repeat": 9,
+              "vertices_in_repeat_1_only": 3800,
+              "vertices_in_this_repeat_only": 3800,
+              "vertex_counts": [
+                79071,
+                79071
+              ]
+            },
+            {
+              "repeat": 10,
+              "vertices_in_repeat_1_only": 4579,
+              "vertices_in_this_repeat_only": 4579,
+              "vertex_counts": [
+                79071,
+                79071
+              ]
+            },
+            {
+              "repeat": 11,
+              "vertices_in_repeat_1_only": 4080,
+              "vertices_in_this_repeat_only": 4080,
+              "vertex_counts": [
+                79071,
+                79071
+              ]
+            },
+            {
+              "repeat": 12,
+              "vertices_in_repeat_1_only": 4175,
+              "vertices_in_this_repeat_only": 4175,
+              "vertex_counts": [
+                79071,
+                79071
+              ]
+            },
+            {
+              "repeat": 13,
+              "vertices_in_repeat_1_only": 4812,
+              "vertices_in_this_repeat_only": 4812,
+              "vertex_counts": [
+                79071,
+                79071
+              ]
+            },
+            {
+              "repeat": 14,
+              "vertices_in_repeat_1_only": 4279,
+              "vertices_in_this_repeat_only": 4279,
+              "vertex_counts": [
+                79071,
+                79071
+              ]
+            },
+            {
+              "repeat": 15,
+              "vertices_in_repeat_1_only": 4080,
+              "vertices_in_this_repeat_only": 4080,
+              "vertex_counts": [
+                79071,
+                79071
+              ]
+            },
+            {
+              "repeat": 16,
+              "vertices_in_repeat_1_only": 3958,
+              "vertices_in_this_repeat_only": 3958,
+              "vertex_counts": [
+                79071,
+                79071
+              ]
+            },
+            {
+              "repeat": 17,
+              "vertices_in_repeat_1_only": 3776,
+              "vertices_in_this_repeat_only": 3776,
+              "vertex_counts": [
+                79071,
+                79071
+              ]
+            },
+            {
+              "repeat": 18,
+              "vertices_in_repeat_1_only": 4228,
+              "vertices_in_this_repeat_only": 4228,
+              "vertex_counts": [
+                79071,
+                79071
+              ]
+            },
+            {
+              "repeat": 19,
+              "vertices_in_repeat_1_only": 4177,
+              "vertices_in_this_repeat_only": 4177,
+              "vertex_counts": [
+                79071,
+                79071
+              ]
+            },
+            {
+              "repeat": 20,
+              "vertices_in_repeat_1_only": 4225,
+              "vertices_in_this_repeat_only": 4225,
+              "vertex_counts": [
+                79071,
+                79071
+              ]
+            },
+            {
+              "repeat": 21,
+              "vertices_in_repeat_1_only": 4443,
+              "vertices_in_this_repeat_only": 4443,
+              "vertex_counts": [
+                79071,
+                79071
+              ]
+            },
+            {
+              "repeat": 22,
+              "vertices_in_repeat_1_only": 4336,
+              "vertices_in_this_repeat_only": 4336,
+              "vertex_counts": [
+                79071,
+                79071
+              ]
+            },
+            {
+              "repeat": 23,
+              "vertices_in_repeat_1_only": 4600,
+              "vertices_in_this_repeat_only": 4600,
+              "vertex_counts": [
+                79071,
+                79071
+              ]
+            },
+            {
+              "repeat": 24,
+              "vertices_in_repeat_1_only": 4495,
+              "vertices_in_this_repeat_only": 4495,
+              "vertex_counts": [
+                79071,
+                79071
               ]
             }
           ],
-          "largest_set_difference": 4476,
+          "largest_set_difference": 4812,
           "verdict": "genuinely different vertex positions"
         },
         "and_how_far_it_moved": {
@@ -316,34 +1501,193 @@
               "repeat": 2,
               "median_displacement_m": 0.0,
               "p99_displacement_m": 2.384185791015625e-07,
-              "max_displacement_m": 7.867813110351562e-06
+              "max_displacement_m": 2.384185791015625e-06
             },
             {
               "repeat": 3,
               "median_displacement_m": 0.0,
               "p99_displacement_m": 2.384185791015625e-07,
-              "max_displacement_m": 7.271766662597656e-06
+              "max_displacement_m": 3.3974647521972656e-06
             },
             {
               "repeat": 4,
               "median_displacement_m": 0.0,
               "p99_displacement_m": 2.384185791015625e-07,
+              "max_displacement_m": 3.4868717193603516e-06
+            },
+            {
+              "repeat": 5,
+              "median_displacement_m": 0.0,
+              "p99_displacement_m": 2.384185791015625e-07,
+              "max_displacement_m": 2.8312206268310547e-06
+            },
+            {
+              "repeat": 6,
+              "median_displacement_m": 0.0,
+              "p99_displacement_m": 2.384185791015625e-07,
+              "max_displacement_m": 3.814697265625e-06
+            },
+            {
+              "repeat": 7,
+              "median_displacement_m": 0.0,
+              "p99_displacement_m": 2.384185791015625e-07,
+              "max_displacement_m": 1.9073486328125e-06
+            },
+            {
+              "repeat": 8,
+              "median_displacement_m": 0.0,
+              "p99_displacement_m": 2.384185791015625e-07,
+              "max_displacement_m": 4.76837158203125e-06
+            },
+            {
+              "repeat": 9,
+              "median_displacement_m": 0.0,
+              "p99_displacement_m": 2.384185791015625e-07,
+              "max_displacement_m": 2.384185791015625e-06
+            },
+            {
+              "repeat": 10,
+              "median_displacement_m": 0.0,
+              "p99_displacement_m": 2.384185791015625e-07,
+              "max_displacement_m": 3.4570693969726562e-06
+            },
+            {
+              "repeat": 11,
+              "median_displacement_m": 0.0,
+              "p99_displacement_m": 2.384185791015625e-07,
+              "max_displacement_m": 2.86102294921875e-06
+            },
+            {
+              "repeat": 12,
+              "median_displacement_m": 0.0,
+              "p99_displacement_m": 2.384185791015625e-07,
+              "max_displacement_m": 4.76837158203125e-06
+            },
+            {
+              "repeat": 13,
+              "median_displacement_m": 0.0,
+              "p99_displacement_m": 2.384185791015625e-07,
+              "max_displacement_m": 3.4868717193603516e-06
+            },
+            {
+              "repeat": 14,
+              "median_displacement_m": 0.0,
+              "p99_displacement_m": 2.384185791015625e-07,
+              "max_displacement_m": 2.7418136596679688e-06
+            },
+            {
+              "repeat": 15,
+              "median_displacement_m": 0.0,
+              "p99_displacement_m": 2.384185791015625e-07,
+              "max_displacement_m": 3.814697265625e-06
+            },
+            {
+              "repeat": 16,
+              "median_displacement_m": 0.0,
+              "p99_displacement_m": 2.384185791015625e-07,
+              "max_displacement_m": 3.606081008911133e-06
+            },
+            {
+              "repeat": 17,
+              "median_displacement_m": 0.0,
+              "p99_displacement_m": 2.384185791015625e-07,
+              "max_displacement_m": 2.9206275939941406e-06
+            },
+            {
+              "repeat": 18,
+              "median_displacement_m": 0.0,
+              "p99_displacement_m": 2.384185791015625e-07,
+              "max_displacement_m": 2.384185791015625e-06
+            },
+            {
+              "repeat": 19,
+              "median_displacement_m": 0.0,
+              "p99_displacement_m": 2.384185791015625e-07,
+              "max_displacement_m": 3.993511199951172e-06
+            },
+            {
+              "repeat": 20,
+              "median_displacement_m": 0.0,
+              "p99_displacement_m": 2.384185791015625e-07,
+              "max_displacement_m": 4.76837158203125e-06
+            },
+            {
+              "repeat": 21,
+              "median_displacement_m": 0.0,
+              "p99_displacement_m": 2.384185791015625e-07,
+              "max_displacement_m": 3.337860107421875e-06
+            },
+            {
+              "repeat": 22,
+              "median_displacement_m": 0.0,
+              "p99_displacement_m": 2.384185791015625e-07,
+              "max_displacement_m": 3.814697265625e-06
+            },
+            {
+              "repeat": 23,
+              "median_displacement_m": 0.0,
+              "p99_displacement_m": 2.384185791015625e-07,
+              "max_displacement_m": 1.7881393432617188e-06
+            },
+            {
+              "repeat": 24,
+              "median_displacement_m": 0.0,
+              "p99_displacement_m": 2.384185791015625e-07,
               "max_displacement_m": 2.384185791015625e-06
             }
           ],
-          "worst_displacement_m": 7.867813110351562e-06,
+          "the_distribution_of_the_per_pair_worst": {
+            "why_a_distribution_and_not_one_number": "The margin is computed from `worst`, which makes `worst` the quantity the safety claim rests on -- and it is a tail statistic. A handful of repeats describes the middle of its distribution, not the case the margin has to survive. An independent lane hit one per-pair worst three orders of magnitude above its neighbours and could not reproduce it in three further attempts on the identical file, which is exactly the shape a four-repeat run cannot see. So the pairs are reported as a distribution and the headline margin is taken from the worst value known anywhere rather than from the worst seen here.",
+            "pairs_compared": 23,
+            "min_m": 1.7881393432617188e-06,
+            "median_m": 3.3974647521972656e-06,
+            "p90_m": 4.613399505615235e-06,
+            "max_m": 4.76837158203125e-06,
+            "spread_max_over_median": 1.4035087719298245
+          },
+          "worst_displacement_m": 4.76837158203125e-06,
           "the_threshold_it_would_have_to_cross_m": 0.02,
-          "margin_factor": 2542.0024242424242,
-          "what_that_means": "A vertex only changes the answer by crossing the support threshold or landing in another cell. The largest distance any vertex moved between repeats is 7.87e-06 m against a 0.02 m cut, so the decision is stable by a wide margin rather than by luck -- and the margin is the figure to re-check on a scan whose geometry sits closer to the cut."
+          "margin_factor": 4194.304,
+          "the_tail_observed_elsewhere": {
+            "displacement_m": 0.002187,
+            "cut_m": 0.05,
+            "margin_factor": 22.86236854138089,
+            "cells_that_flipped_there": 0,
+            "reproduced_in_three_further_attempts": false,
+            "measured_by": "an independent review lane, on a 53x denser input of the same scene, driving this module's _one_crop with the product modules stubbed",
+            "why_it_is_kept": "Dropping an unreproduced outlier because it is inconvenient is how a margin claim becomes a median claim. It is three orders of magnitude from everything else and it is still 20x short of the cut, so it tightens the stated safety factor without touching the verdict -- which is the honest shape of the result."
+          },
+          "margin_at_the_worst_displacement_known_anywhere": 22.86236854138089,
+          "what_that_means": "A vertex only changes the answer by crossing the support threshold or landing in another cell. Across 23 pairs here the largest any vertex moved was 4.77e-06 m against a 0.02 m cut. Taking instead the worst value known anywhere, including the unreproduced observation above, the decision still clears its threshold by 23x. That is the figure to re-check on a scan whose geometry sits closer to the cut, and it is deliberately the conservative one: no cell changed its verdict at either displacement."
         }
       },
       "the_aggregate_the_record_reports": {
         "removed_vertex_count": {
           "values": [
-            15512.0,
-            15512.0,
-            15512.0,
-            15512.0
+            15866.0,
+            15866.0,
+            15866.0,
+            15866.0,
+            15866.0,
+            15866.0,
+            15866.0,
+            15866.0,
+            15866.0,
+            15866.0,
+            15866.0,
+            15866.0,
+            15866.0,
+            15866.0,
+            15866.0,
+            15866.0,
+            15866.0,
+            15866.0,
+            15866.0,
+            15866.0,
+            15866.0,
+            15866.0,
+            15866.0,
+            15866.0
           ],
           "distinct": 1,
           "spread": 0.0,
@@ -351,10 +1695,30 @@
         },
         "removed_fraction": {
           "values": [
-            0.19748434078525234,
-            0.19748434078525234,
-            0.19748434078525234,
-            0.19748434078525234
+            0.20065510743509,
+            0.20065510743509,
+            0.20065510743509,
+            0.20065510743509,
+            0.20065510743509,
+            0.20065510743509,
+            0.20065510743509,
+            0.20065510743509,
+            0.20065510743509,
+            0.20065510743509,
+            0.20065510743509,
+            0.20065510743509,
+            0.20065510743509,
+            0.20065510743509,
+            0.20065510743509,
+            0.20065510743509,
+            0.20065510743509,
+            0.20065510743509,
+            0.20065510743509,
+            0.20065510743509,
+            0.20065510743509,
+            0.20065510743509,
+            0.20065510743509,
+            0.20065510743509
           ],
           "distinct": 1,
           "spread": 0.0,
@@ -362,10 +1726,30 @@
         },
         "total_vertices": {
           "values": [
-            78548.0,
-            78548.0,
-            78548.0,
-            78548.0
+            79071.0,
+            79071.0,
+            79071.0,
+            79071.0,
+            79071.0,
+            79071.0,
+            79071.0,
+            79071.0,
+            79071.0,
+            79071.0,
+            79071.0,
+            79071.0,
+            79071.0,
+            79071.0,
+            79071.0,
+            79071.0,
+            79071.0,
+            79071.0,
+            79071.0,
+            79071.0,
+            79071.0,
+            79071.0,
+            79071.0,
+            79071.0
           ],
           "distinct": 1,
           "spread": 0.0,
@@ -375,49 +1759,309 @@
       "the_per_cell_decision_a_user_reads": [
         {
           "repeat": 2,
-          "removed_cells_in_repeat_1": 10066,
-          "removed_cells_here": 10066,
-          "cells_both_called_unsupported": 10066,
+          "removed_cells_in_repeat_1": 10385,
+          "removed_cells_here": 10385,
+          "cells_both_called_unsupported": 10385,
           "jaccard": 1.0,
           "cells_whose_verdict_flipped": 0
         },
         {
           "repeat": 3,
-          "removed_cells_in_repeat_1": 10066,
-          "removed_cells_here": 10066,
-          "cells_both_called_unsupported": 10066,
+          "removed_cells_in_repeat_1": 10385,
+          "removed_cells_here": 10385,
+          "cells_both_called_unsupported": 10385,
           "jaccard": 1.0,
           "cells_whose_verdict_flipped": 0
         },
         {
           "repeat": 4,
-          "removed_cells_in_repeat_1": 10066,
-          "removed_cells_here": 10066,
-          "cells_both_called_unsupported": 10066,
+          "removed_cells_in_repeat_1": 10385,
+          "removed_cells_here": 10385,
+          "cells_both_called_unsupported": 10385,
+          "jaccard": 1.0,
+          "cells_whose_verdict_flipped": 0
+        },
+        {
+          "repeat": 5,
+          "removed_cells_in_repeat_1": 10385,
+          "removed_cells_here": 10385,
+          "cells_both_called_unsupported": 10385,
+          "jaccard": 1.0,
+          "cells_whose_verdict_flipped": 0
+        },
+        {
+          "repeat": 6,
+          "removed_cells_in_repeat_1": 10385,
+          "removed_cells_here": 10385,
+          "cells_both_called_unsupported": 10385,
+          "jaccard": 1.0,
+          "cells_whose_verdict_flipped": 0
+        },
+        {
+          "repeat": 7,
+          "removed_cells_in_repeat_1": 10385,
+          "removed_cells_here": 10385,
+          "cells_both_called_unsupported": 10385,
+          "jaccard": 1.0,
+          "cells_whose_verdict_flipped": 0
+        },
+        {
+          "repeat": 8,
+          "removed_cells_in_repeat_1": 10385,
+          "removed_cells_here": 10385,
+          "cells_both_called_unsupported": 10385,
+          "jaccard": 1.0,
+          "cells_whose_verdict_flipped": 0
+        },
+        {
+          "repeat": 9,
+          "removed_cells_in_repeat_1": 10385,
+          "removed_cells_here": 10385,
+          "cells_both_called_unsupported": 10385,
+          "jaccard": 1.0,
+          "cells_whose_verdict_flipped": 0
+        },
+        {
+          "repeat": 10,
+          "removed_cells_in_repeat_1": 10385,
+          "removed_cells_here": 10385,
+          "cells_both_called_unsupported": 10385,
+          "jaccard": 1.0,
+          "cells_whose_verdict_flipped": 0
+        },
+        {
+          "repeat": 11,
+          "removed_cells_in_repeat_1": 10385,
+          "removed_cells_here": 10385,
+          "cells_both_called_unsupported": 10385,
+          "jaccard": 1.0,
+          "cells_whose_verdict_flipped": 0
+        },
+        {
+          "repeat": 12,
+          "removed_cells_in_repeat_1": 10385,
+          "removed_cells_here": 10385,
+          "cells_both_called_unsupported": 10385,
+          "jaccard": 1.0,
+          "cells_whose_verdict_flipped": 0
+        },
+        {
+          "repeat": 13,
+          "removed_cells_in_repeat_1": 10385,
+          "removed_cells_here": 10385,
+          "cells_both_called_unsupported": 10385,
+          "jaccard": 1.0,
+          "cells_whose_verdict_flipped": 0
+        },
+        {
+          "repeat": 14,
+          "removed_cells_in_repeat_1": 10385,
+          "removed_cells_here": 10385,
+          "cells_both_called_unsupported": 10385,
+          "jaccard": 1.0,
+          "cells_whose_verdict_flipped": 0
+        },
+        {
+          "repeat": 15,
+          "removed_cells_in_repeat_1": 10385,
+          "removed_cells_here": 10385,
+          "cells_both_called_unsupported": 10385,
+          "jaccard": 1.0,
+          "cells_whose_verdict_flipped": 0
+        },
+        {
+          "repeat": 16,
+          "removed_cells_in_repeat_1": 10385,
+          "removed_cells_here": 10385,
+          "cells_both_called_unsupported": 10385,
+          "jaccard": 1.0,
+          "cells_whose_verdict_flipped": 0
+        },
+        {
+          "repeat": 17,
+          "removed_cells_in_repeat_1": 10385,
+          "removed_cells_here": 10385,
+          "cells_both_called_unsupported": 10385,
+          "jaccard": 1.0,
+          "cells_whose_verdict_flipped": 0
+        },
+        {
+          "repeat": 18,
+          "removed_cells_in_repeat_1": 10385,
+          "removed_cells_here": 10385,
+          "cells_both_called_unsupported": 10385,
+          "jaccard": 1.0,
+          "cells_whose_verdict_flipped": 0
+        },
+        {
+          "repeat": 19,
+          "removed_cells_in_repeat_1": 10385,
+          "removed_cells_here": 10385,
+          "cells_both_called_unsupported": 10385,
+          "jaccard": 1.0,
+          "cells_whose_verdict_flipped": 0
+        },
+        {
+          "repeat": 20,
+          "removed_cells_in_repeat_1": 10385,
+          "removed_cells_here": 10385,
+          "cells_both_called_unsupported": 10385,
+          "jaccard": 1.0,
+          "cells_whose_verdict_flipped": 0
+        },
+        {
+          "repeat": 21,
+          "removed_cells_in_repeat_1": 10385,
+          "removed_cells_here": 10385,
+          "cells_both_called_unsupported": 10385,
+          "jaccard": 1.0,
+          "cells_whose_verdict_flipped": 0
+        },
+        {
+          "repeat": 22,
+          "removed_cells_in_repeat_1": 10385,
+          "removed_cells_here": 10385,
+          "cells_both_called_unsupported": 10385,
+          "jaccard": 1.0,
+          "cells_whose_verdict_flipped": 0
+        },
+        {
+          "repeat": 23,
+          "removed_cells_in_repeat_1": 10385,
+          "removed_cells_here": 10385,
+          "cells_both_called_unsupported": 10385,
+          "jaccard": 1.0,
+          "cells_whose_verdict_flipped": 0
+        },
+        {
+          "repeat": 24,
+          "removed_cells_in_repeat_1": 10385,
+          "removed_cells_here": 10385,
+          "cells_both_called_unsupported": 10385,
           "jaccard": 1.0,
           "cells_whose_verdict_flipped": 0
         }
       ],
       "where_the_movers_sit": [
         {
-          "vertices_within_10pc_of_the_limit": 1616,
-          "as_fraction_of_all_vertices": 0.02057340734328054,
-          "removed_vertices": 15512
+          "vertices_within_10pc_of_the_limit": 1582,
+          "as_fraction_of_all_vertices": 0.02000733517977514,
+          "removed_vertices": 15866
         },
         {
-          "vertices_within_10pc_of_the_limit": 1616,
-          "as_fraction_of_all_vertices": 0.02057340734328054,
-          "removed_vertices": 15512
+          "vertices_within_10pc_of_the_limit": 1582,
+          "as_fraction_of_all_vertices": 0.02000733517977514,
+          "removed_vertices": 15866
         },
         {
-          "vertices_within_10pc_of_the_limit": 1616,
-          "as_fraction_of_all_vertices": 0.02057340734328054,
-          "removed_vertices": 15512
+          "vertices_within_10pc_of_the_limit": 1582,
+          "as_fraction_of_all_vertices": 0.02000733517977514,
+          "removed_vertices": 15866
         },
         {
-          "vertices_within_10pc_of_the_limit": 1616,
-          "as_fraction_of_all_vertices": 0.02057340734328054,
-          "removed_vertices": 15512
+          "vertices_within_10pc_of_the_limit": 1582,
+          "as_fraction_of_all_vertices": 0.02000733517977514,
+          "removed_vertices": 15866
+        },
+        {
+          "vertices_within_10pc_of_the_limit": 1582,
+          "as_fraction_of_all_vertices": 0.02000733517977514,
+          "removed_vertices": 15866
+        },
+        {
+          "vertices_within_10pc_of_the_limit": 1582,
+          "as_fraction_of_all_vertices": 0.02000733517977514,
+          "removed_vertices": 15866
+        },
+        {
+          "vertices_within_10pc_of_the_limit": 1582,
+          "as_fraction_of_all_vertices": 0.02000733517977514,
+          "removed_vertices": 15866
+        },
+        {
+          "vertices_within_10pc_of_the_limit": 1582,
+          "as_fraction_of_all_vertices": 0.02000733517977514,
+          "removed_vertices": 15866
+        },
+        {
+          "vertices_within_10pc_of_the_limit": 1582,
+          "as_fraction_of_all_vertices": 0.02000733517977514,
+          "removed_vertices": 15866
+        },
+        {
+          "vertices_within_10pc_of_the_limit": 1582,
+          "as_fraction_of_all_vertices": 0.02000733517977514,
+          "removed_vertices": 15866
+        },
+        {
+          "vertices_within_10pc_of_the_limit": 1582,
+          "as_fraction_of_all_vertices": 0.02000733517977514,
+          "removed_vertices": 15866
+        },
+        {
+          "vertices_within_10pc_of_the_limit": 1582,
+          "as_fraction_of_all_vertices": 0.02000733517977514,
+          "removed_vertices": 15866
+        },
+        {
+          "vertices_within_10pc_of_the_limit": 1582,
+          "as_fraction_of_all_vertices": 0.02000733517977514,
+          "removed_vertices": 15866
+        },
+        {
+          "vertices_within_10pc_of_the_limit": 1582,
+          "as_fraction_of_all_vertices": 0.02000733517977514,
+          "removed_vertices": 15866
+        },
+        {
+          "vertices_within_10pc_of_the_limit": 1582,
+          "as_fraction_of_all_vertices": 0.02000733517977514,
+          "removed_vertices": 15866
+        },
+        {
+          "vertices_within_10pc_of_the_limit": 1582,
+          "as_fraction_of_all_vertices": 0.02000733517977514,
+          "removed_vertices": 15866
+        },
+        {
+          "vertices_within_10pc_of_the_limit": 1582,
+          "as_fraction_of_all_vertices": 0.02000733517977514,
+          "removed_vertices": 15866
+        },
+        {
+          "vertices_within_10pc_of_the_limit": 1582,
+          "as_fraction_of_all_vertices": 0.02000733517977514,
+          "removed_vertices": 15866
+        },
+        {
+          "vertices_within_10pc_of_the_limit": 1582,
+          "as_fraction_of_all_vertices": 0.02000733517977514,
+          "removed_vertices": 15866
+        },
+        {
+          "vertices_within_10pc_of_the_limit": 1582,
+          "as_fraction_of_all_vertices": 0.02000733517977514,
+          "removed_vertices": 15866
+        },
+        {
+          "vertices_within_10pc_of_the_limit": 1582,
+          "as_fraction_of_all_vertices": 0.02000733517977514,
+          "removed_vertices": 15866
+        },
+        {
+          "vertices_within_10pc_of_the_limit": 1582,
+          "as_fraction_of_all_vertices": 0.02000733517977514,
+          "removed_vertices": 15866
+        },
+        {
+          "vertices_within_10pc_of_the_limit": 1582,
+          "as_fraction_of_all_vertices": 0.02000733517977514,
+          "removed_vertices": 15866
+        },
+        {
+          "vertices_within_10pc_of_the_limit": 1582,
+          "as_fraction_of_all_vertices": 0.02000733517977514,
+          "removed_vertices": 15866
         }
       ],
       "the_published_downstream_figure": {
@@ -425,70 +2069,390 @@
           {
             "repeat": 1,
             "baseline_uncropped": {
-              "occupied_cells": 2910,
-              "phantom_obstacle_cells": 989,
-              "precision_wrt_observation": 0.6601374570446735,
-              "recall_of_observed_cells": 0.9791029561671764
+              "occupied_cells": 2898,
+              "phantom_obstacle_cells": 986,
+              "precision_wrt_observation": 0.6597653554175293,
+              "recall_of_observed_cells": 0.9740193581253184
             },
             "candidate_cropped": {
-              "occupied_cells": 1986,
-              "phantom_obstacle_cells": 69,
-              "precision_wrt_observation": 0.9652567975830816,
-              "recall_of_observed_cells": 0.9770642201834863
+              "occupied_cells": 1977,
+              "phantom_obstacle_cells": 67,
+              "precision_wrt_observation": 0.966110268082954,
+              "recall_of_observed_cells": 0.9730005094243505
             }
           },
           {
             "repeat": 2,
             "baseline_uncropped": {
-              "occupied_cells": 2910,
-              "phantom_obstacle_cells": 989,
-              "precision_wrt_observation": 0.6601374570446735,
-              "recall_of_observed_cells": 0.9791029561671764
+              "occupied_cells": 2898,
+              "phantom_obstacle_cells": 986,
+              "precision_wrt_observation": 0.6597653554175293,
+              "recall_of_observed_cells": 0.9740193581253184
             },
             "candidate_cropped": {
-              "occupied_cells": 1986,
-              "phantom_obstacle_cells": 69,
-              "precision_wrt_observation": 0.9652567975830816,
-              "recall_of_observed_cells": 0.9770642201834863
+              "occupied_cells": 1977,
+              "phantom_obstacle_cells": 67,
+              "precision_wrt_observation": 0.966110268082954,
+              "recall_of_observed_cells": 0.9730005094243505
             }
           },
           {
             "repeat": 3,
             "baseline_uncropped": {
-              "occupied_cells": 2910,
-              "phantom_obstacle_cells": 989,
-              "precision_wrt_observation": 0.6601374570446735,
-              "recall_of_observed_cells": 0.9791029561671764
+              "occupied_cells": 2898,
+              "phantom_obstacle_cells": 986,
+              "precision_wrt_observation": 0.6597653554175293,
+              "recall_of_observed_cells": 0.9740193581253184
             },
             "candidate_cropped": {
-              "occupied_cells": 1986,
-              "phantom_obstacle_cells": 69,
-              "precision_wrt_observation": 0.9652567975830816,
-              "recall_of_observed_cells": 0.9770642201834863
+              "occupied_cells": 1977,
+              "phantom_obstacle_cells": 67,
+              "precision_wrt_observation": 0.966110268082954,
+              "recall_of_observed_cells": 0.9730005094243505
             }
           },
           {
             "repeat": 4,
             "baseline_uncropped": {
-              "occupied_cells": 2910,
-              "phantom_obstacle_cells": 989,
-              "precision_wrt_observation": 0.6601374570446735,
-              "recall_of_observed_cells": 0.9791029561671764
+              "occupied_cells": 2898,
+              "phantom_obstacle_cells": 986,
+              "precision_wrt_observation": 0.6597653554175293,
+              "recall_of_observed_cells": 0.9740193581253184
             },
             "candidate_cropped": {
-              "occupied_cells": 1986,
-              "phantom_obstacle_cells": 69,
-              "precision_wrt_observation": 0.9652567975830816,
-              "recall_of_observed_cells": 0.9770642201834863
+              "occupied_cells": 1977,
+              "phantom_obstacle_cells": 67,
+              "precision_wrt_observation": 0.966110268082954,
+              "recall_of_observed_cells": 0.9730005094243505
+            }
+          },
+          {
+            "repeat": 5,
+            "baseline_uncropped": {
+              "occupied_cells": 2898,
+              "phantom_obstacle_cells": 986,
+              "precision_wrt_observation": 0.6597653554175293,
+              "recall_of_observed_cells": 0.9740193581253184
+            },
+            "candidate_cropped": {
+              "occupied_cells": 1977,
+              "phantom_obstacle_cells": 67,
+              "precision_wrt_observation": 0.966110268082954,
+              "recall_of_observed_cells": 0.9730005094243505
+            }
+          },
+          {
+            "repeat": 6,
+            "baseline_uncropped": {
+              "occupied_cells": 2898,
+              "phantom_obstacle_cells": 986,
+              "precision_wrt_observation": 0.6597653554175293,
+              "recall_of_observed_cells": 0.9740193581253184
+            },
+            "candidate_cropped": {
+              "occupied_cells": 1977,
+              "phantom_obstacle_cells": 67,
+              "precision_wrt_observation": 0.966110268082954,
+              "recall_of_observed_cells": 0.9730005094243505
+            }
+          },
+          {
+            "repeat": 7,
+            "baseline_uncropped": {
+              "occupied_cells": 2898,
+              "phantom_obstacle_cells": 986,
+              "precision_wrt_observation": 0.6597653554175293,
+              "recall_of_observed_cells": 0.9740193581253184
+            },
+            "candidate_cropped": {
+              "occupied_cells": 1977,
+              "phantom_obstacle_cells": 67,
+              "precision_wrt_observation": 0.966110268082954,
+              "recall_of_observed_cells": 0.9730005094243505
+            }
+          },
+          {
+            "repeat": 8,
+            "baseline_uncropped": {
+              "occupied_cells": 2898,
+              "phantom_obstacle_cells": 986,
+              "precision_wrt_observation": 0.6597653554175293,
+              "recall_of_observed_cells": 0.9740193581253184
+            },
+            "candidate_cropped": {
+              "occupied_cells": 1977,
+              "phantom_obstacle_cells": 67,
+              "precision_wrt_observation": 0.966110268082954,
+              "recall_of_observed_cells": 0.9730005094243505
+            }
+          },
+          {
+            "repeat": 9,
+            "baseline_uncropped": {
+              "occupied_cells": 2898,
+              "phantom_obstacle_cells": 986,
+              "precision_wrt_observation": 0.6597653554175293,
+              "recall_of_observed_cells": 0.9740193581253184
+            },
+            "candidate_cropped": {
+              "occupied_cells": 1977,
+              "phantom_obstacle_cells": 67,
+              "precision_wrt_observation": 0.966110268082954,
+              "recall_of_observed_cells": 0.9730005094243505
+            }
+          },
+          {
+            "repeat": 10,
+            "baseline_uncropped": {
+              "occupied_cells": 2898,
+              "phantom_obstacle_cells": 986,
+              "precision_wrt_observation": 0.6597653554175293,
+              "recall_of_observed_cells": 0.9740193581253184
+            },
+            "candidate_cropped": {
+              "occupied_cells": 1977,
+              "phantom_obstacle_cells": 67,
+              "precision_wrt_observation": 0.966110268082954,
+              "recall_of_observed_cells": 0.9730005094243505
+            }
+          },
+          {
+            "repeat": 11,
+            "baseline_uncropped": {
+              "occupied_cells": 2898,
+              "phantom_obstacle_cells": 986,
+              "precision_wrt_observation": 0.6597653554175293,
+              "recall_of_observed_cells": 0.9740193581253184
+            },
+            "candidate_cropped": {
+              "occupied_cells": 1977,
+              "phantom_obstacle_cells": 67,
+              "precision_wrt_observation": 0.966110268082954,
+              "recall_of_observed_cells": 0.9730005094243505
+            }
+          },
+          {
+            "repeat": 12,
+            "baseline_uncropped": {
+              "occupied_cells": 2898,
+              "phantom_obstacle_cells": 986,
+              "precision_wrt_observation": 0.6597653554175293,
+              "recall_of_observed_cells": 0.9740193581253184
+            },
+            "candidate_cropped": {
+              "occupied_cells": 1977,
+              "phantom_obstacle_cells": 67,
+              "precision_wrt_observation": 0.966110268082954,
+              "recall_of_observed_cells": 0.9730005094243505
+            }
+          },
+          {
+            "repeat": 13,
+            "baseline_uncropped": {
+              "occupied_cells": 2898,
+              "phantom_obstacle_cells": 986,
+              "precision_wrt_observation": 0.6597653554175293,
+              "recall_of_observed_cells": 0.9740193581253184
+            },
+            "candidate_cropped": {
+              "occupied_cells": 1977,
+              "phantom_obstacle_cells": 67,
+              "precision_wrt_observation": 0.966110268082954,
+              "recall_of_observed_cells": 0.9730005094243505
+            }
+          },
+          {
+            "repeat": 14,
+            "baseline_uncropped": {
+              "occupied_cells": 2898,
+              "phantom_obstacle_cells": 986,
+              "precision_wrt_observation": 0.6597653554175293,
+              "recall_of_observed_cells": 0.9740193581253184
+            },
+            "candidate_cropped": {
+              "occupied_cells": 1977,
+              "phantom_obstacle_cells": 67,
+              "precision_wrt_observation": 0.966110268082954,
+              "recall_of_observed_cells": 0.9730005094243505
+            }
+          },
+          {
+            "repeat": 15,
+            "baseline_uncropped": {
+              "occupied_cells": 2898,
+              "phantom_obstacle_cells": 986,
+              "precision_wrt_observation": 0.6597653554175293,
+              "recall_of_observed_cells": 0.9740193581253184
+            },
+            "candidate_cropped": {
+              "occupied_cells": 1977,
+              "phantom_obstacle_cells": 67,
+              "precision_wrt_observation": 0.966110268082954,
+              "recall_of_observed_cells": 0.9730005094243505
+            }
+          },
+          {
+            "repeat": 16,
+            "baseline_uncropped": {
+              "occupied_cells": 2898,
+              "phantom_obstacle_cells": 986,
+              "precision_wrt_observation": 0.6597653554175293,
+              "recall_of_observed_cells": 0.9740193581253184
+            },
+            "candidate_cropped": {
+              "occupied_cells": 1977,
+              "phantom_obstacle_cells": 67,
+              "precision_wrt_observation": 0.966110268082954,
+              "recall_of_observed_cells": 0.9730005094243505
+            }
+          },
+          {
+            "repeat": 17,
+            "baseline_uncropped": {
+              "occupied_cells": 2898,
+              "phantom_obstacle_cells": 986,
+              "precision_wrt_observation": 0.6597653554175293,
+              "recall_of_observed_cells": 0.9740193581253184
+            },
+            "candidate_cropped": {
+              "occupied_cells": 1977,
+              "phantom_obstacle_cells": 67,
+              "precision_wrt_observation": 0.966110268082954,
+              "recall_of_observed_cells": 0.9730005094243505
+            }
+          },
+          {
+            "repeat": 18,
+            "baseline_uncropped": {
+              "occupied_cells": 2898,
+              "phantom_obstacle_cells": 986,
+              "precision_wrt_observation": 0.6597653554175293,
+              "recall_of_observed_cells": 0.9740193581253184
+            },
+            "candidate_cropped": {
+              "occupied_cells": 1977,
+              "phantom_obstacle_cells": 67,
+              "precision_wrt_observation": 0.966110268082954,
+              "recall_of_observed_cells": 0.9730005094243505
+            }
+          },
+          {
+            "repeat": 19,
+            "baseline_uncropped": {
+              "occupied_cells": 2898,
+              "phantom_obstacle_cells": 986,
+              "precision_wrt_observation": 0.6597653554175293,
+              "recall_of_observed_cells": 0.9740193581253184
+            },
+            "candidate_cropped": {
+              "occupied_cells": 1977,
+              "phantom_obstacle_cells": 67,
+              "precision_wrt_observation": 0.966110268082954,
+              "recall_of_observed_cells": 0.9730005094243505
+            }
+          },
+          {
+            "repeat": 20,
+            "baseline_uncropped": {
+              "occupied_cells": 2898,
+              "phantom_obstacle_cells": 986,
+              "precision_wrt_observation": 0.6597653554175293,
+              "recall_of_observed_cells": 0.9740193581253184
+            },
+            "candidate_cropped": {
+              "occupied_cells": 1977,
+              "phantom_obstacle_cells": 67,
+              "precision_wrt_observation": 0.966110268082954,
+              "recall_of_observed_cells": 0.9730005094243505
+            }
+          },
+          {
+            "repeat": 21,
+            "baseline_uncropped": {
+              "occupied_cells": 2898,
+              "phantom_obstacle_cells": 986,
+              "precision_wrt_observation": 0.6597653554175293,
+              "recall_of_observed_cells": 0.9740193581253184
+            },
+            "candidate_cropped": {
+              "occupied_cells": 1977,
+              "phantom_obstacle_cells": 67,
+              "precision_wrt_observation": 0.966110268082954,
+              "recall_of_observed_cells": 0.9730005094243505
+            }
+          },
+          {
+            "repeat": 22,
+            "baseline_uncropped": {
+              "occupied_cells": 2898,
+              "phantom_obstacle_cells": 986,
+              "precision_wrt_observation": 0.6597653554175293,
+              "recall_of_observed_cells": 0.9740193581253184
+            },
+            "candidate_cropped": {
+              "occupied_cells": 1977,
+              "phantom_obstacle_cells": 67,
+              "precision_wrt_observation": 0.966110268082954,
+              "recall_of_observed_cells": 0.9730005094243505
+            }
+          },
+          {
+            "repeat": 23,
+            "baseline_uncropped": {
+              "occupied_cells": 2898,
+              "phantom_obstacle_cells": 986,
+              "precision_wrt_observation": 0.6597653554175293,
+              "recall_of_observed_cells": 0.9740193581253184
+            },
+            "candidate_cropped": {
+              "occupied_cells": 1977,
+              "phantom_obstacle_cells": 67,
+              "precision_wrt_observation": 0.966110268082954,
+              "recall_of_observed_cells": 0.9730005094243505
+            }
+          },
+          {
+            "repeat": 24,
+            "baseline_uncropped": {
+              "occupied_cells": 2898,
+              "phantom_obstacle_cells": 986,
+              "precision_wrt_observation": 0.6597653554175293,
+              "recall_of_observed_cells": 0.9740193581253184
+            },
+            "candidate_cropped": {
+              "occupied_cells": 1977,
+              "phantom_obstacle_cells": 67,
+              "precision_wrt_observation": 0.966110268082954,
+              "recall_of_observed_cells": 0.9730005094243505
             }
           }
         ],
         "phantom_cells_removed_by_the_crop": {
           "values": [
-            920.0,
-            920.0,
-            920.0,
-            920.0
+            919.0,
+            919.0,
+            919.0,
+            919.0,
+            919.0,
+            919.0,
+            919.0,
+            919.0,
+            919.0,
+            919.0,
+            919.0,
+            919.0,
+            919.0,
+            919.0,
+            919.0,
+            919.0,
+            919.0,
+            919.0,
+            919.0,
+            919.0,
+            919.0,
+            919.0,
+            919.0,
+            919.0
           ],
           "distinct": 1,
           "spread": 0.0,
@@ -496,18 +2460,64 @@
         },
         "precision_after_the_crop": {
           "values": [
-            0.9652567975830816,
-            0.9652567975830816,
-            0.9652567975830816,
-            0.9652567975830816
+            0.966110268082954,
+            0.966110268082954,
+            0.966110268082954,
+            0.966110268082954,
+            0.966110268082954,
+            0.966110268082954,
+            0.966110268082954,
+            0.966110268082954,
+            0.966110268082954,
+            0.966110268082954,
+            0.966110268082954,
+            0.966110268082954,
+            0.966110268082954,
+            0.966110268082954,
+            0.966110268082954,
+            0.966110268082954,
+            0.966110268082954,
+            0.966110268082954,
+            0.966110268082954,
+            0.966110268082954,
+            0.966110268082954,
+            0.966110268082954,
+            0.966110268082954,
+            0.966110268082954
           ],
           "distinct": 1,
           "spread": 0.0,
           "relative_spread": 0.0
-        }
+        },
+        "with_the_fused_cloud_rebuilt_instead": {
+          "why_this_arm_exists": "The fixed-cloud arm isolates Poisson, which is what makes its result attributable. It is not what a user runs. Here the fused cloud is rebuilt every time, so registration varies as well, and the question is whether the published per-cell figure survives that.",
+          "invocations": 5,
+          "distinct_fused_clouds": 5,
+          "vertices_per_invocation": [
+            78548,
+            79071,
+            79057,
+            78548,
+            78528
+          ],
+          "phantom_cells_removed": {
+            "values": [
+              920.0,
+              919.0,
+              920.0,
+              920.0,
+              920.0
+            ],
+            "distinct": 2,
+            "spread": 1.0,
+            "relative_spread": 0.001087192868014786
+          },
+          "what_it_shows": "2 distinct value(s) across 5 invocations, [919, 920], a spread of 1 cell(s) on a figure of about 920 -- 0.11% of it. This arm lets registration vary as well, so it does not attribute that spread to anything on its own; compare it with the fixed-cloud arm above."
+        },
+        "what_the_two_arms_together_show": "The published figure is exactly reproducible under the crop and is not exactly reproducible end to end. Holding the fused cloud fixed, all 24 repeats return 919 -- one value, despite every repeat reconstructing a different mesh. Rebuilding it, the figure moves across 2 values spanning 1 cell(s). So the residual belongs to the registration upstream, which is separately known not to be reproducible, and not to the crop or the reconstruction under it. A reader quoting the figure should quote it with that spread; a reader comparing two crop settings on one fused cloud can quote it exactly."
       },
       "what_a_user_may_rely_on": "The per-cell unsupported mask, not only the aggregate. Every repeat agreed on every cell -- Jaccard 1.0, no cell changed its verdict -- so the answer to 'which parts of my mesh are unsupported' is reproducible on this input even though the reconstruction it is computed from is not.",
-      "whether_that_is_benign": "Yes, and by a measured margin rather than by luck. Around 1616 vertices per repeat sit within 10% of the cut, which is where a sharp threshold on a continuous quantity is vulnerable, and none of them crossed: the largest distance any vertex moved between repeats is 7.87e-06 m against a 0.02 m cut, four orders of magnitude smaller than the band it would have to traverse. The condition to re-check on another scan is that ratio, not this verdict.",
+      "whether_that_is_benign": "Yes, and by a measured margin rather than by luck. Around 1582 vertices per repeat sit within 10% of the cut, which is where a sharp threshold on a continuous quantity is vulnerable, and none of them crossed. Over 23 pairs the largest distance any vertex moved was 4.77e-06 m against a 0.02 m cut. The margin is quoted from the worst displacement known anywhere rather than from that, because the statistic has a tail an earlier four-repeat run could not see: on the worst value on record the decision clears the cut by 23x, which is the number to re-check on another scan. Not this verdict, and not the typical case.",
       "what_this_does_not_establish": "Nothing about the cause inside Poisson, which #1024 covers, and nothing about whether the crop rule is the right rule. The figures are not comparable to the record's published values: this harness mirrors the reconstruct-and-crop stage rather than running the full six-stage workflow, and its fused cloud is its own.",
       "reproducibility": {
         "command": "npa/.venv/bin/python docs/evidence/open3d/harness/crop_decision_stability.py",
@@ -520,19 +2530,29 @@
       }
     }
   },
+  "does_the_tail_reproduce_here": {
+    "pairs_compared_here": 46,
+    "worst_displacement_here_m": 1.0013580322265625e-05,
+    "the_event_being_looked_for_m": 0.002187,
+    "how_many_times_larger_that_event_is": 218.40340114285715,
+    "did_it_recur": false,
+    "upper_bound_on_its_per_pair_rate": 0.06304930167405454,
+    "how_that_bound_was_computed": "Zero occurrences in 46 pairs. One-sided 95% upper bound on a per-pair rate is 1 - 0.05 ** (1 / n), which assumes the pairs are independent draws -- they share a fused cloud within a case, so treat it as indicative rather than exact.",
+    "what_this_does_and_does_not_settle": "The distribution here is tight: the worst of 46 pairs is 1e-05 m and the event looked for is 218x larger than that, so whatever produced it is rare rather than routine. It does not settle that it cannot happen, and a bound is not an absence -- it was observed once under this same rule. The published margin therefore stays the conservative one. Raising repeats further would tighten this bound; it would not change which number the safety claim should quote."
+  },
   "does_the_margin_survive_a_denser_capture": {
     "why_this_is_asked": "The first case is a sparse fused cloud, and a margin measured there is worth nothing if the wobble grows with the geometry. The denser case exists to find out, because that is the first thing a reader with a real capture would ask.",
     "vertices_per_case": {
       "voxel_0.05": 18413.0,
-      "voxel_0.02": 78548.0
+      "voxel_0.02": 79071.0
     },
     "worst_displacement_per_case_m": {
-      "voxel_0.05": 6.079673767089844e-06,
-      "voxel_0.02": 7.867813110351562e-06
+      "voxel_0.05": 1.0013580322265625e-05,
+      "voxel_0.02": 4.76837158203125e-06
     },
-    "displacement_grew_by_factor": 1.2941176470588236,
-    "vertices_grew_by_factor": 4.265899093032097,
-    "what_that_establishes": "The displacement is a fixed-magnitude floating-point artefact of the reconstruction, not something that scales with the cloud: a 4.3x denser mesh moved its vertices 1.29x further. So the margin is set by the cut, which a caller chooses, rather than by the capture, which they do not. A reader can compute their own: voxel * support_distance_factor over about 8e-06 m."
+    "displacement_grew_by_factor": 2.1,
+    "vertices_grew_by_factor": 4.294302938141531,
+    "what_that_establishes": "The displacement is a fixed-magnitude floating-point artefact of the reconstruction, not something that scales with the cloud: a 4.3x denser mesh moved its vertices 2.10x further. So the margin is set by the cut, which a caller chooses, rather than by the capture, which they do not. A reader can compute their own: voxel * support_distance_factor over about 1e-05 m."
   },
   "why_cells_and_not_vertices": "Poisson returns a different vertex set each run, so no vertex can be followed between repeats and 'this vertex changed its mind' is not a question that can be asked. A consumer does not ask it either: it asks whether a region of space is occupied. Cells at the scene voxel are that question, and are the form the published occupancy consumer works in.",
   "reproducibility": {
@@ -541,7 +2561,7 @@
   },
   "provenance": {
     "harness": "harness/crop_decision_stability.py",
-    "harness_sha256": "c906893c0d637db9405dd23d0c23e3ca0052c3455405bdbcd29640de462367e7",
+    "harness_sha256": "b9b91c7fa939ac21a4f368685383d90ebf0444485c50e45f3d57cbd4d467e19c",
     "path_is_relative_to": "this evidence directory"
   }
 }

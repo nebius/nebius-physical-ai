@@ -33,11 +33,21 @@ comes first: the input is byte-identical across repeats and Poisson still return
 distinct meshes, with around 2000 of 18,000 vertices in one repeat and not another. Not a
 reordering — genuinely different positions.
 
-The decision does not move with them. Every repeat agrees on every cell, and the per-cell
-downstream figure the record publishes comes back at exactly 733 each time. The reason is
-a ratio rather than luck: the largest distance any vertex travels between repeats is a
-few microns against a 5 cm cut, orders of magnitude short of the band it would have to
-cross.
+The decision does not move with them. All 23 pair comparisons at each of two densities
+agree on every cell, and the per-cell downstream figure comes back at one value — 733 at
+the scene voxel, the published number. The reason is a ratio rather than luck: the
+largest distance any vertex travels between repeats is a few microns against a 5 cm cut.
+
+That ratio is quoted conservatively, because the quantity it is computed from has a tail.
+An independent lane hit one pair three orders of magnitude above its neighbours and could
+not reproduce it three times on a byte-identical file. 46 pairs here did not reproduce it
+either, which bounds its rate rather than disproving it, so the published margin is taken
+from that worst known displacement — a factor of 23, where no cell flips either.
+
+Rebuild the fused cloud instead of re-reading it and the figure moves across a 4-cell
+span, because registration is separately not reproducible. So the figure is exactly
+reproducible under the crop and not end to end: quote it with that spread, unless you are
+comparing two crop settings on one fused cloud.
 
 A margin measured on one sparse cloud would only describe that cloud, so the second case
 is a capture four times denser. The displacement barely notices — 1.3x further across 4.3x
