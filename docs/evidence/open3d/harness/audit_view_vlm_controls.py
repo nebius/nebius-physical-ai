@@ -77,6 +77,29 @@ RETAINED_TINT = (215, 215, 220)
 #: opaque surface at the same depth; oversized ones do the reverse.
 FUSED_POINT_RADIUS_PX = 0
 
+#: The pixel counts below are one draw each, and a rerun will not match them.
+#:
+#: Five repeats of this harness in one install gave five different render hashes. The
+#: visible count held at 3109 while the footprint it divides by moved between 5960 and
+#: 5961; an independent lane's five repeats moved the visible count too, 3108 to 3109,
+#: and the footprint 5959 to 5961. So the ratio is what reproduces -- 0.5215 to 0.5216
+#: across all ten runs, a spread of 1.7e-04 -- and the fifteen digits published beside
+#: it are one draw's arithmetic, not a reproducible quantity.
+#:
+#: This matters only for how to read a rerun. Every one of those ten runs clears the
+#: criterion by more than 20 percentage points, so no conclusion here is near the line.
+#: Without this note a reader who reruns once and sees a different final digit has no
+#: way to tell a second draw from a bug.
+WHAT_REPRODUCES = (
+    "The ratio, to about three decimals. The pixel counts are a single draw: five "
+    "repeats in one install gave five render hashes and moved the subject's footprint "
+    "between 5960 and 5961 px, and an independent lane's five repeats also moved the "
+    "visible count, 3108 to 3109. Across those ten runs the ratio stayed within "
+    "0.5215..0.5216 and every run cleared the 50% criterion by over 20 points. Expect a "
+    "rerun to differ in the fourth decimal and beyond; the digits past that in "
+    "occluded_over_unoccluded are one draw's arithmetic."
+)
+
 
 def _load_harness(name: str):
     """Import a sibling harness by path, since this directory is not a package."""
@@ -306,6 +329,7 @@ def main() -> int:
                 "docs/evidence/open3d/harness/audit_view_vlm_controls.py"
             ),
             "sampling_seed": occlusion.SAMPLING_SEED,
+            "what_reproduces": WHAT_REPRODUCES,
         },
     }
     (OUT / "controls-manifest.json").write_text(json.dumps(record, indent=2) + "\n")

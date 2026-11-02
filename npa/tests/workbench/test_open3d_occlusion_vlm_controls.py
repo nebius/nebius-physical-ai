@@ -12,7 +12,9 @@ live in `docs/evidence/open3d/harness/`.
 
 from __future__ import annotations
 
+import ast
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -433,3 +435,56 @@ def test_the_frozen_plan_hash_says_where_it_is_retained(summary) -> None:
     assert frozen, summary.keys()
     text = json.dumps(frozen)
     assert "A2" in text and "A5" in text, text[:200]
+
+
+def test_the_record_says_which_part_of_the_number_reproduces(controls) -> None:
+    """A fifteen-digit figure whose own spread is in the fourth decimal.
+
+    Ten runs across two installs produced eight different pixel counts and no repeated
+    render hash, so a reader who reruns this once will not match
+    `occluded_over_unoccluded` and had no way to tell a second draw from a bug. The
+    statement that fixes that is the harness's own constant, not prose added to the JSON
+    afterwards, so a regeneration emits it and this test fails if the two drift apart.
+
+    The band is checked against the published figure rather than taken on faith: a
+    statement claiming a range that excludes the number beside it would be worse than no
+    statement. It is also checked for not being vacuous, because containing the figure is
+    too easy -- widening the claim to 0.1..0.9 in both files passed every other assertion
+    here. Vacuity is defined by what the sentence claims rather than by a chosen
+    tolerance: the band must clear the frozen criterion, since the sentence says every
+    run did, and it must not be more than an order of magnitude wider than the movement
+    it describes. A first attempt bounded the width at exactly 1e-3 and rejected a
+    perfectly fair 0.521..0.522, because that subtraction comes to 1.0000000000000009e-3
+    in binary -- a threshold placed where float representation decides the outcome.
+
+    Needs no Open3D.
+    """
+    said = controls["reproducibility"]["what_reproduces"]
+
+    harness = CONTROLS.parent / "harness" / "audit_view_vlm_controls.py"
+    constant = next(
+        ast.literal_eval(node.value)
+        for node in ast.parse(harness.read_text()).body
+        if isinstance(node, ast.Assign)
+        and getattr(node.targets[0], "id", "") == "WHAT_REPRODUCES"
+    )
+    assert said == constant, (
+        "the manifest's statement is no longer the one the harness would write"
+    )
+
+    measured = controls["measurement"]["occluded_over_unoccluded"]
+    low, high = (
+        float(one) for one in re.search(r"(0\.\d+)\.\.(0\.\d+)", said).groups()
+    )
+    assert low <= measured <= high + 1e-4, (
+        f"the claimed band {low}..{high} does not contain the published {measured}"
+    )
+    assert low > FROZEN_A2_THRESHOLD, (
+        f"the claimed band {low}..{high} reaches below the frozen {FROZEN_A2_THRESHOLD} "
+        "criterion, so it no longer supports the sentence it is part of"
+    )
+    assert high - low <= 1e-2, (
+        f"the claimed band {low}..{high} is an order of magnitude wider than the "
+        "fourth-decimal movement this statement exists to describe"
+    )
+    assert measured > FROZEN_A2_THRESHOLD, measured
