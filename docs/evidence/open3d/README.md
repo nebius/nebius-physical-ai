@@ -195,15 +195,17 @@ even sampling cannot reach.
 reader which knob stops a number moving: seed the 300k-point sampling
 (`capability-record-distance-bands.json`), or pin the container thread count
 (`capability-record-support-crop.json`). Neither settles the figure, and neither record is at fault —
-the reconstruction's own non-determinism was measured afterwards, in
-`poisson-figure-reproducibility.json`.
+the reconstruction's own non-determinism was measured afterwards. What this harness isolates is
+that the points and the normals entering reconstruction are byte-identical, which leaves the Poisson
+solver and the density crop after it; `poisson-figure-reproducibility.json`, which names the
+mechanism, is in a separate pull request and may not be in this tree yet.
 
 Measured on the construction the first record names, reporting both figures from the same meshes.
 Seeding does make the input bit-identical, hashed to prove it, and it is the dominant cause: unseeded,
-the unsupported-area fraction spans 9.5e-04 to 5.6e-03 over seven runs of four repeats, the same order
+the unsupported-area fraction's spread over four repeats spans 9.5e-04 to 5.6e-03 across seven runs, the same order
 as that record's own 0.0046 gap, straddling it rather than bounding it. Seeded, the spread falls to
 5.3e-06 to 2.3e-05 — and the fraction still takes four distinct values in four runs. Surface area with
-the input fixed spans 2.3e-06 to 3.6e-06 relative across those runs, inside the second record's
+the input fixed has a relative spread spanning 2.3e-06 to 3.6e-06 across those runs, inside the second record's
 declared ~4e-06 but not comfortably; setting the thread count to 1, engaged and recorded as 16 → 1,
 does not settle it either.
 

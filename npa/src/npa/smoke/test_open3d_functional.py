@@ -120,12 +120,14 @@ def _assert_support_crop_kept_the_observations(report) -> None:
     actually rely on.
 
     Do not tighten these to byte equality: pinning the thread count will not get
-    you there. Measured at a fixed count inside one process, surface area takes
-    four distinct values in four repeats, and `set_max_threads(1)` does not
-    settle it -- it came out worse in some runs and better in others. The
-    residue is the Poisson reconstruction, which the paragraph above does not
-    name and which has no knob. See
-    `docs/evidence/open3d/declared-reproducibility-causes.json`. And do not
+    you there. Measured on the Armadillo 300k-sample construction rather than on
+    this scene, at a fixed count inside one process, surface area takes four
+    distinct values in four repeats, and `set_max_threads(1)` does not settle it
+    -- it came out worse in some runs and better in others. There the points and
+    the estimated normals entering reconstruction are byte-identical across the
+    repeats, both hashed, which leaves the Poisson reconstruction and the
+    density crop after it: neither of the two knobs named above reaches them.
+    See `docs/evidence/open3d/declared-reproducibility-causes.json`. And do not
     loosen them to hide a real regression.
     """
 

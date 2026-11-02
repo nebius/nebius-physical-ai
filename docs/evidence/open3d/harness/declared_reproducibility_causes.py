@@ -63,6 +63,9 @@ SUPPORT_CROP_CLAIM = (
 )
 RECORDED_FRACTIONS = (0.2009, 0.2055)
 RECORDED_SURFACE_AREA_BOUND = 4e-06
+#: The record naming the mechanism, which lands in a separate pull request. Both the
+#: disclosure above and the guard in the tests key off whether this file is present.
+CITED_RECORD = "poisson-figure-reproducibility.json"
 
 #: Earlier runs of this same harness on this host. Recorded because a spread measured
 #: over four repeats is itself unstable, and a sentence derived from one run of it can
@@ -170,6 +173,13 @@ def reconstruct(o3d, cloud, voxel: float) -> dict[str, Any]:
         "triangles": len(mesh.triangles),
         "downsampled_points": len(down.points),
         "downsampled_digest": digest(np.asarray(down.points)),
+        # The normals too, not only the points. Hashing the points alone proves the
+        # cloud entering reconstruction is identical and leaves `estimate_normals` and
+        # `orient_normals_consistent_tangent_plane` -- both of which run after that
+        # hash -- as unexcluded sources of any residue. A tangent-plane orientation
+        # walk has tie-breaks; an attribution that names the Poisson solver has to
+        # exclude them at this site rather than inherit the exclusion from elsewhere.
+        "normals_digest": digest(np.asarray(down.normals)),
     }
 
 
@@ -221,6 +231,16 @@ def condition(o3d, reference, label: str, *, seeded: bool, one_thread: bool) -> 
             {r["downsampled_digest"] for r in rows}
         )
         == 1,
+        # The attribution turns on this. If the points are identical and the normals are
+        # too, then everything before the Poisson solver is excluded by measurement at
+        # this site, and the residue is the solver and the density crop after it. If the
+        # normals differ, normal estimation or the tangent-plane orientation walk is a
+        # live alternative and no Poisson-specific claim is available from this harness.
+        "normals_are_the_same_bytes_every_repeat": len(
+            {r["normals_digest"] for r in rows}
+        )
+        == 1,
+        "normals_digests_observed": len({r["normals_digest"] for r in rows}),
         "max_threads_before": before_threads,
         "max_threads_observed_during": observed_threads,
         "the_thread_knob_engaged": (observed_threads == 1 and before_threads != 1)
@@ -235,15 +255,105 @@ def condition(o3d, reference, label: str, *, seeded: bool, one_thread: bool) -> 
     }
 
 
-def repository_commit() -> str:
-    return subprocess.run(
-        ["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=False
-    ).stdout.strip()
+def _git(*args: str) -> str | None:
+    """stdout, or None when git could not answer. Never a silent empty string."""
+
+    done = subprocess.run(["git", *args], capture_output=True, text=True, check=False)
+    return done.stdout.strip() if done.returncode == 0 else None
+
+
+def provenance() -> dict[str, Any]:
+    """The commit, and whether the tree it was built from was clean.
+
+    A commit alone pins nothing if the tree was dirty: the harness that ran is not
+    the harness at that commit. The sibling capability records carry
+    `working_tree_clean_at_build` for this reason, and a record that omits it is
+    weaker provenance than its neighbours. A git failure is recorded as a failure
+    rather than as an empty commit string.
+    """
+
+    commit = _git("rev-parse", "HEAD")
+    status = _git("status", "--porcelain")
+    return {
+        "repository_commit": commit,
+        "working_tree_clean_at_build": (status == "") if status is not None else None,
+        "git_answered": commit is not None and status is not None,
+    }
+
+
+def citation_disclosure(cited_present: bool) -> dict[str, str]:
+    """The record says the file it cites is missing only while it is missing.
+
+    A flat unconditional key makes the record fail its own citation guard the moment
+    the cited record lands, and the only way to pass is to hand-edit a generated
+    artifact -- which the next regeneration silently undoes, leaving the record on
+    disk and the harness output permanently disagreeing.
+    """
+
+    if cited_present:
+        return {}
+    return {
+        "the_record_it_cites_is_not_on_main_yet": (
+            f"`{CITED_RECORD}` is in pull request 1021 and is not in "
+            "`docs/evidence/open3d/` on main, so a reviewer reading this on main "
+            "cannot open it. Stated rather than left to be discovered: a citation a "
+            "reviewer cannot resolve is a citation that has to be followed by asking "
+            "the author, and this lane has already had one provenance pin re-based "
+            "for exactly that reason. The measurements above stand on their own -- "
+            "each condition's values are in this file, and the isolation of the "
+            "residue is measured here -- so the dependency is for the mechanism's "
+            "name, not for the result."
+        )
+    }
+
+
+def record_path() -> Path:
+    return Path(
+        os.environ.get(
+            "NPA_REPRO_CAUSES_OUT",
+            Path(__file__).resolve().parents[1]
+            / "declared-reproducibility-causes.json",
+        )
+    )
+
+
+def earlier_runs(out: Path) -> tuple[dict[str, list[float]], str]:
+    """The series so far, read from the record being regenerated.
+
+    `EARLIER_RUNS` is the seed for a host that has no record yet. Reading the series
+    back instead means a second run of the harness extends them: with the literal
+    alone, run eight replaced run seven's value while the record went on claiming
+    seven runs, so "the values each run produced" held only as long as somebody
+    remembered to hand-edit the literal first.
+    """
+
+    if not out.exists():
+        return {k: list(v) for k, v in EARLIER_RUNS.items()}, "EARLIER_RUNS literal"
+    try:
+        prior = json.loads(out.read_text())[
+            "observed_across_independent_runs_of_this_harness"
+        ]
+    except (json.JSONDecodeError, KeyError, OSError):
+        return (
+            {k: list(v) for k, v in EARLIER_RUNS.items()},
+            "EARLIER_RUNS literal (the record on disk had no readable series)",
+        )
+    series = {}
+    for key, seed in EARLIER_RUNS.items():
+        values = prior.get(key, {}).get("values")
+        series[key] = (
+            [float(v) for v in values]
+            if isinstance(values, list) and values
+            else list(seed)
+        )
+    return series, f"the series in {out.name}, extended by this run"
 
 
 def main() -> int:
     import open3d as o3d
 
+    out = record_path()
+    series, series_source = earlier_runs(out)
     reference = o3d.io.read_triangle_mesh(o3d.data.ArmadilloMesh().path)
     conditions = {
         "as_both_records_ran_it": condition(
@@ -261,18 +371,25 @@ def main() -> int:
     seeded = conditions["sampling_seeded"]
     limited = conditions["sampling_seeded_and_one_thread"]
 
+    # Emitted only while the cited record really is absent. A flat unconditional key
+    # would make the record fail its own citation guard the moment #1021 lands, and
+    # the only way to pass would be hand-editing a generated artifact -- which the
+    # next regeneration silently undoes.
+    cited_record_present = (Path(__file__).resolve().parents[1] / CITED_RECORD).exists()
+
     recorded_gap = abs(RECORDED_FRACTIONS[1] - RECORDED_FRACTIONS[0])
     residue = seeded["unsupported_area_fraction"]["absolute_spread"]
 
     def observed(key: str, this_run: float) -> dict[str, Any]:
         """This run's value together with the earlier ones, so neither stands alone."""
 
-        values = [*EARLIER_RUNS[key], this_run]
+        values = [*series[key], this_run]
         return {
             "values": values,
             "runs": len(values),
             "min": min(values),
             "max": max(values),
+            "where_the_earlier_values_came_from": series_source,
         }
 
     unseeded_observed = observed(
@@ -335,8 +452,12 @@ def main() -> int:
             "bit-identical, and it does remove most of the movement, so that record's "
             "attribution is right about the dominant cause and wrong only in what it "
             "implies about reproducibility. Limiting threads leaves the residue intact. "
-            "The residue is the reconstruction's own non-determinism, which neither "
-            "record could have known about: it was measured afterwards."
+            "The residue is downstream of the reconstruction's inputs: under seeding "
+            "the sampled cloud, the downsampled cloud and the estimated and oriented "
+            "normals are all byte-identical across the repeats, hashed here to prove "
+            "it, and the figures still move. That leaves the Poisson solver and the "
+            "density crop applied to what it returns -- which neither record could "
+            "have known about, because it was measured afterwards."
         ),
         "claims_examined": {
             "distance_bands": {
@@ -526,25 +647,40 @@ def main() -> int:
             ),
             "by_record": introduced,
         },
-        "where_the_residue_comes_from": (
-            "`poisson-figure-reproducibility.json` establishes that "
-            "`create_from_point_cloud_poisson` is non-deterministic on one fixed input "
-            "in one process at a fixed thread count, and that neither seeding nor "
-            "limiting threads fixes it. That is the floor underneath both statements "
-            "here. It is also why neither record is at fault for the attribution: the "
-            "reconstruction's own non-determinism had not been measured when they were "
-            "written, so the visible causes were the ones they named."
-        ),
-        "the_record_it_cites_is_not_on_main_yet": (
-            "`poisson-figure-reproducibility.json` is in pull request 1021 and is not "
-            "in `docs/evidence/open3d/` on main, so a reviewer reading this on main "
-            "cannot open it. Stated rather than left to be discovered: a citation a "
-            "reviewer cannot resolve is a citation that has to be followed by asking "
-            "the author, and this lane has already had one provenance pin re-based for "
-            "exactly that reason. The measurements above stand on their own -- each "
-            "condition's values are in this file -- and the dependency is for the "
-            "mechanism's name, not for the result."
-        ),
+        "where_the_residue_comes_from": {
+            "isolated_here": (
+                "Under the seeded condition every step before the Poisson solver is "
+                "byte-identical across the repeats, measured in this run: the sampled "
+                "cloud "
+                f"({seeded['input_cloud_digests_observed']} digest over "
+                f"{REPEATS} repeats), the voxel-downsampled cloud, and the estimated "
+                "and tangent-plane-oriented normals "
+                f"({seeded['normals_digests_observed']} digest). Normals are hashed "
+                "because `estimate_normals` and "
+                "`orient_normals_consistent_tangent_plane` run after the point hash, "
+                "and an orientation walk has tie-breaks; hashing only the points "
+                "would leave them as unexcluded alternatives. What remains after that "
+                "hash is `create_from_point_cloud_poisson` and the density-quantile "
+                "crop applied to what it returns. The surface area still takes "
+                f"{seeded['surface_area']['distinct']} distinct values across those "
+                f"{REPEATS} repeats. So the residue is downstream of identical "
+                "inputs and identical normals, on this host at this version."
+            ),
+            "what_that_does_not_establish": (
+                "Which part of the solver, or that the same holds at another Open3D "
+                "version, on another build, or on a scene with different topology. "
+                "`create_from_point_cloud_poisson` returns both the mesh and the "
+                "densities; this harness does not separate a varying mesh from a "
+                "varying density field, and the crop is deterministic given the "
+                "densities it is handed."
+            ),
+            "why_neither_record_is_at_fault": (
+                "The reconstruction's own non-determinism had not been measured when "
+                "either record was written, so the visible causes were the ones they "
+                "named."
+            ),
+        },
+        **citation_disclosure(cited_record_present),
         "what_this_does_not_claim": [
             (
                 f"That {REPEATS} repeats bound anything. These are observed spreads over "
@@ -569,20 +705,13 @@ def main() -> int:
             "scene": "open3d.data.ArmadilloMesh, 300k uniform surface samples",
             "open3d_version": o3d.__version__,
             "python": sys.version.split()[0],
-            "repository_commit": repository_commit(),
+            **provenance(),
             "poisson_depth": POISSON_DEPTH,
             "density_quantile": DENSITY_QUANTILE,
             "seed": SEED,
         },
     }
 
-    out = Path(
-        os.environ.get(
-            "NPA_REPRO_CAUSES_OUT",
-            Path(__file__).resolve().parents[1]
-            / "declared-reproducibility-causes.json",
-        )
-    )
     out.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n")
     print(f"wrote {out}")
     for name, block in conditions.items():
