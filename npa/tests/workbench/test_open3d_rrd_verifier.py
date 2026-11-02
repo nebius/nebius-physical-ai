@@ -28,7 +28,16 @@ fails if that stops being true.
 That last row's band is not an artifact of a small recording, which was the obvious
 objection to keeping the CLI check. It widens with size: 75-99% for the 11 kB
 two-chunk recording above, 70-95% for a 1.8 MB one, and 50-95% for an 18 MB one. A
-small recording is the worst case for that check's value, not the best.
+small recording is the worst case for that check's value, not the best. The reviewer
+reproduced that independently on rerun 0.31.4 across a 775x size ratio and supplied
+the mechanism: the reader's fallback recovers a caller entity as soon as one complete
+chunk precedes the cut, so a larger recording crosses that threshold at a smaller
+percentage.
+
+Because which layer rejects a given cut depends on that chunk layout, the property
+worth pinning is the disjunction rather than any one band:
+`test_no_truncation_of_a_recording_passes_every_check` asserts no truncation is
+accepted by every check, measured over 147 cuts at three sizes.
 """
 
 from __future__ import annotations
@@ -324,6 +333,59 @@ def test_the_cli_is_not_redundant_at_a_realistic_recording_size(
     )
     with pytest.raises(Open3dError, match="rejected"):
         verify_rerun_recording(truncated)
+
+
+@needs_cli
+@pytest.mark.parametrize(
+    ("frames", "points"),
+    [(1, 500), (50, 2000)],
+    ids=["one_chunk", "many_chunks"],
+)
+def test_no_truncation_of_a_recording_passes_every_check(
+    tmp_path: Path, frames: int, points: int
+) -> None:
+    """The property a consumer actually needs, stated over all truncations at once.
+
+    The per-shape tests above each pin one example, which leaves the obvious question
+    of whether some other cut slips through the gap between the layers. This sweeps
+    2% to 98% and asserts no truncation is accepted by every check -- so the claim is
+    "a truncated recording does not verify", not "these four truncations do not".
+
+    Measured at three sizes over 147 cuts with no exception, including the 18 MB case
+    that is too slow to build here. Which layer does the rejecting varies with the
+    cut and with the recording's chunk layout, which is exactly why the sweep asserts
+    the disjunction rather than naming a layer.
+    """
+
+    rr = pytest.importorskip("rerun")
+    numpy = pytest.importorskip("numpy")
+    path = tmp_path / "sweep-source.rrd"
+    rng = numpy.random.default_rng(0)
+    rr.init("npa-open3d-verifier-test-sweep", spawn=False)
+    rr.save(str(path))
+    for frame in range(frames):
+        rr.set_time("frame", sequence=frame)
+        rr.log("points", rr.Points3D(rng.normal(size=(points, 3))))
+    rr.disconnect()
+    if not path.is_file() or not path.stat().st_size:
+        pytest.skip("Rerun did not write a recording on this machine")
+
+    verify_rerun_recording(path)  # the untruncated file must still pass
+
+    payload = path.read_bytes()
+    cut = tmp_path / "cut.rrd"
+    accepted = []
+    for percent in range(2, 100, 8):
+        cut.write_bytes(payload[: len(payload) * percent // 100])
+        try:
+            verify_rerun_recording(cut)
+            accepted.append(percent)
+        except Open3dError:
+            pass
+    assert not accepted, (
+        f"truncations at {accepted}% of a {len(payload)}-byte recording passed every "
+        "check, so a cut recording can be published as verified"
+    )
 
 
 @needs_cli
