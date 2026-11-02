@@ -390,15 +390,33 @@ def test_an_inconsistent_cost_block_is_rejected(what: str, mutate) -> None:
     assert what
 
 
-def _is_empty_literal(node: ast.expr) -> bool:
-    """A value that occupies the key without measuring anything."""
+#: The functions in `runner.py` whose job is to produce a coverage block. A value
+#: emitted by calling one of these is a measurement; add to this set when a new one is
+#: written, which is a visible cost and the point of listing them.
+MEASUREMENT_HELPERS = frozenset({"_coverage_from_distances", "_coverage_cost"})
 
-    if isinstance(node, ast.Constant):
+
+def _is_a_measurement(node: ast.expr) -> bool:
+    """Does this emitted value come from measuring something?
+
+    Phrased as a whitelist after three rounds of the opposite. Rejecting hollow shapes
+    one at a time does not converge: a check against `ast.Constant` missed `{}`, adding
+    `Dict`/`List`/`Tuple`/`Set` missed `dict()`, and the next shape would have been
+    found the same way. A reviewer named the pattern and the stable form -- accept what
+    is intended rather than enumerate what is not -- and this is that.
+
+    Deliberately permissive about *how*: a plain name is accepted, because binding the
+    block to a local before putting it in the report is an ordinary thing to do and the
+    validator checks the value either way. What it will not accept is a value that
+    cannot have measured anything.
+    """
+
+    if isinstance(node, ast.Name):
         return True
-    if isinstance(node, ast.Dict):
-        return not node.keys
-    if isinstance(node, (ast.List, ast.Tuple, ast.Set)):
-        return not node.elts
+    if isinstance(node, ast.Call):
+        func = node.func
+        name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
+        return name in MEASUREMENT_HELPERS
     return False
 
 
@@ -436,16 +454,14 @@ def test_the_reconstruction_still_publishes_the_pair_the_validator_reads() -> No
             "coverage-cost invariant on a report that lacks the pair, so the whole "
             "check would be switched off without a failing test"
         )
-        # Not a literal, because a key present with `None` or `{}` behind it is the
-        # same evasion one word smaller. The validator rejects that at runtime now, so
-        # this is the cheaper notice: it fails in CI rather than in a pod. Deliberately
-        # not a requirement that the value *be* a call -- a name or an expression is
-        # fine, and demanding a particular shape would break on honest refactors. The
-        # empty-container case is here because `{}` parses as a Dict, not a Constant,
-        # and the first version of this check let it straight through.
-        assert not _is_empty_literal(emitted[block]), (
-            f"run_reconstruct emits {block} as a literal, so the key is present and "
-            "carries no measurement"
+        # And the key must carry a measurement, because present-but-hollow is the same
+        # evasion one word smaller. The validator rejects that at runtime; this is the
+        # cheaper notice, failing in CI rather than in a pod.
+        assert _is_a_measurement(emitted[block]), (
+            f"run_reconstruct emits {block} as something that cannot have measured "
+            f"anything. Emit it by calling one of {sorted(MEASUREMENT_HELPERS)}, or "
+            "bind the block to a name first; if a new measurement helper was added, "
+            "add it to MEASUREMENT_HELPERS"
         )
 
 
