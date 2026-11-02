@@ -52,6 +52,28 @@ chooses the page by measuring contrast against the content's own luminance; it a
 expected a trade there and the measurement found none, and separates the controlled comparison from
 the confounded one.
 
+### Which way is up was decided by the run, not the scan
+
+`up-axis-ambiguity.json`. The camera's up vector is inferred from the largest planar segment, and
+`segment_plane` is RANSAC: on a floor and a wall of equal point count successive fits land on either
+one, so the axis differed run to run. Every field published to make that inference visible -- the
+source string, the inlier fraction, the tilt -- took *overlapping* ranges on both branches, so one
+run's record could not show that the next run would roll the view ninety degrees. Seeding is not a
+remedy; ten fits with Open3D's seed re-set to the same value before each one returned both answers.
+
+The fit is now repeated and an axis is named only when the repeats agree; otherwise the declared
+default is published *as* the default. The record keeps six clouds -- two ambiguous constructions,
+two constructed controls, the upstream demo scan, and a sampled Armadillo -- plus the detection rate
+at three repeat counts, because the check misses when the fits agree by chance rather than catching
+every ambiguous scan. At the shipped nine fits an independent lane's 300 runs put the detection rate
+at 0.943. The retained sweep's own count is out of 30 and carries about 1.3 runs of counting noise,
+so it moves between regenerations; quoting one of those counts as *the* figure reads as a rate that
+changed, and the 300-run number is the one to cite. The Armadillo is the case repeat agreement does
+not catch: 40 of 40 fits agree, on a plane tilted past the floor the code publishes off the axis
+they snap it to. That floor is now 10 degrees, having been lowered from 14 as fresh fits kept
+landing under each successive value, and the record carries both the rule that decides where it may
+sit and why it is published at the lowest point that rule leaves standing.
+
 ## The viewer's own frame
 
 `capability-record-viewer-ui-capture.json`, with the frames under `viewer-ui/`. Root's directive that
