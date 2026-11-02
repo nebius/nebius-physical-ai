@@ -357,3 +357,33 @@ def test_the_record_binds_the_harness_that_produced_it() -> None:
     assert (
         hashlib.sha256(harness.read_bytes()).hexdigest() == provenance["harness_sha256"]
     ), "the harness changed without the record being regenerated"
+
+
+def test_the_readme_quotes_the_records_own_figures() -> None:
+    """The body-versus-record class, caught twice by a reader on this PR alone.
+
+    Once was three figures disagreeing with the record; once was a spread written
+    as 3 where the record's field is 2, because there are three distinct values and
+    the spread is their range. Both were found by a person reading carefully, which
+    is the wrong mechanism for a number that a regeneration can move.
+
+    Only the figures the stability paragraph rests on, quoted exactly. A general
+    prose parser would be guessing at which digits in the file are claims.
+    """
+
+    readme = (EVIDENCE.parent / "README.md").read_text()
+    margin = _record()["how_stable_are_these_figures"]["the_margin_the_assertions_have"]
+    paragraph = next(
+        block
+        for block in readme.split("\n\n")
+        if "figure a test applies a threshold to" in block
+    )
+    nearest = margin["nearest_any_repeat_came_to_zero"]
+    assert f"sits {nearest} from that threshold" in paragraph, paragraph
+    assert f"spread of {margin['spread']}" in paragraph, (
+        f"the README's spread disagrees with the record's {margin['spread']}: "
+        f"{paragraph}"
+    )
+    assert f"{min(abs(one) for one in margin['values'])} through " in paragraph, (
+        "the paragraph explains the spread with a range that is not the record's"
+    )

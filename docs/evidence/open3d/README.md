@@ -50,8 +50,9 @@ found 31 figures differing in the fourth significant digit, including between it
 so the record now measures its own stability: over six repeats the vertex counts, the removal
 counts and every yes/no result are identical, while triangle counts and areas move by under half
 a percent. The one figure a test applies a threshold to sits 783 from that threshold with a
-spread of 3, so no conclusion here turns on a digit that moves. A regeneration should expect
-differences at that scale and nothing larger.
+spread of 2 — three distinct values across the six repeats, 783 through 785 — so no conclusion
+here turns on a digit that moves. A regeneration should expect differences at that scale and
+nothing larger.
 
 ## Reproducing
 
