@@ -50,11 +50,12 @@ reproducible under the crop and not end to end: quote it with that spread, unles
 comparing two crop settings on one fused cloud.
 
 A margin measured on one sparse cloud would only describe that cloud, so the second case
-is a capture four times denser. The displacement barely notices — 1.3x further across 4.3x
-more vertices — which places it as a fixed-magnitude artefact of the reconstruction rather
-than something that scales with the geometry. The practical form of that: the margin is
-set by the cut, which a caller chooses, and not by the capture, which they do not. A
-reader can compute their own as `voxel * support_distance_factor` over roughly 8e-06 m.
+is a capture four times denser. The displacement does not follow it: 4.3x the vertices
+moved 1.8x *less* far, which places it as a fixed-magnitude artefact of the reconstruction
+rather than something that scales with the geometry. The practical form of that: the
+margin is set by the cut, which a caller chooses, and not by the capture, which they do
+not. A reader can compute their own as `voxel * support_distance_factor` over roughly
+7e-06 m.
 
 ## Reproducing
 

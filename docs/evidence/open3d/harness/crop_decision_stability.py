@@ -420,6 +420,43 @@ def _whether_that_is_benign(moved: float, straddling: float, displacement: dict)
     )
 
 
+def _what_density_establishes(
+    vertex_ratio: float, displacement_ratio: float, worst: float
+) -> str:
+    """Generated from the comparison, because the direction is the whole claim.
+
+    This sentence previously said "further" while its own two numbers said the denser
+    mesh moved its vertices less far. Writing a directional claim next to the figures
+    rather than deriving it from them is how that survives review of the figures.
+    """
+
+    if displacement_ratio > 1.0:
+        direction = f"{displacement_ratio:.2f}x further"
+    elif displacement_ratio < 1.0:
+        direction = f"{1.0 / displacement_ratio:.2f}x less far"
+    else:
+        direction = "exactly as far"
+
+    if displacement_ratio >= vertex_ratio:
+        reading = (
+            "The displacement tracks the capture, so the margin measured on one cloud "
+            "does not transfer to a denser one and this record cannot generalise it."
+        )
+    else:
+        reading = (
+            "The displacement does not track the capture, so it is a fixed-magnitude "
+            "artefact of the reconstruction rather than something that scales with the "
+            "cloud. The margin is therefore set by the cut, which a caller chooses, "
+            "and not by the capture, which they do not."
+        )
+
+    return (
+        f"A {vertex_ratio:.1f}x denser mesh moved its vertices {direction}. {reading} "
+        f"A reader can compute their own margin: voxel * support_distance_factor over "
+        f"about {worst:.1g} m."
+    )
+
+
 def _tail_bound(cases: dict) -> dict:
     """What 46 pairs can and cannot say about an event seen once somewhere else.
 
@@ -769,7 +806,15 @@ def main() -> int:
         key: one["the_aggregate_the_record_reports"]["total_vertices"]["values"][0]
         for key, one in cases.items()
     }
-    worst, best = max(displacements.values()), min(displacements.values())
+    # Both ratios are the denser case over the sparser case. They were previously
+    # max/min of their own values, which silently ran the displacement ratio in the
+    # opposite direction to the vertex ratio -- the two numbers disagreed about which
+    # case was the numerator, and the sentence below them said "further" when the
+    # denser mesh in fact moved its vertices less far.
+    sparser, denser = sorted(densities, key=densities.get)
+
+    vertex_ratio = float(densities[denser] / densities[sparser])
+    displacement_ratio = float(displacements[denser] / displacements[sparser])
 
     record = {
         "what_this_measures": (
@@ -787,20 +832,13 @@ def main() -> int:
                 "exists to find out, because that is the first thing a reader with a "
                 "real capture would ask."
             ),
+            "both_ratios_are": f"{denser} divided by {sparser}, the denser over the sparser",
             "vertices_per_case": densities,
             "worst_displacement_per_case_m": displacements,
-            "displacement_grew_by_factor": float(worst / best) if best else None,
-            "vertices_grew_by_factor": float(
-                max(densities.values()) / min(densities.values())
-            ),
-            "what_that_establishes": (
-                "The displacement is a fixed-magnitude floating-point artefact of the "
-                "reconstruction, not something that scales with the cloud: a "
-                f"{max(densities.values()) / min(densities.values()):.1f}x denser mesh "
-                f"moved its vertices {float(worst / best):.2f}x further. So the margin "
-                "is set by the cut, which a caller chooses, rather than by the capture, "
-                "which they do not. A reader can compute their own: voxel * "
-                f"support_distance_factor over about {worst:.1g} m."
+            "vertices_denser_over_sparser": vertex_ratio,
+            "displacement_denser_over_sparser": displacement_ratio,
+            "what_that_establishes": _what_density_establishes(
+                vertex_ratio, displacement_ratio, max(displacements.values())
             ),
         },
         "why_cells_and_not_vertices": (

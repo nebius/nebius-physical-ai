@@ -16,6 +16,7 @@ these assert verdicts, the control, and ratios -- never a count.
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import json
 from pathlib import Path
 from typing import Any
@@ -210,6 +211,68 @@ def test_the_published_figure_is_checked_the_way_a_user_runs_it(key: str) -> Non
         ), together
 
 
+def test_both_density_ratios_run_in_the_same_direction() -> None:
+    """Two sibling ratios silently disagreed about which case was the numerator.
+
+    `vertices_grew_by_factor` was the denser over the sparser; the displacement one was
+    max over min of its own values, which happened to be the sparser over the denser.
+    The pair was then read as "the denser mesh moved its vertices further" when the
+    measurement says it moved them less far.
+
+    The previous guard asserted `displacement < vertices`, which holds either way
+    round, so it could not see the inversion. This recomputes both from the per-case
+    figures instead of trusting either field.
+    """
+    survived = _record()["does_the_margin_survive_a_denser_capture"]
+    vertices = survived["vertices_per_case"]
+    displacement = survived["worst_displacement_per_case_m"]
+
+    sparser, denser = sorted(vertices, key=vertices.get)
+    assert survived["vertices_denser_over_sparser"] == pytest.approx(
+        vertices[denser] / vertices[sparser], rel=1e-9
+    )
+    assert survived["displacement_denser_over_sparser"] == pytest.approx(
+        displacement[denser] / displacement[sparser], rel=1e-9
+    ), (
+        "the displacement ratio is not the denser case over the sparser one, so it "
+        "runs in the opposite direction to the vertex ratio beside it and the two "
+        "cannot be read together"
+    )
+    # Naming both cases is not enough -- the numerator has to come first, or the
+    # disclosure reads correct while describing the inverted ratio.
+    disclosed = survived["both_ratios_are"]
+    assert disclosed.index(denser) < disclosed.index(sparser), (
+        f"the disclosure puts {sparser} before {denser}, so it describes the sparser "
+        f"case as the numerator while the figures use the denser one: {disclosed}"
+    )
+
+
+def test_the_directional_claim_is_derived_from_the_direction() -> None:
+    """A directional sentence written beside the numbers instead of from them.
+
+    The prose guard on this record only covered the flip-count sentences, so a claim
+    about which way the displacement moved sat outside every check. Both readings were
+    reachable when this ran, and which one is correct is the entire contribution of the
+    density case.
+    """
+    survived = _record()["does_the_margin_survive_a_denser_capture"]
+    ratio = survived["displacement_denser_over_sparser"]
+    said = survived["what_that_establishes"]
+
+    if ratio < 1.0:
+        assert f"{1.0 / ratio:.2f}x less far" in said, (ratio, said)
+    elif ratio > 1.0:
+        assert f"{ratio:.2f}x further" in said, (ratio, said)
+
+    # The reading has to follow from the comparison, not from the author's hope.
+    if ratio < survived["vertices_denser_over_sparser"]:
+        assert "does not track the capture" in said, said
+        assert "fixed-magnitude" in said, said
+    else:
+        assert "tracks the capture" in said, said
+        assert "does not transfer" in said, said
+
+
 def test_the_margin_is_set_by_the_cut_and_not_by_the_capture() -> None:
     """The generalisation, and the first thing a reader with a real capture would ask.
 
@@ -220,8 +283,8 @@ def test_the_margin_is_set_by_the_cut_and_not_by_the_capture() -> None:
     """
     survived = _record()["does_the_margin_survive_a_denser_capture"]
 
-    vertices = survived["vertices_grew_by_factor"]
-    displacement = survived["displacement_grew_by_factor"]
+    vertices = survived["vertices_denser_over_sparser"]
+    displacement = survived["displacement_denser_over_sparser"]
     assert vertices > 2.0, (
         f"the two cases differ by only {vertices}x in vertex count, which is too little "
         "to tell whether the displacement tracks the geometry"
@@ -284,6 +347,48 @@ def test_the_two_arms_cannot_drift_onto_different_grids() -> None:
     assert source.count("= _grid(cloud)") == 2, (
         "both arms should obtain the grid from the shared builder; one of them is "
         "building its own again"
+    )
+
+
+def test_the_shared_grid_rounds_rather_than_truncates() -> None:
+    """The behaviour the structural guard above cannot see.
+
+    That guard counts `np.meshgrid` in the source, which pins the specific defect that
+    happened and would pass a second grid built some other way. This one calls the
+    builder and checks the decision that actually differed between the two copies:
+    rounding the cell count up from 3.7 cells rather than truncating to 3.
+
+    Needs no Open3D -- the builder only asks a cloud for its bounding box.
+    """
+    harness = EVIDENCE / _record()["provenance"]["harness"]
+    spec = importlib.util.spec_from_file_location("crop_decision_probe", harness)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    cell = module.CELL
+    extent = (cell * 3.7, cell, cell)
+
+    class _Box:
+        def get_min_bound(self):
+            return [0.0, 0.0, 0.0]
+
+        def get_extent(self):
+            return list(extent)
+
+    class _Cloud:
+        def get_axis_aligned_bounding_box(self):
+            return _Box()
+
+    centres, radius = module._grid(_Cloud())
+
+    assert len(centres) == 4, (
+        f"{len(centres)} cells along a 3.7-cell extent: the builder is truncating, "
+        "which is exactly the difference that made the two arms measure different "
+        "grids and move the published figure by about fifty cells"
+    )
+    assert radius == pytest.approx(module.SUPPORT_RADIUS_FACTOR * cell)
+    assert centres[0][0] == pytest.approx(cell / 2), (
+        "cells are not centred in their own extent"
     )
 
 

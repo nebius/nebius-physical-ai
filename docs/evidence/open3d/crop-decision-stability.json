@@ -7,7 +7,7 @@
       "input": {
         "dataset": "open3d.data DemoICPPointClouds, the record's own input",
         "voxel_size": 0.05,
-        "fused_cloud_sha256": "89c6db269a7bc5bc34912084a408ee455e198c5131c6bfc8f138da7da84e1912",
+        "fused_cloud_sha256": "d6d39d75a98ba32dc41d60e0ee1f8984110920817946e49dbab22bc863f9c78a",
         "fused_once_and_reused": true
       },
       "crop_rule": "a vertex is unsupported when its distance to the fused cloud exceeds voxel * 1.0 = 0.05",
@@ -22,8 +22,8 @@
           "per_repeat": [
             {
               "repeat": 2,
-              "vertices_in_repeat_1_only": 2145,
-              "vertices_in_this_repeat_only": 2145,
+              "vertices_in_repeat_1_only": 2157,
+              "vertices_in_this_repeat_only": 2157,
               "vertex_counts": [
                 18413,
                 18413
@@ -31,8 +31,8 @@
             },
             {
               "repeat": 3,
-              "vertices_in_repeat_1_only": 2212,
-              "vertices_in_this_repeat_only": 2212,
+              "vertices_in_repeat_1_only": 1978,
+              "vertices_in_this_repeat_only": 1978,
               "vertex_counts": [
                 18413,
                 18413
@@ -40,8 +40,8 @@
             },
             {
               "repeat": 4,
-              "vertices_in_repeat_1_only": 2202,
-              "vertices_in_this_repeat_only": 2202,
+              "vertices_in_repeat_1_only": 2203,
+              "vertices_in_this_repeat_only": 2203,
               "vertex_counts": [
                 18413,
                 18413
@@ -49,8 +49,8 @@
             },
             {
               "repeat": 5,
-              "vertices_in_repeat_1_only": 2120,
-              "vertices_in_this_repeat_only": 2120,
+              "vertices_in_repeat_1_only": 2194,
+              "vertices_in_this_repeat_only": 2194,
               "vertex_counts": [
                 18413,
                 18413
@@ -58,69 +58,6 @@
             },
             {
               "repeat": 6,
-              "vertices_in_repeat_1_only": 2331,
-              "vertices_in_this_repeat_only": 2331,
-              "vertex_counts": [
-                18413,
-                18413
-              ]
-            },
-            {
-              "repeat": 7,
-              "vertices_in_repeat_1_only": 2539,
-              "vertices_in_this_repeat_only": 2539,
-              "vertex_counts": [
-                18413,
-                18413
-              ]
-            },
-            {
-              "repeat": 8,
-              "vertices_in_repeat_1_only": 1930,
-              "vertices_in_this_repeat_only": 1930,
-              "vertex_counts": [
-                18413,
-                18413
-              ]
-            },
-            {
-              "repeat": 9,
-              "vertices_in_repeat_1_only": 2242,
-              "vertices_in_this_repeat_only": 2242,
-              "vertex_counts": [
-                18413,
-                18413
-              ]
-            },
-            {
-              "repeat": 10,
-              "vertices_in_repeat_1_only": 2022,
-              "vertices_in_this_repeat_only": 2022,
-              "vertex_counts": [
-                18413,
-                18413
-              ]
-            },
-            {
-              "repeat": 11,
-              "vertices_in_repeat_1_only": 2180,
-              "vertices_in_this_repeat_only": 2180,
-              "vertex_counts": [
-                18413,
-                18413
-              ]
-            },
-            {
-              "repeat": 12,
-              "vertices_in_repeat_1_only": 2314,
-              "vertices_in_this_repeat_only": 2314,
-              "vertex_counts": [
-                18413,
-                18413
-              ]
-            },
-            {
-              "repeat": 13,
               "vertices_in_repeat_1_only": 2006,
               "vertices_in_this_repeat_only": 2006,
               "vertex_counts": [
@@ -129,9 +66,72 @@
               ]
             },
             {
+              "repeat": 7,
+              "vertices_in_repeat_1_only": 2191,
+              "vertices_in_this_repeat_only": 2191,
+              "vertex_counts": [
+                18413,
+                18413
+              ]
+            },
+            {
+              "repeat": 8,
+              "vertices_in_repeat_1_only": 2070,
+              "vertices_in_this_repeat_only": 2070,
+              "vertex_counts": [
+                18413,
+                18413
+              ]
+            },
+            {
+              "repeat": 9,
+              "vertices_in_repeat_1_only": 2034,
+              "vertices_in_this_repeat_only": 2034,
+              "vertex_counts": [
+                18413,
+                18413
+              ]
+            },
+            {
+              "repeat": 10,
+              "vertices_in_repeat_1_only": 2249,
+              "vertices_in_this_repeat_only": 2249,
+              "vertex_counts": [
+                18413,
+                18413
+              ]
+            },
+            {
+              "repeat": 11,
+              "vertices_in_repeat_1_only": 2454,
+              "vertices_in_this_repeat_only": 2454,
+              "vertex_counts": [
+                18413,
+                18413
+              ]
+            },
+            {
+              "repeat": 12,
+              "vertices_in_repeat_1_only": 2147,
+              "vertices_in_this_repeat_only": 2147,
+              "vertex_counts": [
+                18413,
+                18413
+              ]
+            },
+            {
+              "repeat": 13,
+              "vertices_in_repeat_1_only": 2314,
+              "vertices_in_this_repeat_only": 2314,
+              "vertex_counts": [
+                18413,
+                18413
+              ]
+            },
+            {
               "repeat": 14,
-              "vertices_in_repeat_1_only": 2016,
-              "vertices_in_this_repeat_only": 2016,
+              "vertices_in_repeat_1_only": 2035,
+              "vertices_in_this_repeat_only": 2035,
               "vertex_counts": [
                 18413,
                 18413
@@ -139,8 +139,8 @@
             },
             {
               "repeat": 15,
-              "vertices_in_repeat_1_only": 2188,
-              "vertices_in_this_repeat_only": 2188,
+              "vertices_in_repeat_1_only": 2109,
+              "vertices_in_this_repeat_only": 2109,
               "vertex_counts": [
                 18413,
                 18413
@@ -148,8 +148,8 @@
             },
             {
               "repeat": 16,
-              "vertices_in_repeat_1_only": 2213,
-              "vertices_in_this_repeat_only": 2213,
+              "vertices_in_repeat_1_only": 2050,
+              "vertices_in_this_repeat_only": 2050,
               "vertex_counts": [
                 18413,
                 18413
@@ -157,8 +157,8 @@
             },
             {
               "repeat": 17,
-              "vertices_in_repeat_1_only": 2310,
-              "vertices_in_this_repeat_only": 2310,
+              "vertices_in_repeat_1_only": 2028,
+              "vertices_in_this_repeat_only": 2028,
               "vertex_counts": [
                 18413,
                 18413
@@ -166,8 +166,8 @@
             },
             {
               "repeat": 18,
-              "vertices_in_repeat_1_only": 2263,
-              "vertices_in_this_repeat_only": 2263,
+              "vertices_in_repeat_1_only": 2415,
+              "vertices_in_this_repeat_only": 2415,
               "vertex_counts": [
                 18413,
                 18413
@@ -175,8 +175,8 @@
             },
             {
               "repeat": 19,
-              "vertices_in_repeat_1_only": 2159,
-              "vertices_in_this_repeat_only": 2159,
+              "vertices_in_repeat_1_only": 1986,
+              "vertices_in_this_repeat_only": 1986,
               "vertex_counts": [
                 18413,
                 18413
@@ -184,8 +184,8 @@
             },
             {
               "repeat": 20,
-              "vertices_in_repeat_1_only": 2265,
-              "vertices_in_this_repeat_only": 2265,
+              "vertices_in_repeat_1_only": 2093,
+              "vertices_in_this_repeat_only": 2093,
               "vertex_counts": [
                 18413,
                 18413
@@ -193,8 +193,8 @@
             },
             {
               "repeat": 21,
-              "vertices_in_repeat_1_only": 2400,
-              "vertices_in_this_repeat_only": 2400,
+              "vertices_in_repeat_1_only": 1940,
+              "vertices_in_this_repeat_only": 1940,
               "vertex_counts": [
                 18413,
                 18413
@@ -202,8 +202,8 @@
             },
             {
               "repeat": 22,
-              "vertices_in_repeat_1_only": 2137,
-              "vertices_in_this_repeat_only": 2137,
+              "vertices_in_repeat_1_only": 2287,
+              "vertices_in_this_repeat_only": 2287,
               "vertex_counts": [
                 18413,
                 18413
@@ -211,8 +211,8 @@
             },
             {
               "repeat": 23,
-              "vertices_in_repeat_1_only": 2186,
-              "vertices_in_this_repeat_only": 2186,
+              "vertices_in_repeat_1_only": 2143,
+              "vertices_in_this_repeat_only": 2143,
               "vertex_counts": [
                 18413,
                 18413
@@ -220,15 +220,15 @@
             },
             {
               "repeat": 24,
-              "vertices_in_repeat_1_only": 2105,
-              "vertices_in_this_repeat_only": 2105,
+              "vertices_in_repeat_1_only": 2088,
+              "vertices_in_this_repeat_only": 2088,
               "vertex_counts": [
                 18413,
                 18413
               ]
             }
           ],
-          "largest_set_difference": 2539,
+          "largest_set_difference": 2454,
           "verdict": "genuinely different vertex positions"
         },
         "and_how_far_it_moved": {
@@ -236,154 +236,154 @@
             {
               "repeat": 2,
               "median_displacement_m": 0.0,
-              "p99_displacement_m": 3.5762786865234375e-07,
-              "max_displacement_m": 2.7418136596679688e-06
+              "p99_displacement_m": 4.76837158203125e-07,
+              "max_displacement_m": 3.337860107421875e-06
             },
             {
               "repeat": 3,
               "median_displacement_m": 0.0,
               "p99_displacement_m": 4.76837158203125e-07,
-              "max_displacement_m": 4.76837158203125e-06
+              "max_displacement_m": 3.2186508178710938e-06
             },
             {
               "repeat": 4,
               "median_displacement_m": 0.0,
-              "p99_displacement_m": 4.76837158203125e-07,
-              "max_displacement_m": 6.9141387939453125e-06
+              "p99_displacement_m": 4.172325134277344e-07,
+              "max_displacement_m": 4.172325134277344e-06
             },
             {
               "repeat": 5,
               "median_displacement_m": 0.0,
               "p99_displacement_m": 4.76837158203125e-07,
-              "max_displacement_m": 5.9604644775390625e-06
+              "max_displacement_m": 3.0994415283203125e-06
             },
             {
               "repeat": 6,
               "median_displacement_m": 0.0,
-              "p99_displacement_m": 4.76837158203125e-07,
-              "max_displacement_m": 4.827976226806641e-06
+              "p99_displacement_m": 4.172325134277344e-07,
+              "max_displacement_m": 3.5762786865234375e-06
             },
             {
               "repeat": 7,
               "median_displacement_m": 0.0,
               "p99_displacement_m": 4.76837158203125e-07,
-              "max_displacement_m": 5.662441253662109e-06
+              "max_displacement_m": 3.337860107421875e-06
             },
             {
               "repeat": 8,
               "median_displacement_m": 0.0,
-              "p99_displacement_m": 2.384185791015625e-07,
-              "max_displacement_m": 2.0265579223632812e-06
+              "p99_displacement_m": 3.5762786865234375e-07,
+              "max_displacement_m": 5.7220458984375e-06
             },
             {
               "repeat": 9,
               "median_displacement_m": 0.0,
-              "p99_displacement_m": 4.76837158203125e-07,
-              "max_displacement_m": 2.562999725341797e-06
+              "p99_displacement_m": 3.5762786865234375e-07,
+              "max_displacement_m": 4.172325134277344e-06
             },
             {
               "repeat": 10,
               "median_displacement_m": 0.0,
-              "p99_displacement_m": 3.5762786865234375e-07,
-              "max_displacement_m": 2.86102294921875e-06
+              "p99_displacement_m": 4.76837158203125e-07,
+              "max_displacement_m": 3.814697265625e-06
             },
             {
               "repeat": 11,
               "median_displacement_m": 0.0,
               "p99_displacement_m": 4.76837158203125e-07,
-              "max_displacement_m": 5.7220458984375e-06
+              "max_displacement_m": 4.023313522338867e-06
             },
             {
               "repeat": 12,
               "median_displacement_m": 0.0,
               "p99_displacement_m": 4.76837158203125e-07,
-              "max_displacement_m": 3.5762786865234375e-06
+              "max_displacement_m": 5.0067901611328125e-06
             },
             {
               "repeat": 13,
               "median_displacement_m": 0.0,
-              "p99_displacement_m": 3.5762786865234375e-07,
-              "max_displacement_m": 2.6226043701171875e-06
+              "p99_displacement_m": 4.76837158203125e-07,
+              "max_displacement_m": 2.7418136596679688e-06
             },
             {
               "repeat": 14,
               "median_displacement_m": 0.0,
-              "p99_displacement_m": 3.5762786865234375e-07,
-              "max_displacement_m": 2.86102294921875e-06
+              "p99_displacement_m": 2.980232238769531e-07,
+              "max_displacement_m": 3.0994415283203125e-06
             },
             {
               "repeat": 15,
               "median_displacement_m": 0.0,
               "p99_displacement_m": 4.76837158203125e-07,
-              "max_displacement_m": 4.5299530029296875e-06
+              "max_displacement_m": 3.814697265625e-06
             },
             {
               "repeat": 16,
               "median_displacement_m": 0.0,
               "p99_displacement_m": 4.76837158203125e-07,
-              "max_displacement_m": 4.0531158447265625e-06
+              "max_displacement_m": 7.3909759521484375e-06
             },
             {
               "repeat": 17,
               "median_displacement_m": 0.0,
-              "p99_displacement_m": 4.76837158203125e-07,
-              "max_displacement_m": 5.7220458984375e-06
+              "p99_displacement_m": 3.5762786865234375e-07,
+              "max_displacement_m": 5.0067901611328125e-06
             },
             {
               "repeat": 18,
               "median_displacement_m": 0.0,
               "p99_displacement_m": 4.76837158203125e-07,
-              "max_displacement_m": 4.0531158447265625e-06
+              "max_displacement_m": 4.76837158203125e-06
             },
             {
               "repeat": 19,
               "median_displacement_m": 0.0,
-              "p99_displacement_m": 4.76837158203125e-07,
-              "max_displacement_m": 5.0067901611328125e-06
+              "p99_displacement_m": 3.5762786865234375e-07,
+              "max_displacement_m": 2.86102294921875e-06
             },
             {
               "repeat": 20,
               "median_displacement_m": 0.0,
-              "p99_displacement_m": 4.76837158203125e-07,
-              "max_displacement_m": 5.9604644775390625e-06
+              "p99_displacement_m": 3.5762786865234375e-07,
+              "max_displacement_m": 5.4836273193359375e-06
             },
             {
               "repeat": 21,
               "median_displacement_m": 0.0,
-              "p99_displacement_m": 4.76837158203125e-07,
-              "max_displacement_m": 1.0013580322265625e-05
+              "p99_displacement_m": 2.384185791015625e-07,
+              "max_displacement_m": 3.159046173095703e-06
             },
             {
               "repeat": 22,
               "median_displacement_m": 0.0,
               "p99_displacement_m": 4.76837158203125e-07,
-              "max_displacement_m": 4.023313522338867e-06
+              "max_displacement_m": 5.7220458984375e-06
             },
             {
               "repeat": 23,
               "median_displacement_m": 0.0,
-              "p99_displacement_m": 4.76837158203125e-07,
-              "max_displacement_m": 3.427267074584961e-06
+              "p99_displacement_m": 3.5762786865234375e-07,
+              "max_displacement_m": 4.291534423828125e-06
             },
             {
               "repeat": 24,
               "median_displacement_m": 0.0,
               "p99_displacement_m": 4.76837158203125e-07,
-              "max_displacement_m": 4.5299530029296875e-06
+              "max_displacement_m": 4.76837158203125e-06
             }
           ],
           "the_distribution_of_the_per_pair_worst": {
             "why_a_distribution_and_not_one_number": "The margin is computed from `worst`, which makes `worst` the quantity the safety claim rests on -- and it is a tail statistic. A handful of repeats describes the middle of its distribution, not the case the margin has to survive. An independent lane hit one per-pair worst three orders of magnitude above its neighbours and could not reproduce it in three further attempts on the identical file, which is exactly the shape a four-repeat run cannot see. So the pairs are reported as a distribution and the headline margin is taken from the worst value known anywhere rather than from the worst seen here.",
             "pairs_compared": 23,
-            "min_m": 2.0265579223632812e-06,
-            "median_m": 4.5299530029296875e-06,
-            "p90_m": 5.9604644775390625e-06,
-            "max_m": 1.0013580322265625e-05,
-            "spread_max_over_median": 2.210526315789474
+            "min_m": 2.7418136596679688e-06,
+            "median_m": 4.023313522338867e-06,
+            "p90_m": 5.674362182617188e-06,
+            "max_m": 7.3909759521484375e-06,
+            "spread_max_over_median": 1.837037037037037
           },
-          "worst_displacement_m": 1.0013580322265625e-05,
+          "worst_displacement_m": 7.3909759521484375e-06,
           "the_threshold_it_would_have_to_cross_m": 0.05,
-          "margin_factor": 4993.219047619048,
+          "margin_factor": 6765.006451612903,
           "the_tail_observed_elsewhere": {
             "displacement_m": 0.002187,
             "cut_m": 0.05,
@@ -394,7 +394,7 @@
             "why_it_is_kept": "Dropping an unreproduced outlier because it is inconvenient is how a margin claim becomes a median claim. It is three orders of magnitude from everything else and it is still 20x short of the cut, so it tightens the stated safety factor without touching the verdict -- which is the honest shape of the result."
           },
           "margin_at_the_worst_displacement_known_anywhere": 22.86236854138089,
-          "what_that_means": "A vertex only changes the answer by crossing the support threshold or landing in another cell. Across 23 pairs here the largest any vertex moved was 1e-05 m against a 0.05 m cut. Taking instead the worst value known anywhere, including the unreproduced observation above, the decision still clears its threshold by 23x. That is the figure to re-check on a scan whose geometry sits closer to the cut, and it is deliberately the conservative one: no cell changed its verdict at either displacement."
+          "what_that_means": "A vertex only changes the answer by crossing the support threshold or landing in another cell. Across 23 pairs here the largest any vertex moved was 7.39e-06 m against a 0.05 m cut. Taking instead the worst value known anywhere, including the unreproduced observation above, the decision still clears its threshold by 23x. That is the figure to re-check on a scan whose geometry sits closer to the cut, and it is deliberately the conservative one: no cell changed its verdict at either displacement."
         }
       },
       "the_aggregate_the_record_reports": {
@@ -1230,30 +1230,30 @@
           "invocations": 5,
           "distinct_fused_clouds": 5,
           "vertices_per_invocation": [
-            18413,
-            18413,
-            18413,
             18408,
-            18424
+            18424,
+            18413,
+            18424,
+            18413
           ],
           "phantom_cells_removed": {
             "values": [
-              733.0,
-              733.0,
-              733.0,
               734.0,
-              730.0
+              730.0,
+              733.0,
+              730.0,
+              733.0
             ],
             "distinct": 3,
             "spread": 4.0,
-            "relative_spread": 0.0054600054600054595
+            "relative_spread": 0.00546448087431694
           },
           "what_it_shows": "3 distinct value(s) across 5 invocations, [730, 733, 734], a spread of 4 cell(s) on a figure of about 733 -- 0.55% of it. This arm lets registration vary as well, so it does not attribute that spread to anything on its own; compare it with the fixed-cloud arm above."
         },
         "what_the_two_arms_together_show": "The published figure is exactly reproducible under the crop and is not exactly reproducible end to end. Holding the fused cloud fixed, all 24 repeats return 733 -- one value, despite every repeat reconstructing a different mesh. Rebuilding it, the figure moves across 3 values spanning 4 cell(s). So the residual belongs to the registration upstream, which is separately known not to be reproducible, and not to the crop or the reconstruction under it. A reader quoting the figure should quote it with that spread; a reader comparing two crop settings on one fused cloud can quote it exactly."
       },
       "what_a_user_may_rely_on": "The per-cell unsupported mask, not only the aggregate. Every repeat agreed on every cell -- Jaccard 1.0, no cell changed its verdict -- so the answer to 'which parts of my mesh are unsupported' is reproducible on this input even though the reconstruction it is computed from is not.",
-      "whether_that_is_benign": "Yes, and by a measured margin rather than by luck. Around 556 vertices per repeat sit within 10% of the cut, which is where a sharp threshold on a continuous quantity is vulnerable, and none of them crossed. Over 23 pairs the largest distance any vertex moved was 1e-05 m against a 0.05 m cut. The margin is quoted from the worst displacement known anywhere rather than from that, because the statistic has a tail an earlier four-repeat run could not see: on the worst value on record the decision clears the cut by 23x, which is the number to re-check on another scan. Not this verdict, and not the typical case.",
+      "whether_that_is_benign": "Yes, and by a measured margin rather than by luck. Around 556 vertices per repeat sit within 10% of the cut, which is where a sharp threshold on a continuous quantity is vulnerable, and none of them crossed. Over 23 pairs the largest distance any vertex moved was 7.39e-06 m against a 0.05 m cut. The margin is quoted from the worst displacement known anywhere rather than from that, because the statistic has a tail an earlier four-repeat run could not see: on the worst value on record the decision clears the cut by 23x, which is the number to re-check on another scan. Not this verdict, and not the typical case.",
       "what_this_does_not_establish": "Nothing about the cause inside Poisson, which #1024 covers, and nothing about whether the crop rule is the right rule. The figures are not comparable to the record's published values: this harness mirrors the reconstruct-and-crop stage rather than running the full six-stage workflow, and its fused cloud is its own.",
       "reproducibility": {
         "command": "npa/.venv/bin/python docs/evidence/open3d/harness/crop_decision_stability.py",
@@ -1271,7 +1271,7 @@
       "input": {
         "dataset": "open3d.data DemoICPPointClouds, the record's own input",
         "voxel_size": 0.02,
-        "fused_cloud_sha256": "a360c5b0259a6f448f61ffacb9df79874b18de683cd442c4df0cc5ca9bd1af4e",
+        "fused_cloud_sha256": "15e2fa1743b20eae3abffe292f6e45a702d8339ff497b455490857664c1b5b89",
         "fused_once_and_reused": true
       },
       "crop_rule": "a vertex is unsupported when its distance to the fused cloud exceeds voxel * 1.0 = 0.02",
@@ -1286,213 +1286,213 @@
           "per_repeat": [
             {
               "repeat": 2,
-              "vertices_in_repeat_1_only": 3895,
-              "vertices_in_this_repeat_only": 3895,
+              "vertices_in_repeat_1_only": 3930,
+              "vertices_in_this_repeat_only": 3930,
               "vertex_counts": [
-                79071,
-                79071
+                79059,
+                79059
               ]
             },
             {
               "repeat": 3,
-              "vertices_in_repeat_1_only": 3850,
-              "vertices_in_this_repeat_only": 3850,
+              "vertices_in_repeat_1_only": 4102,
+              "vertices_in_this_repeat_only": 4102,
               "vertex_counts": [
-                79071,
-                79071
+                79059,
+                79059
               ]
             },
             {
               "repeat": 4,
-              "vertices_in_repeat_1_only": 4686,
-              "vertices_in_this_repeat_only": 4686,
+              "vertices_in_repeat_1_only": 3998,
+              "vertices_in_this_repeat_only": 3998,
               "vertex_counts": [
-                79071,
-                79071
+                79059,
+                79059
               ]
             },
             {
               "repeat": 5,
-              "vertices_in_repeat_1_only": 4435,
-              "vertices_in_this_repeat_only": 4435,
+              "vertices_in_repeat_1_only": 3883,
+              "vertices_in_this_repeat_only": 3883,
               "vertex_counts": [
-                79071,
-                79071
+                79059,
+                79059
               ]
             },
             {
               "repeat": 6,
-              "vertices_in_repeat_1_only": 4568,
-              "vertices_in_this_repeat_only": 4568,
+              "vertices_in_repeat_1_only": 4347,
+              "vertices_in_this_repeat_only": 4347,
               "vertex_counts": [
-                79071,
-                79071
+                79059,
+                79059
               ]
             },
             {
               "repeat": 7,
-              "vertices_in_repeat_1_only": 4418,
-              "vertices_in_this_repeat_only": 4418,
+              "vertices_in_repeat_1_only": 3792,
+              "vertices_in_this_repeat_only": 3792,
               "vertex_counts": [
-                79071,
-                79071
+                79059,
+                79059
               ]
             },
             {
               "repeat": 8,
-              "vertices_in_repeat_1_only": 3775,
-              "vertices_in_this_repeat_only": 3776,
+              "vertices_in_repeat_1_only": 4209,
+              "vertices_in_this_repeat_only": 4209,
               "vertex_counts": [
-                79071,
-                79071
+                79059,
+                79059
               ]
             },
             {
               "repeat": 9,
-              "vertices_in_repeat_1_only": 3800,
-              "vertices_in_this_repeat_only": 3800,
+              "vertices_in_repeat_1_only": 3898,
+              "vertices_in_this_repeat_only": 3898,
               "vertex_counts": [
-                79071,
-                79071
+                79059,
+                79059
               ]
             },
             {
               "repeat": 10,
-              "vertices_in_repeat_1_only": 4579,
-              "vertices_in_this_repeat_only": 4579,
+              "vertices_in_repeat_1_only": 4605,
+              "vertices_in_this_repeat_only": 4605,
               "vertex_counts": [
-                79071,
-                79071
+                79059,
+                79059
               ]
             },
             {
               "repeat": 11,
-              "vertices_in_repeat_1_only": 4080,
-              "vertices_in_this_repeat_only": 4080,
+              "vertices_in_repeat_1_only": 4000,
+              "vertices_in_this_repeat_only": 4000,
               "vertex_counts": [
-                79071,
-                79071
+                79059,
+                79059
               ]
             },
             {
               "repeat": 12,
-              "vertices_in_repeat_1_only": 4175,
-              "vertices_in_this_repeat_only": 4175,
+              "vertices_in_repeat_1_only": 4292,
+              "vertices_in_this_repeat_only": 4292,
               "vertex_counts": [
-                79071,
-                79071
+                79059,
+                79059
               ]
             },
             {
               "repeat": 13,
-              "vertices_in_repeat_1_only": 4812,
-              "vertices_in_this_repeat_only": 4812,
+              "vertices_in_repeat_1_only": 3699,
+              "vertices_in_this_repeat_only": 3699,
               "vertex_counts": [
-                79071,
-                79071
+                79059,
+                79059
               ]
             },
             {
               "repeat": 14,
-              "vertices_in_repeat_1_only": 4279,
-              "vertices_in_this_repeat_only": 4279,
+              "vertices_in_repeat_1_only": 3794,
+              "vertices_in_this_repeat_only": 3794,
               "vertex_counts": [
-                79071,
-                79071
+                79059,
+                79059
               ]
             },
             {
               "repeat": 15,
-              "vertices_in_repeat_1_only": 4080,
-              "vertices_in_this_repeat_only": 4080,
+              "vertices_in_repeat_1_only": 4211,
+              "vertices_in_this_repeat_only": 4211,
               "vertex_counts": [
-                79071,
-                79071
+                79059,
+                79059
               ]
             },
             {
               "repeat": 16,
-              "vertices_in_repeat_1_only": 3958,
-              "vertices_in_this_repeat_only": 3958,
+              "vertices_in_repeat_1_only": 3906,
+              "vertices_in_this_repeat_only": 3906,
               "vertex_counts": [
-                79071,
-                79071
+                79059,
+                79059
               ]
             },
             {
               "repeat": 17,
-              "vertices_in_repeat_1_only": 3776,
-              "vertices_in_this_repeat_only": 3776,
+              "vertices_in_repeat_1_only": 4111,
+              "vertices_in_this_repeat_only": 4111,
               "vertex_counts": [
-                79071,
-                79071
+                79059,
+                79059
               ]
             },
             {
               "repeat": 18,
-              "vertices_in_repeat_1_only": 4228,
-              "vertices_in_this_repeat_only": 4228,
+              "vertices_in_repeat_1_only": 3823,
+              "vertices_in_this_repeat_only": 3823,
               "vertex_counts": [
-                79071,
-                79071
+                79059,
+                79059
               ]
             },
             {
               "repeat": 19,
-              "vertices_in_repeat_1_only": 4177,
-              "vertices_in_this_repeat_only": 4177,
+              "vertices_in_repeat_1_only": 4024,
+              "vertices_in_this_repeat_only": 4024,
               "vertex_counts": [
-                79071,
-                79071
+                79059,
+                79059
               ]
             },
             {
               "repeat": 20,
-              "vertices_in_repeat_1_only": 4225,
-              "vertices_in_this_repeat_only": 4225,
+              "vertices_in_repeat_1_only": 3850,
+              "vertices_in_this_repeat_only": 3850,
               "vertex_counts": [
-                79071,
-                79071
+                79059,
+                79059
               ]
             },
             {
               "repeat": 21,
-              "vertices_in_repeat_1_only": 4443,
-              "vertices_in_this_repeat_only": 4443,
+              "vertices_in_repeat_1_only": 3967,
+              "vertices_in_this_repeat_only": 3967,
               "vertex_counts": [
-                79071,
-                79071
+                79059,
+                79059
               ]
             },
             {
               "repeat": 22,
-              "vertices_in_repeat_1_only": 4336,
-              "vertices_in_this_repeat_only": 4336,
+              "vertices_in_repeat_1_only": 4105,
+              "vertices_in_this_repeat_only": 4105,
               "vertex_counts": [
-                79071,
-                79071
+                79059,
+                79059
               ]
             },
             {
               "repeat": 23,
-              "vertices_in_repeat_1_only": 4600,
-              "vertices_in_this_repeat_only": 4600,
+              "vertices_in_repeat_1_only": 4392,
+              "vertices_in_this_repeat_only": 4392,
               "vertex_counts": [
-                79071,
-                79071
+                79059,
+                79059
               ]
             },
             {
               "repeat": 24,
-              "vertices_in_repeat_1_only": 4495,
-              "vertices_in_this_repeat_only": 4495,
+              "vertices_in_repeat_1_only": 3813,
+              "vertices_in_this_repeat_only": 3813,
               "vertex_counts": [
-                79071,
-                79071
+                79059,
+                79059
               ]
             }
           ],
-          "largest_set_difference": 4812,
+          "largest_set_difference": 4605,
           "verdict": "genuinely different vertex positions"
         },
         "and_how_far_it_moved": {
@@ -1501,153 +1501,153 @@
               "repeat": 2,
               "median_displacement_m": 0.0,
               "p99_displacement_m": 2.384185791015625e-07,
-              "max_displacement_m": 2.384185791015625e-06
+              "max_displacement_m": 1.5497207641601562e-06
             },
             {
               "repeat": 3,
               "median_displacement_m": 0.0,
               "p99_displacement_m": 2.384185791015625e-07,
-              "max_displacement_m": 3.3974647521972656e-06
+              "max_displacement_m": 2.6226043701171875e-06
             },
             {
               "repeat": 4,
               "median_displacement_m": 0.0,
               "p99_displacement_m": 2.384185791015625e-07,
-              "max_displacement_m": 3.4868717193603516e-06
+              "max_displacement_m": 4.0531158447265625e-06
             },
             {
               "repeat": 5,
               "median_displacement_m": 0.0,
               "p99_displacement_m": 2.384185791015625e-07,
-              "max_displacement_m": 2.8312206268310547e-06
+              "max_displacement_m": 1.430511474609375e-06
             },
             {
               "repeat": 6,
               "median_displacement_m": 0.0,
               "p99_displacement_m": 2.384185791015625e-07,
-              "max_displacement_m": 3.814697265625e-06
+              "max_displacement_m": 2.7418136596679688e-06
             },
             {
               "repeat": 7,
               "median_displacement_m": 0.0,
               "p99_displacement_m": 2.384185791015625e-07,
-              "max_displacement_m": 1.9073486328125e-06
+              "max_displacement_m": 2.7418136596679688e-06
             },
             {
               "repeat": 8,
               "median_displacement_m": 0.0,
               "p99_displacement_m": 2.384185791015625e-07,
-              "max_displacement_m": 4.76837158203125e-06
+              "max_displacement_m": 2.2351741790771484e-06
             },
             {
               "repeat": 9,
               "median_displacement_m": 0.0,
               "p99_displacement_m": 2.384185791015625e-07,
-              "max_displacement_m": 2.384185791015625e-06
+              "max_displacement_m": 2.086162567138672e-06
             },
             {
               "repeat": 10,
               "median_displacement_m": 0.0,
               "p99_displacement_m": 2.384185791015625e-07,
-              "max_displacement_m": 3.4570693969726562e-06
+              "max_displacement_m": 2.6226043701171875e-06
             },
             {
               "repeat": 11,
               "median_displacement_m": 0.0,
               "p99_displacement_m": 2.384185791015625e-07,
-              "max_displacement_m": 2.86102294921875e-06
+              "max_displacement_m": 1.430511474609375e-06
             },
             {
               "repeat": 12,
               "median_displacement_m": 0.0,
               "p99_displacement_m": 2.384185791015625e-07,
-              "max_displacement_m": 4.76837158203125e-06
+              "max_displacement_m": 3.933906555175781e-06
             },
             {
               "repeat": 13,
               "median_displacement_m": 0.0,
               "p99_displacement_m": 2.384185791015625e-07,
-              "max_displacement_m": 3.4868717193603516e-06
+              "max_displacement_m": 2.1457672119140625e-06
             },
             {
               "repeat": 14,
               "median_displacement_m": 0.0,
               "p99_displacement_m": 2.384185791015625e-07,
-              "max_displacement_m": 2.7418136596679688e-06
+              "max_displacement_m": 2.0265579223632812e-06
             },
             {
               "repeat": 15,
               "median_displacement_m": 0.0,
               "p99_displacement_m": 2.384185791015625e-07,
-              "max_displacement_m": 3.814697265625e-06
+              "max_displacement_m": 2.5033950805664062e-06
             },
             {
               "repeat": 16,
               "median_displacement_m": 0.0,
               "p99_displacement_m": 2.384185791015625e-07,
-              "max_displacement_m": 3.606081008911133e-06
+              "max_displacement_m": 2.1457672119140625e-06
             },
             {
               "repeat": 17,
               "median_displacement_m": 0.0,
               "p99_displacement_m": 2.384185791015625e-07,
-              "max_displacement_m": 2.9206275939941406e-06
+              "max_displacement_m": 1.9073486328125e-06
             },
             {
               "repeat": 18,
               "median_displacement_m": 0.0,
               "p99_displacement_m": 2.384185791015625e-07,
-              "max_displacement_m": 2.384185791015625e-06
+              "max_displacement_m": 1.6689300537109375e-06
             },
             {
               "repeat": 19,
               "median_displacement_m": 0.0,
               "p99_displacement_m": 2.384185791015625e-07,
-              "max_displacement_m": 3.993511199951172e-06
+              "max_displacement_m": 2.1457672119140625e-06
             },
             {
               "repeat": 20,
               "median_displacement_m": 0.0,
               "p99_displacement_m": 2.384185791015625e-07,
-              "max_displacement_m": 4.76837158203125e-06
+              "max_displacement_m": 1.7881393432617188e-06
             },
             {
               "repeat": 21,
               "median_displacement_m": 0.0,
               "p99_displacement_m": 2.384185791015625e-07,
-              "max_displacement_m": 3.337860107421875e-06
+              "max_displacement_m": 1.6689300537109375e-06
             },
             {
               "repeat": 22,
               "median_displacement_m": 0.0,
               "p99_displacement_m": 2.384185791015625e-07,
-              "max_displacement_m": 3.814697265625e-06
+              "max_displacement_m": 2.2351741790771484e-06
             },
             {
               "repeat": 23,
               "median_displacement_m": 0.0,
               "p99_displacement_m": 2.384185791015625e-07,
-              "max_displacement_m": 1.7881393432617188e-06
+              "max_displacement_m": 2.1457672119140625e-06
             },
             {
               "repeat": 24,
               "median_displacement_m": 0.0,
               "p99_displacement_m": 2.384185791015625e-07,
-              "max_displacement_m": 2.384185791015625e-06
+              "max_displacement_m": 2.7418136596679688e-06
             }
           ],
           "the_distribution_of_the_per_pair_worst": {
             "why_a_distribution_and_not_one_number": "The margin is computed from `worst`, which makes `worst` the quantity the safety claim rests on -- and it is a tail statistic. A handful of repeats describes the middle of its distribution, not the case the margin has to survive. An independent lane hit one per-pair worst three orders of magnitude above its neighbours and could not reproduce it in three further attempts on the identical file, which is exactly the shape a four-repeat run cannot see. So the pairs are reported as a distribution and the headline margin is taken from the worst value known anywhere rather than from the worst seen here.",
             "pairs_compared": 23,
-            "min_m": 1.7881393432617188e-06,
-            "median_m": 3.3974647521972656e-06,
-            "p90_m": 4.613399505615235e-06,
-            "max_m": 4.76837158203125e-06,
-            "spread_max_over_median": 1.4035087719298245
+            "min_m": 1.430511474609375e-06,
+            "median_m": 2.1457672119140625e-06,
+            "p90_m": 2.7418136596679688e-06,
+            "max_m": 4.0531158447265625e-06,
+            "spread_max_over_median": 1.8888888888888888
           },
-          "worst_displacement_m": 4.76837158203125e-06,
+          "worst_displacement_m": 4.0531158447265625e-06,
           "the_threshold_it_would_have_to_cross_m": 0.02,
-          "margin_factor": 4194.304,
+          "margin_factor": 4934.4752941176475,
           "the_tail_observed_elsewhere": {
             "displacement_m": 0.002187,
             "cut_m": 0.05,
@@ -1658,36 +1658,36 @@
             "why_it_is_kept": "Dropping an unreproduced outlier because it is inconvenient is how a margin claim becomes a median claim. It is three orders of magnitude from everything else and it is still 20x short of the cut, so it tightens the stated safety factor without touching the verdict -- which is the honest shape of the result."
           },
           "margin_at_the_worst_displacement_known_anywhere": 22.86236854138089,
-          "what_that_means": "A vertex only changes the answer by crossing the support threshold or landing in another cell. Across 23 pairs here the largest any vertex moved was 4.77e-06 m against a 0.02 m cut. Taking instead the worst value known anywhere, including the unreproduced observation above, the decision still clears its threshold by 23x. That is the figure to re-check on a scan whose geometry sits closer to the cut, and it is deliberately the conservative one: no cell changed its verdict at either displacement."
+          "what_that_means": "A vertex only changes the answer by crossing the support threshold or landing in another cell. Across 23 pairs here the largest any vertex moved was 4.05e-06 m against a 0.02 m cut. Taking instead the worst value known anywhere, including the unreproduced observation above, the decision still clears its threshold by 23x. That is the figure to re-check on a scan whose geometry sits closer to the cut, and it is deliberately the conservative one: no cell changed its verdict at either displacement."
         }
       },
       "the_aggregate_the_record_reports": {
         "removed_vertex_count": {
           "values": [
-            15866.0,
-            15866.0,
-            15866.0,
-            15866.0,
-            15866.0,
-            15866.0,
-            15866.0,
-            15866.0,
-            15866.0,
-            15866.0,
-            15866.0,
-            15866.0,
-            15866.0,
-            15866.0,
-            15866.0,
-            15866.0,
-            15866.0,
-            15866.0,
-            15866.0,
-            15866.0,
-            15866.0,
-            15866.0,
-            15866.0,
-            15866.0
+            15853.0,
+            15853.0,
+            15853.0,
+            15853.0,
+            15853.0,
+            15853.0,
+            15853.0,
+            15853.0,
+            15853.0,
+            15853.0,
+            15853.0,
+            15853.0,
+            15853.0,
+            15853.0,
+            15853.0,
+            15853.0,
+            15853.0,
+            15853.0,
+            15853.0,
+            15853.0,
+            15853.0,
+            15853.0,
+            15853.0,
+            15853.0
           ],
           "distinct": 1,
           "spread": 0.0,
@@ -1695,30 +1695,30 @@
         },
         "removed_fraction": {
           "values": [
-            0.20065510743509,
-            0.20065510743509,
-            0.20065510743509,
-            0.20065510743509,
-            0.20065510743509,
-            0.20065510743509,
-            0.20065510743509,
-            0.20065510743509,
-            0.20065510743509,
-            0.20065510743509,
-            0.20065510743509,
-            0.20065510743509,
-            0.20065510743509,
-            0.20065510743509,
-            0.20065510743509,
-            0.20065510743509,
-            0.20065510743509,
-            0.20065510743509,
-            0.20065510743509,
-            0.20065510743509,
-            0.20065510743509,
-            0.20065510743509,
-            0.20065510743509,
-            0.20065510743509
+            0.20052112978914483,
+            0.20052112978914483,
+            0.20052112978914483,
+            0.20052112978914483,
+            0.20052112978914483,
+            0.20052112978914483,
+            0.20052112978914483,
+            0.20052112978914483,
+            0.20052112978914483,
+            0.20052112978914483,
+            0.20052112978914483,
+            0.20052112978914483,
+            0.20052112978914483,
+            0.20052112978914483,
+            0.20052112978914483,
+            0.20052112978914483,
+            0.20052112978914483,
+            0.20052112978914483,
+            0.20052112978914483,
+            0.20052112978914483,
+            0.20052112978914483,
+            0.20052112978914483,
+            0.20052112978914483,
+            0.20052112978914483
           ],
           "distinct": 1,
           "spread": 0.0,
@@ -1726,30 +1726,30 @@
         },
         "total_vertices": {
           "values": [
-            79071.0,
-            79071.0,
-            79071.0,
-            79071.0,
-            79071.0,
-            79071.0,
-            79071.0,
-            79071.0,
-            79071.0,
-            79071.0,
-            79071.0,
-            79071.0,
-            79071.0,
-            79071.0,
-            79071.0,
-            79071.0,
-            79071.0,
-            79071.0,
-            79071.0,
-            79071.0,
-            79071.0,
-            79071.0,
-            79071.0,
-            79071.0
+            79059.0,
+            79059.0,
+            79059.0,
+            79059.0,
+            79059.0,
+            79059.0,
+            79059.0,
+            79059.0,
+            79059.0,
+            79059.0,
+            79059.0,
+            79059.0,
+            79059.0,
+            79059.0,
+            79059.0,
+            79059.0,
+            79059.0,
+            79059.0,
+            79059.0,
+            79059.0,
+            79059.0,
+            79059.0,
+            79059.0,
+            79059.0
           ],
           "distinct": 1,
           "spread": 0.0,
@@ -1759,185 +1759,185 @@
       "the_per_cell_decision_a_user_reads": [
         {
           "repeat": 2,
-          "removed_cells_in_repeat_1": 10385,
-          "removed_cells_here": 10385,
-          "cells_both_called_unsupported": 10385,
+          "removed_cells_in_repeat_1": 10379,
+          "removed_cells_here": 10379,
+          "cells_both_called_unsupported": 10379,
           "jaccard": 1.0,
           "cells_whose_verdict_flipped": 0
         },
         {
           "repeat": 3,
-          "removed_cells_in_repeat_1": 10385,
-          "removed_cells_here": 10385,
-          "cells_both_called_unsupported": 10385,
+          "removed_cells_in_repeat_1": 10379,
+          "removed_cells_here": 10379,
+          "cells_both_called_unsupported": 10379,
           "jaccard": 1.0,
           "cells_whose_verdict_flipped": 0
         },
         {
           "repeat": 4,
-          "removed_cells_in_repeat_1": 10385,
-          "removed_cells_here": 10385,
-          "cells_both_called_unsupported": 10385,
+          "removed_cells_in_repeat_1": 10379,
+          "removed_cells_here": 10379,
+          "cells_both_called_unsupported": 10379,
           "jaccard": 1.0,
           "cells_whose_verdict_flipped": 0
         },
         {
           "repeat": 5,
-          "removed_cells_in_repeat_1": 10385,
-          "removed_cells_here": 10385,
-          "cells_both_called_unsupported": 10385,
+          "removed_cells_in_repeat_1": 10379,
+          "removed_cells_here": 10379,
+          "cells_both_called_unsupported": 10379,
           "jaccard": 1.0,
           "cells_whose_verdict_flipped": 0
         },
         {
           "repeat": 6,
-          "removed_cells_in_repeat_1": 10385,
-          "removed_cells_here": 10385,
-          "cells_both_called_unsupported": 10385,
+          "removed_cells_in_repeat_1": 10379,
+          "removed_cells_here": 10379,
+          "cells_both_called_unsupported": 10379,
           "jaccard": 1.0,
           "cells_whose_verdict_flipped": 0
         },
         {
           "repeat": 7,
-          "removed_cells_in_repeat_1": 10385,
-          "removed_cells_here": 10385,
-          "cells_both_called_unsupported": 10385,
+          "removed_cells_in_repeat_1": 10379,
+          "removed_cells_here": 10379,
+          "cells_both_called_unsupported": 10379,
           "jaccard": 1.0,
           "cells_whose_verdict_flipped": 0
         },
         {
           "repeat": 8,
-          "removed_cells_in_repeat_1": 10385,
-          "removed_cells_here": 10385,
-          "cells_both_called_unsupported": 10385,
+          "removed_cells_in_repeat_1": 10379,
+          "removed_cells_here": 10379,
+          "cells_both_called_unsupported": 10379,
           "jaccard": 1.0,
           "cells_whose_verdict_flipped": 0
         },
         {
           "repeat": 9,
-          "removed_cells_in_repeat_1": 10385,
-          "removed_cells_here": 10385,
-          "cells_both_called_unsupported": 10385,
+          "removed_cells_in_repeat_1": 10379,
+          "removed_cells_here": 10379,
+          "cells_both_called_unsupported": 10379,
           "jaccard": 1.0,
           "cells_whose_verdict_flipped": 0
         },
         {
           "repeat": 10,
-          "removed_cells_in_repeat_1": 10385,
-          "removed_cells_here": 10385,
-          "cells_both_called_unsupported": 10385,
+          "removed_cells_in_repeat_1": 10379,
+          "removed_cells_here": 10379,
+          "cells_both_called_unsupported": 10379,
           "jaccard": 1.0,
           "cells_whose_verdict_flipped": 0
         },
         {
           "repeat": 11,
-          "removed_cells_in_repeat_1": 10385,
-          "removed_cells_here": 10385,
-          "cells_both_called_unsupported": 10385,
+          "removed_cells_in_repeat_1": 10379,
+          "removed_cells_here": 10379,
+          "cells_both_called_unsupported": 10379,
           "jaccard": 1.0,
           "cells_whose_verdict_flipped": 0
         },
         {
           "repeat": 12,
-          "removed_cells_in_repeat_1": 10385,
-          "removed_cells_here": 10385,
-          "cells_both_called_unsupported": 10385,
+          "removed_cells_in_repeat_1": 10379,
+          "removed_cells_here": 10379,
+          "cells_both_called_unsupported": 10379,
           "jaccard": 1.0,
           "cells_whose_verdict_flipped": 0
         },
         {
           "repeat": 13,
-          "removed_cells_in_repeat_1": 10385,
-          "removed_cells_here": 10385,
-          "cells_both_called_unsupported": 10385,
+          "removed_cells_in_repeat_1": 10379,
+          "removed_cells_here": 10379,
+          "cells_both_called_unsupported": 10379,
           "jaccard": 1.0,
           "cells_whose_verdict_flipped": 0
         },
         {
           "repeat": 14,
-          "removed_cells_in_repeat_1": 10385,
-          "removed_cells_here": 10385,
-          "cells_both_called_unsupported": 10385,
+          "removed_cells_in_repeat_1": 10379,
+          "removed_cells_here": 10379,
+          "cells_both_called_unsupported": 10379,
           "jaccard": 1.0,
           "cells_whose_verdict_flipped": 0
         },
         {
           "repeat": 15,
-          "removed_cells_in_repeat_1": 10385,
-          "removed_cells_here": 10385,
-          "cells_both_called_unsupported": 10385,
+          "removed_cells_in_repeat_1": 10379,
+          "removed_cells_here": 10379,
+          "cells_both_called_unsupported": 10379,
           "jaccard": 1.0,
           "cells_whose_verdict_flipped": 0
         },
         {
           "repeat": 16,
-          "removed_cells_in_repeat_1": 10385,
-          "removed_cells_here": 10385,
-          "cells_both_called_unsupported": 10385,
+          "removed_cells_in_repeat_1": 10379,
+          "removed_cells_here": 10379,
+          "cells_both_called_unsupported": 10379,
           "jaccard": 1.0,
           "cells_whose_verdict_flipped": 0
         },
         {
           "repeat": 17,
-          "removed_cells_in_repeat_1": 10385,
-          "removed_cells_here": 10385,
-          "cells_both_called_unsupported": 10385,
+          "removed_cells_in_repeat_1": 10379,
+          "removed_cells_here": 10379,
+          "cells_both_called_unsupported": 10379,
           "jaccard": 1.0,
           "cells_whose_verdict_flipped": 0
         },
         {
           "repeat": 18,
-          "removed_cells_in_repeat_1": 10385,
-          "removed_cells_here": 10385,
-          "cells_both_called_unsupported": 10385,
+          "removed_cells_in_repeat_1": 10379,
+          "removed_cells_here": 10379,
+          "cells_both_called_unsupported": 10379,
           "jaccard": 1.0,
           "cells_whose_verdict_flipped": 0
         },
         {
           "repeat": 19,
-          "removed_cells_in_repeat_1": 10385,
-          "removed_cells_here": 10385,
-          "cells_both_called_unsupported": 10385,
+          "removed_cells_in_repeat_1": 10379,
+          "removed_cells_here": 10379,
+          "cells_both_called_unsupported": 10379,
           "jaccard": 1.0,
           "cells_whose_verdict_flipped": 0
         },
         {
           "repeat": 20,
-          "removed_cells_in_repeat_1": 10385,
-          "removed_cells_here": 10385,
-          "cells_both_called_unsupported": 10385,
+          "removed_cells_in_repeat_1": 10379,
+          "removed_cells_here": 10379,
+          "cells_both_called_unsupported": 10379,
           "jaccard": 1.0,
           "cells_whose_verdict_flipped": 0
         },
         {
           "repeat": 21,
-          "removed_cells_in_repeat_1": 10385,
-          "removed_cells_here": 10385,
-          "cells_both_called_unsupported": 10385,
+          "removed_cells_in_repeat_1": 10379,
+          "removed_cells_here": 10379,
+          "cells_both_called_unsupported": 10379,
           "jaccard": 1.0,
           "cells_whose_verdict_flipped": 0
         },
         {
           "repeat": 22,
-          "removed_cells_in_repeat_1": 10385,
-          "removed_cells_here": 10385,
-          "cells_both_called_unsupported": 10385,
+          "removed_cells_in_repeat_1": 10379,
+          "removed_cells_here": 10379,
+          "cells_both_called_unsupported": 10379,
           "jaccard": 1.0,
           "cells_whose_verdict_flipped": 0
         },
         {
           "repeat": 23,
-          "removed_cells_in_repeat_1": 10385,
-          "removed_cells_here": 10385,
-          "cells_both_called_unsupported": 10385,
+          "removed_cells_in_repeat_1": 10379,
+          "removed_cells_here": 10379,
+          "cells_both_called_unsupported": 10379,
           "jaccard": 1.0,
           "cells_whose_verdict_flipped": 0
         },
         {
           "repeat": 24,
-          "removed_cells_in_repeat_1": 10385,
-          "removed_cells_here": 10385,
-          "cells_both_called_unsupported": 10385,
+          "removed_cells_in_repeat_1": 10379,
+          "removed_cells_here": 10379,
+          "cells_both_called_unsupported": 10379,
           "jaccard": 1.0,
           "cells_whose_verdict_flipped": 0
         }
@@ -1945,123 +1945,123 @@
       "where_the_movers_sit": [
         {
           "vertices_within_10pc_of_the_limit": 1582,
-          "as_fraction_of_all_vertices": 0.02000733517977514,
-          "removed_vertices": 15866
+          "as_fraction_of_all_vertices": 0.020010372000657736,
+          "removed_vertices": 15853
         },
         {
           "vertices_within_10pc_of_the_limit": 1582,
-          "as_fraction_of_all_vertices": 0.02000733517977514,
-          "removed_vertices": 15866
+          "as_fraction_of_all_vertices": 0.020010372000657736,
+          "removed_vertices": 15853
         },
         {
           "vertices_within_10pc_of_the_limit": 1582,
-          "as_fraction_of_all_vertices": 0.02000733517977514,
-          "removed_vertices": 15866
+          "as_fraction_of_all_vertices": 0.020010372000657736,
+          "removed_vertices": 15853
         },
         {
           "vertices_within_10pc_of_the_limit": 1582,
-          "as_fraction_of_all_vertices": 0.02000733517977514,
-          "removed_vertices": 15866
+          "as_fraction_of_all_vertices": 0.020010372000657736,
+          "removed_vertices": 15853
         },
         {
           "vertices_within_10pc_of_the_limit": 1582,
-          "as_fraction_of_all_vertices": 0.02000733517977514,
-          "removed_vertices": 15866
+          "as_fraction_of_all_vertices": 0.020010372000657736,
+          "removed_vertices": 15853
         },
         {
           "vertices_within_10pc_of_the_limit": 1582,
-          "as_fraction_of_all_vertices": 0.02000733517977514,
-          "removed_vertices": 15866
+          "as_fraction_of_all_vertices": 0.020010372000657736,
+          "removed_vertices": 15853
         },
         {
           "vertices_within_10pc_of_the_limit": 1582,
-          "as_fraction_of_all_vertices": 0.02000733517977514,
-          "removed_vertices": 15866
+          "as_fraction_of_all_vertices": 0.020010372000657736,
+          "removed_vertices": 15853
         },
         {
           "vertices_within_10pc_of_the_limit": 1582,
-          "as_fraction_of_all_vertices": 0.02000733517977514,
-          "removed_vertices": 15866
+          "as_fraction_of_all_vertices": 0.020010372000657736,
+          "removed_vertices": 15853
         },
         {
           "vertices_within_10pc_of_the_limit": 1582,
-          "as_fraction_of_all_vertices": 0.02000733517977514,
-          "removed_vertices": 15866
+          "as_fraction_of_all_vertices": 0.020010372000657736,
+          "removed_vertices": 15853
         },
         {
           "vertices_within_10pc_of_the_limit": 1582,
-          "as_fraction_of_all_vertices": 0.02000733517977514,
-          "removed_vertices": 15866
+          "as_fraction_of_all_vertices": 0.020010372000657736,
+          "removed_vertices": 15853
         },
         {
           "vertices_within_10pc_of_the_limit": 1582,
-          "as_fraction_of_all_vertices": 0.02000733517977514,
-          "removed_vertices": 15866
+          "as_fraction_of_all_vertices": 0.020010372000657736,
+          "removed_vertices": 15853
         },
         {
           "vertices_within_10pc_of_the_limit": 1582,
-          "as_fraction_of_all_vertices": 0.02000733517977514,
-          "removed_vertices": 15866
+          "as_fraction_of_all_vertices": 0.020010372000657736,
+          "removed_vertices": 15853
         },
         {
           "vertices_within_10pc_of_the_limit": 1582,
-          "as_fraction_of_all_vertices": 0.02000733517977514,
-          "removed_vertices": 15866
+          "as_fraction_of_all_vertices": 0.020010372000657736,
+          "removed_vertices": 15853
         },
         {
           "vertices_within_10pc_of_the_limit": 1582,
-          "as_fraction_of_all_vertices": 0.02000733517977514,
-          "removed_vertices": 15866
+          "as_fraction_of_all_vertices": 0.020010372000657736,
+          "removed_vertices": 15853
         },
         {
           "vertices_within_10pc_of_the_limit": 1582,
-          "as_fraction_of_all_vertices": 0.02000733517977514,
-          "removed_vertices": 15866
+          "as_fraction_of_all_vertices": 0.020010372000657736,
+          "removed_vertices": 15853
         },
         {
           "vertices_within_10pc_of_the_limit": 1582,
-          "as_fraction_of_all_vertices": 0.02000733517977514,
-          "removed_vertices": 15866
+          "as_fraction_of_all_vertices": 0.020010372000657736,
+          "removed_vertices": 15853
         },
         {
           "vertices_within_10pc_of_the_limit": 1582,
-          "as_fraction_of_all_vertices": 0.02000733517977514,
-          "removed_vertices": 15866
+          "as_fraction_of_all_vertices": 0.020010372000657736,
+          "removed_vertices": 15853
         },
         {
           "vertices_within_10pc_of_the_limit": 1582,
-          "as_fraction_of_all_vertices": 0.02000733517977514,
-          "removed_vertices": 15866
+          "as_fraction_of_all_vertices": 0.020010372000657736,
+          "removed_vertices": 15853
         },
         {
           "vertices_within_10pc_of_the_limit": 1582,
-          "as_fraction_of_all_vertices": 0.02000733517977514,
-          "removed_vertices": 15866
+          "as_fraction_of_all_vertices": 0.020010372000657736,
+          "removed_vertices": 15853
         },
         {
           "vertices_within_10pc_of_the_limit": 1582,
-          "as_fraction_of_all_vertices": 0.02000733517977514,
-          "removed_vertices": 15866
+          "as_fraction_of_all_vertices": 0.020010372000657736,
+          "removed_vertices": 15853
         },
         {
           "vertices_within_10pc_of_the_limit": 1582,
-          "as_fraction_of_all_vertices": 0.02000733517977514,
-          "removed_vertices": 15866
+          "as_fraction_of_all_vertices": 0.020010372000657736,
+          "removed_vertices": 15853
         },
         {
           "vertices_within_10pc_of_the_limit": 1582,
-          "as_fraction_of_all_vertices": 0.02000733517977514,
-          "removed_vertices": 15866
+          "as_fraction_of_all_vertices": 0.020010372000657736,
+          "removed_vertices": 15853
         },
         {
           "vertices_within_10pc_of_the_limit": 1582,
-          "as_fraction_of_all_vertices": 0.02000733517977514,
-          "removed_vertices": 15866
+          "as_fraction_of_all_vertices": 0.020010372000657736,
+          "removed_vertices": 15853
         },
         {
           "vertices_within_10pc_of_the_limit": 1582,
-          "as_fraction_of_all_vertices": 0.02000733517977514,
-          "removed_vertices": 15866
+          "as_fraction_of_all_vertices": 0.020010372000657736,
+          "removed_vertices": 15853
         }
       ],
       "the_published_downstream_figure": {
@@ -2495,29 +2495,29 @@
           "distinct_fused_clouds": 5,
           "vertices_per_invocation": [
             78548,
-            79071,
-            79057,
             78548,
-            78528
+            78578,
+            78867,
+            78872
           ],
           "phantom_cells_removed": {
             "values": [
               920.0,
+              920.0,
               919.0,
-              920.0,
-              920.0,
-              920.0
+              899.0,
+              900.0
             ],
-            "distinct": 2,
-            "spread": 1.0,
-            "relative_spread": 0.001087192868014786
+            "distinct": 4,
+            "spread": 21.0,
+            "relative_spread": 0.023036419482229047
           },
-          "what_it_shows": "2 distinct value(s) across 5 invocations, [919, 920], a spread of 1 cell(s) on a figure of about 920 -- 0.11% of it. This arm lets registration vary as well, so it does not attribute that spread to anything on its own; compare it with the fixed-cloud arm above."
+          "what_it_shows": "4 distinct value(s) across 5 invocations, [899, 900, 919, 920], a spread of 21 cell(s) on a figure of about 919 -- 2.29% of it. This arm lets registration vary as well, so it does not attribute that spread to anything on its own; compare it with the fixed-cloud arm above."
         },
-        "what_the_two_arms_together_show": "The published figure is exactly reproducible under the crop and is not exactly reproducible end to end. Holding the fused cloud fixed, all 24 repeats return 919 -- one value, despite every repeat reconstructing a different mesh. Rebuilding it, the figure moves across 2 values spanning 1 cell(s). So the residual belongs to the registration upstream, which is separately known not to be reproducible, and not to the crop or the reconstruction under it. A reader quoting the figure should quote it with that spread; a reader comparing two crop settings on one fused cloud can quote it exactly."
+        "what_the_two_arms_together_show": "The published figure is exactly reproducible under the crop and is not exactly reproducible end to end. Holding the fused cloud fixed, all 24 repeats return 919 -- one value, despite every repeat reconstructing a different mesh. Rebuilding it, the figure moves across 4 values spanning 21 cell(s). So the residual belongs to the registration upstream, which is separately known not to be reproducible, and not to the crop or the reconstruction under it. A reader quoting the figure should quote it with that spread; a reader comparing two crop settings on one fused cloud can quote it exactly."
       },
       "what_a_user_may_rely_on": "The per-cell unsupported mask, not only the aggregate. Every repeat agreed on every cell -- Jaccard 1.0, no cell changed its verdict -- so the answer to 'which parts of my mesh are unsupported' is reproducible on this input even though the reconstruction it is computed from is not.",
-      "whether_that_is_benign": "Yes, and by a measured margin rather than by luck. Around 1582 vertices per repeat sit within 10% of the cut, which is where a sharp threshold on a continuous quantity is vulnerable, and none of them crossed. Over 23 pairs the largest distance any vertex moved was 4.77e-06 m against a 0.02 m cut. The margin is quoted from the worst displacement known anywhere rather than from that, because the statistic has a tail an earlier four-repeat run could not see: on the worst value on record the decision clears the cut by 23x, which is the number to re-check on another scan. Not this verdict, and not the typical case.",
+      "whether_that_is_benign": "Yes, and by a measured margin rather than by luck. Around 1582 vertices per repeat sit within 10% of the cut, which is where a sharp threshold on a continuous quantity is vulnerable, and none of them crossed. Over 23 pairs the largest distance any vertex moved was 4.05e-06 m against a 0.02 m cut. The margin is quoted from the worst displacement known anywhere rather than from that, because the statistic has a tail an earlier four-repeat run could not see: on the worst value on record the decision clears the cut by 23x, which is the number to re-check on another scan. Not this verdict, and not the typical case.",
       "what_this_does_not_establish": "Nothing about the cause inside Poisson, which #1024 covers, and nothing about whether the crop rule is the right rule. The figures are not comparable to the record's published values: this harness mirrors the reconstruct-and-crop stage rather than running the full six-stage workflow, and its fused cloud is its own.",
       "reproducibility": {
         "command": "npa/.venv/bin/python docs/evidence/open3d/harness/crop_decision_stability.py",
@@ -2532,27 +2532,28 @@
   },
   "does_the_tail_reproduce_here": {
     "pairs_compared_here": 46,
-    "worst_displacement_here_m": 1.0013580322265625e-05,
+    "worst_displacement_here_m": 7.3909759521484375e-06,
     "the_event_being_looked_for_m": 0.002187,
-    "how_many_times_larger_that_event_is": 218.40340114285715,
+    "how_many_times_larger_that_event_is": 295.9013821935484,
     "did_it_recur": false,
     "upper_bound_on_its_per_pair_rate": 0.06304930167405454,
     "how_that_bound_was_computed": "Zero occurrences in 46 pairs. One-sided 95% upper bound on a per-pair rate is 1 - 0.05 ** (1 / n), which assumes the pairs are independent draws -- they share a fused cloud within a case, so treat it as indicative rather than exact.",
-    "what_this_does_and_does_not_settle": "The distribution here is tight: the worst of 46 pairs is 1e-05 m and the event looked for is 218x larger than that, so whatever produced it is rare rather than routine. It does not settle that it cannot happen, and a bound is not an absence -- it was observed once under this same rule. The published margin therefore stays the conservative one. Raising repeats further would tighten this bound; it would not change which number the safety claim should quote."
+    "what_this_does_and_does_not_settle": "The distribution here is tight: the worst of 46 pairs is 7.39e-06 m and the event looked for is 296x larger than that, so whatever produced it is rare rather than routine. It does not settle that it cannot happen, and a bound is not an absence -- it was observed once under this same rule. The published margin therefore stays the conservative one. Raising repeats further would tighten this bound; it would not change which number the safety claim should quote."
   },
   "does_the_margin_survive_a_denser_capture": {
     "why_this_is_asked": "The first case is a sparse fused cloud, and a margin measured there is worth nothing if the wobble grows with the geometry. The denser case exists to find out, because that is the first thing a reader with a real capture would ask.",
+    "both_ratios_are": "voxel_0.02 divided by voxel_0.05, the denser over the sparser",
     "vertices_per_case": {
       "voxel_0.05": 18413.0,
-      "voxel_0.02": 79071.0
+      "voxel_0.02": 79059.0
     },
     "worst_displacement_per_case_m": {
-      "voxel_0.05": 1.0013580322265625e-05,
-      "voxel_0.02": 4.76837158203125e-06
+      "voxel_0.05": 7.3909759521484375e-06,
+      "voxel_0.02": 4.0531158447265625e-06
     },
-    "displacement_grew_by_factor": 2.1,
-    "vertices_grew_by_factor": 4.294302938141531,
-    "what_that_establishes": "The displacement is a fixed-magnitude floating-point artefact of the reconstruction, not something that scales with the cloud: a 4.3x denser mesh moved its vertices 2.10x further. So the margin is set by the cut, which a caller chooses, rather than by the capture, which they do not. A reader can compute their own: voxel * support_distance_factor over about 1e-05 m."
+    "vertices_denser_over_sparser": 4.293651224678216,
+    "displacement_denser_over_sparser": 0.5483870967741935,
+    "what_that_establishes": "A 4.3x denser mesh moved its vertices 1.82x less far. The displacement does not track the capture, so it is a fixed-magnitude artefact of the reconstruction rather than something that scales with the cloud. The margin is therefore set by the cut, which a caller chooses, and not by the capture, which they do not. A reader can compute their own margin: voxel * support_distance_factor over about 7e-06 m."
   },
   "why_cells_and_not_vertices": "Poisson returns a different vertex set each run, so no vertex can be followed between repeats and 'this vertex changed its mind' is not a question that can be asked. A consumer does not ask it either: it asks whether a region of space is occupied. Cells at the scene voxel are that question, and are the form the published occupancy consumer works in.",
   "reproducibility": {
@@ -2561,7 +2562,7 @@
   },
   "provenance": {
     "harness": "harness/crop_decision_stability.py",
-    "harness_sha256": "b9b91c7fa939ac21a4f368685383d90ebf0444485c50e45f3d57cbd4d467e19c",
+    "harness_sha256": "4222a9baaf9e4727e7362a977f0c6ecfe5c7655cca2bf9bc3069aebe53f85893",
     "path_is_relative_to": "this evidence directory"
   }
 }
