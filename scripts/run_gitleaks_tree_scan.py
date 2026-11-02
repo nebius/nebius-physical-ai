@@ -148,6 +148,10 @@ _ARCHIVE_PREFIX_BYTES = 512
 _ENCODED_ARCHIVE_MAX_CANDIDATES = 4096
 _ENCODED_ARCHIVE_MAX_BYTES = 16 * 1024 * 1024
 _ENCODED_ARCHIVE_PREFIX_BYTES = 8 * 1024
+_ARCHIVE_SIGNATURE_OVERLAP_BYTES = max(
+    _ENCODED_ARCHIVE_PREFIX_BYTES,
+    _PROBE_DECODE_CHUNK_BYTES,
+)
 _EMBEDDED_ARCHIVE_PROBE_CHUNK_BYTES = 16
 _MAX_EMBEDDED_TAR_CHECKSUM_CANDIDATES = 100_000
 _IMMEDIATE_EMBEDDED_ARCHIVE_SIGNATURES = (
@@ -175,6 +179,43 @@ _TAR_NUL_TERMINATED_CHECKSUM_FIELD = re.compile(
     rb"(?=[+\-0-7_oO\x09-\x0d\x1c-\x20]{0,6}[0-7])"
 )
 _TAR_BASE256_CHECKSUM_MARKER = re.compile(rb"[\x80\xff]")
+_ZLIB_COMPRESSION_METHOD_MARKER = re.compile(rb"[\x08\x18\x28\x38\x48\x58\x68\x78]")
+_PINNED_ZLIB_HEADERS = frozenset(
+    {
+        0x081D,
+        0x085B,
+        0x0899,
+        0x08D7,
+        0x1819,
+        0x1857,
+        0x1895,
+        0x18D3,
+        0x2815,
+        0x2853,
+        0x2891,
+        0x28CF,
+        0x3811,
+        0x384F,
+        0x388D,
+        0x38CB,
+        0x480D,
+        0x484B,
+        0x4889,
+        0x48C7,
+        0x5809,
+        0x5847,
+        0x5885,
+        0x58C3,
+        0x6805,
+        0x6843,
+        0x6881,
+        0x68DE,
+        0x7801,
+        0x785E,
+        0x789C,
+        0x78DA,
+    }
+)
 _TAR_STRUCTURAL_TYPES = frozenset(tarfile.SUPPORTED_TYPES) | {
     tarfile.SOLARIS_XHDTYPE,
     tarfile.XGLTYPE,
@@ -318,7 +359,7 @@ class _BoundedArchiveStream:
         window = self._archive_overlap + content
         if _contains_non_tar_archive_signature(window):
             raise _ScanError("Nested archive bytes cannot be scanned")
-        self._archive_overlap = window[-_ENCODED_ARCHIVE_PREFIX_BYTES:]
+        self._archive_overlap = window[-_ARCHIVE_SIGNATURE_OVERLAP_BYTES:]
         if self._writer is not None:
             self._writer.append(content)
         return content
@@ -1015,9 +1056,40 @@ def _archive_kind(prefix: bytes) -> str | None:
         return "zstd"
     if prefix.startswith((b"\x04\x22\x4d\x18", b"\x02\x21\x4c\x18")):
         return "lz4"
+    if _zlib_candidate_requires_rejection(prefix, 0):
+        return "zlib"
     if _tar_header_checksum_valid(prefix):
         return "tar"
     return None
+
+
+def _zlib_header_plausible(content: bytes | mmap.mmap, offset: int) -> bool:
+    """Recognize the exact RFC 1950 headers used by the pinned archive stack."""
+    if offset < 0 or offset + 2 > len(content):
+        return False
+    header = (content[offset] << 8) | content[offset + 1]
+    return header in _PINNED_ZLIB_HEADERS
+
+
+def _zlib_candidate_requires_rejection(
+    content: bytes | mmap.mmap,
+    offset: int,
+) -> bool:
+    """Reject a decodable or bounded-but-ambiguous RFC 1950 stream candidate."""
+    if not _zlib_header_plausible(content, offset):
+        return False
+    candidate = bytes(content[offset : offset + _PROBE_DECODE_CHUNK_BYTES])
+    decoder = zlib.decompressobj()
+    try:
+        decoded = decoder.decompress(candidate, max_length=_PROBE_STREAM_MAX_BYTES + 1)
+    except zlib.error:
+        return False
+    return (
+        decoder.eof
+        or bool(decoder.unconsumed_tail)
+        or len(decoded) > _PROBE_STREAM_MAX_BYTES
+        or len(candidate) == _PROBE_DECODE_CHUNK_BYTES
+    )
 
 
 def _contains_archive_signature(
@@ -1034,13 +1106,24 @@ def _contains_archive_signature(
 
 def _contains_non_tar_archive_signature(content: bytes) -> bool:
     """Detect nested container signatures that are not TAR's own header marker."""
-    return (
+    if (
         any(
             signature in content for signature in _IMMEDIATE_EMBEDDED_ARCHIVE_SIGNATURES
         )
         or b"\x1f\x8b\x08" in content
         or re.search(rb"BZh[1-9]", content) is not None
-    )
+    ):
+        return True
+    candidates = 0
+    for match in _ZLIB_COMPRESSION_METHOD_MARKER.finditer(content):
+        if not _zlib_header_plausible(content, match.start()):
+            continue
+        candidates += 1
+        if candidates > _ENCODED_ARCHIVE_MAX_CANDIDATES:
+            return True
+        if _zlib_candidate_requires_rejection(content, match.start()):
+            return True
+    return False
 
 
 def _contains_tar_header(
@@ -1090,22 +1173,33 @@ def _contains_tar_header(
 def _embedded_compressed_streams(
     content: mmap.mmap,
 ) -> Iterator[tuple[str, int]]:
-    """Yield plausible gzip and bzip2 stream offsets."""
+    """Yield plausible gzip, bzip2, and RFC 1950 zlib stream offsets."""
     for kind, signature in (("gzip", b"\x1f\x8b\x08"), ("bzip2", b"BZh")):
         position = content.find(signature)
         while position >= 0:
             if kind != "bzip2" or content[position + 3 : position + 4] in b"123456789":
                 yield kind, position
             position = content.find(signature, position + 1)
+    for match in _ZLIB_COMPRESSION_METHOD_MARKER.finditer(content):
+        if _zlib_header_plausible(content, match.start()):
+            yield "zlib", match.start()
 
 
 def _embedded_stream_requires_rejection(path: Path, kind: str, offset: int) -> bool:
     """Reject output, complete streams, and bounded-but-ambiguous candidates."""
-    decoder = (
-        zlib.decompressobj(16 + zlib.MAX_WBITS)
-        if kind == "gzip"
-        else bz2.BZ2Decompressor()
-    )
+    if kind == "zlib":
+        with path.open("rb") as stream:
+            stream.seek(offset)
+            return _zlib_candidate_requires_rejection(
+                stream.read(_PROBE_DECODE_CHUNK_BYTES),
+                0,
+            )
+    if kind == "gzip":
+        decoder = zlib.decompressobj(16 + zlib.MAX_WBITS)
+    elif kind == "bzip2":
+        decoder = bz2.BZ2Decompressor()
+    else:  # pragma: no cover - yielded kinds are closed above.
+        raise _ScanError("Unknown embedded compression kind")
     with path.open("rb") as stream:
         stream.seek(offset)
         content = stream.read(_PROBE_DECODE_CHUNK_BYTES)
@@ -1153,6 +1247,26 @@ def _has_archive_suffix(name: str) -> bool:
     )
 
 
+def _has_nonterminal_archive_token(name: str) -> bool:
+    """Reject aliases that the pinned archive stack may redispatch by substring."""
+    lowered = name.lower()
+    suffixes = _ARCHIVE_SUFFIXES | _REJECTED_ARCHIVE_SUFFIXES
+    for suffix in suffixes:
+        offset = lowered.find(suffix)
+        while offset >= 0:
+            end = offset + len(suffix)
+            if end != len(lowered):
+                compound_tar_suffix = suffix == ".tar" and any(
+                    offset == len(lowered) - len(compound)
+                    for compound in _TAR_SUFFIXES
+                    if lowered.endswith(compound)
+                )
+                if not compound_tar_suffix:
+                    return True
+            offset = lowered.find(suffix, offset + 1)
+    return False
+
+
 def _inspect_archive_stream(
     stream: BinaryIO,
     budget: _ArchiveBudget,
@@ -1177,7 +1291,7 @@ def _inspect_archive_stream(
                 window,
                 budget,
             )
-            overlap = window[-_ENCODED_ARCHIVE_PREFIX_BYTES:]
+            overlap = window[-_ARCHIVE_SIGNATURE_OVERLAP_BYTES:]
         if member_writer is not None:
             member_writer.finish()
     except Exception:
@@ -1196,6 +1310,7 @@ def _reject_nested_archive(
     """Reject nested containers whose complete policy traversal is ambiguous."""
     if (
         _has_archive_suffix(member)
+        or _has_nonterminal_archive_token(member)
         or _archive_kind(prefix) is not None
         or contains_archive
     ):
@@ -1711,6 +1826,8 @@ def _validate_archive_file(
     """Fail closed on archive names or bytes Gitleaks cannot traverse completely."""
     archive_budget = _ArchiveBudget() if budget is None else budget
     lowered = path.name.lower()
+    if _has_nonterminal_archive_token(path.name):
+        raise _ScanError("Archive name contains a noncanonical extension alias")
     if any(lowered.endswith(suffix) for suffix in _REJECTED_ARCHIVE_SUFFIXES):
         raise _ScanError("Archive uses a noncanonical or unsupported extension")
     with path.open("rb") as stream:

@@ -6,6 +6,7 @@ from collections.abc import Callable
 import base64
 import bz2
 import gzip
+import hashlib
 import importlib.util
 import io
 import json
@@ -1249,10 +1250,16 @@ def _write_encoded_archive_carrier(
     if carrier not in {
         "encoded_zip",
         "double_encoded_zip",
+        "encoded_zlib",
         "hex_zip",
         "percent_zip",
     }:
         return False
+    if carrier == "encoded_zlib":
+        (repo / "credential.txt").write_bytes(
+            base64.b64encode(zlib.compress(assignment.encode()))
+        )
+        return True
     archive = _zip_member("credential.txt", assignment.encode())
     if carrier == "encoded_zip":
         content = base64.b64encode(archive)
@@ -1276,8 +1283,18 @@ def _write_composed_archive_carrier(
         "zip_encoded_zip",
         "gzip_encoded_zip",
         "zip_prefixed_gzip",
+        "zip_substring_alias",
+        "zip_zlib",
     }:
         return False
+    if carrier == "zip_substring_alias":
+        (repo / "credential.zip").write_bytes(_zip_member("carrier.zip.p12", b""))
+        return True
+    if carrier == "zip_zlib":
+        (repo / "credential.zip").write_bytes(
+            _zip_member("nested.bin", zlib.compress(assignment.encode()))
+        )
+        return True
     nested = base64.b64encode(_zip_member("credential.txt", assignment.encode()))
     if carrier == "zip_encoded_zip":
         (repo / "credential.zip").write_bytes(_zip_member("carrier.txt", nested))
@@ -1297,6 +1314,9 @@ def _write_composed_archive_carrier(
 
 def _write_archive_carrier(repo: Path, carrier: str, assignment: str) -> bool:
     """Write one archive carrier and report whether the name was handled."""
+    if carrier == "zlib_disguised":
+        (repo / "credential.bin").write_bytes(zlib.compress(assignment.encode()))
+        return True
     if carrier == "deep_zip":
         (repo / "credential.zip").write_bytes(_nested_zip(assignment.encode(), 4))
         return True
@@ -1313,12 +1333,15 @@ def _write_archive_carrier(repo: Path, carrier: str, assignment: str) -> bool:
         with zipfile.ZipFile(repo / "credential.zip", "w") as archive:
             archive.writestr("metadata/", assignment.encode())
         return True
-    if carrier == "zip_comment":
+    if carrier in {"zip_comment", "zip_comment_zlib"}:
         compressor = zlib.compressobj(wbits=31)
+        comment = (
+            zlib.compress(assignment.encode())
+            if carrier == "zip_comment_zlib"
+            else compressor.compress(assignment.encode()) + compressor.flush()
+        )
         with zipfile.ZipFile(repo / "credential.zip", "w") as archive:
-            archive.comment = (
-                compressor.compress(assignment.encode()) + compressor.flush()
-            )
+            archive.comment = comment
             archive.writestr("safe.txt", b"safe\n")
         return True
     if carrier == "zip_utf16":
@@ -1427,6 +1450,31 @@ def test_runner_rejects_unscannable_zip_names(
     assert "archive" in output.err.lower()
 
 
+@pytest.mark.skipif(
+    shutil.which("gitleaks") is None, reason="gitleaks is not installed"
+)
+def test_runner_rejects_archive_substring_alias_for_empty_path_rule(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Reject a name the pinned archive stack may redispatch before path rules."""
+    repo = _repo(tmp_path)
+    (repo / ".gitleaks.toml").write_text(
+        "[extend]\nuseDefault = true\n",
+        encoding="utf-8",
+    )
+    (repo / "clean.txt").write_text("clean base\n", encoding="utf-8")
+    base = _commit(repo, "clean base")
+    (repo / "carrier.zip.p12").write_bytes(b"")
+    candidate = _commit(repo, "archive substring path alias")
+    scanner = shutil.which("gitleaks")
+    assert scanner is not None
+
+    assert tree_scan.main(_runner_arguments(repo, candidate, base, scanner)) == 1
+    output = capsys.readouterr()
+    assert "archive" in output.err.lower()
+
+
 def _write_text_carrier(repo: Path, carrier: str, assignment: str) -> None:
     """Write one Unicode, encoded, policy, inline, or path carrier."""
     if carrier == "utf16":
@@ -1463,16 +1511,21 @@ def _assert_carrier_failure(carrier: str, token: str, out: str, err: str) -> Non
         assert "archive" in err.lower()
     elif carrier in {
         "encoded_zip",
+        "encoded_zlib",
         "double_encoded_zip",
         "gzip_encoded_zip",
         "hex_zip",
         "percent_zip",
         "tar_trailing_gzip",
         "zip_comment",
+        "zip_comment_zlib",
         "zip_directory_path",
         "zip_directory_payload",
         "zip_encoded_zip",
         "zip_prefixed_gzip",
+        "zip_substring_alias",
+        "zip_zlib",
+        "zlib_disguised",
     }:
         assert "archive" in err.lower()
     elif carrier in {"six_encoded", "tar_gz_six_encoded", "zip_six_encoded"}:
@@ -1493,6 +1546,7 @@ def _assert_carrier_failure(carrier: str, token: str, out: str, err: str) -> Non
         "utf32",
         "zip",
         "zip_comment",
+        "zip_comment_zlib",
         "zip_directory_path",
         "zip_directory_payload",
         "zip_prefixed_gzip",
@@ -1500,9 +1554,12 @@ def _assert_carrier_failure(carrier: str, token: str, out: str, err: str) -> Non
         "zip_policy_blob",
         "deep_zip",
         "encoded_zip",
+        "encoded_zlib",
         "double_encoded_zip",
         "zip_encoded_zip",
         "gzip_encoded_zip",
+        "zip_substring_alias",
+        "zip_zlib",
         "hex_zip",
         "percent_zip",
         "encoded",
@@ -1515,6 +1572,7 @@ def _assert_carrier_failure(carrier: str, token: str, out: str, err: str) -> Non
         "path",
         "policy_blob",
         "policy_blob_utf16",
+        "zlib_disguised",
     ],
 )
 def test_runner_rejects_nonplaintext_secret_carriers(
@@ -2811,12 +2869,61 @@ def test_embedded_archive_probe_ignores_invalid_media_signatures(
         + bytes.fromhex("1f8b08b353aa0c56fba7e165")
         + b"video-middle"
         + bytes.fromhex("425a68372dfcdb7ffb6fe197")
+        + b"\x78\x9cnot-a-zlib-stream"
     )
 
     assert not tree_scan._contains_embedded_archive(carrier)
 
 
-@pytest.mark.parametrize("compress", [gzip.compress, bz2.compress])
+def test_zlib_header_recognizer_covers_pinned_archives_headers() -> None:
+    """Match the pinned mholt/archives RFC 1950 header population exactly."""
+    valid_headers = {
+        bytes.fromhex(value)
+        for value in (
+            "081d 085b 0899 08d7 1819 1857 1895 18d3 "
+            "2815 2853 2891 28cf 3811 384f 388d 38cb "
+            "480d 484b 4889 48c7 5809 5847 5885 58c3 "
+            "6805 6843 6881 68de 7801 785e 789c 78da"
+        ).split()
+    }
+    assert all(tree_scan._zlib_header_plausible(header, 0) for header in valid_headers)
+    assert not tree_scan._zlib_header_plausible(bytes.fromhex("7820"), 0)
+    assert not tree_scan._zlib_header_plausible(bytes.fromhex("789d"), 0)
+
+
+def test_zlib_probe_spans_archive_read_boundary() -> None:
+    """Retain enough overlap to validate a stream crossing a 64-KiB read."""
+    payload = b"".join(
+        hashlib.sha256(index.to_bytes(4, "big")).digest() for index in range(1536)
+    )
+    compressed = zlib.compress(payload)
+    assert 20 * 1024 < len(compressed) < tree_scan._ARCHIVE_READ_BYTES
+    content = b"x" * (tree_scan._ARCHIVE_READ_BYTES - 20 * 1024) + compressed
+
+    _, contains_archive = tree_scan._inspect_archive_stream(
+        io.BytesIO(content),
+        tree_scan._ArchiveBudget(),
+    )
+    assert contains_archive
+
+    bounded = tree_scan._BoundedArchiveStream(
+        io.BytesIO(content),
+        tree_scan._ArchiveBudget(),
+    )
+    assert bounded.read(tree_scan._ARCHIVE_READ_BYTES)
+    with pytest.raises(tree_scan._ScanError, match="Nested archive"):
+        bounded.read(tree_scan._ARCHIVE_READ_BYTES)
+
+
+def test_archive_name_alias_matches_pinned_substring_dispatch() -> None:
+    """Reject nonterminal aliases while retaining canonical compound TAR names."""
+    assert tree_scan._has_nonterminal_archive_token("carrier.zip.p12")
+    assert tree_scan._has_nonterminal_archive_token("carrier.zip.txt.gz")
+    assert not tree_scan._has_nonterminal_archive_token("carrier.zip")
+    assert not tree_scan._has_nonterminal_archive_token("carrier.tar.gz")
+
+
+@pytest.mark.parametrize("compress", [gzip.compress, bz2.compress, zlib.compress])
 def test_embedded_archive_probe_recognizes_decodable_streams(
     tmp_path: Path,
     compress: Callable[[bytes], bytes],
@@ -2873,9 +2980,11 @@ def test_embedded_archive_probe_fails_closed_at_candidate_limit(
 @pytest.mark.skipif(
     shutil.which("gitleaks") is None, reason="gitleaks is not installed"
 )
+@pytest.mark.parametrize("compress", [gzip.compress, zlib.compress])
 def test_runner_rejects_embedded_archive_in_commit_metadata(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
+    compress: Callable[[bytes], bytes],
 ) -> None:
     """Reject a compressed carrier hidden after a benign commit-message prefix."""
     repo = _repo(tmp_path)
@@ -2893,7 +3002,7 @@ def test_runner_rejects_embedded_archive_in_commit_metadata(
     binary_content = (
         content[:message_start]
         + b"benign commit prefix\n"
-        + gzip.compress(f'api_key = "{token}"\n'.encode())
+        + compress(f'api_key = "{token}"\n'.encode())
     )
     candidate = (
         subprocess.run(
