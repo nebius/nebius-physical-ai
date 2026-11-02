@@ -711,7 +711,16 @@ def run_reconstruct(
         raise Open3dError("Poisson reconstruction produced no triangles")
     density = np.asarray(densities)
     removed = 0
-    density_contribution: dict[str, Any] | None = None
+    # Measured unconditionally. `density_quantile` of 0 is schema-legal and
+    # documented -- the skill tells an operator to pass it to keep the raw Poisson
+    # surface -- and publishing the block as `null` in that case made the runtime's own
+    # validator reject the report, after the Poisson solve, both mesh writes and both
+    # support passes, and before anything durable was written. The failure message
+    # described the artifact, so the operator was pointed at an artifact bug rather
+    # than at their flag. Nothing removed is a measurement of nothing removed.
+    density_contribution: dict[str, Any] = _density_crop_contribution(
+        o3d, cloud, [], voxel, request
+    )
     if request.density_quantile > 0.0:
         threshold = float(np.quantile(density, request.density_quantile))
         mask = density < threshold
@@ -760,6 +769,11 @@ def run_reconstruct(
         "poisson_depth": request.poisson_depth,
         "density_quantile": request.density_quantile,
         "support_distance_factor": request.support_distance_factor,
+        # The length the factor above multiplies. Without it the report names a
+        # support *factor* and a support *distance* with nothing connecting them, so
+        # the distance the exclusive count was measured against could not be checked
+        # against the configuration the report claims to have run at.
+        "voxel_size": voxel,
         "input_points": len(cloud.points),
         "low_density_vertices_removed": removed,
         "density_crop_contribution": density_contribution,

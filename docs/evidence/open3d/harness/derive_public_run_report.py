@@ -220,12 +220,24 @@ ALLOWED: dict[str, dict[str, str]] = {
         "crop_justification.vertex_fraction_removed": NUM,
         "crop_justification.vertices_removed": NUM,
         "density_quantile": NUM,
+        # What the density crop contributed that the support crop would not have
+        # made. This table denies by default -- an unclassified leaf is a SystemExit --
+        # so publishing the block without listing it here would have aborted the next
+        # derivation of a public report. Failing closed, and still failing.
+        "density_crop_contribution.note": NOTE,
+        "density_crop_contribution.removed_only_by_this_crop": NUM,
+        "density_crop_contribution.support_crop_was_disabled": FLAG,
+        "density_crop_contribution.support_distance": NUM,
+        "density_crop_contribution.vertices_removed": NUM,
         "input_points": NUM,
         "low_density_vertices_removed": NUM,
         "poisson_depth": NUM,
         "schema_version": TEXT,
         "support_distance_factor": NUM,
         "unsupported_vertices_removed": NUM,
+        # The length the support factor multiplies, so the published support distance
+        # can be checked against the configuration rather than taken on trust.
+        "voxel_size": NUM,
         **_mesh("mesh"),
         **_mesh("mesh_uncropped"),
         **_support("support"),

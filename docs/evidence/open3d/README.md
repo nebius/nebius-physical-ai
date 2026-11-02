@@ -39,7 +39,7 @@ overlap with the next filter rather than a measurement that cannot see a crop. T
 readings are recorded against the obvious misreadings. The crop is strongly selective — Spearman
 −0.70 of density against distance to the cloud, and at the shipped quantile the vertices it
 removes sit 51× farther from any observed point than the ones it keeps — so this is not a filter
-trimming at random. And pushed to the 0.20 quantile it removes roughly 785 triangles and 0.34 m²
+trimming at random. And pushed to the 0.20 quantile it removes roughly 780 triangles and 0.34 m²
 of *supported* surface, about 1.9% of the delivered mesh, so raising the quantile buys a
 contribution by deleting surface the scan does support. The sweep's widest support distance loses
 about 8980 triangles the same way, which is the worst case rather than the shipped one.
@@ -50,7 +50,7 @@ found 31 figures differing in the fourth significant digit, including between it
 so the record now measures its own stability: over six repeats the vertex counts, the removal
 counts and every yes/no result are identical, while triangle counts and areas move by under half
 a percent. The one figure a test applies a threshold to sits 783 from that threshold with a
-spread of 2 — three distinct values across the six repeats, 783 through 785 — so no conclusion
+spread of 3 — 4 distinct values across the six repeats, 783 through 786 — so no conclusion
 here turns on a digit that moves. A regeneration should expect differences at that scale and
 nothing larger.
 

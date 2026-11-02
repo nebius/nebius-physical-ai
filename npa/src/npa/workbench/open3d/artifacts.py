@@ -448,6 +448,34 @@ def validate_density_crop_contribution(report: Any) -> None:
             "support cropping was disabled, so every density removal is this crop's "
             f"own, but the report credits it with {exclusive} of {removed}"
         )
+    # And the flag against the field it is derived from, which sits in the same
+    # report. The check above was one-directional: it held the counts to the flag and
+    # never held the flag to the configuration, so a report could declare
+    # `support_crop_was_disabled: false` beside `support_distance_factor: 0.0` and
+    # credit the crop with 0 of 518 -- impossible by the same construction the True
+    # branch enforces -- and validate cleanly. `validate_overlay_matches_crop` already
+    # ties the overlay to this field; this ties the flag to it.
+    factor = report.get("support_distance_factor")
+    if _finite_number(factor):
+        if disabled != (float(factor) <= 0.0):
+            raise Open3dError(
+                f"density_crop_contribution says support cropping was "
+                f"{'disabled' if disabled else 'enabled'} while the report ran at a "
+                f"support distance factor of {factor}"
+            )
+        # The distance it published is that factor times the voxel size, and a
+        # mismatch means the exclusive count was measured against a different
+        # threshold than the one the report names.
+        distance = contribution.get("support_distance")
+        voxel = report.get("voxel_size")
+        if not disabled and _finite_number(distance) and _finite_number(voxel):
+            expected = float(voxel) * float(factor)
+            if abs(float(distance) - expected) > max(1e-12, 1e-9 * abs(expected)):
+                raise Open3dError(
+                    f"density_crop_contribution measured against a support distance "
+                    f"of {distance} where the report's voxel size and factor give "
+                    f"{expected}"
+                )
     published = report.get("low_density_vertices_removed")
     if isinstance(published, int) and not isinstance(published, bool):
         if published != removed:

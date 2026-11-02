@@ -17,9 +17,15 @@ The control that makes that readable is the same pipeline with support cropping 
 where the density crop is the only filter and does change the output. Without it, "the
 density crop does nothing" could as easily mean the measurement cannot see a crop.
 
-The grid also records where the density crop stops being harmless: pushed to the 0.20
-quantile it removes nearly nine thousand triangles of *supported* surface, which is
-the opposite of what either filter is for.
+The grid also records where the density crop stops being harmless. Pushed to the 0.20
+quantile it removes supported surface -- roughly 780 triangles, about 1.9%, at the
+support distance the product ships, rising to roughly 9000 at the widest support factor
+the grid sweeps. Either way it is the opposite of what either filter is for. The figure
+depends on the support factor, and an earlier version of this paragraph quoted the
+widest row without saying so, overstating the shipped configuration by an order of
+magnitude. The figures are given to one significant figure deliberately: the solve is
+not deterministic, the exact counts move between runs, and the two precise numbers
+previously written into this file both went stale against the record below.
 
 Run inside the Open3D image:
     docker run --rm -v "$EVIDENCE_DIR:/data" --entrypoint python "$IMAGE" \
@@ -262,21 +268,33 @@ def how_stable_are_these_figures(cloud, tree) -> dict:
             "relative_spread": round((high - low) / abs(high), 6) if high else 0.0,
         }
 
-    constant = [
-        field
-        for field in (
-            "vertices_before_any_crop",
-            "density_removed_vertices",
-            "of_those_within_the_support_distance",
-            "delivered_mesh_is_identical",
-            "the_density_crop_changes_the_mesh_here",
-        )
-        if len({one[field] for one in repeats}) == 1
-    ]
+    # Every structural field, with whether it held -- not a filtered list of the ones
+    # that did. Filtering meant a figure that moved was dropped from a block named
+    # "identical in every repeat", so the record would publish a shorter list with
+    # nothing saying a fact had left it. Four of the five are asserted by name in the
+    # suite, so their disappearance would at least raise KeyError;
+    # `vertices_before_any_crop` was asserted nowhere while being published as a fixed
+    # figure at the top of this record.
+    structural = {}
+    for field in (
+        "vertices_before_any_crop",
+        "density_removed_vertices",
+        "of_those_within_the_support_distance",
+        "delivered_mesh_is_identical",
+        "the_density_crop_changes_the_mesh_here",
+    ):
+        seen = [one[field] for one in repeats]
+        structural[field] = {
+            "value": seen[0],
+            "identical": len(set(seen)) == 1,
+            "values": None if len(set(seen)) == 1 else seen,
+        }
     margin = spread("triangles_removed_at_quantile_020")
-    # The ratio is the point. A figure that wobbles by three while sitting 780 away
-    # from the only threshold anything asserts about it cannot flip that assertion,
-    # and saying so is more useful than asking a reader to trust the digits.
+    # The ratio is the point. A figure whose observed values span 2 while sitting
+    # some 780 away from the only threshold anything asserts about it cannot flip that
+    # assertion, and saying so is more useful than asking a reader to trust the digits.
+    # The span is published below as `spread`; it is not restated here, because the
+    # last two numbers written into this comment both went stale against it.
     nearest = min(abs(one) for one in margin["values"])
     return {
         "why_this_is_here": (
@@ -289,7 +307,15 @@ def how_stable_are_these_figures(cloud, tree) -> dict:
             "separate solves in one interpreter, because the variation is per-solve: "
             "repeated calls spread as widely as separate processes did"
         ),
-        "identical_in_every_repeat": {field: repeats[0][field] for field in constant},
+        "structural_results_by_repeat": structural,
+        "identical_in_every_repeat": {
+            field: entry["value"]
+            for field, entry in structural.items()
+            if entry["identical"]
+        },
+        "structural_results_that_moved": sorted(
+            field for field, entry in structural.items() if not entry["identical"]
+        ),
         "moved_between_repeats": {
             field: spread(field)
             for field in ("control_triangles_removed", "control_surface_area_removed")
@@ -352,8 +378,12 @@ def build() -> dict:
                 "Changing a default is a separate decision from reporting honestly"
             ),
             "not_a_general_result_about_every_scan": (
-                "one real scan and the pipeline's synthetic fragments, both of which "
-                "show the same complete overlap at the defaults. A capture whose "
+                "one real scan -- the upstream demo capture this harness measures, "
+                "and nothing else. An earlier version of this sentence also cited "
+                "the pipeline's synthetic fragments as showing the same complete "
+                "overlap; no artifact in this directory measures this quantity on "
+                "them, so the claim was corroboration the record did not carry, "
+                "inside the block whose job is to bound the claim. A capture whose "
                 "low-density regions sit close to observed points would behave "
                 "differently, and the published contribution would show it"
             ),
