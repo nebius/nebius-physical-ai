@@ -15,6 +15,7 @@ extra, and is not in `npa/ci/requirements.txt`.
 
 from __future__ import annotations
 
+import ast
 import json
 from pathlib import Path
 
@@ -25,6 +26,7 @@ from npa.workbench.open3d.artifacts import Open3dError, validate_support
 from npa.workbench.open3d.runner import _coverage_cost, _coverage_from_distances
 
 REPO = Path(__file__).resolve().parents[3]
+SRC = REPO / "npa" / "src" / "npa" / "workbench" / "open3d"
 RECORD = REPO / "docs" / "evidence" / "open3d" / "support-crop-coverage-guarantee.json"
 HARNESS = (
     REPO
@@ -358,6 +360,57 @@ def test_an_inconsistent_cost_block_is_rejected(what: str, mutate) -> None:
     with pytest.raises(Open3dError):
         validate_support(report, voxel_size=1.0)
     assert what
+
+
+def test_the_reconstruction_still_publishes_the_pair_the_validator_reads() -> None:
+    """The join between the writer and the validator, checked where Open3D is absent.
+
+    `validate_support` reads the coverage-cost pair only when a report carries it, so
+    that records written before it existed still validate. A reviewer pointed out what
+    that leaves open: remove the emission from `run_reconstruct` and nothing goes red,
+    because the validator then skips the invariant by design and no test here feeds it a
+    report the runner actually produced.
+
+    The functional smoke now requires the pair on a real report, which is the stronger
+    check -- it runs the pipeline. But that eval needs Open3D, so it runs in the
+    container and on no CI shard. This reads the writer's own returned keys out of the
+    source instead, which is weaker about the values and runs everywhere.
+    """
+
+    tree = ast.parse((SRC / "runner.py").read_text())
+    writer = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef) and node.name == "run_reconstruct"
+    )
+    emitted = {
+        key.value
+        for node in ast.walk(writer)
+        if isinstance(node, ast.Dict)
+        for key in node.keys
+        if isinstance(key, ast.Constant) and isinstance(key.value, str)
+    }
+    for block in ("coverage_before_crop", "coverage_cost_of_crop", "coverage"):
+        assert block in emitted, (
+            f"run_reconstruct no longer emits {block}, and validate_support skips the "
+            "coverage-cost invariant on a report that lacks the pair, so the whole "
+            "check would be switched off without a failing test"
+        )
+
+
+def test_the_functional_smoke_requires_the_pair_on_a_real_report() -> None:
+    """And that requirement must stay in the eval that runs the real pipeline.
+
+    Stated as its own test because the static check above cannot see values. If this
+    assertion is deleted, the only thing proving a real report satisfies the invariant
+    is gone, and nothing on a CI shard can notice.
+    """
+
+    smoke = (SRC / ".." / ".." / "smoke" / "test_open3d_functional.py").resolve()
+    text = smoke.read_text()
+    assert "coverage_cost_of_crop" in text
+    assert "coverage_before_crop" in text
+    assert "validate_support" in text
 
 
 def test_the_real_data_control_reports_a_measured_zero() -> None:
