@@ -118,8 +118,18 @@ def _assert_support_crop_kept_the_observations(report) -> None:
     bit-for-bit because the generator is seeded; floating-point sums do not. On
     the upstream demo scans two builds of this image agreed to 4e-06 relative on
     surface area and about 1e-08 on pose, which is the contract a consumer can
-    actually rely on. Do not tighten these to byte equality without pinning the
-    thread count, and do not loosen them to hide a real regression.
+    actually rely on.
+
+    Do not tighten these to byte equality: pinning the thread count will not get
+    you there. Measured on the Armadillo 300k-sample construction rather than on
+    this scene, at a fixed count inside one process, surface area takes four
+    distinct values in four repeats, and `set_max_threads(1)` does not settle it
+    -- it came out worse in some runs and better in others. There the points and
+    the estimated normals entering reconstruction are byte-identical across the
+    repeats, both hashed, which leaves the Poisson reconstruction and the
+    density crop after it: neither of the two knobs named above reaches them.
+    See `docs/evidence/open3d/declared-reproducibility-causes.json`. And do not
+    loosen them to hide a real regression.
     """
 
     before = report["support_before_crop"]["unsupported_area_fraction"]
