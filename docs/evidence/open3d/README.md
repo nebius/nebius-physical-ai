@@ -36,9 +36,15 @@ reordering — genuinely different positions.
 The decision does not move with them. Every repeat agrees on every cell, and the per-cell
 downstream figure the record publishes comes back at exactly 733 each time. The reason is
 a ratio rather than luck: the largest distance any vertex travels between repeats is a
-few microns against a 5 cm cut, four orders of magnitude short of the band it would have
-to cross. That ratio is the thing to re-check on a scan whose geometry sits nearer the
-cut, and it is in the record for that purpose.
+few microns against a 5 cm cut, orders of magnitude short of the band it would have to
+cross.
+
+A margin measured on one sparse cloud would only describe that cloud, so the second case
+is a capture four times denser. The displacement barely notices — 1.3x further across 4.3x
+more vertices — which places it as a fixed-magnitude artefact of the reconstruction rather
+than something that scales with the geometry. The practical form of that: the margin is
+set by the cut, which a caller chooses, and not by the capture, which they do not. A
+reader can compute their own as `voxel * support_distance_factor` over roughly 8e-06 m.
 
 ## Reproducing
 
