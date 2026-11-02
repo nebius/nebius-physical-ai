@@ -406,6 +406,165 @@ def _assert_uneven_coverage_is_not_called_fabrication(o3d) -> None:
     assert "separate question this cannot answer" in uneven["note"]
 
 
+def _assert_the_optimization_reports_what_it_did(o3d, graph: dict) -> None:
+    """The optimizer does nothing here, so prove the measure can see when it does.
+
+    These fragments are mutually consistent, so `global_optimization` finds the
+    odometry chain already optimal and corrects exactly 0.0. Asserting that alone
+    would pass just as well if the correction were never computed, which is how the
+    step went unchecked in the first place. So the second half induces an error the
+    optimizer has to fix and reads the same figure back.
+    """
+
+    import numpy as np
+
+    optimization = graph["optimization"]
+    assert optimization["edges_submitted"] == len(graph["edges"]), optimization
+    assert optimization["edges_pruned"] == 0, (
+        f"nothing should be prunable on three consistent fragments: {optimization}"
+    )
+    # Not `== 0.0`. This file's own docstring warns that `global_optimization`
+    # reduces in thread-scheduling order and must not be held to byte equality
+    # without a pinned thread count, and the nearby recorded corrections are 1.8e-07
+    # to 4.7e-06 -- the same order as the convergence threshold, so the margin on
+    # either side of zero is unknown. A zero here is also a legitimate answer rather
+    # than a suspicious one: these fragments agree, so the chain already is the
+    # optimum and the correct correction is nothing. What this can assert is that
+    # whatever the optimizer did is negligible against the scene it did it in. The
+    # proof that a real correction would be *seen* is the induced control below, not
+    # a floor on this draw.
+    assert optimization["max_point_displacement_as_share_of_extent"] <= 1e-5, (
+        "these fragments agree, so the optimizer should have nothing worth "
+        f"distributing; this moved the cloud a readable fraction of the scene: "
+        f"{optimization}"
+    )
+
+    registration = o3d.pipelines.registration
+    induced = registration.PoseGraph()
+    induced.nodes.append(registration.PoseGraphNode(np.identity(4)))
+    wrong = np.identity(4)
+    wrong[0, 3] = 0.5
+    induced.nodes.append(registration.PoseGraphNode(wrong))
+    induced.edges.append(
+        registration.PoseGraphEdge(
+            0, 1, np.identity(4), np.identity(6), uncertain=False
+        )
+    )
+    before = [np.asarray(node.pose).copy() for node in induced.nodes]
+    registration.global_optimization(
+        induced,
+        registration.GlobalOptimizationLevenbergMarquardt(),
+        registration.GlobalOptimizationConvergenceCriteria(),
+        registration.GlobalOptimizationOption(
+            max_correspondence_distance=VOXEL_SIZE * 1.5,
+            edge_prune_threshold=0.25,
+            reference_node=0,
+        ),
+    )
+    corrections = [
+        float(np.abs(np.asarray(node.pose) - was).max())
+        for node, was in zip(induced.nodes, before, strict=True)
+    ]
+    assert max(corrections) == pytest_approx(0.5), (
+        "the optimizer did not correct a node placed 0.5 off against an edge "
+        f"asserting identity, so a zero correction above means nothing: {corrections}"
+    )
+    assert corrections[0] == 0.0, (
+        f"node 0 is the anchor and must not move: {corrections}"
+    )
+
+
+def _assert_the_product_reports_a_prune_it_performed(o3d, root: Path) -> None:
+    """Drive `run_multiway` on a loop where the optimizer has something to reject.
+
+    The assertions above are not enough on their own, and finding that out is the
+    whole point of this change. On three consistent fragments the correction is 0.0
+    and nothing is prunable, so reading the poses *after* optimization instead of
+    before, or publishing the surviving edge count as the submitted one, produces
+    identical output. Both mutations survive every check that uses only that input --
+    the same shape as the defect being fixed.
+
+    Four 140-degree views of a cylindrical room at 80-degree spacing give a graph
+    with six edges, of which the optimizer prunes one and corrects a pose by a small
+    but nonzero amount. That makes both figures observable.
+    """
+
+    import numpy as np
+
+    rng = np.random.default_rng(0)
+    paths: dict[str, str] = {}
+    for index, start in enumerate((0.0, 80.0, 160.0, 240.0)):
+        angles = np.radians(rng.uniform(start, start + 140.0, 9000))
+        points = np.column_stack(
+            [2.0 * np.cos(angles), 2.0 * np.sin(angles), rng.uniform(-1.0, 1.0, 9000)]
+        )
+        points = points + rng.normal(0.0, 0.004, points.shape)
+        cloud = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(points))
+        path = root / f"loop_{index}.ply"
+        if not o3d.io.write_point_cloud(str(path), cloud.voxel_down_sample(VOXEL_SIZE)):
+            raise AssertionError(f"could not write {path}")
+        paths[f"view_{index}"] = str(path)
+
+    manifest = RegistrationManifest(
+        fragments=[
+            {
+                "id": name,
+                "uri": paths[name],
+                "sha256": "0" * 64,
+                "bytes": Path(paths[name]).stat().st_size,
+            }
+            for name in sorted(paths)
+        ],
+        voxel_size=VOXEL_SIZE,
+    ).model_dump(mode="json")
+    output = root / "multiway_loop"
+    output.mkdir()
+    graph = run_multiway({"manifest": manifest, "fragments": paths}, output, RUN_ID)[
+        "pose_graph"
+    ]
+    validate_pose_graph(graph, fragment_count=4)
+    optimization = graph["optimization"]
+
+    assert optimization["edges_submitted"] == 6, optimization
+    assert optimization["edges_pruned"] >= 1, (
+        "the loop no longer produces a pruned edge, so nothing here can tell the "
+        "submitted edge count from the surviving one: " + repr(optimization)
+    )
+    assert optimization["edges_that_survived_pruning"] == len(graph["edges"]), (
+        optimization
+    )
+    # Deliberately not a floor on the correction. A loop whose pairwise estimates
+    # already agree can legitimately need no change, and demanding that every real
+    # optimizer draw move a pose would make a correct result a red gate -- on a
+    # quantity this file already documents as thread-schedule dependent. The pruned
+    # edge above is the contract behaviour this case exists to exercise; that the
+    # optimizer *can* move a pose is proved by the induced control, where the answer
+    # is known. What is asserted here is that the published figures describe each
+    # other.
+    displacement = optimization["max_point_displacement"]
+    extent = optimization["scene_extent"]
+    assert extent > 0.0, optimization
+    assert displacement == pytest_approx(
+        max(optimization["max_point_displacement_per_node"])
+    ), optimization
+    assert optimization["max_point_displacement_as_share_of_extent"] == pytest_approx(
+        displacement / extent
+    ), optimization
+
+
+def pytest_approx(expected: float, tolerance: float = 1e-6):
+    """Tiny stand-in: the smoke runs as a script, without pytest installed."""
+
+    class _Close:
+        def __eq__(self, other: object) -> bool:
+            return isinstance(other, float) and abs(other - expected) <= tolerance
+
+        def __repr__(self) -> str:
+            return f"approximately {expected}"
+
+    return _Close()
+
+
 def main() -> None:
     import open3d as o3d
 
@@ -445,6 +604,8 @@ def main() -> None:
         graph_dir.mkdir()
         report = run_multiway(payload, graph_dir, RUN_ID)
         validate_pose_graph(report["pose_graph"], fragment_count=3)
+        _assert_the_optimization_reports_what_it_did(o3d, report["pose_graph"])
+        _assert_the_product_reports_a_prune_it_performed(o3d, root)
 
         surface = root / "reconstruct"
         surface.mkdir()
@@ -500,7 +661,9 @@ def main() -> None:
         print(
             "Open3D registration recovered the ground-truth pose "
             f"(ICP fitness {min(row['icp']['fitness'] for row in rows):.4f}+), "
-            f"optimized a {len(report['pose_graph']['nodes'])}-node pose graph, "
+            f"optimized a {len(report['pose_graph']['nodes'])}-node pose graph "
+            f"(correcting {report['pose_graph']['optimization']['max_pose_correction']}, "
+            "because the pairwise estimates already agreed), "
             f"reconstructed {mesh_report['mesh']['triangle_count']} triangles, "
             "cropped surface the scan did not support "
             f"({mesh_report['support_before_crop']['unsupported_area_fraction']:.4f} "
