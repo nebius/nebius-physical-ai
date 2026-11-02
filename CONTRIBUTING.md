@@ -650,6 +650,13 @@ Only their exact full-file SHA-256 identities admit those known bytes, and the
 helper still probes every candidate against the same open memory map. Changed
 bytes do not inherit that exception, so a changed file that retains an
 output-bearing or over-limit candidate fails closed at the ordinary boundary.
+One small public Rerun recording inside the LeRobot proof ZIP similarly has
+two incidental rejecting RFC 1950 candidates. Archive-member admission hashes
+the same complete bounded stream that is budgeted, written to scanner views,
+and probed. Only that exact full-member identity may waive the incidental
+compressed-candidate result. Archive-looking member names or prefixes, encoded
+containers, malformed archives, changed member bytes, and standalone compressed
+streams retain their ordinary fail-closed behavior.
 Longer unsupported container signatures and embedded xz signatures remain
 fail-closed.
 Malformed strongly identified Unicode or content that reaches the first

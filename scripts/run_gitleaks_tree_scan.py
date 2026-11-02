@@ -262,6 +262,10 @@ _INERT_EMBEDDED_MEDIA_SHA256 = _INERT_STRICT_PNG_MEDIA_SHA256 | {
     "803cc4e2bbf2260838354f7475ced9ab9417ab54a99ff62d3e4532e51b894a2b",
     "c6ea539976f254eec55da12d7ac2674272c74b06fa676ffd1fdcac8c392e3218",
 }
+_INERT_ARCHIVE_MEMBER_MEDIA_SHA256 = {
+    # Public Rerun recording inside the repository's LeRobot proof bundle.
+    "a9a3c049743d1bb6297b7a22377512f1979c7720a4d10278d97092f84f91c760",
+}
 _BINARY_CONTROL_FILES = (
     "binary-wrapper-control.txt",
     "archive-control.zip!payload.txt",
@@ -1139,14 +1143,13 @@ def _contains_archive_signature(
 
 def _contains_non_tar_archive_signature(content: bytes) -> bool:
     """Detect nested container signatures that are not TAR's own header marker."""
-    if (
+    contains_archive = (
         any(
             signature in content for signature in _IMMEDIATE_EMBEDDED_ARCHIVE_SIGNATURES
         )
         or b"\x1f\x8b\x08" in content
         or re.search(rb"BZh[1-9]", content) is not None
-    ):
-        return True
+    )
     candidates = 0
     for match in _ZLIB_COMPRESSION_METHOD_MARKER.finditer(content):
         if not _zlib_header_plausible(content, match.start()):
@@ -1154,9 +1157,12 @@ def _contains_non_tar_archive_signature(content: bytes) -> bool:
         candidates += 1
         if candidates > _ENCODED_ARCHIVE_MAX_CANDIDATES:
             return True
-        if _zlib_candidate_requires_rejection(content, match.start()):
-            return True
-    return False
+        candidate_rejects = _zlib_candidate_requires_rejection(
+            content,
+            match.start(),
+        )
+        contains_archive = contains_archive or candidate_rejects
+    return contains_archive
 
 
 class _TarHeaderSearch:
@@ -1721,15 +1727,17 @@ def _inspect_archive_stream(
     stream: BinaryIO,
     budget: _ArchiveBudget,
     member_writer: _ArchiveMemberProbeWriter | None = None,
-) -> tuple[bytes, bool]:
+) -> tuple[bytes, bool, str]:
     """Verify a bounded stream and detect encoded or nested containers."""
     prefix = bytearray()
+    digest = hashlib.sha256()
     overlap = b""
     contains_archive = False
     member_bytes = 0
     try:
         while chunk := stream.read(_ARCHIVE_READ_BYTES):
             member_bytes = budget.add_bytes(member_bytes, len(chunk))
+            digest.update(chunk)
             if member_writer is not None:
                 member_writer.append(chunk)
             if len(prefix) < _ARCHIVE_PREFIX_BYTES:
@@ -1737,10 +1745,11 @@ def _inspect_archive_stream(
                 prefix.extend(chunk[:missing])
             window = overlap + chunk
             _reject_encoded_archives(window)
-            contains_archive = contains_archive or _contains_archive_signature(
+            window_contains_archive = _contains_archive_signature(
                 window,
                 budget,
             )
+            contains_archive = contains_archive or window_contains_archive
             overlap = window[-_ARCHIVE_SIGNATURE_OVERLAP_BYTES:]
         if member_writer is not None:
             member_writer.finish()
@@ -1748,7 +1757,7 @@ def _inspect_archive_stream(
         if member_writer is not None:
             member_writer.abort()
         raise
-    return bytes(prefix), contains_archive
+    return bytes(prefix), contains_archive, digest.hexdigest()
 
 
 def _reject_nested_archive(
@@ -1756,13 +1765,18 @@ def _reject_nested_archive(
     prefix: bytes,
     *,
     contains_archive: bool,
+    content_sha256: str,
+    allow_inert_media: bool,
 ) -> None:
     """Reject nested containers whose complete policy traversal is ambiguous."""
+    approved_media = (
+        allow_inert_media and content_sha256 in _INERT_ARCHIVE_MEMBER_MEDIA_SHA256
+    )
     if (
         _has_archive_suffix(member)
         or _has_nonterminal_archive_token(member)
         or _archive_kind(prefix) is not None
-        or contains_archive
+        or (contains_archive and not approved_media)
     ):
         raise _ScanError(
             "Nested archive member cannot prove complete Gitleaks policy coverage"
@@ -2041,10 +2055,12 @@ def _validate_zip_archive(
                 )
                 try:
                     with archive.open(member) as stream:
-                        prefix, contains_archive = _inspect_archive_stream(
-                            stream,
-                            budget,
-                            member_writer,
+                        prefix, contains_archive, content_sha256 = (
+                            _inspect_archive_stream(
+                                stream,
+                                budget,
+                                member_writer,
+                            )
                         )
                 except Exception:
                     if member_writer is not None:
@@ -2054,6 +2070,8 @@ def _validate_zip_archive(
                     member.filename,
                     prefix,
                     contains_archive=contains_archive,
+                    content_sha256=content_sha256,
+                    allow_inert_media=True,
                 )
     except (materializer.SnapshotError, _ScanError):
         raise
@@ -2206,15 +2224,19 @@ def _validate_tar_archive(
                             member_writer.abort()
                         raise _ScanError("Archive member could not be read")
                     with stream:
-                        prefix, contains_archive = _inspect_archive_stream(
-                            stream,
-                            budget,
-                            member_writer,
+                        prefix, contains_archive, content_sha256 = (
+                            _inspect_archive_stream(
+                                stream,
+                                budget,
+                                member_writer,
+                            )
                         )
                     _reject_nested_archive(
                         member.name,
                         prefix,
                         contains_archive=contains_archive,
+                        content_sha256=content_sha256,
+                        allow_inert_media=True,
                     )
             while bounded_stream.read(_ARCHIVE_READ_BYTES):
                 pass
@@ -2248,7 +2270,7 @@ def _validate_compressed_stream(
     )
     try:
         with openers[kind](path, "rb") as stream:
-            prefix, contains_archive = _inspect_archive_stream(
+            prefix, contains_archive, content_sha256 = _inspect_archive_stream(
                 stream,
                 budget,
                 member_writer,
@@ -2261,6 +2283,8 @@ def _validate_compressed_stream(
         "<compressed-stream>",
         prefix,
         contains_archive=contains_archive,
+        content_sha256=content_sha256,
+        allow_inert_media=False,
     )
 
 

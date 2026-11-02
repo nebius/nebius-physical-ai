@@ -3658,6 +3658,311 @@ def test_architecture_png_admission_rejects_near_and_changed_bytes(
         assert tree_scan._contains_embedded_archive(path)
 
 
+class _RecordingMemberWriter:
+    """Capture the exact bytes supplied to an archive-member scan view."""
+
+    def __init__(self) -> None:
+        self.chunks: list[bytes] = []
+        self.finished = False
+        self.aborted = False
+
+    def append(self, content: bytes) -> None:
+        self.chunks.append(content)
+
+    def finish(self) -> None:
+        self.finished = True
+
+    def abort(self) -> None:
+        self.aborted = True
+
+
+class _ChunkedReadStream:
+    """Return caller-independent short chunks before the real EOF."""
+
+    def __init__(self, chunks: list[bytes]) -> None:
+        self.chunks = iter(chunks)
+
+    def read(self, _size: int = -1) -> bytes:
+        return next(self.chunks, b"")
+
+
+def _proof_bundle_rrd() -> tuple[Path, bytes]:
+    """Return the exact public proof bundle and its Rerun member."""
+    bundle = ROOT / "docs/workbench/evidence/lerobot-subtasks/proof-bundle.zip"
+    with zipfile.ZipFile(bundle) as archive:
+        return bundle, archive.read("lerobot-subtasks.rrd")
+
+
+def _assert_proof_bundle_rrd_candidates(content: bytes) -> None:
+    """Bind every proof-member predicate decision to an independent result."""
+    candidates = list(tree_scan._embedded_compressed_streams(content))
+    assert len(candidates) == 30
+    classifications: Counter[str] = Counter()
+    for kind, offset in candidates:
+        classification, independently_rejecting = _independent_probe_classification(
+            content, kind, offset
+        )
+        classifications[classification] += 1
+        assert (
+            tree_scan._embedded_stream_requires_rejection(content, kind, offset)
+            is independently_rejecting
+        )
+    assert classifications == {
+        "zlib_error": 28,
+        "zlib_complete_empty": 1,
+        "zlib_output": 1,
+    }
+
+
+def _record_zlib_probe_digests(
+    monkeypatch: pytest.MonkeyPatch,
+) -> list[str]:
+    """Record every bounded candidate passed to the production zlib probe."""
+    original_probe = tree_scan._zlib_candidate_requires_rejection
+    observed: list[str] = []
+
+    def _recording_probe(candidate: bytes, offset: int) -> bool:
+        end = offset + tree_scan._PROBE_DECODE_CHUNK_BYTES
+        observed.append(hashlib.sha256(candidate[offset:end]).hexdigest())
+        return original_probe(candidate, offset)
+
+    monkeypatch.setattr(
+        tree_scan,
+        "_zlib_candidate_requires_rejection",
+        _recording_probe,
+    )
+    return observed
+
+
+def _alias_path_identity(
+    monkeypatch: pytest.MonkeyPatch,
+    alias: Path,
+    target: Path,
+) -> None:
+    """Present one path as another through resolution and direct equality."""
+    original_resolve = Path.resolve
+    original_eq = Path.__eq__
+
+    def _spoofed_resolve(path: Path, strict: bool = False) -> Path:
+        if str(path) == str(alias):
+            return target
+        return original_resolve(path, strict=strict)
+
+    def _spoofed_eq(left: Path, right: object) -> bool:
+        if {str(left), str(right)} == {str(alias), str(target)}:
+            return True
+        return original_eq(left, right)
+
+    monkeypatch.setattr(Path, "resolve", _spoofed_resolve)
+    monkeypatch.setattr(Path, "__eq__", _spoofed_eq)
+
+
+def test_exact_proof_bundle_member_uses_same_stream_hash_and_scan_bytes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Admit one exact member only after consuming and writing every byte."""
+    bundle, content = _proof_bundle_rrd()
+    identity = hashlib.sha256(content).hexdigest()
+    assert tree_scan._INERT_ARCHIVE_MEMBER_MEDIA_SHA256 == {identity}
+    _assert_proof_bundle_rrd_candidates(content)
+    writer = _RecordingMemberWriter()
+    budget = tree_scan._ArchiveBudget()
+    budget.start_member(len(content))
+    observed_digests = _record_zlib_probe_digests(monkeypatch)
+    prefix, contains_archive, observed_identity = tree_scan._inspect_archive_stream(
+        io.BytesIO(content),
+        budget,
+        writer,
+    )
+    assert contains_archive
+    assert observed_identity == identity
+    assert b"".join(writer.chunks) == content
+    assert budget.total_bytes == len(content)
+    assert writer.finished and not writer.aborted
+    expected_digests = {
+        hashlib.sha256(
+            content[offset : offset + tree_scan._PROBE_DECODE_CHUNK_BYTES]
+        ).hexdigest()
+        for _kind, offset in tree_scan._embedded_compressed_streams(content)
+    }
+    assert len(expected_digests) == 30
+    assert expected_digests <= set(observed_digests)
+    tree_scan._reject_nested_archive(
+        "lerobot-subtasks.rrd",
+        prefix,
+        contains_archive=True,
+        content_sha256=observed_identity,
+        allow_inert_media=True,
+    )
+    tree_scan._validate_archive_file(bundle)
+
+
+def test_archive_stream_probes_each_final_byte() -> None:
+    """Probe a nested signature whose last byte is the member's final byte."""
+    content = b"A" * (tree_scan._ARCHIVE_READ_BYTES - 4) + b"PK\x03\x04"
+    writer = _RecordingMemberWriter()
+    budget = tree_scan._ArchiveBudget()
+    budget.start_member(len(content))
+    _prefix, contains_archive, observed_identity = tree_scan._inspect_archive_stream(
+        io.BytesIO(content),
+        budget,
+        writer,
+    )
+    assert contains_archive
+    assert observed_identity == hashlib.sha256(content).hexdigest()
+    assert b"".join(writer.chunks) == content
+    assert budget.total_bytes == len(content)
+
+
+def test_archive_stream_reads_short_chunks_through_real_eof() -> None:
+    """Do not treat a short read as EOF before a later nested signature."""
+    chunks = [b"A" * 17, b"B" * 19, b"PK\x03\x04"]
+    content = b"".join(chunks)
+    writer = _RecordingMemberWriter()
+    budget = tree_scan._ArchiveBudget()
+    budget.start_member(len(content))
+    _prefix, contains_archive, observed_identity = tree_scan._inspect_archive_stream(
+        _ChunkedReadStream(chunks),
+        budget,
+        writer,
+    )
+    assert contains_archive
+    assert observed_identity == hashlib.sha256(content).hexdigest()
+    assert b"".join(writer.chunks) == content
+    assert budget.total_bytes == len(content)
+
+
+@pytest.mark.parametrize(
+    ("suffix", "compressor"),
+    [
+        (".gz", _gzip_compress),
+        (".bz2", bz2.compress),
+        (".xz", lzma.compress),
+    ],
+)
+def test_archive_member_media_admission_excludes_standalone_streams(
+    tmp_path: Path,
+    suffix: str,
+    compressor: Callable[[bytes], bytes],
+) -> None:
+    """Reject standalone streams expanding to the exact admitted member."""
+    _bundle, content = _proof_bundle_rrd()
+    carrier = tmp_path / f"member{suffix}"
+    carrier.write_bytes(compressor(content))
+    with pytest.raises(tree_scan._ScanError, match="Nested archive member"):
+        tree_scan._validate_archive_file(carrier)
+
+
+def _change_bytes_preserving_crc32(content: bytes) -> bytes:
+    """Change content and solve a four-byte suffix for the original CRC-32."""
+    target_crc = zlib.crc32(content)
+    patch_offset = len(content) - 4
+    baseline = bytearray(content)
+    baseline[0] ^= 1
+    baseline[patch_offset:] = b"\0" * 4
+    baseline_crc = zlib.crc32(baseline)
+    basis: dict[int, tuple[int, int]] = {}
+    for input_bit in range(32):
+        candidate = bytearray(baseline)
+        candidate[patch_offset + input_bit // 8] ^= 1 << (input_bit % 8)
+        value = zlib.crc32(candidate) ^ baseline_crc
+        mask = 1 << input_bit
+        for pivot in range(31, -1, -1):
+            if not value & (1 << pivot):
+                continue
+            if pivot in basis:
+                value ^= basis[pivot][0]
+                mask ^= basis[pivot][1]
+            else:
+                basis[pivot] = (value, mask)
+                break
+    value = target_crc ^ baseline_crc
+    solution = 0
+    for pivot in range(31, -1, -1):
+        if value & (1 << pivot):
+            value ^= basis[pivot][0]
+            solution ^= basis[pivot][1]
+    assert value == 0
+    baseline[patch_offset:] = solution.to_bytes(4, "little")
+    assert zlib.crc32(baseline) == target_crc
+    return bytes(baseline)
+
+
+def test_changed_proof_bundle_member_retaining_candidates_rejects(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Reject same-path and same-CRC changed bytes retaining both collisions."""
+    bundle, content = _proof_bundle_rrd()
+    changed = _change_bytes_preserving_crc32(content)
+    assert zlib.crc32(changed) == zlib.crc32(content)
+    _assert_proof_bundle_rrd_candidates(changed)
+    changed_bundle = (
+        tmp_path / "docs/workbench/evidence/lerobot-subtasks" / "proof-bundle.zip"
+    )
+    changed_bundle.parent.mkdir(parents=True)
+    with (
+        zipfile.ZipFile(bundle) as source,
+        zipfile.ZipFile(changed_bundle, "w") as destination,
+    ):
+        for member in source.infolist():
+            member_content = source.read(member)
+            if member.filename == "lerobot-subtasks.rrd":
+                member_content = changed
+            destination.writestr(member, member_content)
+    _alias_path_identity(monkeypatch, changed_bundle, bundle.resolve())
+    with pytest.raises(tree_scan._ScanError, match="Nested archive member"):
+        tree_scan._validate_archive_file(changed_bundle)
+
+
+@pytest.mark.parametrize(
+    ("member", "prefix", "digest", "allow_inert"),
+    [
+        ("nested.zip", b"safe", "exact", True),
+        ("nested.zip.txt", b"safe", "exact", True),
+        ("safe.bin", b"PK\x03\x04", "exact", True),
+        ("safe.bin", b"safe", "near", True),
+        ("<compressed-stream>", b"safe", "exact", False),
+    ],
+)
+def test_archive_member_media_admission_cannot_waive_structural_rejection(
+    member: str,
+    prefix: bytes,
+    digest: str,
+    allow_inert: bool,
+) -> None:
+    """Keep names, prefixes, near hashes, and standalone streams fail closed."""
+    _bundle, content = _proof_bundle_rrd()
+    identity = hashlib.sha256(content).hexdigest()
+    selected_digest = identity if digest == "exact" else identity[:1] + ("0" * 63)
+    with pytest.raises(tree_scan._ScanError, match="Nested archive member"):
+        tree_scan._reject_nested_archive(
+            member,
+            prefix,
+            contains_archive=True,
+            content_sha256=selected_digest,
+            allow_inert_media=allow_inert,
+        )
+
+
+def test_archive_member_media_admission_requires_all_digest_nibbles() -> None:
+    """Reject a near digest for every possible proper-prefix comparison."""
+    _bundle, content = _proof_bundle_rrd()
+    identity = hashlib.sha256(content).hexdigest()
+    prefix = content[: tree_scan._ARCHIVE_PREFIX_BYTES]
+    for prefix_length in range(1, len(identity)):
+        replacement = "0" if identity[prefix_length] != "0" else "1"
+        near = identity[:prefix_length] + replacement + identity[prefix_length + 1 :]
+        with pytest.raises(tree_scan._ScanError, match="Nested archive member"):
+            tree_scan._reject_nested_archive(
+                "lerobot-subtasks.rrd",
+                prefix,
+                contains_archive=True,
+                content_sha256=near,
+                allow_inert_media=True,
+            )
+
+
 def _record_path_swap_during_hash(
     monkeypatch: pytest.MonkeyPatch,
     carrier: Path,
@@ -3758,11 +4063,12 @@ def test_zlib_probe_rejects_output_before_archive_read_boundary() -> None:
     assert 20 * 1024 < len(compressed) < tree_scan._ARCHIVE_READ_BYTES
     content = b"x" * (tree_scan._ARCHIVE_READ_BYTES - 20 * 1024) + compressed
 
-    _, contains_archive = tree_scan._inspect_archive_stream(
+    _, contains_archive, content_sha256 = tree_scan._inspect_archive_stream(
         io.BytesIO(content),
         tree_scan._ArchiveBudget(),
     )
     assert contains_archive
+    assert content_sha256 == hashlib.sha256(content).hexdigest()
 
     bounded = tree_scan._BoundedArchiveStream(
         io.BytesIO(content),
@@ -3770,6 +4076,28 @@ def test_zlib_probe_rejects_output_before_archive_read_boundary() -> None:
     )
     with pytest.raises(tree_scan._ScanError, match="Nested archive"):
         bounded.read(tree_scan._ARCHIVE_READ_BYTES)
+
+
+@pytest.mark.parametrize("rejecting_offset", [0, 2])
+def test_zlib_probe_aggregates_every_candidate_result(
+    monkeypatch: pytest.MonkeyPatch,
+    rejecting_offset: int,
+) -> None:
+    """Retain a rejection from every plausible candidate in the bounded window."""
+    content = b"\x78\x9c\x78\x9c"
+    observed_offsets: list[int] = []
+
+    def _controlled_probe(_content: bytes, offset: int) -> bool:
+        observed_offsets.append(offset)
+        return offset == rejecting_offset
+
+    monkeypatch.setattr(
+        tree_scan,
+        "_zlib_candidate_requires_rejection",
+        _controlled_probe,
+    )
+    assert tree_scan._contains_non_tar_archive_signature(content)
+    assert observed_offsets == [0, 2]
 
 
 def test_archive_name_alias_matches_pinned_substring_dispatch() -> None:
