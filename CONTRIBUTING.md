@@ -627,7 +627,7 @@ also fail closed. Because short gzip, bzip2, and RFC 1950 zlib markers occur
 incidentally in ordinary media, those markers are confirmed with a bounded
 decoder. After an exact zlib wrapper header, a raw-DEFLATE probe limits output
 to one byte, so decoded output remains observable and fails closed even if later
-wrapper input truncates or fails its Adler-32 check. Outside the two exact-byte
+wrapper input truncates or fails its Adler-32 check. Outside the exact-byte
 media admissions below, decoded output, a complete empty stream, more than 4,096
 candidates, or a candidate that remains ambiguous at the probe limit fails
 closed; a candidate rejected before producing any output is not treated as a
@@ -641,14 +641,17 @@ excluded from embedded-container discovery. Chunk framing and ancillary data
 remain scanned, with enough lookahead to detect a container that starts outside
 IDAT. A prefix, trailing bytes, malformed structure, invalid CRC, impossible
 layout or filter, or decoder error removes the PNG exception and returns the
-complete file to ordinary discovery. Two repository-owned public MP4/Rerun
-artifacts contain more than 4,096 incidental compression headers and hundreds of
-malformed raw-DEFLATE prefixes that emit bytes before failing. Only their exact
-full-file SHA-256 identities admit those known bytes, and the helper still
-probes every candidate against the same open memory map. Changed bytes do not
-inherit that exception, so any output-bearing or over-limit mutation fails
-closed at the ordinary boundary. Longer unsupported container signatures and
-embedded xz signatures remain fail-closed.
+complete file to ordinary discovery. Three repository-owned public artifacts
+need exact-byte admission. The Workbench architecture PNG has one incidental
+output-bearing RFC 1950 candidate in CRC-valid ancillary data outside IDAT. The
+LeRobot MP4/Rerun pair contains more than 4,096 incidental compression headers
+and hundreds of malformed raw-DEFLATE prefixes that emit bytes before failing.
+Only their exact full-file SHA-256 identities admit those known bytes, and the
+helper still probes every candidate against the same open memory map. Changed
+bytes do not inherit that exception, so a changed file that retains an
+output-bearing or over-limit candidate fails closed at the ordinary boundary.
+Longer unsupported container signatures and embedded xz signatures remain
+fail-closed.
 Malformed strongly identified Unicode or content that reaches the first
 unsupported decode layer also fails instead of being silently omitted. Encoded
 candidates are fully inspected for encoded containers under a 16-MiB

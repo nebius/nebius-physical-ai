@@ -250,7 +250,12 @@ _INERT_ENCODED_ARCHIVE_SHA256 = {
     # Public split IDAT/IEND suffix used by the Sim2Real review controls.
     "480850d1783069d8dab7d0d0b426ebf3c46bc85d852c774278de81547690e677",
 }
-_INERT_EMBEDDED_MEDIA_SHA256 = {
+_INERT_STRICT_PNG_MEDIA_SHA256 = {
+    # Public Workbench architecture PNG. Its authenticated ancillary caBX
+    # payload has one incidental RFC 1950 candidate that emits a byte.
+    "bae993cd4604b6efa7ebf28365fab41d16e9369e22a3e8f7065a4c4d5a597451",
+}
+_INERT_EMBEDDED_MEDIA_SHA256 = _INERT_STRICT_PNG_MEDIA_SHA256 | {
     # Public LeRobot labeled MP4 and its reviewable Rerun recording. Both contain
     # thousands of incidental RFC 1950 headers, including malformed streams that
     # emit bytes, but their complete immutable public payloads are known inert.
@@ -1561,6 +1566,17 @@ def _content_sha256(content: bytes | mmap.mmap) -> str:
     return digest.hexdigest()
 
 
+def _inert_embedded_media_approved(content: bytes | mmap.mmap) -> bool:
+    """Authenticate exact mapped bytes and any format-specific prerequisite."""
+    identity = _content_sha256(content)
+    if identity not in _INERT_EMBEDDED_MEDIA_SHA256:
+        return False
+    return (
+        identity not in _INERT_STRICT_PNG_MEDIA_SHA256
+        or _validated_png_idat_ranges(content) is not None
+    )
+
+
 def _embedded_compressed_streams(
     content: bytes | mmap.mmap,
 ) -> Iterator[tuple[str, int]]:
@@ -1633,7 +1649,7 @@ def _regions_contain_compressed_archive(
         """Authenticate the mapped bytes before applying the narrow exception."""
         nonlocal inert_media
         if inert_media is None:
-            inert_media = _content_sha256(content) in _INERT_EMBEDDED_MEDIA_SHA256
+            inert_media = _inert_embedded_media_approved(content)
         return inert_media
 
     for region, source_offset, start_limit in regions:
@@ -3580,19 +3596,32 @@ def _require_no_decode_exhaustion(
 
 
 def _private_control_tokens(count: int) -> list[bytes]:
-    """Generate diverse controls that cannot randomly spell scanner stopwords."""
+    """Derive diverse controls without random compressed-stream collisions."""
     prefix = b"".join((b"Qw7eR9tY", b"2uI4oP6a", b"S8dF0gH1", b"jK3lZ5xC"))
-    randomizer = secrets.SystemRandom()
-    tokens: set[bytes] = set()
-    while len(tokens) < count:
-        letters = randomizer.sample("ABCDEFGHIJKLMNOPQRSTUVWXYZ", 12)
-        digits = [randomizer.choice("0123456789") for _ in letters]
+    letters = "ABCDEFGHIJKLMNPQRSTUVWXYZ"
+    digits = "012345679"
+    tokens: list[bytes] = []
+    for index in range(count):
+        seed = hashlib.sha256(
+            b"npa-gitleaks-private-control-v1:" + index.to_bytes(8, "big")
+        ).digest()
+        ranked_letters = sorted(
+            letters,
+            key=lambda letter: hashlib.sha256(seed + letter.encode()).digest(),
+        )
+        selected_digits = hashlib.shake_256(seed + b":digits").digest(12)
         suffix = "".join(
             character
-            for pair in zip(letters, digits, strict=True)
+            for pair in zip(
+                ranked_letters[:12],
+                (digits[value % len(digits)] for value in selected_digits),
+                strict=True,
+            )
             for character in pair
         ).encode("ascii")
-        tokens.add(prefix + suffix)
+        tokens.append(prefix + suffix)
+    if len(set(tokens)) != count:
+        raise _ScanError("Private scanner controls are not unique")
     return sorted(tokens)
 
 

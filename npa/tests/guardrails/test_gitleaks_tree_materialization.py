@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Callable
 import base64
 import bz2
@@ -483,15 +484,19 @@ def test_policy_blob_bound_precedes_body_allocation(
 
 
 def test_private_scanner_controls_have_a_diversity_floor() -> None:
-    """Keep random control entropy from making real scanner checks intermittent."""
+    """Keep deterministic controls diverse and free of compression candidates."""
     tokens = tree_scan._private_control_tokens(128)
 
+    assert tokens == tree_scan._private_control_tokens(128)
     assert len(tokens) == 128
     assert len(set(tokens)) == 128
     assert all(len(token) == 56 for token in tokens)
     assert all(len(set(token[-24::2])) == 12 for token in tokens)
     assert all(token[-24::2].isalpha() for token in tokens)
     assert all(token[-23::2].isdigit() for token in tokens)
+    assert all(
+        not tuple(tree_scan._embedded_compressed_streams(token)) for token in tokens
+    )
 
 
 def test_binary_control_requires_three_distinct_carrier_paths(
@@ -928,11 +933,8 @@ def test_history_view_preserves_compound_archive_basename(tmp_path: Path) -> Non
     """Keep the exact basename required by Gitleaks archive identification."""
     repo = _repo(tmp_path)
     archive_path = repo / "credential.tar.gz"
-    with tarfile.open(archive_path, "w:gz") as archive:
-        payload = b"historical archive payload\n"
-        metadata = tarfile.TarInfo("credential.txt")
-        metadata.size = len(payload)
-        archive.addfile(metadata, io.BytesIO(payload))
+    payload = b"historical archive payload\n"
+    archive_path.write_bytes(_gzip_compress(_tar_member("credential.txt", payload)))
     revision = _commit(repo, "compound archive")
     expected = archive_path.read_bytes()
     destination = tmp_path / "historical"
@@ -1142,6 +1144,18 @@ def _encode_base64_layers(content: bytes, layers: int) -> bytes:
     return content
 
 
+def _encode_percent_layers(content: bytes, layers: int) -> bytes:
+    """Encode depth controls without incidental binary-container headers."""
+    for _ in range(layers):
+        content = b"".join(f"%{byte:02X}".encode() for byte in content)
+    return content
+
+
+def _gzip_compress(content: bytes) -> bytes:
+    """Build deterministic gzip bytes for scanner fixtures."""
+    return gzip.compress(content, mtime=0)
+
+
 def _nested_zip(content: bytes, depth: int) -> bytes:
     """Wrap test content in nested deflated ZIP archives."""
     name = "credential.txt"
@@ -1190,7 +1204,7 @@ def _concatenated_tar_streams(
         return first_stream + second_stream
     compressor = {
         ".tar.bz2": bz2.compress,
-        ".tar.gz": gzip.compress,
+        ".tar.gz": _gzip_compress,
         ".tar.xz": lzma.compress,
     }[archive_suffix]
     return compressor(first_stream) + compressor(second_stream)
@@ -1365,12 +1379,14 @@ def _write_archive_carrier(repo: Path, carrier: str, assignment: str) -> bool:
         metadata = tarfile.TarInfo("safe.txt")
         metadata.size = len(b"safe\n")
         metadata.pax_headers = {"comment": assignment}
+        encoded_tar = io.BytesIO()
         with tarfile.open(
-            repo / "credential.tar.gz",
-            "w:gz",
+            fileobj=encoded_tar,
+            mode="w",
             format=tarfile.PAX_FORMAT,
         ) as archive:
             archive.addfile(metadata, io.BytesIO(b"safe\n"))
+        (repo / "credential.tar.gz").write_bytes(_gzip_compress(encoded_tar.getvalue()))
         return True
     if carrier == "tar_trailing_gzip":
         raw_tar = io.BytesIO()
@@ -1379,11 +1395,11 @@ def _write_archive_carrier(repo: Path, carrier: str, assignment: str) -> bool:
             metadata.size = len(b"safe\n")
             archive.addfile(metadata, io.BytesIO(b"safe\n"))
         (repo / "credential.tar.gz").write_bytes(
-            gzip.compress(raw_tar.getvalue() + gzip.compress(assignment.encode()))
+            _gzip_compress(raw_tar.getvalue() + _gzip_compress(assignment.encode()))
         )
         return True
     if carrier in {"zip_six_encoded", "tar_gz_six_encoded"}:
-        encoded = _encode_base64_layers(encoded, 6)
+        encoded = _encode_percent_layers(encoded, 6)
     if carrier in {"zip", "zip_six_encoded"}:
         with zipfile.ZipFile(
             repo / "credential.zip",
@@ -1394,10 +1410,9 @@ def _write_archive_carrier(repo: Path, carrier: str, assignment: str) -> bool:
         return True
     if carrier != "tar_gz_six_encoded":
         return False
-    metadata = tarfile.TarInfo("credential.txt")
-    metadata.size = len(encoded)
-    with tarfile.open(repo / "credential.tar.gz", "w:gz") as archive:
-        archive.addfile(metadata, io.BytesIO(encoded))
+    (repo / "credential.tar.gz").write_bytes(
+        _gzip_compress(_tar_member("credential.txt", encoded))
+    )
     return True
 
 
@@ -1491,7 +1506,7 @@ def _write_text_carrier(repo: Path, carrier: str, assignment: str) -> None:
         )
     elif carrier == "six_encoded":
         (repo / "credential.txt").write_bytes(
-            _encode_base64_layers(assignment.encode(), 6)
+            _encode_percent_layers(assignment.encode(), 6)
         )
     elif carrier == "inline_allow":
         allowed = assignment.rstrip() + "  # gitleaks:allow\n"
@@ -2379,9 +2394,10 @@ def test_archive_member_wrapper_preserves_full_policy_path(
             compression=zipfile.ZIP_DEFLATED,
         ) as archive:
             archive.writestr("keys/key.pem", payload)
+    elif archive_suffix == ".tar.gz":
+        archive_path.write_bytes(_gzip_compress(_tar_member("keys/key.pem", payload)))
     else:
-        mode = "w:gz" if archive_suffix == ".tar.gz" else "w"
-        with tarfile.open(archive_path, mode) as archive:
+        with tarfile.open(archive_path, "w") as archive:
             metadata = tarfile.TarInfo("keys/key.pem")
             metadata.size = len(payload)
             archive.addfile(metadata, io.BytesIO(payload))
@@ -2945,6 +2961,25 @@ def _png_chunk_payload_ranges(
     return tuple(ranges)
 
 
+def _mutate_png_chunk_payload(content: bytes, kind: bytes, offset: int) -> bytes:
+    """Change one ancillary byte while repairing that chunk's CRC."""
+    mutated = bytearray(content)
+    position = len(tree_scan._PNG_SIGNATURE)
+    while position + 12 <= len(content):
+        length = int.from_bytes(content[position : position + 4], "big")
+        chunk_kind = content[position + 4 : position + 8]
+        data_start = position + 8
+        data_end = data_start + length
+        if chunk_kind == kind:
+            assert 0 <= offset < length
+            mutated[data_start + offset] ^= 1
+            checksum = zlib.crc32(bytes(mutated[position + 4 : data_end]))
+            mutated[data_end : data_end + 4] = checksum.to_bytes(4, "big")
+            return bytes(mutated)
+        position = data_end + 4
+    raise AssertionError(f"missing PNG chunk: {kind!r}")
+
+
 def _output_bearing_malformed_zlib(payload: bytes, mutation: str) -> bytes:
     """Build a zlib stream that emits payload before its terminal failure."""
     compressed = bytearray(zlib.compress(payload))
@@ -3065,6 +3100,22 @@ def test_png_idat_exception_rejects_ancillary_zlib_carrier(tmp_path: Path) -> No
     carrier.write_bytes(_strict_png(ancillary=ancillary))
 
     assert tree_scan._validated_png_idat_ranges(carrier.read_bytes()) is not None
+    assert tree_scan._contains_embedded_archive(carrier)
+    with pytest.raises(tree_scan._ScanError, match="Embedded archive"):
+        tree_scan._validate_archive_file(carrier)
+
+
+def test_png_idat_exception_rejects_malformed_ancillary_zlib_carrier(
+    tmp_path: Path,
+) -> None:
+    """Reject raw-DEFLATE output in ordinary strict-PNG ancillary bytes."""
+    malformed = _output_bearing_malformed_zlib(b"hidden payload", "checksum")
+    ancillary = _png_chunk(b"caBX", b"prefix" + malformed + b"suffix")
+    content = _strict_png(ancillary=ancillary)
+    carrier = tmp_path / "frame.png"
+    carrier.write_bytes(content)
+
+    assert tree_scan._validated_png_idat_ranges(content) is not None
     assert tree_scan._contains_embedded_archive(carrier)
     with pytest.raises(tree_scan._ScanError, match="Embedded archive"):
         tree_scan._validate_archive_file(carrier)
@@ -3354,58 +3405,257 @@ def test_png_idat_exception_bounds_chunk_allocation(
     assert tree_scan._contains_embedded_archive(carrier)
 
 
-def _exact_embedded_media_expectations() -> tuple[tuple[Path, int, int], ...]:
-    """Return pinned media paths, candidate counts, and rejecting probe counts."""
+def _classify_raw_zlib_candidate(candidate: bytes) -> tuple[str, bool]:
+    """Classify RFC 1950 bytes without calling the production predicate."""
+    decoder = zlib.decompressobj(-zlib.MAX_WBITS)
+    try:
+        decoded = decoder.decompress(candidate[2:], max_length=1)
+    except zlib.error:
+        return "zlib_error", False
+    if decoded:
+        return "zlib_output", True
+    if decoder.eof:
+        return "zlib_complete_empty", True
+    if decoder.unconsumed_tail:
+        return "zlib_unconsumed", True
+    bounded = len(candidate) == tree_scan._PROBE_DECODE_CHUNK_BYTES
+    return ("zlib_bounded" if bounded else "zlib_inert"), bounded
+
+
+def _classify_framed_candidate(candidate: bytes, kind: str) -> tuple[str, bool]:
+    """Classify one gzip or bzip2 stream independently."""
+    if kind == "gzip":
+        decoder = zlib.decompressobj(16 + zlib.MAX_WBITS)
+    else:
+        assert kind == "bzip2"
+        decoder = bz2.BZ2Decompressor()
+    for position in range(
+        0,
+        len(candidate),
+        tree_scan._EMBEDDED_ARCHIVE_PROBE_CHUNK_BYTES,
+    ):
+        chunk = candidate[
+            position : position + tree_scan._EMBEDDED_ARCHIVE_PROBE_CHUNK_BYTES
+        ]
+        try:
+            decoded = decoder.decompress(chunk, max_length=1)
+        except (EOFError, OSError, zlib.error):
+            return f"{kind}_error", False
+        if decoded:
+            return f"{kind}_output", True
+        if decoder.eof:
+            return f"{kind}_complete_empty", True
+    bounded = len(candidate) == tree_scan._PROBE_DECODE_CHUNK_BYTES
+    return (f"{kind}_bounded" if bounded else f"{kind}_inert"), bounded
+
+
+def _independent_probe_classification(
+    content: bytes,
+    kind: str,
+    offset: int,
+) -> tuple[str, bool]:
+    """Dispatch one independent candidate classification."""
+    candidate = content[offset : offset + tree_scan._PROBE_DECODE_CHUNK_BYTES]
+    if kind == "zlib":
+        return _classify_raw_zlib_candidate(candidate)
+    return _classify_framed_candidate(candidate, kind)
+
+
+def _exact_embedded_media_expectations() -> tuple[
+    tuple[Path, int, int, dict[str, int]], ...
+]:
+    """Return pinned media paths and exact independent probe classifications."""
     return (
         (
             ROOT / "docs/workbench/evidence/lerobot-video-subtasks/lerobot-labeled.mp4",
             4_187,
             786,
+            {
+                "gzip_error": 1,
+                "zlib_complete_empty": 2,
+                "zlib_error": 3_400,
+                "zlib_output": 784,
+            },
         ),
         (
             ROOT
             / "docs/workbench/evidence/lerobot-video-subtasks/lerobot-video-subtasks.rrd",
             4_274,
             792,
+            {
+                "gzip_error": 1,
+                "zlib_complete_empty": 3,
+                "zlib_error": 3_481,
+                "zlib_output": 789,
+            },
         ),
     )
+
+
+def _outside_png_compressed_candidates(
+    content: bytes,
+) -> tuple[tuple[str, int], ...]:
+    """Return candidates whose starts are outside authenticated IDAT payloads."""
+    candidates: list[tuple[str, int]] = []
+    for region, source_offset, start_limit in tree_scan._embedded_scan_regions(content):
+        candidates.extend(
+            (kind, source_offset + offset)
+            for kind, offset in tree_scan._embedded_compressed_streams(region)
+            if offset < start_limit
+        )
+    return tuple(candidates)
+
+
+def _assert_exact_media_fixture(
+    path: Path,
+    expected_candidates: int,
+    expected_rejecting: int,
+    expected_classifications: dict[str, int],
+    probe: Callable[[bytes, str, int], bool],
+) -> bytes:
+    """Assert independent and production classifications for one exact file."""
+    raw = path.read_bytes()
+    candidates = list(tree_scan._embedded_compressed_streams(raw))
+    assert len(candidates) == expected_candidates
+    classifications: Counter[str] = Counter()
+    for kind, offset in candidates:
+        classification, independently_rejecting = _independent_probe_classification(
+            raw, kind, offset
+        )
+        classifications[classification] += 1
+        assert probe(raw, kind, offset) is independently_rejecting
+    assert dict(classifications) == expected_classifications
+    assert sum(probe(raw, kind, offset) for kind, offset in candidates) == (
+        expected_rejecting
+    )
+    return raw
+
+
+def _assert_exact_media_allowlists(
+    fixtures: tuple[tuple[Path, int, int, dict[str, int]], ...],
+) -> None:
+    """Bind each admission to one complete repository-owned payload."""
+    architecture = ROOT / "docs/assets/workbench-architecture.png"
+    expected = {
+        hashlib.sha256(path.read_bytes()).hexdigest()
+        for path, _count, _rejecting, _classifications in fixtures
+    } | {hashlib.sha256(architecture.read_bytes()).hexdigest()}
+    assert tree_scan._INERT_EMBEDDED_MEDIA_SHA256 == expected
+    assert tree_scan._INERT_STRICT_PNG_MEDIA_SHA256 == {
+        hashlib.sha256(architecture.read_bytes()).hexdigest()
+    }
 
 
 def test_embedded_candidate_limit_exceptions_are_byte_exact(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Bind two media files while still checking every compression candidate."""
+    """Bind three media files while still checking every compression candidate."""
     fixtures = _exact_embedded_media_expectations()
-    assert tree_scan._INERT_EMBEDDED_MEDIA_SHA256 == {
-        hashlib.sha256(path.read_bytes()).hexdigest()
-        for path, _count, _rejecting in fixtures
-    }
+    _assert_exact_media_allowlists(fixtures)
     original_probe = tree_scan._embedded_stream_requires_rejection
-    observed_candidates = 0
+    observed: list[tuple[str, int]] = []
 
     def _recording_probe(content: bytes, kind: str, offset: int) -> bool:
-        nonlocal observed_candidates
-        observed_candidates += 1
+        observed.append((kind, offset))
         return original_probe(content, kind, offset)
 
     monkeypatch.setattr(
         tree_scan, "_embedded_stream_requires_rejection", _recording_probe
     )
-    for path, expected_candidates, expected_rejecting in fixtures:
-        raw = path.read_bytes()
-        candidates = list(tree_scan._embedded_compressed_streams(raw))
-        assert len(candidates) == expected_candidates
-        rejecting = sum(
-            original_probe(raw, kind, offset) for kind, offset in candidates
+    for (
+        path,
+        expected_candidates,
+        expected_rejecting,
+        expected_classifications,
+    ) in fixtures:
+        raw = _assert_exact_media_fixture(
+            path,
+            expected_candidates,
+            expected_rejecting,
+            expected_classifications,
+            original_probe,
         )
-        assert rejecting == expected_rejecting
-        observed_candidates = 0
+        observed.clear()
         assert not tree_scan._contains_embedded_archive(path)
-        assert observed_candidates == expected_candidates
+        assert len(observed) == expected_candidates
         mutated = tmp_path / path.name
         mutated.write_bytes(b"J" + raw)
         assert tree_scan._contains_embedded_archive(mutated)
+
+
+def test_architecture_png_admission_is_exact_and_probes_ancillary_candidates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Authenticate one public PNG after probing both ancillary candidates."""
+    path = ROOT / "docs/assets/workbench-architecture.png"
+    raw = path.read_bytes()
+    assert hashlib.sha256(raw).hexdigest() in tree_scan._INERT_EMBEDDED_MEDIA_SHA256
+    assert tree_scan._validated_png_idat_ranges(raw) is not None
+    candidates = _outside_png_compressed_candidates(raw)
+    assert candidates == (("zlib", 9561), ("zlib", 9666))
+    original_probe = tree_scan._embedded_stream_requires_rejection
+    assert [original_probe(raw, kind, offset) for kind, offset in candidates] == [
+        False,
+        True,
+    ]
+    decoder = zlib.decompressobj(-zlib.MAX_WBITS)
+    assert decoder.decompress(raw[9668:], max_length=1) == b"\xa8"
+    assert tree_scan._inert_embedded_media_approved(raw)
+
+    observed: list[tuple[str, int]] = []
+
+    def _recording_probe(content: bytes, kind: str, offset: int) -> bool:
+        observed.append((kind, offset))
+        return original_probe(content, kind, offset)
+
+    monkeypatch.setattr(
+        tree_scan,
+        "_embedded_stream_requires_rejection",
+        _recording_probe,
+    )
+    assert not tree_scan._contains_embedded_archive(path)
+    assert observed == list(candidates)
+
+
+def test_architecture_png_admission_rejects_near_and_changed_bytes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Reject changed identities, path aliases, prefixes, and invalid parsing."""
+    path = ROOT / "docs/assets/workbench-architecture.png"
+    raw = path.read_bytes()
+    candidates = _outside_png_compressed_candidates(raw)
+    changed = _mutate_png_chunk_payload(raw, b"caBX", 0)
+    assert tree_scan._validated_png_idat_ranges(changed) is not None
+    assert _outside_png_compressed_candidates(changed) == candidates
+    assert not tree_scan._inert_embedded_media_approved(changed)
+    changed_path = tmp_path / "docs/assets/workbench-architecture.png"
+    changed_path.parent.mkdir(parents=True)
+    changed_path.write_bytes(changed)
+    assert tree_scan._contains_embedded_archive(changed_path)
+    with pytest.raises(tree_scan._ScanError, match="Embedded archive"):
+        tree_scan._validate_archive_file(changed_path)
+
+    prefixed = tmp_path / "prefixed.png"
+    prefixed.write_bytes(b"J" + raw)
+    assert tree_scan._contains_embedded_archive(prefixed)
+
+    admitted = hashlib.sha256(raw).hexdigest()
+    near_match = admitted[:1] + ("0" * 63)
+    assert near_match not in tree_scan._INERT_EMBEDDED_MEDIA_SHA256
+    with monkeypatch.context() as partial_hash:
+        partial_hash.setattr(tree_scan, "_content_sha256", lambda _content: near_match)
+        assert not tree_scan._inert_embedded_media_approved(raw)
+
+    with monkeypatch.context() as strict_png_failure:
+        strict_png_failure.setattr(
+            tree_scan,
+            "_validated_png_idat_ranges",
+            lambda _content: None,
+        )
+        assert not tree_scan._inert_embedded_media_approved(raw)
+        assert tree_scan._contains_embedded_archive(path)
 
 
 def _record_path_swap_during_hash(
@@ -3499,8 +3749,8 @@ def test_zlib_header_recognizer_covers_pinned_archives_headers() -> None:
     assert not tree_scan._zlib_header_plausible(bytes.fromhex("789d"), 0)
 
 
-def test_zlib_probe_spans_archive_read_boundary() -> None:
-    """Retain enough overlap to validate a stream crossing a 64-KiB read."""
+def test_zlib_probe_rejects_output_before_archive_read_boundary() -> None:
+    """Reject observed raw output without waiting for the wrapper's next read."""
     payload = b"".join(
         hashlib.sha256(index.to_bytes(4, "big")).digest() for index in range(1536)
     )
@@ -3518,7 +3768,6 @@ def test_zlib_probe_spans_archive_read_boundary() -> None:
         io.BytesIO(content),
         tree_scan._ArchiveBudget(),
     )
-    assert bounded.read(tree_scan._ARCHIVE_READ_BYTES)
     with pytest.raises(tree_scan._ScanError, match="Nested archive"):
         bounded.read(tree_scan._ARCHIVE_READ_BYTES)
 
@@ -3589,10 +3838,10 @@ def test_embedded_archive_probe_rejects_truncated_output_and_unsupported_streams
 ) -> None:
     """Fail closed after decoded output and on unsupported container bytes."""
     carrier = tmp_path / "carrier.bin"
-    carrier.write_bytes(b"prefix" + gzip.compress(b"hidden payload")[:-8])
+    carrier.write_bytes(b"prefix" + _gzip_compress(b"hidden payload")[:-8])
     assert tree_scan._contains_embedded_archive(carrier)
 
-    corrupt_checksum = bytearray(gzip.compress(b"x"))
+    corrupt_checksum = bytearray(_gzip_compress(b"x"))
     corrupt_checksum[-8] ^= 1
     carrier.write_bytes(b"prefix" + bytes(corrupt_checksum))
     assert tree_scan._contains_embedded_archive(carrier)
@@ -4302,8 +4551,14 @@ def test_archive_validation_bounds_compressed_tar_metadata(
     archive = tmp_path / "metadata.tar.gz"
     member = tarfile.TarInfo("a" * 2048)
     member.size = 1
-    with tarfile.open(archive, "w:gz", format=tarfile.PAX_FORMAT) as bundle:
+    encoded_tar = io.BytesIO()
+    with tarfile.open(
+        fileobj=encoded_tar,
+        mode="w",
+        format=tarfile.PAX_FORMAT,
+    ) as bundle:
         bundle.addfile(member, io.BytesIO(b"x"))
+    archive.write_bytes(_gzip_compress(encoded_tar.getvalue()))
 
     with pytest.raises(tree_scan._ScanError, match="aggregate structural"):
         tree_scan._validate_archive_file(archive)
@@ -4364,7 +4619,7 @@ def test_archive_validation_rejects_unreferenced_zip_bytes(tmp_path: Path) -> No
     canonical = _zip_member("payload.txt", b"safe\n")
 
     prefixed = tmp_path / "prefixed.zip"
-    prefixed.write_bytes(gzip.compress(b"hidden\n") + canonical)
+    prefixed.write_bytes(_gzip_compress(b"hidden\n") + canonical)
     with pytest.raises(
         tree_scan._ScanError,
         match="central directory|unreferenced",
