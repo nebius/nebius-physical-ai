@@ -457,8 +457,24 @@ _DISPLACEMENT_PROVENANCE = MappingProxyType(
 )
 
 
+#: The capture scales the two displacement figures were measured at.
+#:
+#: The support threshold is `voxel * support_distance_factor`, so it scales with the
+#: caller's capture, while the displacement figures are absolute metres measured at these
+#: voxel sizes. Comparing one against the other outside this range compares a measured
+#: quantity to an unmeasured one: at a much coarser voxel the threshold grows while the
+#: displacement constant does not, so nearly every vertex clears it and the strongest
+#: verdict is reached in the unsafe direction. At a much finer voxel the reverse pins the
+#: weakest verdict regardless of geometry. Outside the range the verdict abstains.
+MEASURED_VOXEL_RANGE_M = (0.02, 0.05)
+
+
 def _crop_reproducibility(
-    at_routine: int, at_bound: int, vertices: int, closest: float
+    at_routine: int,
+    at_bound: int,
+    vertices: int,
+    closest: float,
+    voxel: float | None,
 ) -> dict[str, Any]:
     """Three outcomes, because two measured scales admit a case between them.
 
@@ -470,15 +486,34 @@ def _crop_reproducibility(
 
     routine = POISSON_VERTEX_DISPLACEMENT_ROUTINE_M
     bound = POISSON_VERTEX_DISPLACEMENT_BOUND_M
+    low, high = MEASURED_VOXEL_RANGE_M
+    outside = voxel is None or not low <= voxel <= high
 
-    if at_routine:
+    if outside:
+        verdict = "not_measured_at_this_configuration"
+        meaning = (
+            "The threshold is voxel * support_distance_factor, so it scales with the "
+            "capture, while both displacement figures are absolute metres measured at "
+            f"voxel {low:g} m and {high:g} m. This run is at "
+            f"{'an unreported voxel' if voxel is None else f'voxel {voxel:g} m'}, "
+            "outside that range, so comparing the two would compare a measured "
+            "quantity against an unmeasured one. The direction of the error is not "
+            "symmetric: a coarser capture inflates the threshold while the "
+            "displacement figure stays put, which would reach the strongest verdict "
+            "for a regime nobody has measured. The counts and distances below are "
+            "still exactly what the crop decided on -- read those."
+        )
+    elif at_routine:
         verdict = "not_guaranteed"
         meaning = (
             f"{at_routine} {'vertex sits' if at_routine == 1 else 'vertices sit'} "
             f"closer to the threshold than vertices routinely move between runs "
             f"({routine:g} m, the largest in 46 pair comparisons), so a rerun may return "
             f"a different verdict for {'it' if at_routine == 1 else 'them'} and move "
-            "the counts derived from it by up to that many vertices. May, not will: "
+            f"the counts derived from it by up to {at_routine} at that displacement -- "
+            f"and by up to {at_bound} at the largest displacement ever recorded "
+            f"({bound:g} m), which is the figure to size an error bar from. May, not "
+            "will: "
             "being inside the displacement makes a vertex able to cross, not likely to. "
             "A denser capture shortens the distances themselves. Changing "
             "--support-distance-factor moves the cut rather than the geometry, so it "
@@ -524,6 +559,7 @@ def _crop_reproducibility(
         # dict(), not the proxy itself: this summary is serialised to a run artifact and
         # MappingProxyType is not JSON-encodable.
         "measured_by": dict(_DISPLACEMENT_PROVENANCE),
+        "measured_voxel_range_m": list(MEASURED_VOXEL_RANGE_M),
         "what_no_verdict_here_establishes": (
             "Both displacement figures are the largest values seen in a finite number "
             "of comparisons on one scene, so they are sample maxima and not bounds. "
@@ -534,10 +570,20 @@ def _crop_reproducibility(
             "hold rather than be likely to hold, the margin is the figure to act on, "
             "not the verdict."
         ),
+        "what_a_displacement_means_here": (
+            "Not the motion of a tracked vertex. A rerun calls Poisson again and "
+            "derives its density threshold from that run's own density array, so the "
+            "vertex set is regenerated rather than perturbed and no vertex can be "
+            "followed between runs. The figures are nearest-point distances between two "
+            "independently generated vertex sets, which is what makes them a statement "
+            "about how sensitive a decision near the cut is, and not a count of "
+            "vertices that can flip. A rerun can also introduce or drop vertices near "
+            "the threshold, and the counts above do not bound that."
+        ),
     }
 
 
-def _crop_margin(distances, limit: float) -> dict[str, Any]:
+def _crop_margin(distances, limit: float, voxel: float | None = None) -> dict[str, Any]:
     """How close did the crop come to deciding something else?
 
     The crop's own reproducibility is a ratio, not a property: it holds when the
@@ -556,12 +602,24 @@ def _crop_margin(distances, limit: float) -> dict[str, Any]:
 
     import numpy as np
 
-    if limit <= 0.0 or not len(distances):
+    if limit <= 0.0:
         return {
             "applies": False,
             "why_not": (
                 "support cropping is disabled, so there is no threshold for anything to "
                 "sit near"
+            ),
+        }
+
+    if distances is None or not len(distances):
+        # A separate reason, because the previous single branch reported a disabled crop
+        # whenever the array was empty -- true for the common case and false here.
+        return {
+            "applies": False,
+            "why_not": (
+                f"support cropping is enabled at a {limit:g} m threshold, but the mesh "
+                "presented no vertices to measure against it, so there is no decision "
+                "to be close to"
             ),
         }
 
@@ -578,14 +636,14 @@ def _crop_margin(distances, limit: float) -> dict[str, Any]:
         "closest_vertex_to_the_threshold_m": closest,
         "closest_as_a_fraction_of_the_threshold": float(closest / limit),
         "vertices_within": {
-            f"{share:g}_of_the_threshold": {
+            f"within_{format(share * 100, 'g').replace('.', 'p')}_percent_of_the_threshold": {
                 "count": int((gap < share * limit).sum()),
                 "fraction": float((gap < share * limit).mean()),
             }
             for share in CROP_MARGIN_BANDS
         },
         "reproducibility": _crop_reproducibility(
-            at_routine, at_bound, int(len(gap)), closest
+            at_routine, at_bound, int(len(gap)), closest, voxel
         ),
         "what_this_does_not_establish": (
             "That the reconstruction is correct. A vertex far from the cut can still be "
@@ -896,7 +954,7 @@ def run_reconstruct(
         distances = _sample_distances(o3d, cloud, np.asarray(mesh.vertices))
         crop = distances > limit
         unsupported_removed = int(crop.sum())
-        crop_margin = _crop_margin(distances, limit)
+        crop_margin = _crop_margin(distances, limit, voxel)
         mesh.remove_vertices_by_mask(crop)
         if not mesh.has_triangles():
             raise Open3dError(

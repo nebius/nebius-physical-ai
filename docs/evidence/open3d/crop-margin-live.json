@@ -13,18 +13,18 @@
       "crop_margin": {
         "applies": true,
         "threshold_m": 0.05,
-        "closest_vertex_to_the_threshold_m": 9.063953482484066e-06,
-        "closest_as_a_fraction_of_the_threshold": 0.00018127906964968132,
+        "closest_vertex_to_the_threshold_m": 4.888607696089398e-06,
+        "closest_as_a_fraction_of_the_threshold": 9.777215392178795e-05,
         "vertices_within": {
-          "0.01_of_the_threshold": {
+          "within_1_percent_of_the_threshold": {
             "count": 52,
             "fraction": 0.002824091674360506
           },
-          "0.1_of_the_threshold": {
+          "within_10_percent_of_the_threshold": {
             "count": 556,
             "fraction": 0.03019605713354695
           },
-          "0.5_of_the_threshold": {
+          "within_50_percent_of_the_threshold": {
             "count": 4663,
             "fraction": 0.2532449899527508
           }
@@ -32,18 +32,23 @@
         "reproducibility": {
           "verdict": "not_guaranteed",
           "routine_displacement_m": 1e-05,
-          "vertices_within_the_routine_displacement": 1,
+          "vertices_within_the_routine_displacement": 2,
           "worst_recorded_displacement_m": 0.002187,
           "vertices_within_the_worst_recorded_displacement": 238,
           "fraction_within_the_worst_recorded": 0.012925650355726933,
-          "what_that_means": "1 vertex sits closer to the threshold than vertices routinely move between runs (1e-05 m, the largest in 46 pair comparisons), so a rerun may return a different verdict for it and move the counts derived from it by up to that many vertices. May, not will: being inside the displacement makes a vertex able to cross, not likely to. A denser capture shortens the distances themselves. Changing --support-distance-factor moves the cut rather than the geometry, so it changes which vertices sit near it and is not reliably a reduction -- re-run and read this figure again.",
+          "what_that_means": "2 vertices sit closer to the threshold than vertices routinely move between runs (1e-05 m, the largest in 46 pair comparisons), so a rerun may return a different verdict for them and move the counts derived from it by up to 2 at that displacement -- and by up to 238 at the largest displacement ever recorded (0.002187 m), which is the figure to size an error bar from. May, not will: being inside the displacement makes a vertex able to cross, not likely to. A denser capture shortens the distances themselves. Changing --support-distance-factor moves the cut rather than the geometry, so it changes which vertices sit near it and is not reliably a reduction -- re-run and read this figure again.",
           "measured_by": {
             "what_was_measured": "repeated Poisson reconstructions of one fused cloud, comparing the occupancy decision at every scene voxel between pairs of runs: 46 pair comparisons at two capture densities for the routine figure, and one independent observation that did not reproduce in three further attempts for the worst recorded",
             "on_what_input": "one scene -- the Open3D ICP demo fragments -- at voxel 0.05 and 0.02. Both figures are therefore properties of that scene's geometry and capture, not of the reconstruction algorithm in general.",
             "kind_of_figure": "sample maxima. Each is the largest value observed in a finite number of comparisons, which is not the same as a bound on what can occur.",
             "published_as": "crop-decision-stability.json in the Open3D evidence directory, alongside the stability study that produced it rather than alongside this field"
           },
-          "what_no_verdict_here_establishes": "Both displacement figures are the largest values seen in a finite number of comparisons on one scene, so they are sample maxima and not bounds. Nothing about Poisson reconstruction prevents a run from displacing a vertex further than either, and a scene with different geometry, scale or noise may well do so. Read every verdict here as 'against displacements that have been measured', including the strongest one. If a decision must hold rather than be likely to hold, the margin is the figure to act on, not the verdict."
+          "measured_voxel_range_m": [
+            0.02,
+            0.05
+          ],
+          "what_no_verdict_here_establishes": "Both displacement figures are the largest values seen in a finite number of comparisons on one scene, so they are sample maxima and not bounds. Nothing about Poisson reconstruction prevents a run from displacing a vertex further than either, and a scene with different geometry, scale or noise may well do so. Read every verdict here as 'against displacements that have been measured', including the strongest one. If a decision must hold rather than be likely to hold, the margin is the figure to act on, not the verdict.",
+          "what_a_displacement_means_here": "Not the motion of a tracked vertex. A rerun calls Poisson again and derives its density threshold from that run's own density array, so the vertex set is regenerated rather than perturbed and no vertex can be followed between runs. The figures are nearest-point distances between two independently generated vertex sets, which is what makes them a statement about how sensitive a decision near the cut is, and not a count of vertices that can flip. A rerun can also introduce or drop vertices near the threshold, and the counts above do not bound that."
         },
         "what_this_does_not_establish": "That the reconstruction is correct. A vertex far from the cut can still be in the wrong place, and a reproducible verdict on an invented surface is still a verdict on an invented surface. This says only whether re-running would decide differently."
       }
@@ -53,18 +58,18 @@
       "crop_margin": {
         "applies": true,
         "threshold_m": 0.043500000000000004,
-        "closest_vertex_to_the_threshold_m": 2.923108947602837e-07,
-        "closest_as_a_fraction_of_the_threshold": 6.719790684144452e-06,
+        "closest_vertex_to_the_threshold_m": 5.453413983932953e-07,
+        "closest_as_a_fraction_of_the_threshold": 1.2536583871110236e-05,
         "vertices_within": {
-          "0.01_of_the_threshold": {
+          "within_1_percent_of_the_threshold": {
             "count": 54,
             "fraction": 0.0029327105849128333
           },
-          "0.1_of_the_threshold": {
-            "count": 434,
-            "fraction": 0.023570303589854992
+          "within_10_percent_of_the_threshold": {
+            "count": 433,
+            "fraction": 0.02351599413457883
           },
-          "0.5_of_the_threshold": {
+          "within_50_percent_of_the_threshold": {
             "count": 6346,
             "fraction": 0.3446478031825341
           }
@@ -76,14 +81,19 @@
           "worst_recorded_displacement_m": 0.002187,
           "vertices_within_the_worst_recorded_displacement": 209,
           "fraction_within_the_worst_recorded": 0.011350676152718188,
-          "what_that_means": "1 vertex sits closer to the threshold than vertices routinely move between runs (1e-05 m, the largest in 46 pair comparisons), so a rerun may return a different verdict for it and move the counts derived from it by up to that many vertices. May, not will: being inside the displacement makes a vertex able to cross, not likely to. A denser capture shortens the distances themselves. Changing --support-distance-factor moves the cut rather than the geometry, so it changes which vertices sit near it and is not reliably a reduction -- re-run and read this figure again.",
+          "what_that_means": "1 vertex sits closer to the threshold than vertices routinely move between runs (1e-05 m, the largest in 46 pair comparisons), so a rerun may return a different verdict for it and move the counts derived from it by up to 1 at that displacement -- and by up to 209 at the largest displacement ever recorded (0.002187 m), which is the figure to size an error bar from. May, not will: being inside the displacement makes a vertex able to cross, not likely to. A denser capture shortens the distances themselves. Changing --support-distance-factor moves the cut rather than the geometry, so it changes which vertices sit near it and is not reliably a reduction -- re-run and read this figure again.",
           "measured_by": {
             "what_was_measured": "repeated Poisson reconstructions of one fused cloud, comparing the occupancy decision at every scene voxel between pairs of runs: 46 pair comparisons at two capture densities for the routine figure, and one independent observation that did not reproduce in three further attempts for the worst recorded",
             "on_what_input": "one scene -- the Open3D ICP demo fragments -- at voxel 0.05 and 0.02. Both figures are therefore properties of that scene's geometry and capture, not of the reconstruction algorithm in general.",
             "kind_of_figure": "sample maxima. Each is the largest value observed in a finite number of comparisons, which is not the same as a bound on what can occur.",
             "published_as": "crop-decision-stability.json in the Open3D evidence directory, alongside the stability study that produced it rather than alongside this field"
           },
-          "what_no_verdict_here_establishes": "Both displacement figures are the largest values seen in a finite number of comparisons on one scene, so they are sample maxima and not bounds. Nothing about Poisson reconstruction prevents a run from displacing a vertex further than either, and a scene with different geometry, scale or noise may well do so. Read every verdict here as 'against displacements that have been measured', including the strongest one. If a decision must hold rather than be likely to hold, the margin is the figure to act on, not the verdict."
+          "measured_voxel_range_m": [
+            0.02,
+            0.05
+          ],
+          "what_no_verdict_here_establishes": "Both displacement figures are the largest values seen in a finite number of comparisons on one scene, so they are sample maxima and not bounds. Nothing about Poisson reconstruction prevents a run from displacing a vertex further than either, and a scene with different geometry, scale or noise may well do so. Read every verdict here as 'against displacements that have been measured', including the strongest one. If a decision must hold rather than be likely to hold, the margin is the figure to act on, not the verdict.",
+          "what_a_displacement_means_here": "Not the motion of a tracked vertex. A rerun calls Poisson again and derives its density threshold from that run's own density array, so the vertex set is regenerated rather than perturbed and no vertex can be followed between runs. The figures are nearest-point distances between two independently generated vertex sets, which is what makes them a statement about how sensitive a decision near the cut is, and not a count of vertices that can flip. A rerun can also introduce or drop vertices near the threshold, and the counts above do not bound that."
         },
         "what_this_does_not_establish": "That the reconstruction is correct. A vertex far from the cut can still be in the wrong place, and a reproducible verdict on an invented surface is still a verdict on an invented surface. This says only whether re-running would decide differently."
       }
