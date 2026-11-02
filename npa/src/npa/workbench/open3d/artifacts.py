@@ -264,6 +264,81 @@ def validate_pose_graph(graph: Any, *, fragment_count: int) -> None:
                 or not 0 <= value < fragment_count
             ):
                 raise Open3dError(f"pose graph edge {key} is out of range")
+    if "optimization" in graph:
+        _validate_optimization_report(
+            graph["optimization"], nodes=len(nodes), edges=edges
+        )
+
+
+def _validate_optimization_report(report: Any, *, nodes: int, edges: list) -> None:
+    """Hold the optimization summary to the graph it is a summary of.
+
+    Optional, because reports written before this block existed are still valid
+    pose graphs. What it must not be is present and hollow: an empty mapping would
+    otherwise satisfy `"optimization" in graph` while asserting nothing.
+    """
+
+    if not isinstance(report, dict) or not report:
+        raise Open3dError("pose graph optimization summary must be a non-empty mapping")
+    required = (
+        "edges_submitted",
+        "loop_closures_submitted",
+        "edges_that_survived_pruning",
+        "edges_pruned",
+        "max_pose_correction",
+        "max_pose_correction_per_node",
+    )
+    missing = sorted(key for key in required if key not in report)
+    if missing:
+        raise Open3dError(
+            f"pose graph optimization summary is missing {', '.join(missing)}"
+        )
+    counts = {}
+    for key in required[:4]:
+        value = report[key]
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise Open3dError(f"pose graph optimization {key} must be a count")
+        counts[key] = value
+    if counts["edges_that_survived_pruning"] != len(edges):
+        raise Open3dError(
+            "pose graph optimization reports a different surviving edge count than "
+            "the graph serializes"
+        )
+    if (
+        counts["edges_submitted"] - counts["edges_pruned"]
+        != counts["edges_that_survived_pruning"]
+    ):
+        raise Open3dError(
+            "pose graph optimization edge counts do not add up: submitted minus "
+            "pruned must equal the edges that survived"
+        )
+    # Only loop closures are prunable -- consecutive pairs are submitted as certain
+    # odometry -- so more pruned than submitted as closures means the summary is
+    # describing a different graph.
+    if counts["loop_closures_submitted"] > counts["edges_submitted"]:
+        raise Open3dError(
+            "pose graph optimization reports more loop closures than edges"
+        )
+    if counts["edges_pruned"] > counts["loop_closures_submitted"]:
+        raise Open3dError(
+            "pose graph optimization reports more pruned edges than it submitted as "
+            "prunable loop closures"
+        )
+    per_node = report["max_pose_correction_per_node"]
+    if not isinstance(per_node, list) or len(per_node) != nodes:
+        raise Open3dError(
+            "pose graph optimization must report one pose correction per node"
+        )
+    if not all(_finite_number(value) and value >= 0.0 for value in per_node):
+        raise Open3dError("every pose correction must be a finite, non-negative number")
+    largest = report["max_pose_correction"]
+    if not _finite_number(largest) or largest < 0.0:
+        raise Open3dError("the largest pose correction must be finite and non-negative")
+    if per_node and abs(float(largest) - max(float(v) for v in per_node)) > 1e-12:
+        raise Open3dError(
+            "the largest pose correction is not the largest of the per-node "
+            "corrections it summarizes"
+        )
 
 
 def validate_mesh(mesh: Any) -> None:

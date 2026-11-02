@@ -320,12 +320,27 @@ def run_multiway(payload: dict[str, Any], output: Path, run_id: str) -> dict[str
         edge_prune_threshold=0.25,
         reference_node=0,
     )
+    # Read before optimizing. `global_optimization` mutates the graph in place and
+    # prunes loop closures below the threshold, so neither the correction it applies
+    # nor the edges it rejects can be recovered from the optimized graph afterwards.
+    # Without these two figures a run that corrected real drift and a run that did
+    # nothing serialize the same shape -- and on both the demo fragments and this
+    # pipeline's own synthetic ones, what it does is nothing (4.7e-06 of a
+    # metres-wide scene, and exactly 0.0 respectively; see
+    # docs/evidence/open3d/pose-graph-optimization.json).
+    poses_before = [np.asarray(node.pose, dtype=float).copy() for node in graph.nodes]
+    edges_submitted = len(graph.edges)
+    loop_closures_submitted = sum(1 for edge in graph.edges if edge.uncertain)
     registration.global_optimization(
         graph,
         registration.GlobalOptimizationLevenbergMarquardt(),
         registration.GlobalOptimizationConvergenceCriteria(),
         option,
     )
+    corrections = [
+        float(np.abs(np.asarray(node.pose, dtype=float) - was).max())
+        for node, was in zip(graph.nodes, poses_before, strict=True)
+    ]
     # Serialize the graph Open3D actually optimized. `global_optimization` may
     # prune edges below the threshold, so reusing the pre-optimization list would
     # publish a graph that no longer matches the poses below it.
@@ -361,6 +376,12 @@ def run_multiway(payload: dict[str, Any], output: Path, run_id: str) -> dict[str
     fused_path = output / "fused.ply"
     if not o3d.io.write_point_cloud(str(fused_path), fused_down):
         raise Open3dError("Open3D could not write the fused cloud")
+    extent = float(
+        np.linalg.norm(
+            np.asarray(fused_down.get_axis_aligned_bounding_box().get_extent())
+        )
+    )
+    largest = max(corrections) if corrections else 0.0
     pose_graph = {
         "nodes": nodes,
         "edges": edges,
@@ -369,6 +390,20 @@ def run_multiway(payload: dict[str, Any], output: Path, run_id: str) -> dict[str
         "fused_points": len(fused_down.points),
         "fused_points_before_downsample": len(fused.points),
         "fused_sha256": _digest(fused_path),
+        "optimization": {
+            "edges_submitted": edges_submitted,
+            "loop_closures_submitted": loop_closures_submitted,
+            "edges_that_survived_pruning": len(edges),
+            "edges_pruned": edges_submitted - len(edges),
+            "max_pose_correction": largest,
+            "max_pose_correction_per_node": corrections,
+            # Relative, because a correction is only small compared with something.
+            # The scene extent is the fused cloud's bounding-box diagonal.
+            "scene_extent": extent,
+            "max_pose_correction_as_share_of_extent": (
+                largest / extent if extent > 0.0 else None
+            ),
+        },
     }
     (output / "pose_graph.json").write_bytes(canonical(pose_graph))
     (output / PAIRS_JOURNAL).write_text(

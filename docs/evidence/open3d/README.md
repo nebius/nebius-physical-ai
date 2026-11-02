@@ -19,6 +19,28 @@ own question and method in its module docstring.
 | The floor is set by the voxel-to-sample-spacing ratio, not by geometry, sampling or mesh resolution | `floor-vs-voxel-multiple.json`, `floor-vs-resolution.json` |
 | Even sampling zeroes the headline fraction, so its failure is a capture-time artefact | `poisson-procedure-and-overcall-audit.json` |
 
+### The multiway optimization was a step nobody could check had run
+
+`pose-graph-optimization.json`. `global_optimization` is the entire difference between multiway
+registration and chaining pairwise transforms, and it mutates the graph in place: it moves node
+poses and it prunes loop closures below the confidence threshold. The record serialized the graph
+afterwards, so neither effect survived — a pruned edge was simply absent from the list, and nothing
+stated the correction.
+
+On the fragments the pipeline runs on, the optimizer corrects nothing worth acting on: 4.7e-06 of a
+metres-wide scene on the upstream demo fragments, and exactly 0.0 through `run_multiway` on the
+synthetic fragments the smoke writes. That is the right answer — the pairwise estimates already
+agree — and it is also why the step was only ever exercised where it could not fail. The run now
+publishes the submitted and pruned edge counts and the per-node correction, so the two cases are
+distinguishable.
+
+Two things in the record are there because they nearly went wrong. The control induces a 0.5 pose
+error and watches the optimizer undo it, because without it a measured zero cannot be told from a
+probe that cannot read poses — which is what a zero on every case first looked like. And the loop
+construction is measured twice, standalone and through `run_multiway`, because they disagree: one
+pruned edge at the harness's constants, three at the manifest's. The second is the figure a test may
+assert on, so both are kept rather than averaged.
+
 ## Reproducing
 
 ```bash
