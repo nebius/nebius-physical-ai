@@ -18,6 +18,27 @@ own question and method in its module docstring.
 | It does under-call below a sensitivity floor, so a low reading is a lower bound | `floor-across-geometry-and-sampling.json` |
 | The floor is set by the voxel-to-sample-spacing ratio, not by geometry, sampling or mesh resolution | `floor-vs-voxel-multiple.json`, `floor-vs-resolution.json` |
 | Even sampling zeroes the headline fraction, so its failure is a capture-time artefact | `poisson-procedure-and-overcall-audit.json` |
+| The crop's per-cell answer reproduces even though the reconstruction under it does not | `crop-decision-stability.json` |
+
+## The crop decides the same thing twice, and the reconstruction does not
+
+`capability-record-support-crop.json` describes its own reproducibility as numeric to
+about 4e-06 relative on surface area. That is an aggregate and it is true, and it is not
+what a user asks: the question is *which parts* of my mesh are unsupported, and no
+average answers it. The concern was concrete rather than theoretical — the Poisson layers
+one stage downstream differ by 1-2% of their points between repeats.
+
+So the stage was repeated with the fused cloud built once and re-read, and the control
+comes first: the input is byte-identical across repeats and Poisson still returns four
+distinct meshes, with around 2000 of 18,000 vertices in one repeat and not another. Not a
+reordering — genuinely different positions.
+
+The decision does not move with them. Every repeat agrees on every cell, and the per-cell
+downstream figure the record publishes comes back at exactly 733 each time. The reason is
+a ratio rather than luck: the largest distance any vertex travels between repeats is a
+few microns against a 5 cm cut, four orders of magnitude short of the band it would have
+to cross. That ratio is the thing to re-check on a scan whose geometry sits nearer the
+cut, and it is in the record for that purpose.
 
 ## Reproducing
 

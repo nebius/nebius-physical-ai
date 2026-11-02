@@ -1,0 +1,259 @@
+{
+  "what_this_measures": "Whether the support crop returns the same decision twice, as opposed to the same average. The fused cloud is built once and re-read for every repeat, so registration cannot contribute.",
+  "why_cells_and_not_vertices": "Poisson returns a different vertex set each run, so no vertex can be followed between repeats and 'this vertex changed its mind' is not a question that can be asked. A consumer does not ask it either: it asks whether a region of space is occupied. Cells at the scene voxel are that question, and are the form the published occupancy consumer already works in.",
+  "input": {
+    "dataset": "open3d.data DemoICPPointClouds, the record's own input",
+    "voxel_size": 0.05,
+    "fused_cloud_sha256": "674cf08c6eb7db54f6074f1ee46ae4fd2117df1e25b55010f6b8fe98e6e1edd0",
+    "fused_once_and_reused": true
+  },
+  "crop_rule": "a vertex is unsupported when its distance to the fused cloud exceeds voxel * 1.0 = 0.05",
+  "repeats": 4,
+  "did_the_reconstruction_vary_at_all": {
+    "why_this_is_first": "A stable decision means nothing if nothing upstream moved. The same mistake sank a thread experiment on this record: the lever never engaged, so the result measured nothing. Read this block before any figure below it.",
+    "distinct_fused_clouds": 1,
+    "distinct_normal_sets": 1,
+    "distinct_poisson_meshes": 4,
+    "poisson_varied_between_repeats": true,
+    "and_whether_that_is_only_reordering": {
+      "per_repeat": [
+        {
+          "repeat": 2,
+          "vertices_in_repeat_1_only": 2418,
+          "vertices_in_this_repeat_only": 2418,
+          "vertex_counts": [
+            18413,
+            18413
+          ]
+        },
+        {
+          "repeat": 3,
+          "vertices_in_repeat_1_only": 2020,
+          "vertices_in_this_repeat_only": 2020,
+          "vertex_counts": [
+            18413,
+            18413
+          ]
+        },
+        {
+          "repeat": 4,
+          "vertices_in_repeat_1_only": 1906,
+          "vertices_in_this_repeat_only": 1906,
+          "vertex_counts": [
+            18413,
+            18413
+          ]
+        }
+      ],
+      "largest_set_difference": 2418,
+      "verdict": "genuinely different vertex positions"
+    },
+    "and_how_far_it_moved": {
+      "per_repeat": [
+        {
+          "repeat": 2,
+          "median_displacement_m": 0.0,
+          "p99_displacement_m": 4.76837158203125e-07,
+          "max_displacement_m": 6.4373016357421875e-06
+        },
+        {
+          "repeat": 3,
+          "median_displacement_m": 0.0,
+          "p99_displacement_m": 3.5762786865234375e-07,
+          "max_displacement_m": 3.0994415283203125e-06
+        },
+        {
+          "repeat": 4,
+          "median_displacement_m": 0.0,
+          "p99_displacement_m": 2.384185791015625e-07,
+          "max_displacement_m": 3.0994415283203125e-06
+        }
+      ],
+      "worst_displacement_m": 6.4373016357421875e-06,
+      "the_threshold_it_would_have_to_cross_m": 0.05,
+      "margin_factor": 7767.22962962963,
+      "what_that_means": "A vertex only changes the answer by crossing the support threshold or landing in another cell. The largest distance any vertex moved between repeats is 6.44e-06 m against a 0.05 m cut, so the decision is stable by a wide margin rather than by luck -- and the margin is the figure to re-check on a scan whose geometry sits closer to the cut."
+    }
+  },
+  "the_aggregate_the_record_reports": {
+    "removed_vertex_count": {
+      "values": [
+        3677.0,
+        3677.0,
+        3677.0,
+        3677.0
+      ],
+      "distinct": 1,
+      "spread": 0.0,
+      "relative_spread": 0.0
+    },
+    "removed_fraction": {
+      "values": [
+        0.19969586705045347,
+        0.19969586705045347,
+        0.19969586705045347,
+        0.19969586705045347
+      ],
+      "distinct": 1,
+      "spread": 0.0,
+      "relative_spread": 0.0
+    },
+    "total_vertices": {
+      "values": [
+        18413.0,
+        18413.0,
+        18413.0,
+        18413.0
+      ],
+      "distinct": 1,
+      "spread": 0.0,
+      "relative_spread": 0.0
+    }
+  },
+  "the_per_cell_decision_a_user_reads": [
+    {
+      "repeat": 2,
+      "removed_cells_in_repeat_1": 2293,
+      "removed_cells_here": 2293,
+      "cells_both_called_unsupported": 2293,
+      "jaccard": 1.0,
+      "cells_whose_verdict_flipped": 0
+    },
+    {
+      "repeat": 3,
+      "removed_cells_in_repeat_1": 2293,
+      "removed_cells_here": 2293,
+      "cells_both_called_unsupported": 2293,
+      "jaccard": 1.0,
+      "cells_whose_verdict_flipped": 0
+    },
+    {
+      "repeat": 4,
+      "removed_cells_in_repeat_1": 2293,
+      "removed_cells_here": 2293,
+      "cells_both_called_unsupported": 2293,
+      "jaccard": 1.0,
+      "cells_whose_verdict_flipped": 0
+    }
+  ],
+  "where_the_movers_sit": [
+    {
+      "vertices_within_10pc_of_the_limit": 556,
+      "as_fraction_of_all_vertices": 0.03019605713354695,
+      "removed_vertices": 3677
+    },
+    {
+      "vertices_within_10pc_of_the_limit": 556,
+      "as_fraction_of_all_vertices": 0.03019605713354695,
+      "removed_vertices": 3677
+    },
+    {
+      "vertices_within_10pc_of_the_limit": 556,
+      "as_fraction_of_all_vertices": 0.03019605713354695,
+      "removed_vertices": 3677
+    },
+    {
+      "vertices_within_10pc_of_the_limit": 556,
+      "as_fraction_of_all_vertices": 0.03019605713354695,
+      "removed_vertices": 3677
+    }
+  ],
+  "the_published_downstream_figure": {
+    "per_repeat": [
+      {
+        "repeat": 1,
+        "baseline_uncropped": {
+          "occupied_cells": 2684,
+          "phantom_obstacle_cells": 871,
+          "precision_wrt_observation": 0.6754843517138599,
+          "recall_of_observed_cells": 0.9623142250530785
+        },
+        "candidate_cropped": {
+          "occupied_cells": 1948,
+          "phantom_obstacle_cells": 138,
+          "precision_wrt_observation": 0.9291581108829569,
+          "recall_of_observed_cells": 0.9607218683651805
+        }
+      },
+      {
+        "repeat": 2,
+        "baseline_uncropped": {
+          "occupied_cells": 2684,
+          "phantom_obstacle_cells": 871,
+          "precision_wrt_observation": 0.6754843517138599,
+          "recall_of_observed_cells": 0.9623142250530785
+        },
+        "candidate_cropped": {
+          "occupied_cells": 1948,
+          "phantom_obstacle_cells": 138,
+          "precision_wrt_observation": 0.9291581108829569,
+          "recall_of_observed_cells": 0.9607218683651805
+        }
+      },
+      {
+        "repeat": 3,
+        "baseline_uncropped": {
+          "occupied_cells": 2684,
+          "phantom_obstacle_cells": 871,
+          "precision_wrt_observation": 0.6754843517138599,
+          "recall_of_observed_cells": 0.9623142250530785
+        },
+        "candidate_cropped": {
+          "occupied_cells": 1948,
+          "phantom_obstacle_cells": 138,
+          "precision_wrt_observation": 0.9291581108829569,
+          "recall_of_observed_cells": 0.9607218683651805
+        }
+      },
+      {
+        "repeat": 4,
+        "baseline_uncropped": {
+          "occupied_cells": 2684,
+          "phantom_obstacle_cells": 871,
+          "precision_wrt_observation": 0.6754843517138599,
+          "recall_of_observed_cells": 0.9623142250530785
+        },
+        "candidate_cropped": {
+          "occupied_cells": 1948,
+          "phantom_obstacle_cells": 138,
+          "precision_wrt_observation": 0.9291581108829569,
+          "recall_of_observed_cells": 0.9607218683651805
+        }
+      }
+    ],
+    "phantom_cells_removed_by_the_crop": {
+      "values": [
+        733.0,
+        733.0,
+        733.0,
+        733.0
+      ],
+      "distinct": 1,
+      "spread": 0.0,
+      "relative_spread": 0.0
+    },
+    "precision_after_the_crop": {
+      "values": [
+        0.9291581108829569,
+        0.9291581108829569,
+        0.9291581108829569,
+        0.9291581108829569
+      ],
+      "distinct": 1,
+      "spread": 0.0,
+      "relative_spread": 0.0
+    }
+  },
+  "what_a_user_may_rely_on": "The per-cell unsupported mask, not only the aggregate. Every repeat agreed on every cell -- Jaccard 1.0, no cell changed its verdict -- so the answer to 'which parts of my mesh are unsupported' is reproducible on this input even though the reconstruction it is computed from is not.",
+  "whether_that_is_benign": "Yes, and by a measured margin rather than by luck. Around 556 vertices per repeat sit within 10% of the cut, which is where a sharp threshold on a continuous quantity is vulnerable, and none of them crossed: the largest distance any vertex moved between repeats is 6.44e-06 m against a 0.05 m cut, four orders of magnitude smaller than the band it would have to traverse. The condition to re-check on another scan is that ratio, not this verdict.",
+  "what_this_does_not_establish": "Nothing about the cause inside Poisson, which #1024 covers, and nothing about whether the crop rule is the right rule. The figures are not comparable to the record's published values: this harness mirrors the reconstruct-and-crop stage rather than running the full six-stage workflow, and its fused cloud is its own.",
+  "reproducibility": {
+    "command": "npa/.venv/bin/python docs/evidence/open3d/harness/crop_decision_stability.py",
+    "note": "Every figure here is a between-run comparison, so the figures are expected to move. The verdicts are what reproduce."
+  },
+  "provenance": {
+    "harness": "harness/crop_decision_stability.py",
+    "harness_sha256": "97aa9712de10667e3e1a5f00a0b21591161facc8dd0d360129398e9141f4007f",
+    "path_is_relative_to": "this evidence directory"
+  }
+}
