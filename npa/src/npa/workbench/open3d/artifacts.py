@@ -51,6 +51,12 @@ def _finite_number(value: Any) -> bool:
     )
 
 
+#: Distinguishes "this record predates the field" from "this record published the
+#: field as nothing". Only the first is exempt from a check; keying a
+#: backward-compatibility exemption on `None` makes it a switch a writer can throw.
+_ABSENT = object()
+
+
 def validate_rigid_transform(value: Any, *, what: str) -> None:
     """Reject anything that is not a real 4x4 rigid body transform.
 
@@ -534,6 +540,229 @@ def validate_overlay_matches_crop(recording: Any, reconstruction: Any) -> None:
         raise Open3dError(
             f"recording drew {shown} unsupported triangles but the crop removed "
             f"{full - kept}; the overlay is not showing the crop that ran"
+        )
+
+
+#: Sources that mean "the scan did not determine an up axis, so this is the declared
+#: default". Every one of them must publish the default rather than a measured axis.
+_DECLARED_UP_SOURCES = frozenset(
+    {"default", "default-weak-plane", "default-ambiguous-plane"}
+)
+#: The one source that names a measured axis, plus the defaults above. Kept as a
+#: closed set because the semantic checks are keyed to these literals: a source
+#: outside it would reach none of them and be accepted unexamined.
+_MEASURED_UP_SOURCE = "largest-plane-normal-snapped-to-axis"
+_KNOWN_UP_SOURCES = _DECLARED_UP_SOURCES | {_MEASURED_UP_SOURCE}
+#: What the counterexample must say to be one: repeats that agreed, and a tilt large
+#: enough that agreeing on it is visibly not the same as the plane meaning something.
+_COUNTEREXAMPLE_TILT_DEGREES = 10.0
+
+
+def validate_up_axis_inference(recording: Any) -> None:
+    """Stop a coin-flipped camera axis from being published as a measured one.
+
+    The up vector steers the camera, and `segment_plane` is RANSAC: on a scan with
+    two comparable planes the axis differs run to run while every published field
+    stays the same, so a reviewer reading one run cannot tell the next run will roll
+    the view ninety degrees. The runner answers that by repeating the fit and
+    refusing to name an axis when the repeats disagree. This holds the record to
+    that: a report that says it measured an axis must show the repeats agreed, and a
+    report that says the repeats disagreed must publish the declared default rather
+    than one of the branches.
+    """
+
+    if not isinstance(recording, dict):
+        raise Open3dError("up-axis check needs the recording report")
+    inference = recording.get("up_axis_inference", _ABSENT)
+    if inference is _ABSENT:
+        return  # Predates the inference being reported at all.
+    if not isinstance(inference, dict):
+        raise Open3dError("up_axis_inference is not a report")
+    source = inference.get("source")
+    up = inference.get("up")
+    if not isinstance(source, str) or not source:
+        raise Open3dError("up_axis_inference does not say where its axis came from")
+    # Both semantic claims below are keyed to literal source strings, so a source
+    # this function does not recognise reaches neither of them and is accepted with
+    # any number of disagreeing axes. Nothing emits an unrecognised source today, so
+    # this was safe by circumstance rather than by construction -- and the dangerous
+    # shape is not a wild string but a near miss like `largest-plane-normal`, a
+    # truncation of the real one, which would turn both checks off silently instead
+    # of failing loudly.
+    if source not in _KNOWN_UP_SOURCES:
+        raise Open3dError(
+            f"up_axis_inference reports an unrecognised source {source!r}; the "
+            "checks below are keyed to the known sources and would not apply"
+        )
+    if not isinstance(up, list) or len(up) != 3:
+        raise Open3dError("up_axis_inference does not publish a three-vector")
+    if not all(
+        isinstance(value, int | float) and _finite_number(value) for value in up
+    ):
+        raise Open3dError("the published up vector is not made of finite numbers")
+    if source in _DECLARED_UP_SOURCES and tuple(float(v) for v in up) != (
+        0.0,
+        0.0,
+        1.0,
+    ):
+        raise Open3dError(
+            f"source {source!r} means no axis was determined, but the report "
+            f"publishes {up} instead of the declared default"
+        )
+
+    agreement = inference.get("agreement", _ABSENT)
+    if agreement is _ABSENT:
+        if source == "default-ambiguous-plane":
+            raise Open3dError(
+                "the report claims the repeats disagreed but does not say what they "
+                "disagreed about"
+            )
+        return
+    if not isinstance(agreement, dict):
+        raise Open3dError("up_axis_inference.agreement is not a report")
+    distinct = agreement.get("distinct_axes")
+    repeats = agreement.get("repeats")
+    # `isinstance(True, int)` is True, so without the bool exclusions these two
+    # accepted `distinct: True` where `attempted` below deliberately rejects it. One
+    # rule for all three counts.
+    if not isinstance(distinct, int) or isinstance(distinct, bool) or distinct < 1:
+        raise Open3dError("the agreement report does not count the axes it found")
+    if not isinstance(repeats, int) or isinstance(repeats, bool) or repeats < 1:
+        raise Open3dError("the agreement report does not count its repeats")
+    if distinct > repeats:
+        raise Open3dError(
+            f"the agreement report found {distinct} axes in {repeats} repeats"
+        )
+    # Required, not optional. The check below is the only thing standing between a
+    # one-usable-fit sample and the word "measured", and an optional field is a check
+    # the producer can turn off by omission -- which is the dependency on the producer
+    # staying correct that this validator exists to remove.
+    attempted = agreement.get("attempted_fits")
+    if not isinstance(attempted, int) or isinstance(attempted, bool):
+        raise Open3dError(
+            "the agreement report does not say how many fits were attempted, so the "
+            "repeats it counts cannot be read as a majority of anything"
+        )
+    if attempted < repeats:
+        raise Open3dError(
+            f"the agreement report counts {repeats} repeats out of "
+            f"{attempted} attempted fits"
+        )
+    # A majority of attempts was not enough on its own: it is a ratio, and a ratio is
+    # satisfied by 1 of 1. `_up_axis(..., repeats=0)` produces exactly that, and the
+    # resulting report -- a single fit, which is the coin flip this whole change exists
+    # to replace -- passed every guard here and was published as a measured axis. The
+    # product call site uses the default, so there was no live exposure; the point of
+    # this validator is not to depend on that.
+    #
+    # Two, not more: the claim being checked is that repeats agreed, and two repeats
+    # are the fewest that can agree. A higher floor would be this validator deciding
+    # how many fits the producer must perform, which is the producer's parameter.
+    if source == _MEASURED_UP_SOURCE and attempted < 2:
+        raise Open3dError(
+            f"the report names a measured axis from {attempted} attempted fit, and "
+            "one fit cannot agree with anything"
+        )
+    # A majority, so "the repeats agreed" cannot be satisfied by a sample of one out
+    # of nine. Without this, a scan whose fits were weak eight times in nine and
+    # strong on the draw that happened to be first was published as measured.
+    if source == "largest-plane-normal-snapped-to-axis" and 2 * repeats <= attempted:
+        raise Open3dError(
+            f"the report names a measured axis from {repeats} usable fits out of "
+            f"{attempted} attempted, which is not a majority of them"
+        )
+    # The two claims that must not come apart: naming an axis requires the repeats to
+    # have agreed, and reporting disagreement requires not naming one.
+    if source == "largest-plane-normal-snapped-to-axis" and distinct != 1:
+        raise Open3dError(
+            f"the report names a measured axis while its {repeats} repeats found "
+            f"{distinct} different ones"
+        )
+    if source == "default-ambiguous-plane" and distinct < 2:
+        raise Open3dError(
+            "the report falls back to the default for ambiguity while its repeats "
+            "all agreed"
+        )
+    candidates = agreement.get("candidates")
+    if not isinstance(candidates, list) or len(candidates) != distinct:
+        raise Open3dError(
+            f"the agreement report counts {distinct} axes but lists "
+            f"{len(candidates) if isinstance(candidates, list) else 'no'} candidates"
+        )
+    # Checked before `.get` below: a non-dict element raised `AttributeError`, which
+    # is outside the CLI's `(Open3dError, ValueError)` and so broke the
+    # machine-readable failure contract for that one shape.
+    if not all(isinstance(one, dict) for one in candidates):
+        raise Open3dError("the agreement report lists a candidate that is not a report")
+    if sum(one.get("chosen_by_repeats", 0) for one in candidates) != repeats:
+        raise Open3dError(
+            "the candidates' repeat counts do not add up to the repeats performed"
+        )
+    # The direction, not only the counts. Every check above constrains how many axes
+    # were found and how often; none constrained *which* axis got published. A report
+    # naming a measured axis of (0,0,1) whose single agreeing candidate is (1,0,0)
+    # satisfied all of them, so the vector the view cameras consume could differ from
+    # the axis the agreement block attests to and the record still validated. The
+    # ambiguous-source branch is already bound to the declared default; this binds the
+    # measured branch to its own evidence.
+    if source == _MEASURED_UP_SOURCE:
+        agreed = candidates[0].get("up")
+        if not isinstance(agreed, list) or len(agreed) != 3:
+            raise Open3dError(
+                "the agreement report's candidate does not name the axis it agreed on"
+            )
+        try:
+            published = [float(value) for value in up]
+            attested = [float(value) for value in agreed]
+        except (TypeError, ValueError):
+            raise Open3dError(
+                "the agreement report's axis is not three numbers"
+            ) from None
+        if published != attested:
+            raise Open3dError(
+                f"the report publishes {published} as a measured axis while its "
+                f"repeats agreed on {attested}"
+            )
+    _validate_up_counterexample(agreement.get("agreement_is_not_meaningfulness"))
+
+
+def _validate_up_counterexample(limitation: Any) -> None:
+    """Require the published limitation to be a measured case, not a sentence.
+
+    The claim this guards is that repeat agreement does not establish the plane
+    means anything. Carried as prose, that survives being negated; carried as a
+    case where the repeats agreed unanimously on a plane tilted well off the axis
+    it was snapped to, it does not.
+    """
+
+    if not isinstance(limitation, dict):
+        raise Open3dError("the agreement report does not publish its limitation")
+    case = limitation.get("measured_counterexample")
+    if not isinstance(case, dict):
+        raise Open3dError("the limitation is not backed by a measured counterexample")
+    required = (
+        "repeats_that_agreed",
+        "of_repeats",
+        "plane_tilt_to_the_snapped_axis_degrees",
+    )
+    missing = [key for key in required if key not in case]
+    if missing:
+        raise Open3dError(f"the counterexample does not publish {missing}")
+    if not all(_finite_number(case[key]) for key in required):
+        raise Open3dError("the counterexample's measurements must be finite numbers")
+    agreed = float(case["repeats_that_agreed"])
+    total = float(case["of_repeats"])
+    tilt = float(case["plane_tilt_to_the_snapped_axis_degrees"])
+    if total <= 0 or agreed != total:
+        raise Open3dError(
+            f"the counterexample is not one: {agreed} of {total} repeats agreed, so it "
+            "does not show agreement failing to mean anything"
+        )
+    if tilt < _COUNTEREXAMPLE_TILT_DEGREES:
+        raise Open3dError(
+            f"the counterexample's plane is {tilt} degrees off the axis it was snapped "
+            f"to, under the {_COUNTEREXAMPLE_TILT_DEGREES} this claim needs to be "
+            "visible rather than arguable"
         )
 
 

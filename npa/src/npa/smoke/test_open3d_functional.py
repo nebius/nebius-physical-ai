@@ -21,6 +21,7 @@ from npa.workbench.open3d.artifacts import (
     validate_mesh,
     validate_support,
     validate_pose_graph,
+    validate_up_axis_inference,
     verify_rerun_recording,
 )
 from npa.workbench.open3d.runner import (
@@ -223,6 +224,104 @@ _CUBE_FACES = (
     ([0, 0, 0], 1, 2),
     ([1, 0, 0], 1, 2),
 )
+
+
+def _assert_the_up_axis_is_decided_by_the_scan(o3d) -> None:
+    """Two clouds where the answer is known, against the real `segment_plane`.
+
+    The unit tests cover the aggregation and the validator with no Open3D present.
+    What they cannot cover is whether repeating a real RANSAC fit actually separates
+    a scan that determines an up axis from one that does not, so both directions run
+    here on constructed geometry whose answer is not in question.
+    """
+
+    import numpy as np
+
+    from npa.workbench.open3d.artifacts import validate_up_axis_inference
+    from npa.workbench.open3d.runner import _up_axis
+
+    def room(floor_points: int, wall_points: int):
+        rng = np.random.default_rng(7)
+        floor = np.column_stack(
+            [
+                rng.uniform(0, 4.0, floor_points),
+                rng.uniform(0, 4.0, floor_points),
+                np.zeros(floor_points),
+            ]
+        )
+        wall = np.column_stack(
+            [
+                np.zeros(wall_points),
+                rng.uniform(0, 4.0, wall_points),
+                rng.uniform(0, 4.0, wall_points),
+            ]
+        )
+        cloud = o3d.geometry.PointCloud()
+        cloud.points = o3d.utility.Vector3dVector(np.vstack([floor, wall]))
+        return cloud
+
+    determined = _up_axis(o3d, room(8100, 810), VOXEL_SIZE)
+    validate_up_axis_inference({"up_axis_inference": determined})
+    assert determined["source"] == "largest-plane-normal-snapped-to-axis", determined
+    assert determined["up"] == [0.0, 0.0, 1.0], determined
+    assert determined["agreement"]["distinct_axes"] == 1, determined["agreement"]
+    runner = determined["agreement"]["runner_up_plane"]
+    assert runner["measured"] and runner["inliers_relative_to_the_winner"] < 0.5, runner
+
+    def two_walls(first_points: int, second_points: int):
+        """Planes at x=0 and y=0, so the candidate axes are x and y -- never z.
+
+        The floor-and-wall room above cannot test the fallback properly: its
+        majority branch *is* the declared default, so publishing the default and
+        publishing the winning branch look identical. Here the default is neither
+        candidate, which makes the difference observable.
+        """
+
+        rng = np.random.default_rng(7)
+        first = np.column_stack(
+            [
+                np.zeros(first_points),
+                rng.uniform(0, 4.0, first_points),
+                rng.uniform(0, 4.0, first_points),
+            ]
+        )
+        second = np.column_stack(
+            [
+                rng.uniform(0, 4.0, second_points),
+                np.zeros(second_points),
+                rng.uniform(0, 4.0, second_points),
+            ]
+        )
+        cloud = o3d.geometry.PointCloud()
+        cloud.points = o3d.utility.Vector3dVector(np.vstack([first, second]))
+        return cloud
+
+    # Equal point counts on two perpendicular planes. The check is allowed to miss --
+    # its measured rate is 25 to 27 of 30 runs on the floor-and-wall room -- so this asserts
+    # the two outcomes it may legitimately produce, and that neither is a named axis
+    # contradicted by its own repeats.
+    ambiguous = _up_axis(o3d, two_walls(8100, 8100), VOXEL_SIZE)
+    validate_up_axis_inference({"up_axis_inference": ambiguous})
+    assert ambiguous["source"] in {
+        "default-ambiguous-plane",
+        "largest-plane-normal-snapped-to-axis",
+    }, ambiguous
+    candidates = [one["up"] for one in ambiguous["agreement"]["candidates"]]
+    assert [0.0, 0.0, 1.0] not in candidates, (
+        "this construction is meant to make the declared default unreachable as a "
+        f"measured branch, and a fit returned it: {candidates}"
+    )
+    if ambiguous["source"] == "default-ambiguous-plane":
+        assert ambiguous["agreement"]["distinct_axes"] >= 2, ambiguous["agreement"]
+        # The assertion the whole fallback exists for: when the repeats disagree the
+        # published vector is the declared default, not whichever branch won.
+        assert ambiguous["up"] == [0.0, 0.0, 1.0], ambiguous
+    competition = ambiguous["agreement"]["runner_up_plane"]
+    assert competition["inliers_relative_to_the_winner"] > 0.9, competition
+    assert (
+        competition["inliers_relative_to_the_winner"]
+        > runner["inliers_relative_to_the_winner"]
+    ), "the ambiguous room's runner-up is not closer than the determined room's"
 
 
 def _assert_uneven_coverage_is_not_called_fabrication(o3d) -> None:
@@ -519,7 +618,7 @@ def main() -> None:
 
         recording = root / "visualize"
         recording.mkdir()
-        run_visualize(
+        view = run_visualize(
             {
                 "pose_graph": report["pose_graph"],
                 "fragments": paths,
@@ -532,7 +631,18 @@ def main() -> None:
             RUN_ID,
         )
         verify_rerun_recording(recording / "point_cloud.rrd")
+
+        # The up-axis block the real pipeline wrote for its own fused cloud, held to
+        # the same validator the runtime applies. The constructed rooms below test
+        # both directions; this tests the scene the rest of this smoke built.
+        validate_up_axis_inference(view)
+        inference = view["up_axis_inference"]
+        assert inference["source"], inference
+        if "agreement" in inference:
+            assert inference["agreement"]["repeats"] >= 2, inference["agreement"]
+
         _assert_uneven_coverage_is_not_called_fabrication(o3d)
+        _assert_the_up_axis_is_decided_by_the_scan(o3d)
 
         print(
             "Open3D registration recovered the ground-truth pose "

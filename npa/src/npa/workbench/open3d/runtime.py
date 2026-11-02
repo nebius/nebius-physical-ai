@@ -38,6 +38,7 @@ from .artifacts import (
     validate_result,
     validate_overlay_matches_crop,
     validate_support,
+    validate_up_axis_inference,
     verify_rerun_recording,
 )
 from .schemas import (
@@ -827,6 +828,7 @@ def visualize(request: RunRequest) -> dict[str, Any]:
         result = json.loads((output / "runner.json").read_text())
         result["schema_version"] = "npa.open3d.recording.v1"
         validate_overlay_matches_crop(result, report)
+        validate_up_axis_inference(result)
         payload = recording.read_bytes()
         if sha256_bytes(payload) != result["sha256"]:
             raise Open3dError("recording does not match its reported digest")
