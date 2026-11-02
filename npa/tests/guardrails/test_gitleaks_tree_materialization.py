@@ -21,6 +21,7 @@ import tarfile
 import zipfile
 import zlib
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -2096,12 +2097,70 @@ def test_forced_text_exact_history_scans_same_path_root_variants(
     assert {finding.get("StartLine") for finding in findings} == {1}
 
 
-def test_exact_path_orchestration_runs_one_generated_history(
+@pytest.mark.skipif(
+    shutil.which("gitleaks") is None, reason="gitleaks is not installed"
+)
+def test_exact_path_batches_scan_every_root_with_real_gitleaks(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Use one history scan and forbid per-view filesystem scanner processes."""
+    """Find every ordered root after crossing the unchanged file ceiling."""
+    views = [tmp_path / f"view-{index}" for index in range(3)]
+    for index, view in enumerate(views):
+        view.mkdir()
+        carrier = view / "nested" / "carrier.bin"
+        carrier.parent.mkdir()
+        carrier.write_text(
+            "NPA_BATCH_HISTORY_" + f"{index:024d}",
+            encoding="utf-8",
+        )
+    config_content = (
+        "[[rules]]\n"
+        'id = "batch-history-control"\n'
+        'description = "Batch history control"\n'
+        "regex = '''^NPA_BATCH_HISTORY_[0-9]{24}$'''\n"
+        "path = '''^nested/carrier\\.bin$'''\n"
+    ).encode()
+    config = tmp_path / "policy.toml"
+    config.write_bytes(config_content)
+    ignore = tmp_path / "policy.ignore"
+    ignore.write_text("", encoding="utf-8")
+    scanner = shutil.which("gitleaks")
+    assert scanner is not None
+    monkeypatch.setattr(tree_scan, "_MAX_ENCODED_CANDIDATE_FILES", 2)
+    work = tmp_path / "work"
+    work.mkdir()
+
+    scans = tree_scan._scan_exact_path_views(
+        scanner,
+        work,
+        views,
+        "batch-control",
+        config,
+        ignore,
+        config_content,
+        tree_scan._ReportBudget(),
+    )
+    findings = [
+        finding for _result, batch_findings in scans for finding in batch_findings
+    ]
+
+    assert [result.returncode for result, _findings in scans] == [1, 1]
+    assert len(findings) == 3
+    assert {finding.get("RuleID") for finding in findings} == {"batch-history-control"}
+    assert {finding.get("File") for finding in findings} == {"nested/carrier.bin"}
+    assert len({finding.get("Commit") for finding in findings}) == 3
+
+
+def test_exact_path_orchestration_runs_one_bounded_generated_history(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Use one bounded history and forbid per-view scanner processes."""
     views = [tmp_path / name for name in ("first", "second", "third")]
+    for index, view in enumerate(views):
+        view.mkdir()
+        (view / "carrier.txt").write_text(f"view {index}\n", encoding="utf-8")
     config = tmp_path / "policy.toml"
     ignore = tmp_path / "policy.ignore"
     config_content = b"[extend]\nuseDefault = true\n"
@@ -2112,35 +2171,46 @@ def test_exact_path_orchestration_runs_one_generated_history(
         stdout=b"",
         stderr=b"",
     )
-    generated_history_calls: list[Path] = []
+    prepared_history_calls: list[tuple[Path, list[Path]]] = []
+    scan_calls: list[tuple[Path, Path]] = []
 
-    def run_generated_history(
+    def prepare_history(
+        repository: Path,
+        batch: tree_scan._ExactPathBatch,
+        received_content: bytes,
+    ) -> tuple[str, ...]:
+        assert [view.root for view in batch.views] == views
+        assert received_content == config_content
+        repository.mkdir()
+        prepared_history_calls.append((repository, [view.root for view in batch.views]))
+        return ("a" * 40, "b" * 40, "c" * 40)
+
+    def run_scan(
         executable: str,
         repository: Path,
-        received_views: list[Path],
         received_config: Path,
         received_ignore: Path,
         report: Path,
-        received_content: bytes,
         *,
+        history_range: str,
         report_budget: tree_scan._ReportBudget,
+        **_kwargs: object,
     ) -> tuple[subprocess.CompletedProcess[bytes], list[dict[str, object]]]:
         assert executable == "/trusted/gitleaks"
-        assert received_views == views
         assert received_config == config
         assert received_ignore == ignore
-        assert report == tmp_path / "work" / "candidate-exact-path-git.json"
-        assert received_content == config_content
+        assert report == tmp_path / "work" / "candidate-exact-path-git-00.json"
+        assert history_range == "--all"
         assert report_budget is budget
-        generated_history_calls.append(repository)
+        scan_calls.append((repository, report))
         return result, []
 
     def reject_extra_scan(*_args: object, **_kwargs: object) -> None:
         raise AssertionError("exact-path orchestration launched a per-view scan")
 
-    monkeypatch.setattr(tree_scan, "_run_gitleaks_exact_views", run_generated_history)
+    monkeypatch.setattr(tree_scan, "_prepare_forced_text_history", prepare_history)
     monkeypatch.setattr(tree_scan, "_run_gitleaks_exact_view", reject_extra_scan)
-    monkeypatch.setattr(tree_scan, "_run_gitleaks", reject_extra_scan)
+    monkeypatch.setattr(tree_scan, "_run_gitleaks", run_scan)
 
     scans = tree_scan._scan_exact_path_views(
         "/trusted/gitleaks",
@@ -2153,12 +2223,718 @@ def test_exact_path_orchestration_runs_one_generated_history(
         budget,
     )
 
-    assert generated_history_calls == [
-        tmp_path / "work" / "candidate-exact-path-history"
+    assert prepared_history_calls == [
+        (
+            tmp_path / "work" / "candidate-exact-path-history-00",
+            views,
+        )
+    ]
+    assert scan_calls == [
+        (
+            tmp_path / "work" / "candidate-exact-path-history-00",
+            tmp_path / "work" / "candidate-exact-path-git-00.json",
+        )
     ]
     assert len(scans) == 1
     assert scans[0][0] is result
     assert scans[0][1] == []
+
+
+@pytest.mark.parametrize("bound", ["files", "bytes"])
+def test_exact_path_orchestration_batches_at_unchanged_bounds(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    bound: str,
+) -> None:
+    """Partition complete views once without raising either history ceiling."""
+    views = [tmp_path / name for name in ("first", "second", "third")]
+    payloads = (b"aa", b"bb", b"c")
+    for view, payload in zip(views, payloads, strict=True):
+        view.mkdir()
+        (view / "carrier.txt").write_bytes(payload)
+    monkeypatch.setattr(
+        tree_scan, "_MAX_ENCODED_CANDIDATE_FILES", 2 if bound == "files" else 10
+    )
+    monkeypatch.setattr(
+        tree_scan, "_MAX_EXACT_PATH_HISTORY_BYTES", 4 if bound == "bytes" else 100
+    )
+    prepared_calls: list[tuple[Path, list[Path]]] = []
+    scan_calls: list[tuple[Path, Path]] = []
+    result = subprocess.CompletedProcess(["gitleaks"], 0, b"", b"")
+
+    def prepare_history(
+        repository: Path,
+        batch: tree_scan._ExactPathBatch,
+        _content: bytes,
+    ) -> tuple[str, ...]:
+        repository.mkdir()
+        prepared_calls.append((repository, [view.root for view in batch.views]))
+        return tuple("a" * 40 for _view in batch.views)
+
+    def run_scan(
+        _executable: str,
+        repository: Path,
+        _config: Path,
+        _ignore: Path,
+        report: Path,
+        *,
+        history_range: str,
+        report_budget: tree_scan._ReportBudget,
+        **_kwargs: object,
+    ) -> tuple[subprocess.CompletedProcess[bytes], list[dict[str, object]]]:
+        assert history_range == "--all"
+        assert report_budget is budget
+        scan_calls.append((repository, report))
+        return result, []
+
+    budget = tree_scan._ReportBudget()
+    monkeypatch.setattr(tree_scan, "_prepare_forced_text_history", prepare_history)
+    monkeypatch.setattr(tree_scan, "_run_gitleaks", run_scan)
+    scans = tree_scan._scan_exact_path_views(
+        "/trusted/gitleaks",
+        tmp_path / "work",
+        views,
+        "transformed-exact-path",
+        tmp_path / "policy.toml",
+        tmp_path / "policy.ignore",
+        b"[extend]\nuseDefault = true\n",
+        budget,
+    )
+
+    assert [view for _repo, batch in prepared_calls for view in batch] == views
+    assert [batch for _repo, batch in prepared_calls] == [views[:2], views[2:]]
+    assert [repo.name for repo, _batch in prepared_calls] == [
+        "transformed-exact-path-history-00",
+        "transformed-exact-path-history-01",
+    ]
+    assert [report.name for _repo, report in scan_calls] == [
+        "transformed-exact-path-git-00.json",
+        "transformed-exact-path-git-01.json",
+    ]
+    assert len(scans) == 2
+
+
+@pytest.mark.parametrize(
+    ("failure", "error"),
+    [
+        ("empty", "view is empty"),
+        ("files", "view exceeds the bounded file count"),
+        ("bytes", "view exceeds the bounded byte count"),
+        ("shards", "views exceed the shard limit"),
+        ("batches", "histories exceed the bounded batch count"),
+    ],
+)
+def test_exact_path_orchestration_rejects_unbatchable_population(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure: str,
+    error: str,
+) -> None:
+    """Fail before Gitleaks when complete views cannot fit bounded batches."""
+    views = [tmp_path / f"view-{index}" for index in range(3)]
+    for view in views:
+        view.mkdir()
+        if failure != "empty":
+            (view / "carrier.txt").write_bytes(b"aa")
+    if failure == "files":
+        (views[0] / "second.txt").write_bytes(b"b")
+        monkeypatch.setattr(tree_scan, "_MAX_ENCODED_CANDIDATE_FILES", 1)
+        views = views[:1]
+    elif failure == "bytes":
+        monkeypatch.setattr(tree_scan, "_MAX_EXACT_PATH_HISTORY_BYTES", 1)
+        views = views[:1]
+    elif failure == "shards":
+        monkeypatch.setattr(tree_scan, "_MAX_EXACT_PATH_SHARDS", 2)
+    elif failure == "batches":
+        monkeypatch.setattr(tree_scan, "_MAX_ENCODED_CANDIDATE_FILES", 1)
+        monkeypatch.setattr(tree_scan, "_MAX_EXACT_PATH_HISTORY_BATCHES", 2)
+    else:
+        views = views[:1]
+
+    def reject_scan(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("Gitleaks ran before batch validation completed")
+
+    monkeypatch.setattr(tree_scan, "_run_gitleaks_exact_views", reject_scan)
+    with pytest.raises(tree_scan._ScanError, match=error):
+        tree_scan._scan_exact_path_views(
+            "/trusted/gitleaks",
+            tmp_path / "work",
+            views,
+            "archive-exact-path",
+            tmp_path / "policy.toml",
+            tmp_path / "policy.ignore",
+            b"[extend]\nuseDefault = true\n",
+            tree_scan._ReportBudget(),
+        )
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ["add", "delete", "replace", "mutate", "symlink", "nonregular"],
+)
+def test_exact_path_manifest_rejects_changed_input_before_scan(
+    tmp_path: Path,
+    mutation: str,
+) -> None:
+    """Fail if a bound view changes before its generated history is frozen."""
+    view = tmp_path / "view"
+    view.mkdir()
+    carrier = view / "carrier.bin"
+    carrier.write_bytes(b"ABCDEF")
+    batches = tree_scan._partition_exact_path_views([view])
+    assert len(batches) == 1
+
+    if mutation == "add":
+        (view / "added.bin").write_bytes(b"new")
+    elif mutation == "delete":
+        carrier.unlink()
+    elif mutation == "replace":
+        carrier.unlink()
+        carrier.write_bytes(b"UVWXYZ")
+    elif mutation == "mutate":
+        carrier.write_bytes(b"123456")
+    elif mutation == "symlink":
+        target = tmp_path / "target.bin"
+        target.write_bytes(b"ABCDEF")
+        carrier.unlink()
+        os.symlink(target, carrier)
+    else:
+        carrier.unlink()
+        os.mkfifo(carrier)
+
+    with pytest.raises(
+        tree_scan._ScanError,
+        match="changed|symbolic link|non-regular",
+    ):
+        tree_scan._prepare_forced_text_history(
+            tmp_path / "history",
+            batches[0],
+            b"[extend]\nuseDefault = true\n",
+        )
+
+
+def test_exact_path_manifest_rejects_ancestor_symlink_race(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Reject an ancestor swapped for a linked tree after inventory validation."""
+    view = tmp_path / "view"
+    view.mkdir()
+    (view / "carrier.bin").write_bytes(b"ABCDEF")
+    batches = tree_scan._partition_exact_path_views([view])
+    assert len(batches) == 1
+    original_require = tree_scan._require_exact_path_inventory
+    mutated = False
+
+    def require_then_replace(bound: tree_scan._ExactPathView) -> None:
+        nonlocal mutated
+        original_require(bound)
+        if mutated:
+            return
+        mutated = True
+        retained = tmp_path / "retained"
+        bound.root.rename(retained)
+        replacement = tmp_path / "replacement"
+        replacement.mkdir()
+        (replacement / "carrier.bin").write_bytes(b"UVWXYZ")
+        os.symlink(replacement, bound.root)
+
+    monkeypatch.setattr(
+        tree_scan,
+        "_require_exact_path_inventory",
+        require_then_replace,
+    )
+    with pytest.raises(tree_scan._ScanError, match="changed after it was measured"):
+        tree_scan._prepare_forced_text_history(
+            tmp_path / "history",
+            batches[0],
+            b"[extend]\nuseDefault = true\n",
+        )
+    assert mutated
+
+
+@pytest.mark.parametrize("mutation", ["truncate", "rewrite"])
+def test_exact_path_manifest_rejects_mid_read_mutation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mutation: str,
+) -> None:
+    """Reject truncation or same-size content mutation during the bound read."""
+    view = tmp_path / "view"
+    view.mkdir()
+    carrier = view / "carrier.bin"
+    chunk_bytes = tree_scan._PROBE_DECODE_CHUNK_BYTES
+    carrier.write_bytes(b"A" * (chunk_bytes * 2))
+    batches = tree_scan._partition_exact_path_views([view])
+    assert len(batches) == 1
+    original_fdopen = tree_scan.os.fdopen
+    mutated = False
+
+    class MutatingReader:
+        def __init__(self, raw: io.BufferedReader) -> None:
+            self.raw = raw
+
+        def __enter__(self) -> MutatingReader:
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            self.raw.close()
+
+        def fileno(self) -> int:
+            return self.raw.fileno()
+
+        def read(self, size: int) -> bytes:
+            nonlocal mutated
+            content = self.raw.read(size)
+            if content and not mutated:
+                mutated = True
+                if mutation == "truncate":
+                    carrier.write_bytes(b"B")
+                else:
+                    with carrier.open("r+b") as stream:
+                        stream.seek(chunk_bytes)
+                        stream.write(b"B" * chunk_bytes)
+            return content
+
+    def fdopen(
+        descriptor: int,
+        mode: str,
+        *args: object,
+        **kwargs: object,
+    ) -> object:
+        raw = original_fdopen(descriptor, mode, *args, **kwargs)
+        if mode != "rb":
+            return raw
+        assert isinstance(raw, io.BufferedReader)
+        return MutatingReader(raw)
+
+    monkeypatch.setattr(tree_scan.os, "fdopen", fdopen)
+    with pytest.raises(tree_scan._ScanError, match="changed after it was measured"):
+        tree_scan._prepare_forced_text_history(
+            tmp_path / "history",
+            batches[0],
+            b"[extend]\nuseDefault = true\n",
+        )
+    assert mutated
+
+
+@pytest.mark.parametrize("kind", ["symlink", "file", "fifo"])
+def test_exact_path_manifest_rejects_non_directory_view(
+    tmp_path: Path,
+    kind: str,
+) -> None:
+    """Reject linked and non-directory roots before any generated history."""
+    view = tmp_path / "view"
+    if kind == "symlink":
+        target = tmp_path / "target"
+        target.mkdir()
+        (target / "carrier.bin").write_bytes(b"x")
+        os.symlink(target, view)
+    elif kind == "file":
+        view.write_bytes(b"x")
+    else:
+        os.mkfifo(view)
+
+    with pytest.raises(tree_scan._ScanError, match="regular directory"):
+        tree_scan._partition_exact_path_views([view])
+
+
+def test_exact_path_partition_accepts_twelve_batches_and_rejects_thirteen(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Keep the literal process-amplification boundary mutation-sensitive."""
+    views = [tmp_path / f"view-{index:02d}" for index in range(14)]
+    for view in views:
+        view.mkdir()
+        (view / "carrier.bin").write_bytes(b"x")
+    monkeypatch.setattr(tree_scan, "_MAX_ENCODED_CANDIDATE_FILES", 1)
+    monkeypatch.setattr(tree_scan, "_MAX_EXACT_PATH_HISTORY_BATCHES", 12)
+    original_measure = tree_scan._measure_exact_path_view
+    measured: list[Path] = []
+
+    def measure(view: Path) -> tree_scan._ExactPathView:
+        measured.append(view)
+        return original_measure(view)
+
+    monkeypatch.setattr(tree_scan, "_measure_exact_path_view", measure)
+
+    batches = tree_scan._partition_exact_path_views(views[:12])
+    assert len(batches) == 12
+    assert [batch.files for batch in batches] == [1] * 12
+    measured.clear()
+    with pytest.raises(
+        tree_scan._ScanError,
+        match="histories exceed the bounded batch count",
+    ):
+        tree_scan._partition_exact_path_views(views)
+    assert measured == views[:13]
+
+
+def test_prepares_exact_populations_with_diagnosed_batch_cardinality(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Prepare candidate 1, historical 1, and transformed 2 before scanning."""
+
+    def views(label: str, count: int) -> list[Path]:
+        roots = [tmp_path / f"{label}-{index}" for index in range(count)]
+        for index, root in enumerate(roots):
+            root.mkdir()
+            (root / "carrier.bin").write_text(str(index), encoding="utf-8")
+        return roots
+
+    candidate = views("candidate", 2)
+    historical = views("historical", 2)
+    transformed = views("transformed", 3)
+    monkeypatch.setattr(tree_scan, "_MAX_ENCODED_CANDIDATE_FILES", 2)
+    sources = SimpleNamespace(
+        candidate_exact_path_views=candidate,
+        historical_exact_path_views=historical,
+    )
+    probes = SimpleNamespace(transformed_exact_path_views=transformed)
+
+    prepared = tree_scan._prepare_exact_path_populations(
+        tmp_path / "work",
+        sources,
+        probes,
+        b"[extend]\nuseDefault = true\n",
+    )
+
+    assert [len(prepared.candidate), len(prepared.historical)] == [1, 1]
+    assert len(prepared.transformed) == 2
+    all_scans = prepared.candidate + prepared.historical + prepared.transformed
+    assert len({scan.repository for scan in all_scans}) == 4
+    assert len({scan.report for scan in all_scans}) == 4
+    assert [scan.repository.name for scan in prepared.transformed] == [
+        "transformed-exact-path-history-00",
+        "transformed-exact-path-history-01",
+    ]
+    assert all(scan.repository.is_dir() for scan in all_scans)
+    assert all(not scan.report.exists() for scan in all_scans)
+
+
+def test_workspace_preflights_all_exact_paths_before_gitleaks(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A late malformed population must stop every Gitleaks invocation."""
+    config = tmp_path / "policy.toml"
+    ignore = tmp_path / "policy.ignore"
+    config.write_text("", encoding="utf-8")
+    ignore.write_text("", encoding="utf-8")
+    sources = SimpleNamespace(history_source=tmp_path / "history")
+    probes = object()
+    plan = SimpleNamespace(
+        config_content=b"policy",
+        commit_range="base..candidate",
+        commits=["candidate"],
+    )
+    calls: list[str] = []
+
+    monkeypatch.setattr(
+        tree_scan,
+        "_write_scan_policy",
+        lambda *_args: (config, ignore),
+    )
+    monkeypatch.setattr(tree_scan, "_materialize_sources", lambda *_args: sources)
+    monkeypatch.setattr(tree_scan, "_prepare_probe_sources", lambda *_args: probes)
+    monkeypatch.setattr(
+        tree_scan,
+        "_verify_root_ignore_exact_path_coverage",
+        lambda *_args: None,
+    )
+    monkeypatch.setattr(
+        tree_scan,
+        "_measure_native_history_input",
+        lambda *_args: object(),
+    )
+
+    def reject_population(*_args: object) -> None:
+        calls.append("exact-path-preflight")
+        raise tree_scan._ScanError("late transformed population is malformed")
+
+    def reject_gitleaks(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("Gitleaks ran before exact-path preflight completed")
+
+    monkeypatch.setattr(
+        tree_scan,
+        "_prepare_exact_path_populations",
+        reject_population,
+    )
+    monkeypatch.setattr(tree_scan, "_verify_decode_depth", reject_gitleaks)
+    monkeypatch.setattr(tree_scan, "_verify_binary_control", reject_gitleaks)
+    monkeypatch.setattr(tree_scan, "_verify_fragment_boundary_control", reject_gitleaks)
+    monkeypatch.setattr(tree_scan, "_verify_probe_sources", reject_gitleaks)
+    monkeypatch.setattr(tree_scan, "_run_content_scans", reject_gitleaks)
+    work = tmp_path / "work"
+    work.mkdir()
+
+    with pytest.raises(tree_scan._ScanError, match="late transformed"):
+        tree_scan._scan_workspace(
+            tmp_path / "repo",
+            work,
+            plan,
+            "/trusted/gitleaks",
+        )
+    assert calls == ["exact-path-preflight"]
+
+
+def test_scan_prepares_workspace_before_gitleaks_identity_process(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Freeze all scan inputs before staging runs `gitleaks version`."""
+    order: list[str] = []
+    plan = object()
+    prepared = object()
+
+    monkeypatch.setattr(tree_scan, "_verified_executable", lambda path: path)
+    monkeypatch.setattr(tree_scan, "_plan_scan", lambda *_args: plan)
+
+    def prepare(*_args: object) -> object:
+        order.append("prepare")
+        return prepared
+
+    def stage(executable: str, _root: Path) -> tuple[str, str]:
+        order.append("identity")
+        return executable, "bound-sha256"
+
+    def run(
+        _repo: Path,
+        _root: Path,
+        received_plan: object,
+        _executable: str,
+        received_prepared: object,
+    ) -> dict[str, object]:
+        assert received_plan is plan
+        assert received_prepared is prepared
+        order.append("scan")
+        return {}
+
+    monkeypatch.setattr(tree_scan, "_prepare_scan_workspace", prepare)
+    monkeypatch.setattr(tree_scan, "_stage_gitleaks_executable", stage)
+    monkeypatch.setattr(tree_scan, "_scan_workspace", run)
+    monkeypatch.setattr(tree_scan, "_verify_scan_plan_unchanged", lambda *_args: None)
+    monkeypatch.setattr(
+        tree_scan,
+        "_verify_gitleaks_identity",
+        lambda _executable: order.append("reverify") or "bound-sha256",
+    )
+
+    tree_scan.scan(
+        tmp_path,
+        "a" * 40,
+        "b" * 40,
+        "b" * 40,
+        "/trusted/gitleaks",
+        ".gitleaks.toml",
+    )
+    assert order == ["prepare", "identity", "scan", "reverify"]
+
+
+def test_clean_check_visits_every_prepared_exact_path_batch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Require clean results from every candidate, historical, and transformed batch."""
+    result = subprocess.CompletedProcess(["gitleaks"], 0, b"", b"")
+    observed: list[str] = []
+
+    def require_clean(
+        label: str,
+        _result: subprocess.CompletedProcess[bytes],
+        _findings: list[dict[str, object]],
+    ) -> None:
+        observed.append(label)
+
+    monkeypatch.setattr(tree_scan, "_require_clean_scan", require_clean)
+    clean = (result, [])
+    tree_scan._require_clean_content_scans(
+        clean,
+        (None, []),
+        clean,
+        clean,
+        [clean],
+        [clean],
+        [clean, clean],
+        clean,
+        (None, []),
+        clean,
+    )
+
+    assert observed == [
+        "committed-history",
+        "committed-tree",
+        "commit-metadata",
+        "candidate-exact-path",
+        "historical-exact-path",
+        "transformed-exact-path",
+        "transformed-exact-path",
+        "candidate-probe",
+        "commit-metadata-probe",
+    ]
+
+
+def test_content_orchestration_renders_exact_one_one_two_receipt(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Scan, aggregate, clean-check, and report every prepared population."""
+    root = tmp_path / "work"
+    root.mkdir()
+    config = tmp_path / "policy.toml"
+    ignore = tmp_path / "policy.ignore"
+    config.write_text("[extend]\nuseDefault = true\n", encoding="utf-8")
+    ignore.write_text("", encoding="utf-8")
+    budget = tree_scan._ReportBudget()
+    plan = SimpleNamespace(
+        commit_range="base..candidate",
+        config_content=config.read_bytes(),
+        history_base="base",
+        commits=["candidate"],
+        policy={"commit": "policy", "tree": "policy-tree"},
+    )
+    sources = SimpleNamespace(
+        history_source=tmp_path / "history",
+        scanner_work=tmp_path / "scanner-work",
+        historical_view=tmp_path / "historical",
+        snapshot=tmp_path / "snapshot",
+        commit_metadata_view=tmp_path / "metadata",
+        candidate_receipt={"files": 1},
+        historical_receipt={"commits": ["historical"]},
+        commit_metadata_receipt={"commits": ["candidate"]},
+    )
+    probes = SimpleNamespace(
+        candidate_view=tmp_path / "candidate-probe",
+        historical_view=tmp_path / "historical-probe",
+        commit_metadata_view=tmp_path / "metadata-probe",
+        candidate_receipt={},
+        historical_receipt={},
+        commit_metadata_receipt={},
+    )
+
+    def prepared(
+        label: str, count: int
+    ) -> tuple[tree_scan._PreparedExactPathScan, ...]:
+        return tuple(
+            tree_scan._PreparedExactPathScan(
+                root / f"{label}-history-{index:02d}",
+                root / f"{label}-git-{index:02d}.json",
+            )
+            for index in range(count)
+        )
+
+    exact_paths = tree_scan._PreparedExactPathPopulations(
+        prepared("candidate-exact-path", 1),
+        prepared("historical-exact-path", 1),
+        prepared("transformed-exact-path", 2),
+    )
+    exact_findings = {
+        scan.report.name: [{"batch": scan.report.stem}]
+        for group in exact_paths
+        for scan in group
+    }
+    scanned_reports: list[str] = []
+    budgets: list[tree_scan._ReportBudget] = []
+    result = subprocess.CompletedProcess(["gitleaks"], 0, b"", b"")
+
+    def run_scan(
+        _executable: str,
+        _source: Path,
+        _config: Path,
+        _ignore: Path,
+        report: Path,
+        *,
+        report_budget: tree_scan._ReportBudget,
+        **_kwargs: object,
+    ) -> tuple[subprocess.CompletedProcess[bytes], list[dict[str, object]]]:
+        scanned_reports.append(report.name)
+        budgets.append(report_budget)
+        return result, exact_findings.get(report.name, [])
+
+    def run_metadata(
+        _executable: str,
+        _view: Path,
+        _config: Path,
+        _ignore: Path,
+        _report: Path,
+        _config_content: bytes,
+        *,
+        report_budget: tree_scan._ReportBudget,
+    ) -> tuple[subprocess.CompletedProcess[bytes], list[dict[str, object]]]:
+        budgets.append(report_budget)
+        return result, []
+
+    clean_cardinality: list[tuple[int, int, int]] = []
+
+    def require_all_clean(
+        _history: object,
+        _historical: object,
+        _tree: object,
+        _metadata: object,
+        candidate: list[object],
+        historical: list[object],
+        transformed: list[object],
+        _candidate_probe: object,
+        _historical_probe: object,
+        _metadata_probe: object,
+    ) -> None:
+        clean_cardinality.append((len(candidate), len(historical), len(transformed)))
+
+    monkeypatch.setattr(tree_scan, "_run_gitleaks", run_scan)
+    monkeypatch.setattr(tree_scan, "_run_gitleaks_exact_view", run_metadata)
+    monkeypatch.setattr(
+        tree_scan,
+        "_require_clean_content_scans",
+        require_all_clean,
+    )
+    findings = tree_scan._run_content_scans(
+        "/trusted/gitleaks",
+        root,
+        plan,
+        sources,
+        probes,
+        config,
+        ignore,
+        budget,
+        exact_paths,
+    )
+
+    expected_reports = [scan.report.name for group in exact_paths for scan in group]
+    assert [name for name in scanned_reports if name in exact_findings] == (
+        expected_reports
+    )
+    assert budgets and all(received is budget for received in budgets)
+    assert clean_cardinality == [(1, 1, 2)]
+    assert [finding["batch"] for finding in findings.candidate_exact_paths] == [
+        "candidate-exact-path-git-00"
+    ]
+    assert [finding["batch"] for finding in findings.historical_exact_paths] == [
+        "historical-exact-path-git-00"
+    ]
+    assert [finding["batch"] for finding in findings.transformed_exact_paths] == [
+        "transformed-exact-path-git-00",
+        "transformed-exact-path-git-01",
+    ]
+
+    receipt = tree_scan._render_scan_receipt(
+        plan,
+        sources,
+        probes,
+        findings,
+        tree_scan._NativeHistoryInput(1, 2, 3),
+        config,
+        ignore,
+        budget,
+    )
+    assert receipt["candidate_exact_path_scan_invocations"] == 1
+    assert receipt["historical_exact_path_scan_invocations"] == 1
+    assert receipt["transformed_exact_path_scan_invocations"] == 2
+    assert receipt["candidate_exact_path_findings"] == 1
+    assert receipt["historical_exact_path_findings"] == 1
+    assert receipt["transformed_exact_path_findings"] == 2
+    assert receipt["gitleaks_findings"] == 4
+    assert "archive_exact_path_scan_invocations" not in receipt
 
 
 def test_generated_exact_view_rejects_its_commit_allowlist(tmp_path: Path) -> None:
@@ -2197,9 +2973,11 @@ def test_generated_exact_history_rejects_any_root_commit_allowlist(
             f"exact history value {index}\n",
             encoding="utf-8",
         )
+    first_batch = tree_scan._partition_exact_path_views(views)
+    assert len(first_batch) == 1
     commits = tree_scan._prepare_forced_text_history(
         tmp_path / "first-history",
-        views,
+        first_batch[0],
         b"[extend]\nuseDefault = true\n",
     )
     assert len(commits) == 2
@@ -2213,9 +2991,11 @@ def test_generated_exact_history_rejects_any_root_commit_allowlist(
         tree_scan._ScanError,
         match="allowlist suppresses a generated exact-path",
     ):
+        second_batch = tree_scan._partition_exact_path_views(views)
+        assert len(second_batch) == 1
         tree_scan._prepare_forced_text_history(
             tmp_path / "second-history",
-            views,
+            second_batch[0],
             policy,
         )
 
@@ -2243,9 +3023,10 @@ def test_generated_exact_history_applies_input_bounds(
         error = "bounded byte count"
 
     with pytest.raises(tree_scan._ScanError, match=error):
-        tree_scan._prepare_forced_text_history(
-            tmp_path / "bounded-history",
+        tree_scan._prepare_exact_path_scans(
+            tmp_path / "bounded",
             views,
+            "bounded-history",
             b"[extend]\nuseDefault = true\n",
         )
 
@@ -5540,10 +6321,16 @@ def test_scan_revalidates_history_metadata_after_workspace_scan(
         _root: Path,
         _plan: object,
         _executable: str,
+        _prepared: object,
     ) -> dict[str, object]:
         (repo / ".git" / "shallow").write_text(f"{base}\n", encoding="ascii")
         return {}
 
+    monkeypatch.setattr(
+        tree_scan,
+        "_prepare_scan_workspace",
+        lambda *_args: object(),
+    )
     monkeypatch.setattr(tree_scan, "_scan_workspace", mutate_history)
     monkeypatch.setattr(
         tree_scan,
@@ -7659,7 +8446,7 @@ def test_runner_rejects_binary_secret_deleted_inside_history_range(
             "committed-history",
             "historical-trees",
             "historical-exact-path",
-            "archive-exact-path",
+            "transformed-exact-path",
             "historical-probe",
         )
     )
@@ -7873,6 +8660,32 @@ def test_complete_tree_runner_accepts_clean_binary_blob(
     assert receipt["candidate_probe_findings"] == 0
     assert receipt["historical_probe_findings"] == 0
     assert receipt["commit_metadata_probe_findings"] == 0
+    assert receipt["candidate_exact_path_scan_invocations"] == 1
+    assert receipt["historical_exact_path_scan_invocations"] == 0
+    transformed_shards = sum(
+        probe[f"{prefix}_exact_path_shards"]
+        for probe in (
+            receipt["candidate_decode_probe"],
+            receipt["historical_decode_probe"],
+            receipt["commit_metadata_decode_probe"],
+        )
+        for prefix in ("archive", "candidate", "derived", "fragment")
+    )
+    assert receipt["transformed_exact_path_scan_invocations"] == int(
+        transformed_shards > 0
+    )
+    assert (
+        receipt["exact_path_history_file_limit"]
+        == tree_scan._MAX_ENCODED_CANDIDATE_FILES
+    )
+    assert (
+        receipt["exact_path_history_byte_limit"]
+        == tree_scan._MAX_EXACT_PATH_HISTORY_BYTES
+    )
+    assert (
+        receipt["exact_path_history_batch_limit"]
+        == tree_scan._MAX_EXACT_PATH_HISTORY_BATCHES
+    )
     assert receipt["gitleaks_findings"] == 0
     assert receipt["gitleaks_version"] == tree_scan._GITLEAKS_VERSION
     assert receipt["gitleaks_binary_sha256"] == tree_scan._executable_sha256(

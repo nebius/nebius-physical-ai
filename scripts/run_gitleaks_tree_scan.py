@@ -27,6 +27,7 @@ import urllib.parse
 import zipfile
 import zlib
 from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from functools import partial
 from pathlib import Path, PurePosixPath
 from typing import BinaryIO, NamedTuple, Self
@@ -206,8 +207,12 @@ _MAX_ENCODED_DERIVED_OUTPUT_BYTES = (
 _MAX_ENCODED_DERIVED_ANALYSIS_BYTES = _MAX_ENCODED_CANDIDATE_BYTES
 _MAX_DIRECT_COMPRESSED_CANDIDATES = _MAX_ENCODED_CANDIDATE_MATCHES
 _MAX_EXACT_PATH_HISTORY_BYTES = _MAX_NATIVE_HISTORY_INPUT_BYTES
-# Exact-path variants are compacted into independent roots in one forced-text
-# history, so their count is bounded by generated files rather than processes.
+# Each candidate, historical, or commit-metadata probe has four independently
+# bounded exact-path populations. Keep deterministic batching from restoring
+# one scanner process per view.
+_MAX_EXACT_PATH_HISTORY_BATCHES = 12
+# Exact-path variants are compacted into independent roots in bounded
+# forced-text histories, so their count is bounded by generated files.
 _MAX_EXACT_PATH_SHARDS = _MAX_ENCODED_CANDIDATE_FILES
 _INERT_ENCODED_ARCHIVE_SHA256 = {
     # Public empty-metadata gzip fixture in test_curobo_image_verifier.py.
@@ -1160,7 +1165,7 @@ class _ProbeSources:
         historical_receipt: dict[str, int],
         commit_metadata_view: Path,
         commit_metadata_receipt: dict[str, int],
-        archive_exact_path_views: list[Path],
+        transformed_exact_path_views: list[Path],
     ) -> None:
         self.candidate_view = candidate_view
         self.candidate_receipt = candidate_receipt
@@ -1168,7 +1173,7 @@ class _ProbeSources:
         self.historical_receipt = historical_receipt
         self.commit_metadata_view = commit_metadata_view
         self.commit_metadata_receipt = commit_metadata_receipt
-        self.archive_exact_path_views = archive_exact_path_views
+        self.transformed_exact_path_views = transformed_exact_path_views
 
 
 class _FindingSets:
@@ -1182,10 +1187,13 @@ class _FindingSets:
         commit_metadata: list[dict[str, object]],
         candidate_exact_paths: list[dict[str, object]],
         historical_exact_paths: list[dict[str, object]],
-        archive_exact_paths: list[dict[str, object]],
+        transformed_exact_paths: list[dict[str, object]],
         candidate_probe: list[dict[str, object]],
         historical_probe: list[dict[str, object]],
         commit_metadata_probe: list[dict[str, object]],
+        candidate_exact_path_scan_invocations: int,
+        historical_exact_path_scan_invocations: int,
+        transformed_exact_path_scan_invocations: int,
     ) -> None:
         self.history = history
         self.historical_trees = historical_trees
@@ -1193,10 +1201,19 @@ class _FindingSets:
         self.commit_metadata = commit_metadata
         self.candidate_exact_paths = candidate_exact_paths
         self.historical_exact_paths = historical_exact_paths
-        self.archive_exact_paths = archive_exact_paths
+        self.transformed_exact_paths = transformed_exact_paths
         self.candidate_probe = candidate_probe
         self.historical_probe = historical_probe
         self.commit_metadata_probe = commit_metadata_probe
+        self.candidate_exact_path_scan_invocations = (
+            candidate_exact_path_scan_invocations
+        )
+        self.historical_exact_path_scan_invocations = (
+            historical_exact_path_scan_invocations
+        )
+        self.transformed_exact_path_scan_invocations = (
+            transformed_exact_path_scan_invocations
+        )
 
 
 def _config_blob(repo: Path, tree: str, relative_path: str) -> bytes:
@@ -5360,7 +5377,7 @@ def _prepare_probe_sources(
         preserve_exact_paths,
         retain_direct_rfc1950_outputs=False,
     )
-    archive_exact_path_views = []
+    transformed_exact_path_views = []
     for probe_view in (
         candidate_view,
         historical_view,
@@ -5378,7 +5395,7 @@ def _prepare_probe_sources(
             if exact_root.is_dir():
                 detached_root = root / f"{probe_view.name}-{exact_root_name}"
                 exact_root.rename(detached_root)
-                archive_exact_path_views.extend(
+                transformed_exact_path_views.extend(
                     sorted(path for path in detached_root.iterdir() if path.is_dir())
                 )
     return _ProbeSources(
@@ -5388,7 +5405,7 @@ def _prepare_probe_sources(
         historical_receipt,
         commit_metadata_view,
         commit_metadata_receipt,
-        archive_exact_path_views,
+        transformed_exact_path_views,
     )
 
 
@@ -5616,16 +5633,250 @@ def _quote_fast_import_path(path: bytes) -> bytes:
     return b'"' + b"".join(f"\\{value:03o}".encode() for value in path) + b'"'
 
 
-def _prepare_forced_text_history(
-    repository: Path,
-    views: list[Path],
-    config_content: bytes,
-) -> tuple[str, ...]:
-    """Commit every exact-path variant as an independent forced-text root."""
+class _ExactPathFile(NamedTuple):
+    """Bind one regular exact-path file to its measured content."""
+
+    relative: str
+    bytes: int
+    sha256: str
+
+
+class _ExactPathView(NamedTuple):
+    """Bind one complete exact-path root to an immutable file manifest."""
+
+    root: Path
+    files: tuple[_ExactPathFile, ...]
+    bytes: int
+
+
+class _ExactPathBatch(NamedTuple):
+    """Describe one complete-view forced-text history batch."""
+
+    views: tuple[_ExactPathView, ...]
+    files: int
+    bytes: int
+
+
+class _PreparedExactPathScan(NamedTuple):
+    """Bind one validated generated history to its unique report."""
+
+    repository: Path
+    report: Path
+
+
+class _PreparedExactPathPopulations(NamedTuple):
+    """Collect every exact-path population frozen before Gitleaks runs."""
+
+    candidate: tuple[_PreparedExactPathScan, ...]
+    historical: tuple[_PreparedExactPathScan, ...]
+    transformed: tuple[_PreparedExactPathScan, ...]
+
+
+class _PreparedScanWorkspace(NamedTuple):
+    """Collect all inputs frozen before the first Gitleaks process."""
+
+    report_budget: _ReportBudget
+    config: Path
+    ignore: Path
+    sources: _MaterializedSources
+    probes: _ProbeSources
+    native_history_input: _NativeHistoryInput
+    exact_paths: _PreparedExactPathPopulations
+
+
+def _stable_stat(metadata: os.stat_result) -> tuple[int, ...]:
+    """Return the fields that must not change while a file is read."""
+    return (
+        metadata.st_dev,
+        metadata.st_ino,
+        metadata.st_mode,
+        metadata.st_size,
+        metadata.st_mtime_ns,
+        metadata.st_ctime_ns,
+    )
+
+
+def _enumerate_exact_path_files(
+    view: Path,
+) -> list[tuple[Path, str, os.stat_result]]:
+    """Return one deterministic regular-file inventory without following links."""
+    root_metadata = view.lstat()
+    if view.is_symlink() or not stat.S_ISDIR(root_metadata.st_mode):
+        raise _ScanError("Exact-path scan view must be a regular directory")
+    git_metadata = view / ".git"
+    if git_metadata.exists() or git_metadata.is_symlink():
+        raise _ScanError("Exact-path scan view already contains Git metadata")
+    entries: list[tuple[Path, str, os.stat_result]] = []
+    paths = sorted(
+        view.rglob("*"),
+        key=lambda path: os.fsencode(path.relative_to(view).as_posix()),
+    )
+    for path in paths:
+        metadata = path.lstat()
+        if path.is_symlink():
+            raise _ScanError("Exact-path history contains a symbolic link")
+        if stat.S_ISDIR(metadata.st_mode):
+            continue
+        if not stat.S_ISREG(metadata.st_mode):
+            raise _ScanError("Exact-path history contains a non-regular file")
+        entries.append((path, path.relative_to(view).as_posix(), metadata))
+    return entries
+
+
+def _hash_exact_path_file(path: Path, metadata: os.stat_result) -> tuple[int, str]:
+    """Hash one regular file while proving its opened identity stayed stable."""
+    digest = hashlib.sha256()
+    total = 0
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(path, flags)
+    with os.fdopen(descriptor, "rb") as stream:
+        opened = os.fstat(stream.fileno())
+        if not stat.S_ISREG(opened.st_mode) or (
+            opened.st_dev,
+            opened.st_ino,
+        ) != (metadata.st_dev, metadata.st_ino):
+            raise _ScanError("Exact-path file changed while it was measured")
+        while chunk := stream.read(_PROBE_DECODE_CHUNK_BYTES):
+            digest.update(chunk)
+            total += len(chunk)
+        closed = os.fstat(stream.fileno())
+    if _stable_stat(opened) != _stable_stat(closed) or total != metadata.st_size:
+        raise _ScanError("Exact-path file changed while it was measured")
+    return total, digest.hexdigest()
+
+
+def _measure_exact_path_view(view: Path) -> _ExactPathView:
+    """Validate and bind one private exact-path view to its content."""
+    files: list[_ExactPathFile] = []
+    total_bytes = 0
+    for path, relative, metadata in _enumerate_exact_path_files(view):
+        file_bytes, digest = _hash_exact_path_file(path, metadata)
+        files.append(_ExactPathFile(relative, file_bytes, digest))
+        total_bytes += file_bytes
+        if len(files) > _MAX_ENCODED_CANDIDATE_FILES:
+            raise _ScanError("Exact-path view exceeds the bounded file count")
+        if total_bytes > _MAX_EXACT_PATH_HISTORY_BYTES:
+            raise _ScanError("Exact-path view exceeds the bounded byte count")
+    if not files:
+        raise _ScanError("Exact-path scan view is empty")
+    return _ExactPathView(view, tuple(files), total_bytes)
+
+
+def _partition_exact_path_views(views: list[Path]) -> list[_ExactPathBatch]:
+    """Partition complete views under unchanged per-history bounds."""
     if not views:
-        raise _ScanError("Exact-path forced-text history is empty")
+        return []
     if len(views) > _MAX_EXACT_PATH_SHARDS:
         raise _ScanError("Archive exact-path views exceed the shard limit")
+    batches: list[_ExactPathBatch] = []
+    current: list[_ExactPathView] = []
+    current_files = 0
+    current_bytes = 0
+    for view in views:
+        measured = _measure_exact_path_view(view)
+        view_files = len(measured.files)
+        view_bytes = measured.bytes
+        exceeds = (
+            current_files + view_files > _MAX_ENCODED_CANDIDATE_FILES
+            or current_bytes + view_bytes > _MAX_EXACT_PATH_HISTORY_BYTES
+        )
+        if current and exceeds:
+            batches.append(
+                _ExactPathBatch(tuple(current), current_files, current_bytes)
+            )
+            if len(batches) >= _MAX_EXACT_PATH_HISTORY_BATCHES:
+                raise _ScanError("Exact-path histories exceed the bounded batch count")
+            current = []
+            current_files = 0
+            current_bytes = 0
+        current.append(measured)
+        current_files += view_files
+        current_bytes += view_bytes
+    batches.append(_ExactPathBatch(tuple(current), current_files, current_bytes))
+    if len(batches) > _MAX_EXACT_PATH_HISTORY_BATCHES:
+        raise _ScanError("Exact-path histories exceed the bounded batch count")
+    return batches
+
+
+def _require_exact_path_inventory(view: _ExactPathView) -> None:
+    """Require the current regular-file inventory to match its bound manifest."""
+    current = tuple(
+        (relative, metadata.st_size)
+        for _path, relative, metadata in _enumerate_exact_path_files(view.root)
+    )
+    expected = tuple((entry.relative, entry.bytes) for entry in view.files)
+    if current != expected:
+        raise _ScanError("Exact-path view changed after it was measured")
+
+
+@contextmanager
+def _spool_exact_path_file(
+    view: _ExactPathView,
+    planned: _ExactPathFile,
+) -> Iterator[BinaryIO]:
+    """Copy one still-bound file into private validated temporary storage."""
+    path = view.root.joinpath(*PurePosixPath(planned.relative).parts)
+    metadata = path.lstat()
+    if path.is_symlink() or not stat.S_ISREG(metadata.st_mode):
+        raise _ScanError("Exact-path file type changed after it was measured")
+    if metadata.st_size != planned.bytes:
+        raise _ScanError("Exact-path file size changed after it was measured")
+    with tempfile.TemporaryFile() as spool:
+        flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+        descriptor = os.open(path, flags)
+        digest = hashlib.sha256()
+        total = 0
+        with os.fdopen(descriptor, "rb") as source:
+            opened = os.fstat(source.fileno())
+            if not stat.S_ISREG(opened.st_mode) or (
+                opened.st_dev,
+                opened.st_ino,
+            ) != (metadata.st_dev, metadata.st_ino):
+                raise _ScanError("Exact-path file changed after it was measured")
+            while chunk := source.read(_PROBE_DECODE_CHUNK_BYTES):
+                spool.write(chunk)
+                digest.update(chunk)
+                total += len(chunk)
+            closed = os.fstat(source.fileno())
+        if (
+            _stable_stat(opened) != _stable_stat(closed)
+            or total != planned.bytes
+            or digest.hexdigest() != planned.sha256
+        ):
+            raise _ScanError("Exact-path file changed after it was measured")
+        spool.seek(0)
+        yield spool
+
+
+def _stream_exact_path_file(
+    stream: BinaryIO,
+    view: _ExactPathView,
+    planned: _ExactPathFile,
+) -> None:
+    """Write one validated manifest entry to Git fast-import."""
+    with _spool_exact_path_file(view, planned) as spool:
+        relative = os.fsencode(planned.relative)
+        stream.write(b"M 100644 inline " + _quote_fast_import_path(relative) + b"\n")
+        stream.write(f"data {planned.bytes}\n".encode())
+        while chunk := spool.read(_PROBE_DECODE_CHUNK_BYTES):
+            stream.write(chunk)
+        stream.write(b"\n")
+
+
+def _prepare_forced_text_history(
+    repository: Path,
+    batch: _ExactPathBatch,
+    config_content: bytes,
+) -> tuple[str, ...]:
+    """Commit every bound exact-path variant as an independent forced-text root."""
+    if not batch.views:
+        raise _ScanError("Exact-path forced-text history is empty")
+    if len(batch.views) > _MAX_EXACT_PATH_SHARDS:
+        raise _ScanError("Archive exact-path views exceed the shard limit")
+    if sum(len(view.files) for view in batch.views) != batch.files:
+        raise _ScanError("Exact-path history file manifest is inconsistent")
+    if sum(view.bytes for view in batch.views) != batch.bytes:
+        raise _ScanError("Exact-path history byte manifest is inconsistent")
     repository.mkdir(mode=0o700)
     environment = materializer._git_environment()
 
@@ -5666,34 +5917,17 @@ def _prepare_forced_text_history(
         )
         assert process.stdin is not None
         try:
-            for index, view in enumerate(views):
-                if (view / ".git").exists() or (view / ".git").is_symlink():
-                    raise _ScanError(
-                        "Exact-path scan view already contains Git metadata"
-                    )
+            for index, view in enumerate(batch.views):
+                _require_exact_path_inventory(view)
                 process.stdin.write(f"commit refs/npa-exact-path/{index}\n".encode())
                 process.stdin.write(b"author " + identity + b"\n")
                 process.stdin.write(b"committer " + identity + b"\n")
                 process.stdin.write(f"data {len(message)}\n".encode())
                 process.stdin.write(message + b"\n")
                 process.stdin.write(b"deleteall\n")
-                view_files = 0
-                paths = sorted(
-                    view.rglob("*"),
-                    key=lambda path: os.fsencode(path.relative_to(view).as_posix()),
-                )
-                for path in paths:
-                    if path.is_symlink():
-                        raise _ScanError("Exact-path history contains a symbolic link")
-                    metadata = path.stat()
-                    if stat.S_ISDIR(metadata.st_mode):
-                        continue
-                    if not stat.S_ISREG(metadata.st_mode):
-                        raise _ScanError(
-                            "Exact-path history contains a non-regular file"
-                        )
+                for planned in view.files:
                     total_files += 1
-                    total_bytes += metadata.st_size
+                    total_bytes += planned.bytes
                     if total_files > _MAX_ENCODED_CANDIDATE_FILES:
                         raise _ScanError(
                             "Exact-path history exceeds the bounded file count"
@@ -5702,18 +5936,10 @@ def _prepare_forced_text_history(
                         raise _ScanError(
                             "Exact-path history exceeds the bounded byte count"
                         )
-                    relative = os.fsencode(path.relative_to(view).as_posix())
-                    process.stdin.write(
-                        b"M 100644 inline " + _quote_fast_import_path(relative) + b"\n"
-                    )
-                    process.stdin.write(f"data {metadata.st_size}\n".encode())
-                    with path.open("rb") as stream:
-                        while chunk := stream.read(_PROBE_DECODE_CHUNK_BYTES):
-                            process.stdin.write(chunk)
-                    process.stdin.write(b"\n")
-                    view_files += 1
-                if not view_files:
-                    raise _ScanError("Exact-path scan view is empty")
+                    _stream_exact_path_file(process.stdin, view, planned)
+                _require_exact_path_inventory(view)
+            if total_files != batch.files or total_bytes != batch.bytes:
+                raise _ScanError("Exact-path history differs from its manifest totals")
             process.stdin.write(b"done\n")
             process.stdin.close()
             returncode = process.wait()
@@ -5754,7 +5980,7 @@ def _prepare_forced_text_history(
         .splitlines()
         if line.strip()
     )
-    if len(commits) != len(views):
+    if len(commits) != len(batch.views):
         raise _ScanError("Exact-path forced-text history omitted a root")
     if _policy_commit_allowlists(config_content).intersection(commits):
         raise _ScanError(
@@ -5774,7 +6000,10 @@ def _run_gitleaks_exact_views(
     report_budget: _ReportBudget,
 ) -> tuple[subprocess.CompletedProcess[bytes], list[dict[str, object]]]:
     """Scan all exact-path roots once without candidate-controlled Git behavior."""
-    _prepare_forced_text_history(repository, views, config_content)
+    batches = _partition_exact_path_views(views)
+    if len(batches) != 1:
+        raise _ScanError("Exact-path views require multiple bounded histories")
+    _prepare_forced_text_history(repository, batches[0], config_content)
     return _run_gitleaks(
         executable,
         repository,
@@ -5784,6 +6013,45 @@ def _run_gitleaks_exact_views(
         history_range="--all",
         report_budget=report_budget,
     )
+
+
+def _prepare_exact_path_scans(
+    root: Path,
+    views: list[Path],
+    label: str,
+    config_content: bytes,
+) -> tuple[_PreparedExactPathScan, ...]:
+    """Freeze one population into validated, uniquely named Git histories."""
+    root.mkdir(mode=0o700, parents=True, exist_ok=True)
+    prepared = []
+    for index, batch in enumerate(_partition_exact_path_views(views)):
+        repository = root / f"{label}-history-{index:02d}"
+        report = root / f"{label}-git-{index:02d}.json"
+        _prepare_forced_text_history(repository, batch, config_content)
+        prepared.append(_PreparedExactPathScan(repository, report))
+    return tuple(prepared)
+
+
+def _scan_prepared_exact_path_scans(
+    executable: str,
+    prepared: tuple[_PreparedExactPathScan, ...],
+    config: Path,
+    ignore: Path,
+    report_budget: _ReportBudget,
+) -> list[tuple[subprocess.CompletedProcess[bytes], list[dict[str, object]]]]:
+    """Scan every already validated exact-path history."""
+    return [
+        _run_gitleaks(
+            executable,
+            scan.repository,
+            config,
+            ignore,
+            scan.report,
+            history_range="--all",
+            report_budget=report_budget,
+        )
+        for scan in prepared
+    ]
 
 
 def _scan_exact_path_views(
@@ -5796,21 +6064,43 @@ def _scan_exact_path_views(
     config_content: bytes,
     report_budget: _ReportBudget,
 ) -> list[tuple[subprocess.CompletedProcess[bytes], list[dict[str, object]]]]:
-    """Scan bounded exact-path variants as one forced-text root history."""
-    if not views:
-        return []
-    return [
-        _run_gitleaks_exact_views(
-            executable,
-            root / f"{label}-history",
-            views,
-            config,
-            ignore,
-            root / f"{label}-git.json",
-            config_content,
-            report_budget=report_budget,
-        )
-    ]
+    """Scan complete exact-path views in deterministic bounded histories."""
+    prepared = _prepare_exact_path_scans(root, views, label, config_content)
+    return _scan_prepared_exact_path_scans(
+        executable,
+        prepared,
+        config,
+        ignore,
+        report_budget,
+    )
+
+
+def _prepare_exact_path_populations(
+    root: Path,
+    sources: _MaterializedSources,
+    probes: _ProbeSources,
+    config_content: bytes,
+) -> _PreparedExactPathPopulations:
+    """Freeze every exact-path population before any Gitleaks invocation."""
+    candidate = _prepare_exact_path_scans(
+        root,
+        sources.candidate_exact_path_views,
+        "candidate-exact-path",
+        config_content,
+    )
+    historical = _prepare_exact_path_scans(
+        root,
+        sources.historical_exact_path_views,
+        "historical-exact-path",
+        config_content,
+    )
+    transformed = _prepare_exact_path_scans(
+        root,
+        probes.transformed_exact_path_views,
+        "transformed-exact-path",
+        config_content,
+    )
+    return _PreparedExactPathPopulations(candidate, historical, transformed)
 
 
 def _require_clean_content_scans(
@@ -5830,7 +6120,7 @@ def _require_clean_content_scans(
     historical_exact_path_scans: list[
         tuple[subprocess.CompletedProcess[bytes], list[dict[str, object]]]
     ],
-    archive_exact_path_scans: list[
+    transformed_exact_path_scans: list[
         tuple[subprocess.CompletedProcess[bytes], list[dict[str, object]]]
     ],
     candidate_probe_scan: tuple[
@@ -5861,8 +6151,8 @@ def _require_clean_content_scans(
         _require_clean_scan("candidate-exact-path", *scan)
     for scan in historical_exact_path_scans:
         _require_clean_scan("historical-exact-path", *scan)
-    for scan in archive_exact_path_scans:
-        _require_clean_scan("archive-exact-path", *scan)
+    for scan in transformed_exact_path_scans:
+        _require_clean_scan("transformed-exact-path", *scan)
     _require_clean_scan("candidate-probe", *candidate_probe_scan)
     historical_probe_result, historical_probe_findings = historical_probe_scan
     if historical_probe_result is not None:
@@ -5883,6 +6173,7 @@ def _run_content_scans(
     config: Path,
     ignore: Path,
     report_budget: _ReportBudget,
+    exact_paths: _PreparedExactPathPopulations,
 ) -> _FindingSets:
     """Run and validate history, intermediate-tree, and candidate-tree scans."""
     history_scan = _run_gitleaks(
@@ -5922,34 +6213,25 @@ def _run_content_scans(
         plan.config_content,
         report_budget=report_budget,
     )
-    candidate_exact_path_scans = _scan_exact_path_views(
+    candidate_exact_path_scans = _scan_prepared_exact_path_scans(
         executable,
-        root,
-        sources.candidate_exact_path_views,
-        "candidate-exact-path",
+        exact_paths.candidate,
         config,
         ignore,
-        plan.config_content,
         report_budget,
     )
-    historical_exact_path_scans = _scan_exact_path_views(
+    historical_exact_path_scans = _scan_prepared_exact_path_scans(
         executable,
-        root,
-        sources.historical_exact_path_views,
-        "historical-exact-path",
+        exact_paths.historical,
         config,
         ignore,
-        plan.config_content,
         report_budget,
     )
-    archive_exact_path_scans = _scan_exact_path_views(
+    transformed_exact_path_scans = _scan_prepared_exact_path_scans(
         executable,
-        root,
-        probes.archive_exact_path_views,
-        "archive-exact-path",
+        exact_paths.transformed,
         config,
         ignore,
-        plan.config_content,
         report_budget,
     )
     candidate_probe_scan = _run_gitleaks(
@@ -5992,7 +6274,7 @@ def _run_content_scans(
         commit_metadata_scan,
         candidate_exact_path_scans,
         historical_exact_path_scans,
-        archive_exact_path_scans,
+        transformed_exact_path_scans,
         candidate_probe_scan,
         historical_probe_scan,
         commit_metadata_probe_scan,
@@ -6011,9 +6293,9 @@ def _run_content_scans(
         for _result, findings in historical_exact_path_scans
         for finding in findings
     ]
-    archive_exact_path_findings = [
+    transformed_exact_path_findings = [
         finding
-        for _result, findings in archive_exact_path_scans
+        for _result, findings in transformed_exact_path_scans
         for finding in findings
     ]
     _, candidate_probe_findings = candidate_probe_scan
@@ -6026,10 +6308,13 @@ def _run_content_scans(
         commit_metadata_findings,
         candidate_exact_path_findings,
         historical_exact_path_findings,
-        archive_exact_path_findings,
+        transformed_exact_path_findings,
         candidate_probe_findings,
         historical_probe_findings,
         commit_metadata_probe_findings,
+        len(candidate_exact_path_scans),
+        len(historical_exact_path_scans),
+        len(transformed_exact_path_scans),
     )
 
 
@@ -6051,7 +6336,7 @@ def _render_scan_receipt(
         + len(findings.commit_metadata)
         + len(findings.candidate_exact_paths)
         + len(findings.historical_exact_paths)
-        + len(findings.archive_exact_paths)
+        + len(findings.transformed_exact_paths)
         + len(findings.candidate_probe)
         + len(findings.historical_probe)
         + len(findings.commit_metadata_probe)
@@ -6089,7 +6374,19 @@ def _render_scan_receipt(
         "commit_metadata_findings": len(findings.commit_metadata),
         "candidate_exact_path_findings": len(findings.candidate_exact_paths),
         "historical_exact_path_findings": len(findings.historical_exact_paths),
-        "archive_exact_path_findings": len(findings.archive_exact_paths),
+        "transformed_exact_path_findings": len(findings.transformed_exact_paths),
+        "candidate_exact_path_scan_invocations": (
+            findings.candidate_exact_path_scan_invocations
+        ),
+        "historical_exact_path_scan_invocations": (
+            findings.historical_exact_path_scan_invocations
+        ),
+        "transformed_exact_path_scan_invocations": (
+            findings.transformed_exact_path_scan_invocations
+        ),
+        "exact_path_history_file_limit": _MAX_ENCODED_CANDIDATE_FILES,
+        "exact_path_history_byte_limit": _MAX_EXACT_PATH_HISTORY_BYTES,
+        "exact_path_history_batch_limit": _MAX_EXACT_PATH_HISTORY_BATCHES,
         "commit_metadata_probe_findings": len(findings.commit_metadata_probe),
         "commit_metadata_scan": sources.commit_metadata_receipt,
         "candidate_probe_findings": len(findings.candidate_probe),
@@ -6102,16 +6399,55 @@ def _render_scan_receipt(
     }
 
 
+def _prepare_scan_workspace(
+    repo: Path,
+    root: Path,
+    plan: _ScanPlan,
+) -> _PreparedScanWorkspace:
+    """Freeze every target-scan input before executing Gitleaks."""
+    root.chmod(0o700)
+    report_budget = _ReportBudget()
+    config, ignore = _write_scan_policy(repo, root, plan)
+    sources = _materialize_sources(repo, root, plan)
+    probes = _prepare_probe_sources(root, plan, sources)
+    _verify_root_ignore_exact_path_coverage(plan, sources, probes)
+    native_history_input = _measure_native_history_input(
+        sources.history_source,
+        plan.commit_range,
+        plan.commits,
+    )
+    exact_paths = _prepare_exact_path_populations(
+        root,
+        sources,
+        probes,
+        plan.config_content,
+    )
+    return _PreparedScanWorkspace(
+        report_budget,
+        config,
+        ignore,
+        sources,
+        probes,
+        native_history_input,
+        exact_paths,
+    )
+
+
 def _scan_workspace(
     repo: Path,
     root: Path,
     plan: _ScanPlan,
     executable: str,
+    prepared: _PreparedScanWorkspace | None = None,
 ) -> dict[str, object]:
-    """Execute all controls and scans inside one private workspace."""
-    root.chmod(0o700)
-    report_budget = _ReportBudget()
-    config, ignore = _write_scan_policy(repo, root, plan)
+    """Execute all controls and scans inside one prepared private workspace."""
+    if prepared is None:
+        prepared = _prepare_scan_workspace(repo, root, plan)
+    report_budget = prepared.report_budget
+    config = prepared.config
+    ignore = prepared.ignore
+    sources = prepared.sources
+    probes = prepared.probes
     probe_config, probe_ignore = _verify_decode_depth(
         executable,
         root,
@@ -6124,14 +6460,6 @@ def _scan_workspace(
         ignore,
         root,
         report_budget,
-    )
-    sources = _materialize_sources(repo, root, plan)
-    probes = _prepare_probe_sources(root, plan, sources)
-    _verify_root_ignore_exact_path_coverage(plan, sources, probes)
-    native_history_input = _measure_native_history_input(
-        sources.history_source,
-        plan.commit_range,
-        plan.commits,
     )
     _verify_probe_sources(
         executable,
@@ -6152,13 +6480,14 @@ def _scan_workspace(
         config,
         ignore,
         report_budget,
+        prepared.exact_paths,
     )
     return _render_scan_receipt(
         plan,
         sources,
         probes,
         findings,
-        native_history_input,
+        prepared.native_history_input,
         config,
         ignore,
         report_budget,
@@ -6198,11 +6527,18 @@ def scan(
     with tempfile.TemporaryDirectory(prefix="npa-gitleaks-tree-") as directory:
         root = Path(directory)
         root.chmod(0o700)
+        prepared = _prepare_scan_workspace(repo, root, plan)
         staged_executable, executable_sha256 = _stage_gitleaks_executable(
             executable,
             root,
         )
-        receipt = _scan_workspace(repo, root, plan, staged_executable)
+        receipt = _scan_workspace(
+            repo,
+            root,
+            plan,
+            staged_executable,
+            prepared,
+        )
         _verify_scan_plan_unchanged(
             repo,
             revision,

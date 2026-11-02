@@ -532,12 +532,19 @@ zero of its transformed projection; later localized runs are separated without
 creating a false absolute-start match. The independent raw and transformed
 domains therefore preserve absolute content anchors and path-constrained
 Unicode/archive matches without letting either representation replace the
-other. Historical file/directory prefix
-transitions are placed in different exact-path roots instead of becoming an
-unrepresentable collision. Each bounded exact-path view population is compacted
-into one generated forced-text Git history and scanned once, without a second
-no-Git filesystem pass. The generated repository force-adds every path, overrides
-candidate
+other. Historical file/directory prefix transitions are placed in different
+exact-path roots instead of becoming an unrepresentable collision. Each
+exact-path view population is compacted into deterministic generated forced-text
+Git histories, each limited to 100,000 files and 2 GiB. Complete views stay
+ordered and are never split; at most twelve histories may represent one
+population, preventing a return to one scanner process per view. There is no
+second no-Git filesystem pass. Before any Gitleaks process starts, the helper
+binds every regular file to an ordered path, size, and content digest, rejects
+links and non-regular entries, and prepares every candidate, historical, and
+transformed history. Import revalidates the complete inventory and each digest,
+so deletion, same-size replacement, or other mutation fails before scanning.
+The final receipt reports the exact invocation count for each of those three
+populations. Each generated repository force-adds every path and overrides candidate
 `.gitignore`/`.gitattributes`/filter behavior through private Git metadata, and
 rejects a generated commit identity named by the trusted policy. The Git view
 keeps each complete raw file in one forced-text diff hunk, so wide trusted rules do not
