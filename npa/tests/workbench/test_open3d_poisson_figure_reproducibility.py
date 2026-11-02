@@ -196,6 +196,30 @@ def _tolerance_floor() -> float:
     return record["the_published_figures"]["absolute_difference_on_the_headline"]
 
 
+def _figure_inside(node: ast.expr, values: set[float]) -> bool:
+    """Is one of these figures reachable through nested container literals?"""
+
+    if isinstance(node, ast.Constant):
+        return isinstance(node.value, float) and node.value in values
+    if isinstance(node, (ast.Tuple, ast.List, ast.Set)):
+        return any(_figure_inside(element, values) for element in node.elts)
+    if isinstance(node, ast.Dict):
+        return any(
+            _figure_inside(element, values)
+            for element in (*node.keys, *node.values)
+            if element is not None
+        )
+    return False
+
+
+def _subscript_base(node: ast.expr) -> str | None:
+    """The name a chain of subscripts ultimately reads from, if it is a plain name."""
+
+    while isinstance(node, ast.Subscript):
+        node = node.value
+    return node.id if isinstance(node, ast.Name) else None
+
+
 def _exact_pins(tree: ast.AST, literals: tuple[str, ...]) -> list[tuple[int, str]]:
     """Exact comparisons against these figures, including through a named constant.
 
@@ -221,16 +245,14 @@ def _exact_pins(tree: ast.AST, literals: tuple[str, ...]) -> list[tuple[int, str
             holds_a_figure = (
                 isinstance(node.value.value, float) and node.value.value in values
             )
-        elif isinstance(node.value, (ast.Tuple, ast.List, ast.Set)):
+        elif isinstance(node.value, (ast.Tuple, ast.List, ast.Set, ast.Dict)):
             # A name bound to a container holding a figure is the nearest neighbour of
             # the extract-a-constant refactor, and a reviewer supplied this case with
             # both halves of the fix after their first attempt at it did not work.
-            holds_a_figure = any(
-                isinstance(element, ast.Constant)
-                and isinstance(element.value, float)
-                and element.value in values
-                for element in node.value.elts
-            )
+            # Nested, because they then pointed out that `N = [[figure]]` evaded the
+            # single-level version. Through container literals only, never through a
+            # call: a figure passed to a function says nothing about what comes back.
+            holds_a_figure = _figure_inside(node.value, values)
         if holds_a_figure:
             bound.update(
                 target.id for target in node.targets if isinstance(target, ast.Name)
@@ -241,6 +263,11 @@ def _exact_pins(tree: ast.AST, literals: tuple[str, ...]) -> list[tuple[int, str
             return isinstance(node.value, float) and node.value in values
         if isinstance(node, ast.Name):
             return node.id in bound
+        if isinstance(node, ast.Subscript):
+            # `D["headline"]` and `N[0]`, which read a figure back out of a container
+            # the binding half above already knows holds one. Without this the two
+            # halves do not meet: the container is recognised and the read is not.
+            return _subscript_base(node) in bound
         return False
 
     found: list[tuple[int, str]] = []
@@ -310,11 +337,17 @@ def test_the_published_figures_are_never_pinned_by_exact_equality() -> None:
     container, test modules outside `npa/tests`, the harness directory, and -- the last
     one, which was still open at the previous head -- a pin in a file not named
     `test_*.py`. Two classes they raised afterwards are closed too: a name bound to a
-    container of figures, and a tolerance that is tiny rather than zero.
+    container of figures, and a tolerance that is tiny rather than zero. Then a third
+    round: a *nested* container, `N = [[figure]]` read back as `N[0]`. Closing that
+    needed the read side as well as the binding side, and resolving subscripts closed
+    the dict-value case along with it.
 
-    What is still not reached: a figure arrived at through an attribute, a dict value, or
-    a function return. Only direct literals, names bound to them, and names bound to
-    containers of them are resolved.
+    What is still not reached: a figure arrived at through an attribute or a function
+    return. Resolved are direct literals, names bound to them, names bound to containers
+    of them at any depth including dicts, and subscript reads from those names. A figure
+    passed *into* a call is deliberately not followed -- what a function is given says
+    nothing about what it hands back, and a guard that assumed otherwise would fire on
+    honest code.
     """
     offenders: list[str] = []
     for path in _scanned_files():

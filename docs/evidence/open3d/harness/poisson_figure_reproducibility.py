@@ -364,17 +364,32 @@ def main() -> int:
             ],
             "verified_by": (
                 "Each case written to a probe file at the path it belongs to, the guard "
-                "run against it, and the probe deleted. Eleven pins caught, including "
+                "run against it, and the probe deleted. Fourteen pins caught, including "
                 "the one that evaded at the previous head. Four honest patterns left "
                 "unflagged: `approx(..., abs=1e-4)`, a tuple that merely holds a figure, "
                 "an unrelated container, and membership in a container of other numbers. "
                 "Those matter as much as the pins -- a guard that fires on a figure's "
                 "mere presence is one annoyed person away from deletion."
             ),
+            "a_third_round_closed_two_more": (
+                "After accepting the head above, the reviewer named one more concrete "
+                "evasion: a *nested* container, `N = [[figure]]` with `assert x in "
+                "N[0]`. It was consistent with what the record claimed -- containers of "
+                "figures, not containers of containers -- so the choice was to document "
+                "the limit or close it. Closing it needed the read side too: the "
+                "comparator there is a subscript, not a name, so recognising the "
+                "container without recognising `N[0]` leaves the two halves not "
+                "meeting. Resolving subscripts closed the dict-value case in the same "
+                "stroke, since `D[\"headline\"]` is the same shape. Nested containers, "
+                "dicts, and a dict inside a list are all caught now; both honest "
+                "patterns retested and still unflagged."
+            ),
             "what_is_still_not_reached": (
-                "A figure reached through an attribute, a dict value, or a function "
-                "return. Only direct literals, names bound to them, and names bound to "
-                "containers of them are resolved."
+                "A figure reached through an attribute or a function return. Resolved: "
+                "direct literals, names bound to them, names bound to containers of "
+                "them at any depth including dicts, and subscript reads from those "
+                "names. A figure passed into a call is deliberately not followed -- "
+                "what a function receives says nothing about what it returns."
             ),
         },
         "what_this_does_not_claim": [
