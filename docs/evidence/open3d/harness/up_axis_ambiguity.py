@@ -713,7 +713,7 @@ def _model_against_the_miss_rate(
         "misses_observed": observed,
         "one_sigma_of_the_prediction": round(sigma, 1),
         "gap_in_sigmas": round(gap, 2) if gap is not None else None,
-        "model_rejected": gap is not None and abs(gap) > 3.0,
+        "model_rejected": gap is not None and abs(gap) > MODEL_REJECTION_SIGMAS,
         "so": (
             "stated as the comparison rather than as a verdict, because the quantity "
             "that decides it is a gap in sigmas and a reader should see both terms"
@@ -733,6 +733,144 @@ def _model_against_the_miss_rate(
 EARLIER_GAPS_IN_SIGMAS = (-2.29, -1.3, 0.13, -1.04, -0.02, -2.72)
 
 
+#: Where this record stops calling a gap noise, for the per-run gap and for the
+#: pooled statistic alike. Named because both now use it and because the pooled
+#: statistic has reached it: a threshold applied in one place and written as prose in
+#: the other is how "a couple of sigma" came to sit beside -3.01.
+MODEL_REJECTION_SIGMAS = 3.0
+
+
+def _armadillo_tilt_range(cases: list[dict[str, Any]]) -> tuple[float, float]:
+    """The tilt range the counterexample's bound is measured against."""
+
+    case = next(one for one in cases if one["cloud"] == "armadillo_sampled")
+    branches = case["single_fit_distribution"]["branches"]
+    spans = [one["tilt_to_snapped_axis_degrees_range"] for one in branches]
+    return min(one[0] for one in spans), max(one[1] for one in spans)
+
+
+def _clearance_the_rule_justifies(low: float, high: float) -> tuple[float, float]:
+    """The clearance the sweep supports here, and the most the degree line can afford.
+
+    Deliberately the *largest* affordable level rather than the smallest sufficient
+    one, matching the suite: with the smallest, loosening the tolerated crossing rate
+    would loosen the gate, and no assertion about the record can catch that.
+    """
+
+    affordable = (low - MARGIN_RULE["floor_must_stay_above_degrees"]) / (high - low)
+    offered = sorted(float(one) for one in MARGIN_RULE["crossing_rate_by_clearance"])
+    within_reach = [one for one in offered if one <= affordable]
+    if not within_reach:
+        raise SystemExit(
+            f"this run's fits span {high - low:.2f} degrees from a smallest {low:.2f}, "
+            f"so a floor above {MARGIN_RULE['floor_must_stay_above_degrees']:g} can "
+            f"carry only {affordable:.3f} of the range -- less than the smallest level "
+            f"the sweep measured ({offered[0]:.2f}). The published tilt claim is no "
+            "longer supportable at any margin this record justifies, and lowering the "
+            "degree line to rescue it would cost the claim its content."
+        )
+    return within_reach[-1], affordable
+
+
+def _why_not_more_margin(low: float, high: float) -> str:
+    """Why the clearance stops where it does, in the numbers of the run that wrote it."""
+
+    clearance, affordable = _clearance_the_rule_justifies(low, high)
+    line = MARGIN_RULE["floor_must_stay_above_degrees"]
+    span = high - low
+    residual = MARGIN_RULE["crossing_rate_by_clearance"][f"{clearance:.2f}"]
+    highest = low - clearance * span
+    return (
+        "The two requirements pull opposite ways and this record's spread leaves "
+        f"little room between them: the fits span {span:.2f} degrees from a smallest "
+        f"{low:.2f}, so a floor above {line:g} degrees cannot carry more than "
+        f"{affordable:.3f} of the range. Half the range -- which is where the crossing "
+        f"rate first reaches zero -- would put the floor at {low - 0.5 * span:.2f} and "
+        f"cost the claim its content. At the {clearance:.2f} the published floor has "
+        f"to carry, the residual is {residual:.1%} rather than zero, and the floor "
+        f"could sit anywhere from {line:g} to {highest:.2f} degrees -- a band "
+        f"{highest - line:.2f} degrees wide, which is the gap between two steps of "
+        "the sweep and not a range to choose within. Successive floors picked inside "
+        "it (14.0, 12.0, 10.5, 10.2) each satisfied this rule against the fits in "
+        f"front of them and failed against the next, so the floor is published at "
+        f"{line:g} where no regeneration can invalidate it. That makes the margin "
+        "comparison an identity and moves the check to the line above it: when the "
+        "smallest measured tilt comes within the sweep's own level of the degree "
+        "line, no level is affordable and this record does not build."
+    )
+
+
+def _what_this_does_not_claim(
+    cases: list[dict[str, Any]], detection: dict[str, Any]
+) -> str:
+    """The three limits, with their figures read off the cases rather than retyped."""
+
+    armadillo = next((one for one in cases if "armadillo" in one["cloud"]), None)
+    tilt = UP_AXIS_AGREEMENT_COUNTEREXAMPLE["plane_tilt_to_the_snapped_axis_degrees"]
+    fraction = UP_AXIS_AGREEMENT_COUNTEREXAMPLE["plane_inlier_fraction_was_at_most"]
+    measured_tilt = "not recorded in this run"
+    if armadillo:
+        spans = [
+            one["tilt_to_snapped_axis_degrees_range"]
+            for one in armadillo["single_fit_distribution"]["branches"]
+            if one.get("tilt_to_snapped_axis_degrees_range")
+        ]
+        if spans:
+            measured_tilt = (
+                f"{min(one[0] for one in spans):.1f} to "
+                f"{max(one[1] for one in spans):.1f} degrees"
+            )
+    ranked = [
+        one
+        for one in cases
+        if one["what_the_pipeline_publishes"].get("runner_up_relative_to_winner_range")
+    ]
+    independence = detection["independence_of_the_fits"][
+        "does_the_minority_rate_vary_between_processes"
+    ]
+    predicts = independence["and_does_it_predict_the_miss_rate"]
+    pooled = predicts["where_the_sign_of_this_gap_stands"]
+    # Three outcomes, and the sentence has to say which one this run got. Writing the
+    # favourable one in by hand is how "the misses are accounted for" outlived the
+    # measurement that stopped supporting it.
+    if pooled["pooled_model_rejected"]:
+        chance = (
+            "the misses are fewer than independent fits would produce: pooled over "
+            f"{pooled['runs_pooled']} runs the gap is {pooled['pooled_z']} sigma, "
+            f"past the {pooled['rejection_line_in_sigmas']} this record rejects at, "
+            "in the direction where the check misses less often than chance "
+            "agreement predicts. So the rate is the measurement and chance agreement "
+            "is not a mechanism this record can claim"
+        )
+    elif predicts["model_rejected"]:
+        chance = (
+            "this run's misses depart from what independent fits would produce by "
+            f"{predicts['gap_in_sigmas']} sigma, which one run cannot separate from "
+            "noise; the pooled figure in the same block is what to read"
+        )
+    else:
+        chance = (
+            "the misses are consistent with the branches agreeing by chance -- a "
+            f"reading the independence block finds admissible at "
+            f"{predicts['checks_run']} checks, not one it confirms"
+        )
+    return (
+        "Not that the check always fires: detection_by_repeat_count gives its "
+        f"measured rate at three repeat counts, and {chance}. Not that repeat "
+        "agreement "
+        f"means the axis is right: the armadillo case agrees unanimously on a plane "
+        f"tilted past the published {tilt} degree bound off the axis it is snapped to "
+        f"(this run measured {measured_tilt}), holding at most {fraction} of the "
+        "points, just above the one-tenth floor the weak-plane guard enforces. And "
+        f"not a calibrated threshold on the runner-up plane: across {len(ranked)} "
+        "clouds the ambiguous constructions rank above the determined ones every "
+        "time, but the gap is an ordering with a narrow margin rather than a clean "
+        f"separation, and {len(ranked)} clouds cannot place a line that decides "
+        "whether a camera axis is trustworthy, so that number is published as "
+        "evidence and gates nothing."
+    )
+
+
 def _pooled_gap(gap: float | None) -> dict[str, Any]:
     """Every gap measured so far, pooled, so the direction is derived not asserted.
 
@@ -744,11 +882,33 @@ def _pooled_gap(gap: float | None) -> dict[str, Any]:
     gaps = list(EARLIER_GAPS_IN_SIGMAS) + ([gap] if gap is not None else [])
     mean = sum(gaps) / len(gaps)
     pooled_z = mean * len(gaps) ** 0.5
+    # Derived, not written. Both the adjective and the run count were fixed strings:
+    # they said "a couple of sigma" and "after six runs" while the number beside them
+    # had reached -3.01 across seven gaps -- and 3.0 is this record's own rejection
+    # line for exactly this quantity, applied per-run a few lines below. A regeneration
+    # taking the pooled z to -5 would have shipped under the same two words. The
+    # strength has to be a function of the z, and the count a function of the list.
+    strength = (
+        "within noise"
+        if abs(pooled_z) < 2.0
+        else "around two sigma"
+        if abs(pooled_z) < 3.0
+        else "at or past the three-sigma line this record uses to reject the model"
+    )
+    rejected = abs(pooled_z) > MODEL_REJECTION_SIGMAS
     return {
         "gaps_in_sigmas": [round(one, 2) for one in gaps],
         "this_runs_gap_is_the_last_of_them": gap is not None,
         "mean_gap_in_sigmas": round(mean, 2),
         "pooled_z": round(pooled_z, 2),
+        "runs_pooled": len(gaps),
+        # The same line the per-run gap is judged against, applied to the pooled
+        # statistic and published as a field rather than left for a reader to apply.
+        # It is reached: the pooled direction has got as far as the record's own
+        # rejection threshold, which is a fact about this record and is why the
+        # sentence below has to be derived from it.
+        "rejection_line_in_sigmas": MODEL_REJECTION_SIGMAS,
+        "pooled_model_rejected": rejected,
         # Emitted here because a regeneration has to carry it. This disclosure was the
         # independent reviewer's condition for publishing the pooled z at all, and it
         # had been hand-written into the record while no producer emitted it -- so the
@@ -770,14 +930,18 @@ def _pooled_gap(gap: float | None) -> dict[str, Any]:
             "often than the model says. The direction favours the check"
         ),
         "so": (
-            "the gap has leaned negative across these runs, and pooled it is a couple "
-            "of sigma from zero -- enough to suspect the model over-predicts misses "
-            "by around a tenth, not enough to publish that as a figure, and in the "
+            f"the gap has leaned negative across these {len(gaps)} runs, and pooled "
+            f"it is {strength} -- enough to suspect the model over-predicts misses by "
+            "around a tenth, not enough to publish that as a figure, and in the "
             "direction that makes the check better than the model rather than worse. "
             "No single run rejects the model and the record does not assert it, so "
-            "this changes nothing downstream. It is published because declining to "
-            "look at the direction after six runs would be the same error as reading "
-            "it after two"
+            "this changes nothing downstream. Read it against "
+            "how_this_sample_was_sized above: the sample size was decided after "
+            "seeing the early gaps, which biases a pooled statistic towards "
+            f"overstating the effect, so {'the pooled statistic reaching the line' if rejected else 'the direction'} "
+            "is a reason to keep measuring rather than a result. It is published "
+            f"because declining to look at the direction after {len(gaps)} runs would "
+            "be the same error as reading it after two"
         ),
     }
 
@@ -1014,14 +1178,11 @@ MARGIN_RULE = MappingProxyType(
             "badly tilted and thinly supported, so the floor has to stay where that is "
             "still what it says."
         ),
-        "why_not_more_margin": (
-            "The two requirements pull opposite ways and this record's spread leaves "
-            "little room between them: the fits span 9.51 degrees from a smallest "
-            "13.41, so a floor above 10 degrees cannot carry more than 0.359 of the "
-            "range. Half the range -- which is where the crossing rate first reaches "
-            "zero -- would put the floor at 8.66 and cost the claim its content. The "
-            "residual at the level actually chosen is 2.9%, not zero."
-        ),
+        # Derived per run by `_why_not_more_margin`, because it is arithmetic on
+        # the fits and it quoted a 9.51 span from a smallest 13.41 after the fits had
+        # moved to 9.99 from 13.24 -- the same drift the bounds themselves are
+        # guarded against, in the sentence explaining the guard.
+        "why_not_more_margin": "filled in by main()",
     }
 )
 
@@ -1084,6 +1245,9 @@ def main() -> None:
             "snapped to, because one plane does dominate a convex-ish shape.",
         ),
     ]
+    detection = detection_by_repeat_count(
+        ambiguous, VOXEL, cases[0]["single_fit_distribution"]
+    )
     report = {
         "what_this_measures": (
             "Whether the camera's up vector is determined by the scan or by the run. "
@@ -1101,9 +1265,7 @@ def main() -> None:
         ),
         "cases": cases,
         "seeding_is_not_a_remedy": seeding_is_not_a_remedy(ambiguous, VOXEL),
-        "detection_by_repeat_count": detection_by_repeat_count(
-            ambiguous, VOXEL, cases[0]["single_fit_distribution"]
-        ),
+        "detection_by_repeat_count": detection,
         "what_the_cases_establish": [
             (
                 "A single fit on the ambiguous room returns two different axes, and the "
@@ -1125,17 +1287,14 @@ def main() -> None:
                 "answer."
             ),
         ],
-        "what_this_does_not_claim": (
-            "Not that the check always fires: detection_by_repeat_count gives its "
-            "measured rate at three repeat counts, and the misses are accounted for by "
-            "the branches agreeing by chance. Not that repeat agreement means the axis "
-            "is right -- the armadillo case agrees unanimously on a plane tilted 19 "
-            "degrees off the axis it is snapped to, holding 13% of the points, just "
-            "above the one-tenth floor the weak-plane guard enforces. And not a "
-            "calibrated threshold on the runner-up plane: five clouds separate cleanly "
-            "but five clouds cannot place a line that decides whether a camera axis is "
-            "trustworthy, so that number is published as evidence and gates nothing."
-        ),
+        # Every figure in here is derived from the cases and bounds in this same
+        # object. Written out, it said 19 degrees and 13% for the armadillo (no such
+        # measurement is in this record, and the published bound had been lowered to
+        # 10.5), said the misses "are accounted for" where the independence block
+        # concludes admissible and not confirmed, and said five clouds separate
+        # cleanly where there are six and the separation is an ordering with a margin
+        # the runner itself records as as little as 0.05.
+        "what_this_does_not_claim": _what_this_does_not_claim(cases, detection),
         "counterexample_the_code_publishes": dict(UP_AXIS_AGREEMENT_COUNTEREXAMPLE),
         "cost": (
             "About 85 ms per plane fit on the 198835-point real scan, so the shipped "
@@ -1148,7 +1307,10 @@ def main() -> None:
             "seeded; the fit distributions are not reproducible by construction, which "
             "is the finding."
         ),
-        "the_margin_rule_the_bounds_must_satisfy": dict(MARGIN_RULE),
+        "the_margin_rule_the_bounds_must_satisfy": {
+            **MARGIN_RULE,
+            "why_not_more_margin": _why_not_more_margin(*_armadillo_tilt_range(cases)),
+        },
         "provenance": {
             "harness": "harness/up_axis_ambiguity.py",
             "harness_sha256": "recomputed by main()",

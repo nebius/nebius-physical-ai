@@ -480,9 +480,12 @@ def validate_up_axis_inference(recording: Any) -> None:
         raise Open3dError("up_axis_inference.agreement is not a report")
     distinct = agreement.get("distinct_axes")
     repeats = agreement.get("repeats")
-    if not isinstance(distinct, int) or distinct < 1:
+    # `isinstance(True, int)` is True, so without the bool exclusions these two
+    # accepted `distinct: True` where `attempted` below deliberately rejects it. One
+    # rule for all three counts.
+    if not isinstance(distinct, int) or isinstance(distinct, bool) or distinct < 1:
         raise Open3dError("the agreement report does not count the axes it found")
-    if not isinstance(repeats, int) or repeats < 1:
+    if not isinstance(repeats, int) or isinstance(repeats, bool) or repeats < 1:
         raise Open3dError("the agreement report does not count its repeats")
     if distinct > repeats:
         raise Open3dError(
@@ -502,6 +505,21 @@ def validate_up_axis_inference(recording: Any) -> None:
         raise Open3dError(
             f"the agreement report counts {repeats} repeats out of "
             f"{attempted} attempted fits"
+        )
+    # A majority of attempts was not enough on its own: it is a ratio, and a ratio is
+    # satisfied by 1 of 1. `_up_axis(..., repeats=0)` produces exactly that, and the
+    # resulting report -- a single fit, which is the coin flip this whole change exists
+    # to replace -- passed every guard here and was published as a measured axis. The
+    # product call site uses the default, so there was no live exposure; the point of
+    # this validator is not to depend on that.
+    #
+    # Two, not more: the claim being checked is that repeats agreed, and two repeats
+    # are the fewest that can agree. A higher floor would be this validator deciding
+    # how many fits the producer must perform, which is the producer's parameter.
+    if source == _MEASURED_UP_SOURCE and attempted < 2:
+        raise Open3dError(
+            f"the report names a measured axis from {attempted} attempted fit, and "
+            "one fit cannot agree with anything"
         )
     # A majority, so "the repeats agreed" cannot be satisfied by a sample of one out
     # of nine. Without this, a scan whose fits were weak eight times in nine and
@@ -529,10 +547,40 @@ def validate_up_axis_inference(recording: Any) -> None:
             f"the agreement report counts {distinct} axes but lists "
             f"{len(candidates) if isinstance(candidates, list) else 'no'} candidates"
         )
+    # Checked before `.get` below: a non-dict element raised `AttributeError`, which
+    # is outside the CLI's `(Open3dError, ValueError)` and so broke the
+    # machine-readable failure contract for that one shape.
+    if not all(isinstance(one, dict) for one in candidates):
+        raise Open3dError("the agreement report lists a candidate that is not a report")
     if sum(one.get("chosen_by_repeats", 0) for one in candidates) != repeats:
         raise Open3dError(
             "the candidates' repeat counts do not add up to the repeats performed"
         )
+    # The direction, not only the counts. Every check above constrains how many axes
+    # were found and how often; none constrained *which* axis got published. A report
+    # naming a measured axis of (0,0,1) whose single agreeing candidate is (1,0,0)
+    # satisfied all of them, so the vector the view cameras consume could differ from
+    # the axis the agreement block attests to and the record still validated. The
+    # ambiguous-source branch is already bound to the declared default; this binds the
+    # measured branch to its own evidence.
+    if source == _MEASURED_UP_SOURCE:
+        agreed = candidates[0].get("up")
+        if not isinstance(agreed, list) or len(agreed) != 3:
+            raise Open3dError(
+                "the agreement report's candidate does not name the axis it agreed on"
+            )
+        try:
+            published = [float(value) for value in up]
+            attested = [float(value) for value in agreed]
+        except (TypeError, ValueError):
+            raise Open3dError(
+                "the agreement report's axis is not three numbers"
+            ) from None
+        if published != attested:
+            raise Open3dError(
+                f"the report publishes {published} as a measured axis while its "
+                f"repeats agreed on {attested}"
+            )
     _validate_up_counterexample(agreement.get("agreement_is_not_meaningfulness"))
 
 

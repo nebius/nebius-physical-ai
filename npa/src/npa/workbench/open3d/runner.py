@@ -767,20 +767,54 @@ UP_AXIS_DETECTION_RISES_WITH_FITS = True
 #: Extra plane fits used to decide whether the scan determines an up axis at all.
 #: Eight, from measurement rather than taste: see `UP_AXIS_DETECTION_FLOOR_OF_THIRTY`
 #: for the floor it clears at this and two other counts, and the record for the
-#: sweep itself. The misses
-#: are the branches agreeing by chance, most likely the branches agreeing by chance, though
-#: the record withholds that explanation: forty fits per estimate cannot separate a
-#: varying per-fit rate from counting noise. So this is not a guarantee, and the
-#: measured rate is published rather than a mechanism for it. Nine fits cost about 0.7 s on a
-#: 200k-point scan against a multi-second reconstruction.
+#: sweep itself.
+#:
+#: Why the misses happen is measured in the record, and the answer is two answers.
+#: A fixed per-fit minority rate across processes survives: 3600 checks across twelve
+#: fresh interpreters give chi-square near one per degree of freedom, where the
+#: earlier four-process probe's 0.2-to-0.375 spread would be eight sigma. That probe
+#: is marked superseded rather than deleted. The quantitative claim built on top of it
+#: -- that treating the fits as independent predicts the miss count -- is the one that
+#: does not settle. Its pooled statistic sits close to the line the record rejects at
+#: and has landed on both sides of it across consecutive regenerations, so no figure
+#: from it is quoted here: the record computes the comparison and its own verdict, and
+#: a reader should take them from there rather than from a constant's docstring.
+#: What has been stable is the direction. The observed misses come in at or below what
+#: independent fits would produce, meaning the fits agree with each other no more
+#: often than chance alone would make them, so the check fires at least as often as
+#: the model predicts and the error is not in the optimistic direction. The shipped
+#: count is justified by the measured detection rate and not by a mechanism. Nine fits
+#: cost about 0.7 s on a 200k-point scan against a multi-second reconstruction.
 UP_AXIS_REPEATS = 8
 
 #: The case where agreement across repeats proves nothing, measured rather than
 #: imagined. The Armadillo mesh sampled as a cloud has no floor and no wall, yet all
-#: repeats return the same axis from a plane tilted 19 degrees off it holding 13% of
-#: the points -- just above the one-tenth floor the weak-plane guard enforces. So
-#: repeat agreement separates an ambiguous scan from a determined one, and says
-#: nothing about whether the plane it agreed on means anything.
+#: repeats return the same axis from a plane tilted past the bound below off it,
+#: holding no more than the inlier fraction below -- a fraction that sits just above
+#: the one-tenth floor the weak-plane guard enforces. So repeat agreement separates an
+#: ambiguous scan from a determined one, and says nothing about whether the plane it
+#: agreed on means anything.
+#:
+#: The figures are the two in the mapping and nothing else. Quoting 19 degrees and 13
+#: percent in this sentence was the same stale-extreme defect the bounds exist to
+#: avoid, one block below their removal: no 19-degree armadillo measurement exists in
+#: the record this cites, and the published bound had been lowered twice while that
+#: sentence stood.
+#:
+#: The floor sits exactly on the ten-degree line below which "badly tilted" would
+#: stop meaning anything, and that is a decision rather than a coincidence. The
+#: record's rule also requires a bound to clear the smallest measured tilt by the
+#: largest margin its sweep justifies -- otherwise the bound is pinned to one draw,
+#: which is how the earlier 14.0 cleared a measured 14.11 and was crossed two
+#: regenerations later. Those two requirements leave a band whose width is the
+#: distance between two steps of that sweep, under a quarter of a degree, sitting just
+#: above the ten-degree line. Picking a value inside it reproduces the original defect
+#: one level up: 14.0, then 12.0, then 10.5, then 10.2, each satisfying the rule
+#: against the fits that were in front of it and failing against the next ones. The
+#: ten-degree line is the one point that cannot be invalidated by a regeneration, so
+#: the published claim stops there and the rule's teeth move to where they bite -- if
+#: the measured minimum ever comes closer to this line than the sweep's level allows,
+#: no level is affordable and the record refuses to build.
 #:
 #: The figures are bounds the evidence clears, not the extremes it happened to
 #: record. Quoting the exact minimum went stale on the first regeneration, because
@@ -814,7 +848,7 @@ UP_AXIS_AGREEMENT_COUNTEREXAMPLE = MappingProxyType(
         "construction": "the Armadillo mesh sampled to 40000 points: no floor, no wall",
         "repeats_that_agreed": 40,
         "of_repeats": 40,
-        "plane_tilt_to_the_snapped_axis_degrees": 10.5,
+        "plane_tilt_to_the_snapped_axis_degrees": 10.0,
         "this_tilt_is_a_floor_the_measurement_cleared": True,
         "plane_inlier_fraction_was_at_most": 0.14,
         "evidence": "docs/evidence/open3d/up-axis-ambiguity.json",

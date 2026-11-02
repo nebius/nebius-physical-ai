@@ -106,41 +106,70 @@ def ambiguous_report(**overrides: Any) -> dict[str, Any]:
     return {"up_axis_inference": report}
 
 
-def _drive_up_axis(monkeypatch: pytest.MonkeyPatch, axes: list[list[float]]) -> dict:
+class _SelectableCloud:
+    """Enough of a point cloud for `_runner_up_plane` to run unmocked."""
+
+    def __init__(self, count: int = 400) -> None:
+        self.points = [0] * count
+
+    def select_by_index(self, indices: list[int], invert: bool = False):
+        kept = len(self.points) - len(indices) if invert else len(indices)
+        return _SelectableCloud(max(kept, 0))
+
+
+def _reading(axis: list[float], weak: bool = False) -> dict[str, Any]:
+    return {
+        "weak": weak,
+        "up": axis,
+        "measured_plane_normal": axis,
+        "angle_to_snapped_axis_degrees": 0.4,
+        "plane_inliers": 8100,
+        "plane_inlier_fraction": 0.5,
+        "inlier_indices": [0, 1, 2],
+    }
+
+
+def _drive_up_axis(
+    monkeypatch: pytest.MonkeyPatch,
+    axes: list[list[float]],
+    weak: list[bool] | None = None,
+    runner_up: dict[str, Any] | None = None,
+) -> dict:
     """Run the real `_up_axis` over a scripted sequence of plane fits.
 
     The validator tests below check reports that already exist. This drives the code
     that *writes* them, with the Open3D calls replaced by a script, so the decision
     logic is covered where CI runs rather than only in the functional smoke.
+
+    `weak` scripts the weak flag per fit. Passing `runner_up` leaves the real
+    `_runner_up_plane` in place and scripts the remainder's fit instead, so a caller
+    that needs the fields that function actually publishes gets them from it rather
+    than from a hand-written stand-in.
     """
 
     from npa.workbench.open3d import runner
 
-    readings = [
-        {
-            "weak": False,
-            "up": axis,
-            "measured_plane_normal": axis,
-            "angle_to_snapped_axis_degrees": 0.4,
-            "plane_inliers": 8100,
-            "plane_inlier_fraction": 0.5,
-            "inlier_indices": [0, 1, 2],
-        }
-        for axis in axes
-    ]
+    flags = weak if weak is not None else [False] * len(axes)
+    readings = [_reading(axis, flag) for axis, flag in zip(axes, flags, strict=True)]
+    if runner_up is not None:
+        readings.append(runner_up)
     supply = iter(readings)
     monkeypatch.setattr(
         runner, "_plane_up_reading", lambda *_args, **_kwargs: next(supply)
     )
-    monkeypatch.setattr(
-        runner,
-        "_runner_up_plane",
-        lambda *_args, **_kwargs: {
-            "measured": True,
-            "inliers_relative_to_the_winner": 0.9,
-        },
-    )
-    return runner._up_axis(object(), object(), 0.05, repeats=len(axes) - 1)
+    cloud: Any = object()
+    if runner_up is None:
+        monkeypatch.setattr(
+            runner,
+            "_runner_up_plane",
+            lambda *_args, **_kwargs: {
+                "measured": True,
+                "inliers_relative_to_the_winner": 0.9,
+            },
+        )
+    else:
+        cloud = _SelectableCloud()
+    return runner._up_axis(object(), cloud, 0.05, repeats=len(axes) - 1)
 
 
 def test_disagreeing_fits_publish_the_declared_default_not_the_winning_branch(
@@ -472,6 +501,20 @@ def test_the_published_counterexample_reconstructs_from_the_record() -> None:
         "floor_must_stay_above_degrees"
     ]
     assert published["plane_tilt_to_the_snapped_axis_degrees"] >= worth_stating, (
+        published
+    )
+    # And it is published *at* that line, not above it, which is worth asserting
+    # because of what it costs. The margin rule's level is the largest its sweep
+    # measured that a floor above this line can afford, so the room between the two is
+    # the distance between two sweep steps -- a fifth of a degree here. Four floors
+    # were picked inside that room (14.0, 12.0, 10.5, 10.2) and each one satisfied the
+    # rule against the fits it was written against and failed against the next. At the
+    # line itself the margin comparison below is an identity, and the gate that still
+    # bites is the affordability check inside `_clearance_the_record_justifies`: it
+    # raises when the measured minimum comes within the sweep's level of this line.
+    # That trade is stated here so a later reader sees it rather than finding a
+    # comparison that cannot fail.
+    assert published["plane_tilt_to_the_snapped_axis_degrees"] == worth_stating, (
         published
     )
     assert ceiling <= 0.25, published
@@ -1097,8 +1140,15 @@ def test_the_chance_agreement_model_is_tested_at_power_not_asserted() -> None:
     model = high["and_does_it_predict_the_miss_rate"]
     assert model["checks_run"] >= 3000, model
     assert model["fits_per_check"] == 9, model
-    assert abs(model["gap_in_sigmas"]) <= 3.0, model
-    assert model["model_rejected"] is False, model
+    # Whether this model survives is a result, not a property of the code, and it has
+    # already changed sign between runs: the gap was within noise when this block was
+    # written and is -3.73 in the recorded run. So assert the comparison is reported
+    # honestly rather than that it came out favourably.
+    gap = (
+        model["misses_observed"]
+        - model["misses_predicted_by_each_process_own_minority_rate"]
+    ) / model["one_sigma_of_the_prediction"]
+    assert model["gap_in_sigmas"] == pytest.approx(gap, abs=0.02), model
 
     # The gap's direction across runs, derived from the list rather than described.
     # One run cannot separate a tenth-sized bias from noise, so a record that only
@@ -1120,6 +1170,35 @@ def test_the_chance_agreement_model_is_tested_at_power_not_asserted() -> None:
     # overstating it, and it has to sit in the same object as the number rather than
     # in a paragraph a reader of the record may never see.
     assert "adaptively" in pooled["how_this_sample_was_sized"], pooled
+
+    # The rejection line is published next to the statistic it judges, and both the
+    # per-run flag and the pooled flag follow from it. The record previously carried
+    # the line as a bare 3.0 in the code and "a couple of sigma" in the prose beside a
+    # z of -3.01: the prose was written once and the number kept moving.
+    line = pooled["rejection_line_in_sigmas"]
+    assert line == pytest.approx(3.0), pooled
+    assert pooled["runs_pooled"] == len(gaps), pooled
+    assert pooled["pooled_model_rejected"] is (abs(pooled["pooled_z"]) > line), pooled
+    assert model["model_rejected"] is (abs(model["gap_in_sigmas"]) > line), (
+        model,
+        line,
+    )
+    # And the sentence agrees with the flag, in whichever direction the flag points.
+    assert f"{len(gaps)} runs" in pooled["so"], pooled
+    rejecting = "at or past the three-sigma line" in pooled["so"]
+    assert rejecting is pooled["pooled_model_rejected"], pooled
+
+    # Rejected here means fewer misses than independent fits would give, so the check
+    # fires more often than the model predicts. The record has to say which direction,
+    # because the other one would mean the shipped repeat count is optimistic.
+    if pooled["pooled_model_rejected"]:
+        assert pooled["pooled_z"] < 0, pooled
+        assert (
+            model["misses_observed"]
+            < model["misses_predicted_by_each_process_own_minority_rate"]
+        ), model
+        assert "fewer misses observed than predicted" in pooled["negative_means"]
+
     # Admissible, not confirmed, and the record has to keep saying which.
     assert "not" in high["what_this_still_does_not_establish"]
 
@@ -1243,3 +1322,216 @@ def test_the_margin_rule_is_set_where_a_bound_that_merely_satisfies_it_is_safe()
         "the sweep's zero-margin control should come out near the 50% symmetry demands; "
         f"{rates[f'{0.0:.2f}']} means the sweep measured something else"
     )
+
+
+def _public_report_deriver() -> Any:
+    """The public-run selector, loaded from the evidence harness it lives in."""
+
+    import importlib.util
+
+    path = EVIDENCE / "harness" / "derive_public_run_report.py"
+    spec = importlib.util.spec_from_file_location("_derive_public_run_report", path)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _leaves(node: Any, where: str = "") -> list[tuple[str, Any]]:
+    """Every leaf the selector would walk, in the path notation its table uses."""
+
+    if isinstance(node, dict):
+        found: list[tuple[str, Any]] = []
+        for key, value in node.items():
+            found.extend(_leaves(value, f"{where}.{key}" if where else key))
+        return found
+    if isinstance(node, list):
+        found = []
+        for one in node:
+            found.extend(_leaves(one, f"{where}[]"))
+        return found
+    return [(where, node)]
+
+
+@pytest.mark.parametrize(
+    ("expected_source", "axes", "weak", "runner_up"),
+    [
+        (
+            "largest-plane-normal-snapped-to-axis",
+            [[0.0, 0.0, 1.0]] * 9,
+            None,
+            _reading([0.0, -1.0, 0.0]),
+        ),
+        (
+            "default-ambiguous-plane",
+            [[0.0, 0.0, 1.0]] * 5 + [[1.0, 0.0, 0.0]] * 4,
+            None,
+            _reading([1.0, 0.0, 0.0], weak=True),
+        ),
+        (
+            "default-weak-plane",
+            [[0.0, 0.0, 1.0]] * 9,
+            [False] + [True] * 8,
+            None,
+        ),
+    ],
+)
+def test_every_field_the_producer_publishes_is_classified_for_a_public_run(
+    monkeypatch: pytest.MonkeyPatch,
+    expected_source: str,
+    axes: list[list[float]],
+    weak: list[bool] | None,
+    runner_up: dict[str, Any] | None,
+) -> None:
+    """A field the producer publishes that the public-run selector has not classified
+    stops the next public run.
+
+    The selector denies by default, so a new `up_axis_inference` leaf raises rather
+    than leaking: the safe direction, and still a break. Nothing bound the producer to
+    the selector's table, and the whole agreement block had landed without an entry in
+    it. These three cases are the producer's three published shapes, driven through the
+    real `_up_axis` -- and, where the runner-up fields are reached, the real
+    `_runner_up_plane`, so the names come from the function instead of from a fixture
+    that could repeat the same mistake.
+    """
+
+    report = _drive_up_axis(monkeypatch, axes, weak=weak, runner_up=runner_up)
+    assert report["source"] == expected_source
+
+    derive = _public_report_deriver()
+    allowed = derive.ALLOWED["reports/rrd-manifest.json"]
+    leaves = _leaves({"up_axis_inference": report})
+    assert leaves
+    for path, value in leaves:
+        # SystemExit for a leaf nobody classified, or one whose value is not the kind
+        # its name was allowed for.
+        derive._classify(path, value, allowed)
+
+
+def test_the_weak_plane_branch_publishes_its_sample_outside_the_agreement_block(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Its counts are on the inference object, because in that branch nothing agreed.
+
+    Allowing them as `agreement.usable_fits` would have classified nothing: the
+    producer never emits that path, and the selector would still have failed closed on
+    the real one. The test above would pass either way, so the location is pinned here.
+    """
+
+    report = _drive_up_axis(
+        monkeypatch, [[0.0, 0.0, 1.0]] * 9, weak=[False] + [True] * 8
+    )
+    assert report["source"] == "default-weak-plane"
+    assert "agreement" not in report
+
+    emitted = {path for path, _ in _leaves({"up_axis_inference": report})}
+    assert "up_axis_inference.usable_fits" in emitted
+    assert "up_axis_inference.attempted_fits" in emitted
+
+    allowed = _public_report_deriver().ALLOWED["reports/rrd-manifest.json"]
+    assert "up_axis_inference.agreement.usable_fits" not in allowed
+
+
+def test_a_boolean_is_not_accepted_where_a_count_belongs() -> None:
+    """`isinstance(True, int)` is True, and two of the three counts relied on that.
+
+    `attempted_fits` already rejected it. So a record could carry `distinct_axes: true`
+    or `repeats: true`, be read as a count of one everywhere downstream, and validate --
+    while the same value in the field beside them did not.
+    """
+
+    for field in ("distinct_axes", "repeats"):
+        report = agreeing_report()
+        report["up_axis_inference"]["agreement"][field] = True
+        with pytest.raises(Open3dError, match="positive|count|whole"):
+            validate_up_axis_inference(report)
+
+
+def test_one_fit_cannot_constitute_agreement() -> None:
+    """A majority of the attempts is a ratio, and a ratio is satisfied by 1 of 1.
+
+    `_up_axis(..., repeats=0)` produces exactly that report: one fit, no agreement
+    possible, published as a measured axis. It passed every guard here. The product
+    call site uses the shipped default, so nothing live produced it, which is not what
+    this validator is for.
+    """
+
+    report = agreeing_report()
+    agreement = report["up_axis_inference"]["agreement"]
+    agreement["repeats"] = 1
+    agreement["attempted_fits"] = 1
+    agreement["candidates"] = [{"up": [0.0, 0.0, -1.0], "chosen_by_repeats": 1}]
+    with pytest.raises(Open3dError, match="one fit cannot agree"):
+        validate_up_axis_inference(report)
+
+    # Two is the floor, not more: two repeats are the fewest that can agree, and
+    # anything above that would be this validator setting the producer's fit count.
+    agreement["repeats"] = 2
+    agreement["attempted_fits"] = 2
+    agreement["candidates"] = [{"up": [0.0, 0.0, -1.0], "chosen_by_repeats": 2}]
+    validate_up_axis_inference(report)
+
+
+def test_the_producer_can_actually_emit_the_report_that_guard_rejects(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Reachability, so the guard above is not defending against a hand-written shape."""
+
+    report = _drive_up_axis(monkeypatch, [[0.0, 0.0, 1.0]])
+    assert report["source"] == "largest-plane-normal-snapped-to-axis"
+    assert report["agreement"]["attempted_fits"] == 1
+    with pytest.raises(Open3dError, match="one fit cannot agree"):
+        validate_up_axis_inference({"up_axis_inference": report})
+
+
+def test_the_published_axis_has_to_be_the_one_the_repeats_agreed_on() -> None:
+    """The counts were all constrained; which axis got published was not.
+
+    So a report naming a measured up of (0,0,1), whose single agreeing candidate is
+    (1,0,0), satisfied every check. The vector the view cameras consume could differ
+    from the axis the agreement block attests to, with the record still valid.
+    """
+
+    report = agreeing_report()
+    report["up_axis_inference"]["agreement"]["candidates"] = [
+        {"up": [1.0, 0.0, 0.0], "chosen_by_repeats": 9}
+    ]
+    with pytest.raises(Open3dError, match="agreed on"):
+        validate_up_axis_inference(report)
+
+    # Written as floats by one producer and ints by another is not a disagreement.
+    report["up_axis_inference"]["up"] = [0, 0, -1]
+    report["up_axis_inference"]["agreement"]["candidates"] = [
+        {"up": [0.0, 0.0, -1.0], "chosen_by_repeats": 9}
+    ]
+    validate_up_axis_inference(report)
+
+
+def test_the_ambiguous_branch_is_still_bound_to_the_declared_default() -> None:
+    """The binding above is for the measured branch; this one already had its own.
+
+    Asserting it here keeps the new check from being read as covering both, and would
+    catch the measured binding being applied to the wrong branch.
+    """
+
+    report = ambiguous_report()
+    assert report["up_axis_inference"]["agreement"]["distinct_axes"] == 2
+    validate_up_axis_inference(report)
+
+    report["up_axis_inference"]["up"] = [1.0, 0.0, 0.0]
+    with pytest.raises(Open3dError):
+        validate_up_axis_inference(report)
+
+
+def test_a_candidate_that_is_not_a_report_fails_the_machine_readable_contract() -> None:
+    """It raised `AttributeError` from the `.get` below, which the CLI does not catch.
+
+    The CLI maps `(Open3dError, ValueError)` to an exit code and a message. Everything
+    else is a traceback, so this one malformed shape broke the contract the rest of the
+    validator keeps.
+    """
+
+    report = agreeing_report()
+    report["up_axis_inference"]["agreement"]["candidates"] = ["(0,0,-1)"]
+    with pytest.raises(Open3dError, match="not a report"):
+        validate_up_axis_inference(report)

@@ -64,9 +64,15 @@ remedy; ten fits with Open3D's seed re-set to the same value before each one ret
 The fit is now repeated and an axis is named only when the repeats agree; otherwise the declared
 default is published *as* the default. The record keeps six clouds -- two ambiguous constructions,
 two constructed controls, the upstream demo scan, and a sampled Armadillo -- plus the detection rate
-at three repeat counts, because the check misses when the fits agree by chance and the honest figure
-is 27 of 30 runs rather than all of them. The Armadillo is the case repeat agreement does not catch:
-40 of 40 fits agree, on a plane tilted past 12 degrees off the axis they snap it to.
+at three repeat counts, because the check misses when the fits agree by chance rather than catching
+every ambiguous scan. At the shipped nine fits an independent lane's 300 runs put the detection rate
+at 0.943. The retained sweep's own count is out of 30 and carries about 1.3 runs of counting noise,
+so it moves between regenerations; quoting one of those counts as *the* figure reads as a rate that
+changed, and the 300-run number is the one to cite. The Armadillo is the case repeat agreement does
+not catch: 40 of 40 fits agree, on a plane tilted past the floor the code publishes off the axis
+they snap it to. That floor is now 10 degrees, having been lowered from 14 as fresh fits kept
+landing under each successive value, and the record carries both the rule that decides where it may
+sit and why it is published at the lowest point that rule leaves standing.
 
 ## The viewer's own frame
 
