@@ -590,6 +590,8 @@ def _assert_the_density_crop_reports_its_own_contribution(report: dict) -> None:
         "this measurement exists to expose has gone; recheck whether the published "
         f"removal count still overstates the crop's effect: {contribution}"
     )
+
+
 def main() -> None:
     import open3d as o3d
 
