@@ -137,6 +137,10 @@ def _manifest() -> RegistrationManifest:
     )
 
 
+def _digest_of_this_file() -> str:
+    return hashlib.sha256(Path(__file__).resolve().read_bytes()).hexdigest()
+
+
 def _digest(array) -> str:
     return hashlib.sha256(np.ascontiguousarray(array).tobytes()).hexdigest()
 
@@ -159,6 +163,16 @@ def _digest_all(*arrays) -> str:
         running.update(repr(contiguous.shape).encode())
         running.update(contiguous.tobytes())
     return running.hexdigest()
+
+
+def _spread_of(values: list[float]) -> dict[str, Any]:
+    """The range of a numeric cell, so a reader sees the figure and its movement."""
+
+    return {
+        "min": min(values),
+        "max": max(values),
+        "distinct_values": len(set(values)),
+    }
 
 
 def _distinct(digests: list[str]) -> dict[str, Any]:
@@ -226,43 +240,74 @@ def _stages_alone(construction: str) -> dict[str, Any]:
 
     held = np.eye(4)
     held[:3, 3] = [OFFSET, 0.0, 0.0]
-    icp: dict[str, Any] = {}
-    for name, estimation in (
-        ("point_to_point", registration.TransformationEstimationPointToPoint()),
-        ("point_to_plane", registration.TransformationEstimationPointToPlane()),
-    ):
-        digests, inputs = [], []
-        for _ in range(REPEATS):
-            _seeded(o3d, manifest)
-            moving = o3d.geometry.PointCloud(source)
-            fixed = o3d.geometry.PointCloud(target)
-            _prepared(o3d, moving, manifest)
-            _prepared(o3d, fixed, manifest)
-            # Everything this call can read, digested before it runs. A varying
-            # output means nothing unless the input provably held still.
-            inputs.append(
-                _digest_all(
-                    np.asarray(moving.points),
-                    np.asarray(moving.normals),
-                    np.asarray(fixed.points),
-                    np.asarray(fixed.normals),
-                    held,
-                    np.array([VOXEL * manifest.icp_distance_factor]),
+
+    def icp_from(start, label: str) -> dict[str, Any]:
+        """Both estimations from one fixed start pose, with the work each did."""
+
+        out: dict[str, Any] = {}
+        for name, estimation in (
+            ("point_to_point", registration.TransformationEstimationPointToPoint()),
+            ("point_to_plane", registration.TransformationEstimationPointToPlane()),
+        ):
+            digests, inputs, fitness, correspondences = [], [], [], []
+            for _ in range(REPEATS):
+                _seeded(o3d, manifest)
+                moving = o3d.geometry.PointCloud(source)
+                fixed = o3d.geometry.PointCloud(target)
+                _prepared(o3d, moving, manifest)
+                _prepared(o3d, fixed, manifest)
+                # Everything this call can read, digested before it runs. A varying
+                # output means nothing unless the input provably held still.
+                inputs.append(
+                    _digest_all(
+                        np.asarray(moving.points),
+                        np.asarray(moving.normals),
+                        np.asarray(fixed.points),
+                        np.asarray(fixed.normals),
+                        start,
+                        np.array([VOXEL * manifest.icp_distance_factor]),
+                    )
                 )
-            )
-            refined = registration.registration_icp(
-                moving,
-                fixed,
-                VOXEL * manifest.icp_distance_factor,
-                held,
-                estimation,
-            )
-            digests.append(_digest(np.array(refined.transformation)))
-        icp[name] = {
-            **_distinct(digests),
-            "every_repeat_was_handed_identical_input": len(set(inputs)) == 1,
-            "the_input_digest": inputs[0] if len(set(inputs)) == 1 else None,
-        }
+                refined = registration.registration_icp(
+                    moving,
+                    fixed,
+                    VOXEL * manifest.icp_distance_factor,
+                    start,
+                    estimation,
+                )
+                digests.append(_digest(np.array(refined.transformation)))
+                fitness.append(refined.fitness)
+                correspondences.append(len(refined.correspondence_set))
+            out[name] = {
+                **_distinct(digests),
+                "every_repeat_was_handed_identical_input": len(set(inputs)) == 1,
+                "the_input_digest": inputs[0] if len(set(inputs)) == 1 else None,
+                # How much work the call had to do. Without these a reproducible
+                # cell cannot be told apart from a call that found no
+                # correspondences and returned its start pose: fitness is the
+                # fraction of source points matched, and zero correspondences
+                # means the result is the input.
+                "fitness": _spread_of(fitness),
+                "correspondences": _spread_of(correspondences),
+                "found_no_correspondences_in_some_repeat": min(correspondences) == 0,
+            }
+            out[name]["the_start_pose"] = label
+        return out
+
+    icp = icp_from(held, "a +0.8 m x-translation constructed by this harness")
+    # The same two estimations started where the pipeline actually starts them. The
+    # held pose above is this harness's construction and sits about sixteen voxels
+    # from the constructed pair's true alignment, against an ICP correspondence
+    # distance of one voxel-and-a-half -- so a reproducible result there could mean
+    # the solver is stable or could mean it had nothing to converge to. `_register_pair`
+    # hands point-to-plane ICP `coarse.transformation` from RANSAC, which is a
+    # different and much closer start. Pinned at the first repeat's value so this cell
+    # still holds its input fixed: on the cases where RANSAC is itself not
+    # bit-reproducible, using each repeat's own coarse pose would report RANSAC's
+    # variation as ICP's.
+    from_pipeline = icp_from(
+        coarse[0], "the pipeline's own RANSAC coarse pose, repeat 0"
+    )
 
     return {
         "normal_estimation_downsampled_cloud": _distinct(normals),
@@ -270,6 +315,7 @@ def _stages_alone(construction: str) -> dict[str, Any]:
         "fpfh_features": _distinct(features),
         "ransac_global_registration": _distinct([_digest(one) for one in coarse]),
         "icp_from_one_held_pose": icp,
+        "icp_from_the_pipelines_own_coarse_pose": from_pipeline,
         "the_shipped_icp_estimation": manifest.icp_estimation,
     }
 
@@ -319,14 +365,17 @@ def _composed(construction: str) -> dict[str, Any]:
     }
 
 
-def _how_the_thread_count_participates() -> dict[str, Any]:
+def _how_the_thread_count_participates(construction: str) -> dict[str, Any]:
     """Pin Open3D's thread limit and re-run, both the stage alone and the pipeline.
 
     This cell exists because the thread count is the explanation #1024 found for the
     reconstruction figures, so a reader who knows that record reaches for it first.
     They are right to, and the obvious way to act on it does not work: setting
     `OMP_NUM_THREADS=1` before the process starts leaves `get_max_threads` reporting
-    the host's full count and changes nothing. Open3D's own API is the lever.
+    the host's full count and changes nothing. Open3D's own API is the lever. That
+    sentence used to be hard-coded here; it is now measured in a child process, by
+    `_omp_child`, because asserting it was the same defect as the one this record is
+    about.
 
     I had this cell the other way round -- named for ruling the thread count out --
     on the strength of that environment-variable attempt. The correction is
@@ -335,17 +384,14 @@ def _how_the_thread_count_participates() -> dict[str, Any]:
     """
 
     manifest = _manifest()
-    source, target = _pair("periodic_ripple")
+    source, target = _pair(construction)
     registration = o3d.pipelines.registration
     held = np.eye(4)
     held[:3, 3] = [OFFSET, 0.0, 0.0]
     default_threads = o3d.utility.get_max_threads()
     observed: dict[str, Any] = {
+        "the_case": construction,
         "the_default_thread_count_here": default_threads,
-        "the_environment_variable_is_not_the_lever": (
-            "OMP_NUM_THREADS=1 in the parent shell leaves get_max_threads at the "
-            f"host's {default_threads} and leaves every count below unchanged"
-        ),
     }
     try:
         for threads in (1, 2, default_threads):
@@ -379,7 +425,94 @@ def _how_the_thread_count_participates() -> dict[str, Any]:
             }
     finally:
         o3d.utility.set_max_threads(default_threads)
+    observed["the_environment_variable_is_not_the_lever"] = _omp_child(construction)
     return observed
+
+
+def _omp_child(construction: str) -> dict[str, Any]:
+    """Re-run the one-thread question in a child started under OMP_NUM_THREADS=1.
+
+    This was a hard-coded sentence interpolating whatever `get_max_threads()` had
+    returned in *this* process -- the only cell in the thread section not produced by
+    the code that printed it, in a record whose thesis is that prose no measurement
+    supports is the defect. Worse, run under `OMP_NUM_THREADS=1` on a host where
+    OpenMP honours it, the old sentence would have read "leaves get_max_threads at the
+    host's 1" as a measured fact.
+
+    So it is measured: a child process, this same file, started with the variable set,
+    reporting its own thread count and its own distinct-result counts. The parent's
+    numbers sit beside it.
+    """
+
+    import os
+    import subprocess
+
+    env = {**os.environ, "OMP_NUM_THREADS": "1"}
+    child = subprocess.run(
+        [sys.executable, str(Path(__file__).resolve()), "--omp-child", construction],
+        capture_output=True,
+        text=True,
+        env=env,
+        check=False,
+    )
+    if child.returncode != 0:
+        return {
+            "measured": False,
+            "why_not": (
+                "the child process exited "
+                f"{child.returncode}: {child.stderr.strip().splitlines()[-1:]}"
+            ),
+        }
+    measured = json.loads(child.stdout)
+    return {
+        "measured": True,
+        "how": (
+            "a child process running this same harness with OMP_NUM_THREADS=1 in its "
+            "environment, reporting its own get_max_threads and its own counts"
+        ),
+        "the_childs_get_max_threads": measured["get_max_threads"],
+        "the_variable_reached_the_thread_count": measured["get_max_threads"] == 1,
+        "point_to_plane_icp_from_a_held_pose": measured["alone"],
+        "the_whole_register_pipeline": measured["composed"],
+    }
+
+
+def _omp_child_measurement(construction: str) -> dict[str, Any]:
+    """What the child above reports. Runs with whatever thread count it inherited."""
+
+    manifest = _manifest()
+    source, target = _pair(construction)
+    registration = o3d.pipelines.registration
+    held = np.eye(4)
+    held[:3, 3] = [OFFSET, 0.0, 0.0]
+    alone, composed = [], []
+    for _ in range(REPEATS):
+        _seeded(o3d, manifest)
+        moving = o3d.geometry.PointCloud(source)
+        fixed = o3d.geometry.PointCloud(target)
+        _prepared(o3d, moving, manifest)
+        _prepared(o3d, fixed, manifest)
+        refined = registration.registration_icp(
+            moving,
+            fixed,
+            VOXEL * manifest.icp_distance_factor,
+            held,
+            registration.TransformationEstimationPointToPlane(),
+        )
+        alone.append(_digest(np.array(refined.transformation)))
+        _seeded(o3d, manifest)
+        whole = _register_pair(
+            o3d,
+            o3d.geometry.PointCloud(source),
+            o3d.geometry.PointCloud(target),
+            manifest,
+        )
+        composed.append(_digest(np.array(whole["transformation"])))
+    return {
+        "get_max_threads": o3d.utility.get_max_threads(),
+        "alone": _distinct(alone),
+        "composed": _distinct(composed),
+    }
 
 
 def main() -> int:
@@ -417,10 +550,15 @@ def main() -> int:
                 if isinstance(value, dict) and "bit_identical_every_repeat" in value
             ),
             *(
-                (f"icp_{name}", value)
-                for name, value in case["each_stage_alone"][
-                    "icp_from_one_held_pose"
-                ].items()
+                (f"icp_{name}_from_{where}", value)
+                for where, group in (
+                    ("a_held_pose", "icp_from_one_held_pose"),
+                    (
+                        "the_pipelines_coarse_pose",
+                        "icp_from_the_pipelines_own_coarse_pose",
+                    ),
+                )
+                for name, value in case["each_stage_alone"][group].items()
                 if isinstance(value, dict)
             ),
         )
@@ -443,21 +581,52 @@ def main() -> int:
         "voxel_size": VOXEL,
         "cases": cases,
         "stages_that_are_not_bit_reproducible_alone": unreproducible,
-        "how_the_thread_count_participates": _how_the_thread_count_participates(),
+        # Both cases. The remedy was measured only on the constructed ripple while
+        # being written into the skill as a general instruction, and the record's own
+        # argument is that the demo capture is the one to read first because it is
+        # what every accepted record here is built from.
+        "how_the_thread_count_participates": {
+            label: _how_the_thread_count_participates(label)
+            for label in ("periodic_ripple", "upstream_demo_scan")
+        },
         "what_the_cases_establish": (
             "the composed pipeline returns a different transformation on every "
             "repeat of every case, so the aligned cloud and the aligned_sha256 the "
             "report publishes differ on every run. Taken alone, normal estimation, "
-            "FPFH and point-to-point ICP each return identical bytes every time. The "
-            "shipped point_to_plane ICP does not: on the upstream demo scan and on "
-            "the ambiguous construction it returns a distinct answer on all sixteen "
-            "calls while being handed provably identical points, normals, pose and "
-            "distance. It needs no contrived surface -- the demo capture is the one "
-            "every accepted record in this directory is built from. Only on the "
-            "well-conditioned bowl is that call reproducible, which is what makes "
-            "this conditioning rather than a broken solver. Held to one thread "
-            "through Open3D's API it becomes bit-reproducible, so the variation is "
-            "parallel accumulation rather than anything the seed reaches"
+            "FPFH and point-to-point ICP each return identical bytes every time. Two "
+            "stages do not. The shipped point_to_plane ICP returns a distinct answer "
+            "on all sixteen calls, on the upstream demo scan and on the ambiguous "
+            "construction, while being handed provably identical points, normals, "
+            "pose and distance -- it needs no contrived surface, and the demo capture "
+            "is the one every accepted record in this directory is built from. RANSAC "
+            "global registration is also not bit-reproducible alone, on the same two "
+            "cases, from fixed downsampled clouds and fixed features: 2 distinct "
+            "results on the ripple and 4 on the demo scan. Held to one thread through "
+            "Open3D's API the point-to-plane call becomes bit-reproducible, so that "
+            "variation is parallel accumulation rather than anything the seed reaches. "
+            "Started where the pipeline starts it -- from RANSAC's coarse pose rather "
+            "than from this harness's constructed offset -- point-to-plane ICP returns "
+            "16 distinct results on all three cases, the well-conditioned bowl "
+            "included"
+        ),
+        "the_conditioning_claim_this_record_used_to_make_was_wrong": (
+            "an earlier version read 'only on the well-conditioned bowl is that call "
+            "reproducible, which is what makes this conditioning rather than a broken "
+            "solver'. A reviewer reached the contradiction from control flow alone: on "
+            "the bowl every stage alone was bit-identical while the composed pipeline "
+            "returned 16 distinct results, and `_register_pair` holds exactly one "
+            "further stochastic surface -- the same point-to-plane call, differing only "
+            "in where it starts. Measuring it settles it. The bowl's held-pose cell ran "
+            "at fitness 0.0 with zero correspondences: the call found nothing within "
+            "the correspondence distance and returned the pose it was handed, so that "
+            "cell was reproducible because it did no work, not because the surface is "
+            "well conditioned. The held pose is this harness's own construction, a "
+            "+0.8 m x-translation about sixteen voxels from the true alignment at an "
+            "ICP correspondence distance of one and a half. Started from the "
+            "pipeline's own coarse pose, with 490 correspondences at fitness 0.12, the "
+            "same call on the same bowl returns 16 distinct results of 16. So "
+            "point-to-plane ICP is not bit-reproducible on any case here, including the "
+            "well-conditioned one, and conditioning is not what decides it"
         ),
         "what_was_ruled_out": {
             "normal_estimation": (
@@ -473,7 +642,9 @@ def main() -> int:
             "that the registration is wrong, or that this costs accuracy. The "
             "answer is stable: on the well-determined pair the repeats disagree by "
             "about a trillionth of a voxel, which is floating-point noise, and even "
-            "on the deliberately ambiguous pair by under a thousandth. Nor that the "
+            "on the deliberately ambiguous pair by under a thousandth. That is a "
+            "statement about the size of the disagreement, not about any case being "
+            "free of it. Nor that the "
             "ambiguity itself is new -- #1025 measures that separately, across "
             "seeds, where the error is tens of voxels. Nor that one thread is a "
             "recommendation: it buys reproducible bytes at the cost of the "
@@ -492,6 +663,15 @@ def main() -> int:
             "python": platform.python_version(),
             "numpy": np.__version__,
         },
+        # The bytes that produced this, in the shape `audit_evidence_references.py`
+        # binds: a `sha256` beside a `harness` key. Named in prose alone, the audit
+        # could confirm the file exists and not that it generated these numbers, and
+        # the one thing that follows is that editing the harness without regenerating
+        # is now a finding rather than something a reader has to notice.
+        "produced_by": {
+            "harness": "harness/register_seed_determinism.py",
+            "sha256": _digest_of_this_file(),
+        },
     }
     json.dump(record, sys.stdout, indent=2, sort_keys=False)
     sys.stdout.write("\n")
@@ -499,4 +679,7 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    if len(sys.argv) > 2 and sys.argv[1] == "--omp-child":
+        json.dump(_omp_child_measurement(sys.argv[2]), sys.stdout)
+        raise SystemExit(0)
     raise SystemExit(main())

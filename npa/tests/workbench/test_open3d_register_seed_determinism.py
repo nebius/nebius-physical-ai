@@ -14,13 +14,39 @@ else reads the committed record, so the claims stay gated in CI either way.
 from __future__ import annotations
 
 import json
+import pathlib
 from pathlib import Path
 
 import pytest
+from _pytest.outcomes import Skipped
 
 EVIDENCE = Path(__file__).resolve().parents[3] / "docs" / "evidence" / "open3d"
 RECORD = EVIDENCE / "register-seed-determinism.json"
 SKILL = Path(__file__).resolve().parents[3] / "skills" / "tools" / "open3d" / "SKILL.md"
+
+
+def _load_harness():
+    """Execute the harness module without leaving its `sys.path` edit behind.
+
+    The harness does `sys.path.insert(0, .../npa/src)` at module scope, which loading
+    it runs. Left in place that outlives the test and silently shadows an installed
+    `npa` for the rest of the session -- the kind of thing that surfaces as a
+    different test failing for no visible reason.
+    """
+
+    import importlib.util
+    import sys
+
+    path = EVIDENCE / "harness" / "register_seed_determinism.py"
+    spec = importlib.util.spec_from_file_location("register_seed_determinism", path)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    before = list(sys.path)
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        sys.path[:] = before
+    return module
 
 
 def _record() -> dict:
@@ -111,15 +137,9 @@ def test_the_input_digest_cannot_be_fooled_by_regrouping() -> None:
     # The harness imports Open3D at module scope, so loading it needs Open3D even
     # though the function under test only hashes arrays.
     pytest.importorskip("open3d")
-    import importlib.util
-
     import numpy as np
 
-    path = EVIDENCE / "harness" / "register_seed_determinism.py"
-    spec = importlib.util.spec_from_file_location("register_seed_determinism", path)
-    assert spec and spec.loader
-    harness = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(harness)
+    harness = _load_harness()
 
     same = np.arange(6.0).reshape(2, 3)
     assert harness._digest_all(same, same) != harness._digest_all(
@@ -157,16 +177,34 @@ def test_the_shipped_estimation_is_the_one_that_varies() -> None:
             "point_to_plane"
         ]
         assert (
-            f"{label}:icp_point_to_plane"
+            f"{label}:icp_point_to_plane_from_a_held_pose"
             in (record["stages_that_are_not_bit_reproducible_alone"])
         )
 
-    # And on the well-conditioned pair the same call is exactly reproducible, which
-    # is what makes this a conditioning effect rather than a broken solver.
+    # And the bowl, which this test used to read the other way round. The held-pose
+    # cell there is reproducible, and that was taken as the well-conditioned contrast
+    # that made the effect a conditioning effect. It is not: that cell ran at fitness
+    # 0.0 with zero correspondences, so the call found nothing within the
+    # correspondence distance and returned the pose it was handed. A call that does no
+    # work is reproducible for reasons that say nothing about the surface.
     bowl = record["cases"]["non_periodic_bowl"]["each_stage_alone"]
-    assert bowl["icp_from_one_held_pose"]["point_to_plane"][
-        "bit_identical_every_repeat"
-    ], bowl["icp_from_one_held_pose"]["point_to_plane"]
+    held = bowl["icp_from_one_held_pose"]["point_to_plane"]
+    assert held["bit_identical_every_repeat"], held
+    assert held["found_no_correspondences_in_some_repeat"], (
+        "the bowl's held-pose cell now finds correspondences, so its reproducibility "
+        "means something different than it did and this reasoning needs rereading"
+    )
+    assert held["fitness"]["max"] == 0.0, held["fitness"]
+    from_coarse = bowl["icp_from_the_pipelines_own_coarse_pose"]["point_to_plane"]
+    assert from_coarse["correspondences"]["min"] > 0, from_coarse
+    assert not from_coarse["bit_identical_every_repeat"], (
+        "started where the pipeline starts it, the shipped call is reproducible on "
+        "the bowl -- which would make conditioning the explanation after all"
+    )
+    assert (
+        "non_periodic_bowl:icp_point_to_plane_from_the_pipelines_coarse_pose"
+        in record["stages_that_are_not_bit_reproducible_alone"]
+    )
 
 
 def test_one_thread_is_measured_as_the_remedy_and_the_env_var_is_not() -> None:
@@ -177,19 +215,39 @@ def test_one_thread_is_measured_as_the_remedy_and_the_env_var_is_not() -> None:
     record has to say so or the advice is worse than none.
     """
 
-    threads = _record()["how_the_thread_count_participates"]
-    assert threads["the_default_thread_count_here"] > 1, threads
-    assert "OMP_NUM_THREADS" in threads["the_environment_variable_is_not_the_lever"]
-
-    one = threads["at_1_threads"]
-    assert one["point_to_plane_icp_from_a_held_pose"]["bit_identical_every_repeat"]
-    assert one["the_whole_register_pipeline"]["bit_identical_every_repeat"], (
-        "one thread no longer makes the pipeline reproducible, so the remedy this "
-        "record offers is no longer true"
+    cells = _record()["how_the_thread_count_participates"]
+    assert set(cells) == {"periodic_ripple", "upstream_demo_scan"}, (
+        "the remedy is the one actionable instruction the skill gives, and the "
+        "capture the product ships against has to be one of the cases it was "
+        "measured on"
     )
-    assert not threads["at_2_threads"]["the_whole_register_pipeline"][
-        "bit_identical_every_repeat"
-    ], "two threads reproduced, which would move where the boundary is"
+    for label, threads in cells.items():
+        assert threads["the_default_thread_count_here"] > 1, threads
+
+        one = threads["at_1_threads"]
+        assert one["point_to_plane_icp_from_a_held_pose"]["bit_identical_every_repeat"]
+        assert one["the_whole_register_pipeline"]["bit_identical_every_repeat"], (
+            f"{label}: one thread no longer makes the pipeline reproducible, so the "
+            "remedy this record offers is no longer true"
+        )
+        assert not threads["at_2_threads"]["the_whole_register_pipeline"][
+            "bit_identical_every_repeat"
+        ], f"{label}: two threads reproduced, which would move where the boundary is"
+
+        # The environment variable, measured rather than asserted. This cell was a
+        # hard-coded sentence interpolating the parent's own thread count: the one
+        # claim in the thread section not produced by the code that printed it, in a
+        # record whose subject is prose no measurement supports. Run under the
+        # variable on a host where OpenMP honoured it, it would have printed "leaves
+        # get_max_threads at the host's 1" as a measured fact.
+        env = threads["the_environment_variable_is_not_the_lever"]
+        assert env["measured"] is True, env
+        assert env["the_childs_get_max_threads"] > 1, env
+        assert env["the_variable_reached_the_thread_count"] is False, env
+        assert not env["the_whole_register_pipeline"]["bit_identical_every_repeat"], (
+            f"{label}: the child run under OMP_NUM_THREADS=1 was reproducible, so the "
+            "variable does reach the thread count and the advice is now backwards"
+        )
 
 
 def test_the_prose_a_user_reads_matches_the_record() -> None:
@@ -234,6 +292,24 @@ def test_the_measurement_itself_reproduces(periodic: bool) -> None:
     from npa.workbench.open3d.runner import _register_pair, _seeded
     from npa.workbench.open3d.schemas import RegistrationManifest
 
+    # The variation is parallel accumulation, so on a host that resolves to one thread
+    # the repeats *do* agree -- the record measures exactly that, in
+    # `how_the_thread_count_participates`. Asserting non-determinism unconditionally
+    # turns a correct single-vCPU runner, single-core container or single-threaded
+    # Open3D build into a failure. The boundary comes from the record rather than from
+    # a number chosen here: it is reproducible at 1 thread and not at 2.
+    threads = o3d.utility.get_max_threads()
+    if threads <= 1:
+        thread_cell = _record()["how_the_thread_count_participates"]["periodic_ripple"]
+        assert thread_cell["at_1_threads"]["the_whole_register_pipeline"][
+            "bit_identical_every_repeat"
+        ], "the record no longer says one thread is reproducible; reread this skip"
+        pytest.skip(
+            f"Open3D reports {threads} thread(s) here, and the record measures the "
+            "pipeline as bit-reproducible at one thread -- there is no "
+            "non-determinism to observe on this host"
+        )
+
     rng = np.random.default_rng(7)
 
     def patch(x0: float) -> np.ndarray:
@@ -277,7 +353,8 @@ def test_the_measurement_itself_reproduces(periodic: bool) -> None:
         poses.append(np.array(measured["transformation"]))
 
     assert len({one.tobytes() for one in poses}) > 1, (
-        "four seeded repeats agreed byte-for-byte, which contradicts the record"
+        f"four seeded repeats agreed byte-for-byte at {threads} threads, which "
+        "contradicts the record"
     )
     translations = np.array([one[:3, 3] for one in poses])
     worst = max(
@@ -287,3 +364,215 @@ def test_the_measurement_itself_reproduces(periodic: bool) -> None:
         f"the repeats disagree by {worst / 0.05} voxels, so the answer is not as "
         "stable as the record claims"
     )
+
+
+def test_ransac_is_named_everywhere_the_stable_stages_are_listed() -> None:
+    """The record measured RANSAC varying and then left it out of every summary.
+
+    `stages_that_are_not_bit_reproducible_alone` listed it; the prose a reader
+    actually reads enumerated "normal estimation, FPFH and point-to-point ICP" as the
+    stable stages and stopped. A consumer reading only the summary concluded a fixed
+    seed makes the RANSAC repeat, which is the sentence this whole change exists to
+    remove -- and which survived in two more places.
+    """
+
+    record = _record()
+    for label in ("periodic_ripple", "upstream_demo_scan"):
+        cell = record["cases"][label]["each_stage_alone"]["ransac_global_registration"]
+        assert not cell["bit_identical_every_repeat"], cell
+        assert (
+            f"{label}:ransac_global_registration"
+            in (record["stages_that_are_not_bit_reproducible_alone"])
+        )
+
+    establishes = record["what_the_cases_establish"]
+    assert "RANSAC" in establishes, establishes
+
+    readme = (EVIDENCE / "README.md").read_text()
+    section = readme[readme.index("The seed is not what is loose") :][:3000]
+    assert "RANSAC" in section, section[:400]
+
+
+def test_the_two_other_places_that_claimed_a_seeded_rerun_repeats() -> None:
+    """Four locations held the sentence; the change corrected two of them.
+
+    `schemas.py` is the input contract a caller reads to find out what `random_seed`
+    buys, and the golden-eval docstring is what a reader consults when the smoke
+    tolerances are questioned. Both still said RANSAC repeats bit-for-bit because the
+    generator is seeded, which this record measures as false.
+    """
+
+    from npa.workbench.open3d import schemas
+
+    contract = pathlib.Path(schemas.__file__).read_text()
+    assert "so a rerun repeats the same RANSAC" not in " ".join(contract.split())
+    assert "register-seed-determinism.json" in contract, (
+        "the corrected sentence has to name the measurement, or it is one more claim "
+        "a reader cannot check"
+    )
+
+    # Read as source: importing the golden-eval module pulls in its Open3D-dependent
+    # fixtures, and the claim is in a docstring either way.
+    smoke = (
+        pathlib.Path(__file__).resolve().parents[2]
+        / "src"
+        / "npa"
+        / "smoke"
+        / "test_open3d_functional.py"
+    ).read_text()
+    flat = " ".join(smoke.split())
+    assert "repeat bit-for-bit because the generator is seeded" not in flat, (
+        "the claim wraps across lines in the source, so this has to be checked "
+        "against whitespace-flattened text -- the first version of this assertion "
+        "could not have matched the sentence it was written to catch"
+    )
+    assert "register-seed-determinism.json" in smoke
+
+
+def test_the_record_says_which_published_figures_move() -> None:
+    """`fitness` holding still is the point; the README generalised it to all of them.
+
+    It read "a consumer watching the reported agreement measures sees a perfectly
+    steady pipeline". `inlier_rmse` is published per pair by the same `_result_summary`
+    and takes a different value on almost every repeat, so the sentence overstated how
+    blind a consumer is -- in the artefact whose purpose is to stop claims drifting
+    from measurements.
+    """
+
+    record = _record()
+    moving = {
+        label: case["the_composed_pipeline"]["distinct_icp_inlier_rmse_values"]
+        for label, case in record["cases"].items()
+    }
+    assert all(count > 1 for count in moving.values()), moving
+    steady = {
+        label: case["the_composed_pipeline"]["distinct_icp_fitness_values"]
+        for label, case in record["cases"].items()
+    }
+    assert all(count == 1 for count in steady.values()), steady
+
+    readme = (EVIDENCE / "README.md").read_text()
+    assert "icp.inlier_rmse" in readme, (
+        "the README names fitness as the steady figure and has to name the moving one"
+    )
+
+
+def test_the_record_is_bound_to_the_harness_that_produced_it() -> None:
+    """Named in prose, the audit could confirm the file exists and nothing more.
+
+    This directory's guard binds a `sha256` sitting beside a `harness` key, and the
+    directory's README documents unbound-reference drift as a recurring failure here.
+    What follows from binding is that editing the harness without regenerating is a
+    finding rather than something a reader has to notice.
+    """
+
+    import hashlib
+
+    record = _record()
+    produced = record["produced_by"]
+    assert produced["harness"] == "harness/register_seed_determinism.py"
+    harness = EVIDENCE / "harness" / "register_seed_determinism.py"
+    assert produced["sha256"] == hashlib.sha256(harness.read_bytes()).hexdigest(), (
+        "the record was not regenerated after the harness changed, which is exactly "
+        "what this binding exists to catch"
+    )
+
+
+def test_every_icp_cell_publishes_how_much_work_it_did() -> None:
+    """Without this a reproducible cell cannot be told from a call that did nothing.
+
+    Which is not hypothetical: the bowl's held-pose cell was read as the
+    well-conditioned contrast for a month, and it was a call with zero
+    correspondences returning its own start pose.
+    """
+
+    for case in _record()["cases"].values():
+        stages = case["each_stage_alone"]
+        for group in (
+            "icp_from_one_held_pose",
+            "icp_from_the_pipelines_own_coarse_pose",
+        ):
+            for estimation, cell in stages[group].items():
+                if not isinstance(cell, dict):
+                    continue
+                for field in ("fitness", "correspondences"):
+                    assert set(cell[field]) == {"min", "max", "distinct_values"}, (
+                        f"{group}.{estimation}.{field}"
+                    )
+                assert cell["the_start_pose"], f"{group}.{estimation}"
+                assert isinstance(cell["found_no_correspondences_in_some_repeat"], bool)
+
+
+def test_loading_the_harness_leaves_the_import_path_alone() -> None:
+    """The side effect, asserted rather than described.
+
+    Removing the restore used to change nothing any test could see, which is the same
+    shape as the defects this record is about: a correction with nothing holding it.
+    """
+
+    import sys
+
+    pytest.importorskip("open3d")
+    before = list(sys.path)
+    harness = _load_harness()
+    assert harness._digest_all is not None
+    assert sys.path == before, (
+        "the harness's module-level sys.path.insert outlived the load, so `npa` now "
+        "resolves from the repo tree ahead of anything installed for the rest of "
+        "this session"
+    )
+
+
+def test_the_non_determinism_test_skips_rather_than_fails_at_one_thread() -> None:
+    """The gate, exercised. This host has sixteen threads, so removing it is invisible.
+
+    The record measures the pipeline as bit-reproducible at one thread, so asserting
+    non-determinism unconditionally turns a correct single-vCPU runner or
+    single-threaded Open3D build into a red pipeline. That cannot be proved by
+    running on a sixteen-thread host, so the thread count is faked and the outcome
+    checked: a skip, not a failure.
+    """
+
+    o3d = pytest.importorskip("open3d")
+
+    monkeypatched = pytest.MonkeyPatch()
+    try:
+        monkeypatched.setattr(o3d.utility, "get_max_threads", lambda: 1)
+        with pytest.raises(Skipped) as skipped:
+            test_the_measurement_itself_reproduces(True)
+    finally:
+        monkeypatched.undo()
+    assert "no non-determinism to observe" in str(skipped.value), skipped.value
+    assert o3d.utility.get_max_threads() > 1, "the monkeypatch outlived the test"
+
+
+def test_the_skill_scopes_the_remedy_to_the_cases_it_was_measured_on() -> None:
+    """The one actionable instruction the skill gives, held to what was measured.
+
+    It read "`o3d.utility.set_max_threads(1)` makes the whole pipeline
+    bit-reproducible" while the cell ran only on a constructed ripple -- and the
+    record's own argument is that the demo capture is the one to read first, because
+    it is what every accepted record in that directory is built from. The same bullet
+    told a reader `OMP_NUM_THREADS` does not reach it, from a hard-coded sentence.
+    """
+
+    # Flattened, because the bullet wraps: the same trap as the golden-eval docstring
+    # above, where a flat substring check could not match the sentence it was written
+    # to catch.
+    skill = SKILL.read_text()
+    bullet = " ".join(
+        next(
+            block for block in skill.split("\n- ") if "set_max_threads(1)" in block
+        ).split()
+    )
+    assert "both cases measured" in bullet, bullet
+    assert "demo capture" in bullet, bullet
+    assert "child process" in bullet, (
+        "the environment-variable claim is a measurement now, and the advice should "
+        "say so rather than reading as received wisdom"
+    )
+    assert "RANSAC" in bullet, (
+        "a fixed seed does not make the RANSAC repeat either, which is the sentence "
+        "this change set out to remove"
+    )
+    assert "not a recommendation" in bullet or "trade" in bullet, bullet
