@@ -1,0 +1,441 @@
+{
+  "what_this_measures": "Whether the camera's up vector is determined by the scan or by the run. The pipeline infers it from the largest planar segment, segment_plane is RANSAC, and the published fields -- source, inlier fraction, tilt -- take overlapping values on both branches when two planes compete, so one run's record cannot show that the next run would roll the view by ninety degrees.",
+  "why_it_matters": "The up vector is consumed by the view cameras, not merely recorded. An axis chosen by a coin flip is a view rolled onto its side in some fraction of runs, which is the reviewability problem the inference was added to fix.",
+  "cases": [
+    {
+      "cloud": "ambiguous_room",
+      "points": 16200,
+      "voxel_size": 0.05,
+      "what_this_cloud_is": "A 4x4 floor and a 4x4 wall with 8100 points each. Equal in the quantity segment_plane scores, so the only question is which plane a given fit lands on. This is the failure the repeats exist to catch.",
+      "single_fit_distribution": {
+        "fits": 40,
+        "weak_or_failed_fits": 0,
+        "distinct_axes": 2,
+        "branches": [
+          {
+            "up": [
+              0.0,
+              0.0,
+              1.0
+            ],
+            "chosen_by_fits": 32,
+            "plane_inlier_fraction_range": [
+              0.506358024691358,
+              0.5114814814814815
+            ],
+            "tilt_to_snapped_axis_degrees_range": [
+              0.02661921871477898,
+              0.08782661791059229
+            ]
+          },
+          {
+            "up": [
+              1.0,
+              0.0,
+              0.0
+            ],
+            "chosen_by_fits": 8,
+            "plane_inlier_fraction_range": [
+              0.5064197530864197,
+              0.5082716049382716
+            ],
+            "tilt_to_snapped_axis_degrees_range": [
+              0.027696533997615874,
+              0.09688376775131563
+            ]
+          }
+        ],
+        "no_published_field_separates_the_branches": {
+          "plane_inlier_fraction_range": true,
+          "tilt_to_snapped_axis_degrees_range": true
+        }
+      },
+      "what_the_pipeline_publishes": {
+        "pipeline_runs": 30,
+        "repeats_per_run": 8,
+        "distinct_published_answers": 2,
+        "answers": [
+          {
+            "source": "default-ambiguous-plane",
+            "up": [
+              0.0,
+              0.0,
+              1.0
+            ],
+            "distinct_axes_found_by_repeats": 2,
+            "published_by_runs": 27
+          },
+          {
+            "source": "largest-plane-normal-snapped-to-axis",
+            "up": [
+              0.0,
+              0.0,
+              1.0
+            ],
+            "distinct_axes_found_by_repeats": 1,
+            "published_by_runs": 3
+          }
+        ],
+        "runner_up_relative_to_winner_range": [
+          0.9562643469856228,
+          0.9748872363769353
+        ]
+      }
+    },
+    {
+      "cloud": "two_walls_ambiguous",
+      "points": 16200,
+      "voxel_size": 0.05,
+      "what_this_cloud_is": "Planes at x=0 and y=0 with 8100 points each. Ambiguous like the room above, but with the declared default reachable by neither branch, so the fallback publishing the default is distinguishable from it publishing whichever branch won.",
+      "single_fit_distribution": {
+        "fits": 40,
+        "weak_or_failed_fits": 0,
+        "distinct_axes": 2,
+        "branches": [
+          {
+            "up": [
+              0.0,
+              1.0,
+              0.0
+            ],
+            "chosen_by_fits": 35,
+            "plane_inlier_fraction_range": [
+              0.5061111111111111,
+              0.5114197530864197
+            ],
+            "tilt_to_snapped_axis_degrees_range": [
+              0.025069099740312004,
+              0.08616141082430989
+            ]
+          },
+          {
+            "up": [
+              1.0,
+              0.0,
+              0.0
+            ],
+            "chosen_by_fits": 5,
+            "plane_inlier_fraction_range": [
+              0.5064197530864197,
+              0.5104938271604939
+            ],
+            "tilt_to_snapped_axis_degrees_range": [
+              0.03371303900719535,
+              0.08256735277536234
+            ]
+          }
+        ],
+        "no_published_field_separates_the_branches": {
+          "plane_inlier_fraction_range": true,
+          "tilt_to_snapped_axis_degrees_range": true
+        }
+      },
+      "what_the_pipeline_publishes": {
+        "pipeline_runs": 30,
+        "repeats_per_run": 8,
+        "distinct_published_answers": 2,
+        "answers": [
+          {
+            "source": "default-ambiguous-plane",
+            "up": [
+              0.0,
+              0.0,
+              1.0
+            ],
+            "distinct_axes_found_by_repeats": 2,
+            "published_by_runs": 22
+          },
+          {
+            "source": "largest-plane-normal-snapped-to-axis",
+            "up": [
+              0.0,
+              1.0,
+              0.0
+            ],
+            "distinct_axes_found_by_repeats": 1,
+            "published_by_runs": 8
+          }
+        ],
+        "runner_up_relative_to_winner_range": [
+          0.9612590799031477,
+          0.9758507135016465
+        ]
+      }
+    },
+    {
+      "cloud": "floor_four_to_one",
+      "points": 10125,
+      "voxel_size": 0.05,
+      "what_this_cloud_is": "The same room with a quarter as many wall points. A positive control: the scan does determine an axis and the pipeline must still name it.",
+      "single_fit_distribution": {
+        "fits": 40,
+        "weak_or_failed_fits": 0,
+        "distinct_axes": 1,
+        "branches": [
+          {
+            "up": [
+              0.0,
+              0.0,
+              1.0
+            ],
+            "chosen_by_fits": 40,
+            "plane_inlier_fraction_range": [
+              0.8018765432098766,
+              0.8019753086419753
+            ],
+            "tilt_to_snapped_axis_degrees_range": [
+              0.0054783606669823485,
+              0.00600533446780707
+            ]
+          }
+        ],
+        "no_published_field_separates_the_branches": null
+      },
+      "what_the_pipeline_publishes": {
+        "pipeline_runs": 30,
+        "repeats_per_run": 8,
+        "distinct_published_answers": 1,
+        "answers": [
+          {
+            "source": "largest-plane-normal-snapped-to-axis",
+            "up": [
+              0.0,
+              0.0,
+              1.0
+            ],
+            "distinct_axes_found_by_repeats": 1,
+            "published_by_runs": 30
+          }
+        ],
+        "runner_up_relative_to_winner_range": [
+          0.24584717607973422,
+          0.2470747629018352
+        ]
+      }
+    },
+    {
+      "cloud": "floor_ten_to_one",
+      "points": 8910,
+      "voxel_size": 0.05,
+      "what_this_cloud_is": "And with a tenth, so that 'determined' is not a single example either.",
+      "single_fit_distribution": {
+        "fits": 40,
+        "weak_or_failed_fits": 0,
+        "distinct_axes": 1,
+        "branches": [
+          {
+            "up": [
+              0.0,
+              0.0,
+              1.0
+            ],
+            "chosen_by_fits": 40,
+            "plane_inlier_fraction_range": [
+              0.9101010101010101,
+              0.9105499438832773
+            ],
+            "tilt_to_snapped_axis_degrees_range": [
+              0.002540563840095247,
+              0.005083495337804406
+            ]
+          }
+        ],
+        "no_published_field_separates_the_branches": null
+      },
+      "what_the_pipeline_publishes": {
+        "pipeline_runs": 30,
+        "repeats_per_run": 8,
+        "distinct_published_answers": 1,
+        "answers": [
+          {
+            "source": "largest-plane-normal-snapped-to-axis",
+            "up": [
+              0.0,
+              0.0,
+              1.0
+            ],
+            "distinct_axes_found_by_repeats": 1,
+            "published_by_runs": 30
+          }
+        ],
+        "runner_up_relative_to_winner_range": [
+          0.09877913429522753,
+          0.09877913429522753
+        ]
+      }
+    },
+    {
+      "cloud": "real_demo_scan",
+      "points": 198835,
+      "voxel_size": 0.05,
+      "what_this_cloud_is": "Open3D's own demo capture, the data every accepted record in this directory is built from. The negative control: a measure that fired here would be unusable.",
+      "single_fit_distribution": {
+        "fits": 40,
+        "weak_or_failed_fits": 0,
+        "distinct_axes": 1,
+        "branches": [
+          {
+            "up": [
+              0.0,
+              0.0,
+              -1.0
+            ],
+            "chosen_by_fits": 40,
+            "plane_inlier_fraction_range": [
+              0.33976915532979607,
+              0.38564639022304925
+            ],
+            "tilt_to_snapped_axis_degrees_range": [
+              19.61738004280869,
+              20.517314275979547
+            ]
+          }
+        ],
+        "no_published_field_separates_the_branches": null
+      },
+      "what_the_pipeline_publishes": {
+        "pipeline_runs": 30,
+        "repeats_per_run": 8,
+        "distinct_published_answers": 1,
+        "answers": [
+          {
+            "source": "largest-plane-normal-snapped-to-axis",
+            "up": [
+              0.0,
+              0.0,
+              -1.0
+            ],
+            "distinct_axes_found_by_repeats": 1,
+            "published_by_runs": 30
+          }
+        ],
+        "runner_up_relative_to_winner_range": [
+          0.6199288162750686,
+          0.7289066825674007
+        ]
+      }
+    },
+    {
+      "cloud": "armadillo_sampled",
+      "points": 40000,
+      "voxel_size": 2.0,
+      "what_this_cloud_is": "A model with no floor and no wall. The case the repeats do not catch: they agree unanimously on a plane tilted well off the axis it gets snapped to, because one plane does dominate a convex-ish shape.",
+      "single_fit_distribution": {
+        "fits": 40,
+        "weak_or_failed_fits": 0,
+        "distinct_axes": 1,
+        "branches": [
+          {
+            "up": [
+              0.0,
+              0.0,
+              1.0
+            ],
+            "chosen_by_fits": 40,
+            "plane_inlier_fraction_range": [
+              0.12415,
+              0.13265
+            ],
+            "tilt_to_snapped_axis_degrees_range": [
+              14.140890382877812,
+              22.936451741777937
+            ]
+          }
+        ],
+        "no_published_field_separates_the_branches": null
+      },
+      "what_the_pipeline_publishes": {
+        "pipeline_runs": 30,
+        "repeats_per_run": 8,
+        "distinct_published_answers": 1,
+        "answers": [
+          {
+            "source": "largest-plane-normal-snapped-to-axis",
+            "up": [
+              0.0,
+              0.0,
+              1.0
+            ],
+            "distinct_axes_found_by_repeats": 1,
+            "published_by_runs": 30
+          }
+        ],
+        "runner_up_relative_to_winner_range": [
+          0.7573149741824441,
+          0.8662892836228773
+        ]
+      }
+    }
+  ],
+  "seeding_is_not_a_remedy": {
+    "seed_re_set_before_every_fit": 5,
+    "fits": 10,
+    "answers": [
+      {
+        "up": [
+          1.0,
+          0.0,
+          0.0
+        ],
+        "times": 6
+      },
+      {
+        "up": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "times": 4
+      }
+    ]
+  },
+  "detection_by_repeat_count": {
+    "rates": [
+      {
+        "repeats": 4,
+        "fits": 5,
+        "is_the_shipped_default": false,
+        "ambiguity_detected_in_runs": 23,
+        "of_runs": 30
+      },
+      {
+        "repeats": 8,
+        "fits": 9,
+        "is_the_shipped_default": true,
+        "ambiguity_detected_in_runs": 27,
+        "of_runs": 30
+      },
+      {
+        "repeats": 16,
+        "fits": 17,
+        "is_the_shipped_default": false,
+        "ambiguity_detected_in_runs": 30,
+        "of_runs": 30
+      }
+    ],
+    "why_it_is_not_one": "The check fires when the repeats disagree, so it misses when every fit lands on the same branch by chance. At the per-fit split measured beside this, (1-p)^n + p^n accounts for the observed misses at all three counts, which means the residual is the branches agreeing by chance rather than a defect in the check. The rate falls as one branch gets rarer -- and a rarer branch also rolls the view less often."
+  },
+  "what_the_cases_establish": [
+    "A single fit on the ambiguous room returns two different axes, and the inlier fraction and tilt ranges of the two branches overlap, so no field the function publishes separates them.",
+    "Seeding does not settle it: ten fits with the same seed re-set before each one return both axes.",
+    "With the repeats, the ambiguous room publishes the declared default labelled as the default in most runs, instead of one of the two branches labelled as measured in every run.",
+    "All three determined clouds -- two constructed, one real -- still get a named axis, so the check does not refuse to answer on data that has an answer."
+  ],
+  "what_this_does_not_claim": "Not that the check always fires: detection_by_repeat_count gives its measured rate at three repeat counts, and the misses are accounted for by the branches agreeing by chance. Not that repeat agreement means the axis is right -- the armadillo case agrees unanimously on a plane tilted 19 degrees off the axis it is snapped to, holding 13% of the points, just above the one-tenth floor the weak-plane guard enforces. And not a calibrated threshold on the runner-up plane: five clouds separate cleanly but five clouds cannot place a line that decides whether a camera axis is trustworthy, so that number is published as evidence and gates nothing.",
+  "counterexample_the_code_publishes": {
+    "construction": "the Armadillo mesh sampled to 40000 points: no floor, no wall",
+    "repeats_that_agreed": 40,
+    "of_repeats": 40,
+    "plane_tilt_to_the_snapped_axis_degrees": 14.0,
+    "this_tilt_is_a_floor_the_measurement_cleared": true,
+    "plane_inlier_fraction_was_at_most": 0.14,
+    "evidence": "docs/evidence/open3d/up-axis-ambiguity.json"
+  },
+  "cost": "About 85 ms per plane fit on the 198835-point real scan, so the shipped default of 8 extra fits plus the runner-up costs roughly 0.8 s against a multi-second reconstruction.",
+  "reproduce": "python docs/evidence/open3d/harness/up_axis_ambiguity.py, with npa/src on PYTHONPATH in an environment holding Open3D. The constructed rooms are seeded; the fit distributions are not reproducible by construction, which is the finding.",
+  "environment": {
+    "open3d_version": "0.20.0",
+    "python": "3.14.7",
+    "numpy": "2.5.4"
+  }
+}

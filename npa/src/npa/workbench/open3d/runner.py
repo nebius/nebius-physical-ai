@@ -16,6 +16,7 @@ import hashlib
 import json
 import time
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any, NamedTuple
 
 from .artifacts import (
@@ -734,15 +735,57 @@ def _uncropped_facts(o3d, path: Path) -> dict[str, Any]:
     return _mesh_facts(o3d, mesh, path)
 
 
-def _up_axis(o3d, cloud, voxel: float) -> dict[str, Any]:
-    """Infer which way is up from the scan's largest plane, and say so.
+#: The up vector published when the scan does not determine one. A convention, and
+#: labelled as a convention wherever it is used, because these scans carry none.
+DECLARED_UP = (0.0, 0.0, 1.0)
 
-    A 3D view whose camera rolls the room onto its side is unreadable, and these
-    scans carry no axis convention we are entitled to assume. The largest planar
-    segment in an indoor capture is the floor or a wall, so its normal is a
-    measured basis for the camera's up vector. The inlier count and normal are
-    returned and published, because this is an inference and a reviewer should be
-    able to see it was one — and see when it was weak.
+#: How often the ambiguity was actually detected, as `(fits, runs_detected, runs)`.
+#: Carried as data rather than in a sentence so a test can hold it to
+#: `docs/evidence/open3d/up-axis-ambiguity.json` instead of a comment quietly
+#: drifting away from the evidence -- which it did twice while this was being
+#: written, because the rate moves by a few counts between runs.
+UP_AXIS_DETECTION_MEASURED = ((5, 23, 30), (9, 27, 30), (17, 30, 30))
+
+#: Extra plane fits used to decide whether the scan determines an up axis at all.
+#: Eight, from measurement rather than taste: see `UP_AXIS_DETECTION_MEASURED` for
+#: the rate at this and two other counts, and the record for the rest. The misses
+#: are the branches agreeing by chance, following (1-p)^n + p^n at the measured
+#: per-fit minority rate of 8 in 40 fits, not a defect in the check -- so this is
+#: not a guarantee, and the rate falls as one branch gets rarer, though a rarer
+#: branch also rolls the view less often. Nine fits cost about 0.7 s on a
+#: 200k-point scan against a multi-second reconstruction.
+UP_AXIS_REPEATS = 8
+
+#: The case where agreement across repeats proves nothing, measured rather than
+#: imagined. The Armadillo mesh sampled as a cloud has no floor and no wall, yet all
+#: repeats return the same axis from a plane tilted 19 degrees off it holding 13% of
+#: the points -- just above the one-tenth floor the weak-plane guard enforces. So
+#: repeat agreement separates an ambiguous scan from a determined one, and says
+#: nothing about whether the plane it agreed on means anything.
+#:
+#: The figures are bounds the evidence clears, not the extremes it happened to
+#: record. Quoting the exact minimum went stale on the first regeneration, because
+#: these fits are not reproducible -- which is the finding this whole block is
+#: about. A bound claims less than was measured and stays true across runs, and the
+#: test asserts the direction rather than equality.
+UP_AXIS_AGREEMENT_COUNTEREXAMPLE = MappingProxyType(
+    {
+        "construction": "the Armadillo mesh sampled to 40000 points: no floor, no wall",
+        "repeats_that_agreed": 40,
+        "of_repeats": 40,
+        "plane_tilt_to_the_snapped_axis_degrees": 14.0,
+        "this_tilt_is_a_floor_the_measurement_cleared": True,
+        "plane_inlier_fraction_was_at_most": 0.14,
+        "evidence": "docs/evidence/open3d/up-axis-ambiguity.json",
+    }
+)
+
+
+def _plane_up_reading(o3d, cloud, voxel: float) -> dict[str, Any] | None:
+    """One RANSAC plane fit, reduced to the axis it implies.
+
+    Returns None when the fit does not support an inference at all, which the
+    caller distinguishes from a fit that does.
     """
 
     import numpy as np
@@ -752,7 +795,7 @@ def _up_axis(o3d, cloud, voxel: float) -> dict[str, Any]:
             distance_threshold=voxel, ransac_n=3, num_iterations=1000
         )
     except RuntimeError:
-        return {"source": "default", "up": [0.0, 0.0, 1.0], "plane_inliers": 0}
+        return None
     normal = np.asarray(model[:3], dtype=float)
     norm = float(np.linalg.norm(normal))
     total = len(cloud.points)
@@ -760,8 +803,7 @@ def _up_axis(o3d, cloud, voxel: float) -> dict[str, Any]:
     # camera by it.
     if norm == 0.0 or total == 0 or len(inliers) < 0.1 * total:
         return {
-            "source": "default-weak-plane",
-            "up": [0.0, 0.0, 1.0],
+            "weak": True,
             "plane_inliers": int(len(inliers)),
             "plane_inlier_fraction": (len(inliers) / total) if total else 0.0,
         }
@@ -780,7 +822,7 @@ def _up_axis(o3d, cloud, voxel: float) -> dict[str, Any]:
     snapped = np.zeros(3)
     snapped[axis] = 1.0 if normal[axis] > 0 else -1.0
     return {
-        "source": "largest-plane-normal-snapped-to-axis",
+        "weak": False,
         "up": [float(value) for value in snapped],
         "measured_plane_normal": [float(value) for value in normal],
         "angle_to_snapped_axis_degrees": float(
@@ -788,6 +830,135 @@ def _up_axis(o3d, cloud, voxel: float) -> dict[str, Any]:
         ),
         "plane_inliers": int(len(inliers)),
         "plane_inlier_fraction": len(inliers) / total,
+        # Kept for the runner-up fit and deliberately not published: on a large scan
+        # this is a six-figure index list.
+        "inlier_indices": inliers,
+    }
+
+
+def _runner_up_plane(
+    o3d, cloud, voxel: float, winner: dict[str, Any]
+) -> dict[str, Any]:
+    """How close the second-best plane came, published without a pass/fail line.
+
+    The repeat check catches an ambiguous scan when the fits happen to disagree, and
+    its detection rate falls as one branch gets rarer. This is the measurement that
+    lets a reviewer see a miss: drop the winning plane's inliers, fit the remainder,
+    and report how large the runner-up was relative to the winner.
+
+    No threshold is attached, on purpose. Measured over six clouds the two ambiguous
+    constructions sat at 0.956-0.976 while four determined clouds sat at 0.099-0.866,
+    which is a real separation and still only six clouds -- not enough to place a line
+    that decides whether a camera axis is trustworthy. The number is published so the
+    reader can judge how close the competition was.
+    """
+
+    kept = cloud.select_by_index(winner["inlier_indices"], invert=True)
+    if len(kept.points) < 3:
+        return {"measured": False, "why": "nothing left after removing the winner"}
+    second = _plane_up_reading(o3d, kept, voxel)
+    if second is None:
+        return {"measured": False, "why": "no plane fit the remainder"}
+    winner_inliers = max(winner["plane_inliers"], 1)
+    return {
+        "measured": True,
+        "inliers": second["plane_inliers"],
+        "inliers_relative_to_the_winner": second["plane_inliers"] / winner_inliers,
+        "up_it_would_imply": None if second["weak"] else second["up"],
+        "implies_a_different_axis": (
+            None if second["weak"] else second["up"] != winner["up"]
+        ),
+        "no_threshold_is_applied_to_this": (
+            "Measured at 0.956-0.976 for two ambiguous constructions and at "
+            "0.099-0.866 for four determined clouds. Six clouds are not enough to "
+            "place a line that decides whether a camera axis is trustworthy, so this "
+            "is evidence for a reader, not a gate."
+        ),
+    }
+
+
+def _up_axis(
+    o3d, cloud, voxel: float, repeats: int = UP_AXIS_REPEATS
+) -> dict[str, Any]:
+    """Infer which way is up from the scan's largest plane, or refuse to.
+
+    A 3D view whose camera rolls the room onto its side is unreadable, and these
+    scans carry no axis convention we are entitled to assume. The largest planar
+    segment in an indoor capture is the floor or a wall, so its normal is a
+    measured basis for the camera's up vector. The inlier count and normal are
+    returned and published, because this is an inference and a reviewer should be
+    able to see it was one — and see when it was weak.
+
+    `segment_plane` is RANSAC, so on a scan holding two comparable planes the fit
+    lands on either of them and the axis it implies differs run to run. Seeding is
+    not a remedy: ten repeats with `o3d.utility.random.seed` re-set to the same
+    value before each call returned both answers, in a split that itself varied
+    across processes. Every field this function publishes to make the inference
+    visible -- the source string, the inlier fraction, the tilt -- took overlapping
+    values on both branches, so a reviewer reading one run could not tell that the
+    camera's up vector was a coin flip and that the next run would roll the view by
+    ninety degrees.
+
+    So the fit is repeated and the axis is published only when the repeats agree.
+    When they do not, the declared default is published as the default, which is
+    the honest answer for a scan that does not determine one, with the candidates
+    and their counts recorded so the ambiguity is visible rather than averaged
+    away. Agreement is not a quality score; see
+    `UP_AXIS_AGREEMENT_COUNTEREXAMPLE` for the measured case it does not catch.
+    """
+
+    readings = [
+        _plane_up_reading(o3d, cloud, voxel) for _ in range(1 + max(repeats, 0))
+    ]
+    first = readings[0]
+    if first is None:
+        return {"source": "default", "up": list(DECLARED_UP), "plane_inliers": 0}
+    if first["weak"]:
+        return {
+            "source": "default-weak-plane",
+            "up": list(DECLARED_UP),
+            "plane_inliers": first["plane_inliers"],
+            "plane_inlier_fraction": first["plane_inlier_fraction"],
+        }
+
+    usable = [one for one in readings if one is not None and not one["weak"]]
+    counts: dict[tuple[float, ...], int] = {}
+    for one in usable:
+        key = tuple(one["up"])
+        counts[key] = counts.get(key, 0) + 1
+    agreement = {
+        "repeats": len(usable),
+        "distinct_axes": len(counts),
+        "candidates": [
+            {"up": list(axis), "chosen_by_repeats": count}
+            for axis, count in sorted(counts.items(), key=lambda item: -item[1])
+        ],
+        "runner_up_plane": _runner_up_plane(o3d, cloud, voxel, first),
+        "agreement_is_not_meaningfulness": {
+            "measured_counterexample": dict(UP_AXIS_AGREEMENT_COUNTEREXAMPLE),
+            "so": (
+                "Disagreement here proves the scan does not determine an up axis. "
+                "Agreement proves only that one plane dominates, not that the plane "
+                "is a floor or that the axis means anything."
+            ),
+        },
+    }
+    if len(counts) > 1:
+        return {
+            "source": "default-ambiguous-plane",
+            "up": list(DECLARED_UP),
+            "plane_inliers": first["plane_inliers"],
+            "plane_inlier_fraction": first["plane_inlier_fraction"],
+            "agreement": agreement,
+        }
+    return {
+        "source": "largest-plane-normal-snapped-to-axis",
+        "up": first["up"],
+        "measured_plane_normal": first["measured_plane_normal"],
+        "angle_to_snapped_axis_degrees": first["angle_to_snapped_axis_degrees"],
+        "plane_inliers": first["plane_inliers"],
+        "plane_inlier_fraction": first["plane_inlier_fraction"],
+        "agreement": agreement,
     }
 
 
