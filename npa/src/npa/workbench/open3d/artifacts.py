@@ -21,6 +21,9 @@ RESULT_SCHEMA = "npa.open3d.result.v1"
 PAIRS_JOURNAL = "pairs.jsonl"
 #: Absolute tolerance for "this 3x3 block is a rotation".
 ROTATION_TOLERANCE = 1e-6
+#: Prefix Rerun uses for entity paths it writes itself, such as `/__properties`. A
+#: recording containing only these decoded fine and carried nothing the caller logged.
+RERUN_INTERNAL = "/__"
 
 
 class Open3dError(RuntimeError):
@@ -473,3 +476,40 @@ def verify_rerun_recording(path: Path) -> None:
     )
     if checked.returncode:
         raise Open3dError("Rerun rejected the generated recording")
+    # `rrd verify` alone does not keep the promise in the line above. Measured against
+    # rerun-sdk 0.38.1, it exits 0 for a zero-byte file, for one truncated to its
+    # 40-byte header, and for a recording opened and closed without logging anything.
+    # Decoding rejects the first two. The third decodes cleanly, because Rerun writes a
+    # `/__properties` chunk whether or not the caller logged data, so the only thing
+    # that separates it from a real recording is an entity path the caller put there.
+    #
+    # None of the three subsumes the others, and each rejection below is the only one
+    # that fires on some shape -- a recording truncated to between 75 and 99 percent of
+    # its length still decodes to `/points` through the reader's whole-file fallback,
+    # and only the CLI rejects it. The measurements are in
+    # tests/workbench/test_open3d_rrd_verifier.py, which fails if any layer stops being
+    # the sole catcher of its shape, rather than letting one be dropped as redundant.
+    try:
+        # Imported here, after the CLI check, so the usual "no Rerun at all" case still
+        # reports the unavailable CLI above. A machine with the binary but not the SDK
+        # would otherwise raise ImportError, which no caller catches.
+        from npa.viz.recordings import load_recordings
+
+        recordings = load_recordings(path)
+        logged = [
+            str(chunk.entity_path)
+            for recording in recordings
+            for chunk in recording.chunks()
+        ]
+    except ImportError as exc:
+        raise Open3dError(
+            f"the Rerun SDK is unavailable to decode the recording: {exc}"
+        )
+    except (RuntimeError, ValueError) as exc:
+        raise Open3dError(f"Rerun could not decode the generated recording: {exc}")
+    substantive = [name for name in logged if not name.startswith(RERUN_INTERNAL)]
+    if not substantive:
+        raise Open3dError(
+            "the generated recording carries no logged data: "
+            f"{len(recordings)} recordings, entity paths {sorted(set(logged))}"
+        )

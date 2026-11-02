@@ -1,0 +1,283 @@
+"""Hold `verify_rerun_recording` to the promise in its own docstring.
+
+The function says it decodes "with Rerun's own verifier, not by checking a suffix".
+Both of its guards were unreachable from any unit test: the only test that named it
+replaced it with `lambda _: None`. It is called on the real path and in the functional
+smoke, but no workflow under `.github/` runs that smoke, so nothing CI executes on a
+pull request touched either branch.
+
+Writing these found that the CLI check did not actually keep that promise. Measured
+against rerun-sdk 0.38.1:
+
+    file                        rrd verify   decodes   entity paths
+    a real recording            exit 0       yes       /__properties, /points
+    opened, nothing logged      exit 0       yes       /__properties
+    zero bytes                  exit 0       no        --
+    truncated to its header     exit 0       no        --
+    wrong bytes, .rrd suffix    exit 1       no        --
+    truncated to 75-99%         exit 1       yes       /__properties, /points
+
+The third column is the one that matters: Rerun writes `/__properties` whether or not
+the caller logged anything, so a recording that was opened and closed carrying no data
+passes both a suffix check and `rrd verify`. Three checks now run, and each is the only
+one that rejects some row above -- which is why the last row is in the table, since it
+is the case that stops the CLI check from being redundant once decoding is added.
+`test_each_check_is_the_only_one_that_catches_its_shape` re-measures all three and
+fails if that stops being true.
+"""
+
+from __future__ import annotations
+
+import builtins
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
+
+from npa.workbench.open3d.artifacts import Open3dError, verify_rerun_recording
+
+HEADER_BYTES = 40
+"""Enough of a real recording for `rrd verify` to exit 0 on the remainder."""
+
+
+def rerun_cli() -> str | None:
+    """Resolve the CLI the way the function under test resolves it."""
+
+    sibling = Path(sys.executable).with_name("rerun")
+    return str(sibling) if sibling.is_file() else shutil.which("rerun")
+
+
+needs_cli = pytest.mark.skipif(
+    rerun_cli() is None, reason="the Rerun CLI is not installed on this machine"
+)
+
+
+def test_the_cli_is_resolvable_wherever_the_sdk_is_installed() -> None:
+    """Stop the tests below from silently skipping in CI.
+
+    `rerun-sdk` is in `npa/ci/requirements.txt`, and its console script installs next
+    to `sys.executable`, which is the first place the function looks. If the SDK
+    imports but the CLI does not resolve, every real-decode test here turns into a
+    skip and this file goes back to proving nothing -- which is the shape of the
+    finding it exists to close. So that combination is a failure, not a skip.
+    """
+
+    pytest.importorskip("rerun")
+    assert rerun_cli() is not None, (
+        "rerun imports but its CLI is not resolvable, so the verifier tests would skip"
+    )
+
+
+@pytest.fixture
+def recording(tmp_path: Path) -> Path:
+    """A real recording, written by Rerun, with points actually logged."""
+
+    rr = pytest.importorskip("rerun")
+    numpy = pytest.importorskip("numpy")
+    path = tmp_path / "real.rrd"
+    rr.init("npa-open3d-verifier-test", spawn=False)
+    rr.save(str(path))
+    rr.log(
+        "points",
+        rr.Points3D(numpy.random.default_rng(0).normal(size=(256, 3))),
+    )
+    rr.disconnect()
+    if not path.is_file() or not path.stat().st_size:
+        pytest.skip("Rerun did not write a recording on this machine")
+    return path
+
+
+@needs_cli
+def test_a_real_recording_is_accepted(recording: Path) -> None:
+    """The positive control. Without it the rejections below prove only strictness."""
+
+    verify_rerun_recording(recording)
+
+
+@needs_cli
+def test_a_file_that_is_merely_named_rrd_is_refused(tmp_path: Path) -> None:
+    """The claim the docstring makes in its own favour.
+
+    Right suffix, wrong bytes. This is the case the function names, and it was the
+    one with no test.
+    """
+
+    path = tmp_path / "pretend.rrd"
+    path.write_text("this is not a recording, it is a sentence")
+    with pytest.raises(Open3dError, match="rejected|could not decode"):
+        verify_rerun_recording(path)
+
+
+@needs_cli
+def test_an_empty_recording_is_refused(tmp_path: Path) -> None:
+    """`rrd verify` exits 0 on zero bytes, so the CLI check passed this.
+
+    A stage that created the path but whose writer died before Rerun flushed anything
+    leaves exactly this file, and it was being published as verified.
+    """
+
+    path = tmp_path / "empty.rrd"
+    path.write_bytes(b"")
+    with pytest.raises(Open3dError, match="could not decode"):
+        verify_rerun_recording(path)
+
+
+@needs_cli
+def test_a_recording_truncated_to_its_header_is_refused(
+    tmp_path: Path, recording: Path
+) -> None:
+    """Also exit 0 from the CLI: a valid header followed by no messages."""
+
+    path = tmp_path / "header-only.rrd"
+    path.write_bytes(recording.read_bytes()[:HEADER_BYTES])
+    with pytest.raises(Open3dError, match="could not decode|no data"):
+        verify_rerun_recording(path)
+
+
+@needs_cli
+def test_a_recording_that_logged_nothing_is_refused(tmp_path: Path) -> None:
+    """The shape a suffix check and `rrd verify` both wave through.
+
+    `rr.save` then `rr.disconnect` with no `rr.log` between them writes 3.2 kB that
+    the CLI accepts and that decodes cleanly to one chunk, because Rerun records its
+    own `/__properties` regardless. Nothing the caller logged is in it.
+    """
+
+    rr = pytest.importorskip("rerun")
+    path = tmp_path / "nothing-logged.rrd"
+    rr.init("npa-open3d-verifier-test-empty", spawn=False)
+    rr.save(str(path))
+    rr.disconnect()
+    if not path.is_file():
+        pytest.skip("Rerun did not write a recording on this machine")
+    assert path.stat().st_size > 0, "this case is about a file with bytes in it"
+    with pytest.raises(Open3dError, match="no logged data"):
+        verify_rerun_recording(path)
+
+
+@needs_cli
+def test_a_mostly_complete_recording_is_refused(
+    tmp_path: Path, recording: Path
+) -> None:
+    """The case that keeps the CLI check from being redundant.
+
+    At this truncation the reader's whole-file fallback still returns `/points`, so
+    both decode checks pass and only `rrd verify` rejects it.
+    """
+
+    payload = recording.read_bytes()
+    path = tmp_path / "mostly.rrd"
+    path.write_bytes(payload[: len(payload) * 90 // 100])
+    with pytest.raises(Open3dError, match="rejected"):
+        verify_rerun_recording(path)
+
+
+@needs_cli
+def test_each_check_is_the_only_one_that_catches_its_shape(
+    tmp_path: Path, recording: Path
+) -> None:
+    """Fail if any of the three guards becomes droppable.
+
+    Measures the CLI and the decode independently on one shape per guard, so the
+    table in this file's docstring stays a measurement rather than a remembered
+    claim. If a Rerun upgrade makes one check subsume another, this fails and asks
+    for a re-measurement instead of silently leaving dead code in place.
+    """
+
+    rr = pytest.importorskip("rerun")
+    payload = recording.read_bytes()
+    nothing = tmp_path / "nothing.rrd"
+    rr.init("npa-open3d-verifier-test-matrix", spawn=False)
+    rr.save(str(nothing))
+    rr.disconnect()
+    cases = {
+        "header_only": payload[:HEADER_BYTES],
+        "mostly_complete": payload[: len(payload) * 90 // 100],
+        "nothing_logged": nothing.read_bytes(),
+    }
+    cli = rerun_cli()
+    assert cli is not None
+    verdicts = {}
+    for name, body in cases.items():
+        path = tmp_path / f"{name}.rrd"
+        path.write_bytes(body)
+        checked = subprocess.run(
+            [cli, "rrd", "verify", str(path)], capture_output=True, check=False
+        )
+        try:
+            from npa.viz.recordings import load_recordings
+
+            decoded = load_recordings(path)
+            logged = [
+                str(chunk.entity_path) for one in decoded for chunk in one.chunks()
+            ]
+            decodes, substantive = (
+                True,
+                [name for name in logged if not name.startswith("/__")],
+            )
+        except (RuntimeError, ValueError):
+            decodes, substantive = False, []
+        verdicts[name] = (checked.returncode == 0, decodes, bool(substantive))
+
+    stale = "re-measure the table in this file's docstring before simplifying"
+    # Only the decode rejects this one.
+    assert verdicts["header_only"] == (True, False, False), f"{stale}: header_only"
+    # Only the CLI rejects this one.
+    assert verdicts["mostly_complete"] == (False, True, True), (
+        f"{stale}: mostly_complete"
+    )
+    # Only the logged-data check rejects this one.
+    assert verdicts["nothing_logged"] == (True, True, False), f"{stale}: nothing_logged"
+
+
+def test_an_unavailable_cli_is_reported_as_such(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The other guard with no test.
+
+    Defeats both resolution paths: the interpreter's sibling and `PATH`. Without the
+    second, a machine with `rerun` on `PATH` would never reach the raise.
+    """
+
+    monkeypatch.setattr(sys, "executable", str(tmp_path / "python"))
+    monkeypatch.setattr(shutil, "which", lambda _name: None)
+    path = tmp_path / "unreachable.rrd"
+    path.write_bytes(b"")
+    with pytest.raises(Open3dError, match="Rerun CLI is unavailable"):
+        verify_rerun_recording(path)
+
+
+@needs_cli
+def test_an_unimportable_sdk_is_reported_as_an_open3d_error(
+    recording: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A machine with the Rerun binary but not the SDK.
+
+    The decode runs after the CLI check, so "no Rerun at all" still reports the
+    unavailable CLI. This is the narrower combination, where the import itself fails
+    and `ImportError` would escape a caller that only handles `Open3dError`.
+    """
+
+    real_import = builtins.__import__
+
+    def refuse(name: str, *args, **kwargs):
+        if name == "npa.viz.recordings":
+            raise ImportError("no module named rerun.chunk")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", refuse)
+    with pytest.raises(Open3dError, match="Rerun SDK is unavailable"):
+        verify_rerun_recording(recording)
+
+
+def test_a_missing_file_does_not_pass_verification(
+    tmp_path: Path,
+) -> None:
+    """A path that was never written is not a verified recording."""
+
+    if rerun_cli() is None:
+        pytest.skip("the Rerun CLI is not installed on this machine")
+    with pytest.raises(Open3dError):
+        verify_rerun_recording(tmp_path / "never-written.rrd")
