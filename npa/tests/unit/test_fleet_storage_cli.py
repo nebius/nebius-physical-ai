@@ -32,6 +32,7 @@ def spec_path(tmp_path):
                             {
                                 "name": "training",
                                 "enable_filestore": True,
+                                "filesystem_csi_chart_repository": "oci://charts.example.invalid/nebius",
                                 "cpu_nodes": {"count": 1},
                             }
                         ],

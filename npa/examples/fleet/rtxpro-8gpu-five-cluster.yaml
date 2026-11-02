@@ -36,7 +36,11 @@ defaults:
     capacity_block_group: capacityblockgroup-REPLACE_AT_RUNTIME
   cpu_nodes: {count: 3, platform: cpu-d3, preset: 48vcpu-192gb}
   enable_gpu_cluster: false
-  enable_filestore: true
+  # This example stays plan-safe in public form. To enable a shared filesystem,
+  # set this true and provide filesystem_csi_chart_repository together in an
+  # owner-private runtime copy; Fleet rejects either a new or adopted filesystem
+  # without that chart source before provider mutation.
+  enable_filestore: false
   filestore_disk_size_gibibytes: 5120
   filestore_mount_path: /mnt/data
   filestore_mount_tag: npa-shared-fs

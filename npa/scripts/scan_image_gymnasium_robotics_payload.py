@@ -234,14 +234,14 @@ EXPECTED_ORDERED_LAYER_DIFF_IDS = (
 # above are scanner inputs, not an accepted image digest or current-head proof;
 # a local status edit cannot turn the scanner green.
 EXPECTED_NEUTRAL_FILE_SHA256: dict[str, str | None] = {
-    "source-lock.json": "3318043e3d3fec10b233b212b8e7bd97391f48f20b629dbdb3319981010b6ca9",
+    "source-lock.json": "a3ac1ac7cb5b420144a65166656cb5dc75aaf8668cad2f76edd95bdccee1a7e0",
     "apt-runtime.lock.json": "edcfbf171c6d13b2bfddabc596c0adc29bda8bebd696ec497be6265d863c28b2",
     "corresponding-source.lock.json": "3c238567f6acebd2a393037a05803b2dee6be350808f81bfdcaca47c1cad957f",
-    "requirements.lock": "30d48e4b2bfcf0c590b47ed569393104dd759476d720a608aa9f441cd9976e4a",
+    "requirements.lock": "834e1d6f95eeaeb4f7e201a01033a928d5eee1387b31950223ead31b3172bf80",
     "runtime-bootstrap.py": "dcefd3ea34c3ffb6be392a8f07329ab47608f7f6cf5bef083e250c377b4fd484",
     "capability_smoke.py": "f91683fa5955882e29e2ac8e6ba9f4d92f2a25eb71621275fa3c45b26828d6d6",
-    "verify_image.py": "d8b0ef0d75f282d2178f94dd1666c5905ba429f31a9f55660ee4e4a39d4705b9",  # gitleaks:allow; public file-content SHA-256
-    "runtime-fetch-manifest.json": "72597bda8363f54ef1d243d6f8b2a7660aebdaf54875fd161b11b0097444f957",
+    "verify_image.py": "b03416f3f738145df2d8107a71f24553dfe8537eee1515502fc9257fad6dca51",  # gitleaks:allow; public file-content SHA-256
+    "runtime-fetch-manifest.json": "6ed6067c3fd359ad065b33eb116c557bf7040545499fc1bda9bb6d66df344f8d",
 }
 EXPECTED_SOURCE_FIELDS = {
     "farama_gymnasium_robotics": {
@@ -283,9 +283,9 @@ EXPECTED_PYTHON_DISTRIBUTIONS = {
     "numpy": "2.5.3",
     "packaging": "26.3",
     "pettingzoo": "1.27.0",
-    "pillow": "12.3.0",
+    "pillow": "13.0.0",
     "pyopengl": "3.1.10",
-    "setuptools": "84.0.0",
+    "setuptools": "84.2.1",
     "typing-extensions": "4.16.0",
     "zipp": "4.1.0",
 }

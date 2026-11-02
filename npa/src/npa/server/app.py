@@ -42,6 +42,10 @@ AWS_ENDPOINT_URL = os.environ.get(
 )
 
 
+class CheckpointContractError(ValueError):
+    """A checkpoint omits metadata required for the saved-shape load path."""
+
+
 # ── In-process policy state ───────────────────────────────────────────────
 
 
@@ -67,12 +71,16 @@ class PolicyState:
         env_type: str | None = None,
         env_task: str | None = None,
     ) -> None:
-        """Load a policy from a checkpoint, following lerobot_record.py pattern."""
+        """Load saved checkpoint shapes, or resolve shapes from an explicit env."""
         with self._lock:
             self.unload_unlocked()
 
             from lerobot.configs.policies import PreTrainedConfig
-            from lerobot.policies.factory import make_policy, make_pre_post_processors
+            from lerobot.policies.factory import (
+                get_policy_class,
+                make_policy,
+                make_pre_post_processors,
+            )
             from lerobot.utils.device_utils import get_safe_torch_device
 
             logger.info("Loading policy from: %s", checkpoint_path)
@@ -93,10 +101,31 @@ class PolicyState:
                     kwargs["task"] = env_task
                 env_cfg = env_cls(**kwargs)
 
-            # Create policy (loads weights, moves to device, sets eval mode)
-            policy = make_policy(policy_cfg, env_cfg=env_cfg)
-
             device = get_safe_torch_device(policy_cfg.device)
+            # ``use_peft`` is optional upstream configuration metadata. A
+            # checkpoint without it is a normal non-PEFT checkpoint and must
+            # use the saved-shape loader below rather than failing /serve.
+            if env_cfg is not None:
+                policy = make_policy(policy_cfg, env_cfg=env_cfg)
+            elif getattr(policy_cfg, "use_peft", False):
+                # Upstream's factory requires dataset metadata or an explicit
+                # environment to resolve PEFT feature shapes. Unlike an
+                # ordinary saved-shape checkpoint, this is caller-correctable.
+                raise CheckpointContractError(
+                    "PEFT checkpoints require --env-type and an image with the "
+                    "LeRobot 'peft' extra to resolve feature shapes"
+                )
+            else:
+                # The training factory requires dataset/env metadata and replaces
+                # action shapes. A saved checkpoint already owns those shapes.
+                if not policy_cfg.input_features or not policy_cfg.output_features:
+                    raise CheckpointContractError(
+                        "Checkpoint must contain input and output features"
+                    )
+                policy = get_policy_class(policy_cfg.type).from_pretrained(
+                    checkpoint_path, config=policy_cfg
+                )
+            policy.to(device).eval()
 
             # Create preprocessor and postprocessor from checkpoint
             preprocessor, postprocessor = make_pre_post_processors(
@@ -368,6 +397,8 @@ async def start_serve(req: ServeRequest):
 
     try:
         policy_state.load(local_path, env_type=req.env_type, env_task=req.env_task)
+    except CheckpointContractError as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid checkpoint: {exc}")
     except Exception as exc:
         logger.exception("Failed to load policy from %s", local_path)
         raise HTTPException(status_code=500, detail=f"Failed to load policy: {exc}")

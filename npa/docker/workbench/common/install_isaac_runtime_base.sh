@@ -35,10 +35,10 @@ set -euo pipefail
 TORCH_VERSION="${TORCH_VERSION:-2.9.0}"
 TORCHVISION_VERSION="${TORCHVISION_VERSION:-0.24.0}"
 TORCHAUDIO_VERSION="${TORCHAUDIO_VERSION:-2.9.0}"
-UBUNTU_SNAPSHOT="${NPA_UBUNTU_SNAPSHOT:-20260820T000000Z}"
+UBUNTU_SNAPSHOT="${NPA_UBUNTU_SNAPSHOT:-20261018T000000Z}"
 UBUNTU_SUITE="${NPA_UBUNTU_SUITE:-jammy}"
 ISAAC_PYTHON_MINOR="${NPA_ISAAC_PYTHON_MINOR:-3.11}"
-LINUX_LIBC_DEV_VERSION="${NPA_LINUX_LIBC_DEV_VERSION:-5.15.0-187.197}"
+LINUX_LIBC_DEV_VERSION="${NPA_LINUX_LIBC_DEV_VERSION:-5.15.0-198.208}"
 PYTHON_VERSION="${NPA_ISAAC_PYTHON_VERSION:-3.11.17-1+jammy1}"
 DEADSNAKES_POOL="${NPA_DEADSNAKES_POOL:-https://ppa.launchpadcontent.net/deadsnakes/ppa/ubuntu/pool/main/p/python3.11}"
 # cu128 wheels carry sm_120 kernels, which RTX PRO 6000 Blackwell (compute capability
@@ -73,6 +73,9 @@ printf '%s\n' \
   'Components: main restricted universe multiverse' \
   'Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg' \
   > /etc/apt/sources.list.d/ubuntu.sources
+# Retry only acquisition from the same immutable snapshot. A transient 5xx must
+# not cause this secure, source-pinned build to substitute a moving mirror.
+printf '%s\n' 'Acquire::Retries "5";' > /etc/apt/apt.conf.d/99npa-snapshot-retries
 apt-get update
 # CUDA's Jammy base retains an old linux-libc-dev build. These are development
 # headers rather than the host kernel, but the fixed immutable-snapshot build is
@@ -98,12 +101,12 @@ system_packages=(
 if [ -n "$LINUX_LIBC_DEV_VERSION" ]; then
   system_packages+=("linux-libc-dev=${LINUX_LIBC_DEV_VERSION}")
 elif [ "$UBUNTU_SUITE" = jammy ]; then
-  system_packages+=(linux-libc-dev=5.15.0-186.196)
+  system_packages+=(linux-libc-dev=5.15.0-198.208)
 elif [ "$UBUNTU_SUITE" = noble ]; then
-  # Fixed for CVE-2026-53215 in the repository's immutable Noble snapshot.
+  # Fixed for the current critical CVEs in the immutable Noble snapshot.
   # Keep the exact build here so a future base/snapshot change cannot silently
   # reintroduce the vulnerable userspace headers.
-  system_packages+=(linux-libc-dev=6.8.0-138.138)
+  system_packages+=(linux-libc-dev=6.8.0-147.147)
 else
   system_packages+=(linux-libc-dev)
 fi
@@ -189,8 +192,8 @@ else
   "python${ISAAC_PYTHON_MINOR}" -m venv "$ISAAC_VENV"
 fi
 "$ISAAC_VENV/bin/python" -m pip install --no-cache-dir --no-deps \
-  "pip==26.2.1" \
-  "setuptools==84.0.0" \
+  "pip==26.2.2" \
+  "setuptools==84.1.0" \
   "wheel==0.47.0" \
   "packaging==26.3"
 "$ISAAC_VENV/bin/python" -m pip check
@@ -266,9 +269,18 @@ if [ "$ISAAC_PYTHON_MINOR" = 3.11 ] && grep -qiE '^moviepy==' "$OSS_DEPS_FILE"; 
   "$ISAAC_VENV/bin/python" "${COMMON_DIR}/moviepy_pillow_compat.py"
 fi
 if [ "$ISAAC_PYTHON_MINOR" = 3.12 ]; then
-  # Torch 2.11 requires Setuptools<82. Apply the upstream security fix to the
-  # exact 81.0.0 bytes while preserving its declared version and runtime API.
+  # Verify/backport the upstream Unicode manifest fix against reviewed exact
+  # bytes. The secure 84.1.0 pin carries the official fix natively; older
+  # reviewed constrained bytes receive the bounded compatibility backport.
   "$ISAAC_VENV/bin/python" "${COMMON_DIR}/backport_setuptools_manifest.py"
+fi
+# Torch 2.11.0+cu128's released metadata caps Setuptools below the reviewed
+# Isaac 3 security floor, although its tested extension interface works with
+# 84.2.1. Restrict the RECORD-preserving compatibility repair to this exact
+# Python 3.12/cu128 closure; every other Torch closure retains its own metadata.
+if [ "$ISAAC_PYTHON_MINOR" = 3.12 ] && [ "$SKIP_TORCH" != 1 ] \
+  && [ "$TORCH_VERSION" = 2.11.0 ] && [[ "$TORCH_INDEX_URL" == */cu128 ]]; then
+  "$ISAAC_VENV/bin/python" "${COMMON_DIR}/torch_setuptools_compat.py"
 fi
 "$ISAAC_VENV/bin/python" -m pip check
 

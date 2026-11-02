@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
@@ -39,6 +40,503 @@ def test_cluster_terraform_wires_operator_filesystem_csi_repository() -> None:
     assert (
         'variable "filesystem_csi_chart_repository"'
         in (cluster_dir / "variables.tf").read_text()
+    )
+
+
+def test_provider_migration_detects_only_the_retired_address(monkeypatch, tmp_path):
+    state = {
+        "resources": [
+            {
+                "provider": (
+                    'provider["terraform-provider.storage.eu-north1.nebius.cloud/'
+                    'nebius/nebius"]'
+                )
+            },
+            {"provider": 'provider["registry.terraform.io/hashicorp/random"]'},
+        ]
+    }
+    monkeypatch.setattr(
+        tf_mod,
+        "_run_capture",
+        lambda *_args, **_kwargs: _completed(json.dumps(state)),
+    )
+
+    report = tf_mod._provider_migration_report("terraform", tmp_path, {})
+
+    assert report == {
+        "migration_required": True,
+        "state_present": True,
+        "legacy_provider_addresses": [
+            "terraform-provider.storage.eu-north1.nebius.cloud/nebius/nebius"
+        ],
+        "errors": [],
+    }
+
+
+def test_provider_migration_unavailable_state_is_sanitized_and_blocks(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setattr(
+        tf_mod,
+        "_run_capture",
+        lambda *_args, **_kwargs: _completed("private-provider-endpoint", returncode=1),
+    )
+
+    report = tf_mod._provider_migration_report("terraform", tmp_path, {})
+
+    assert report["errors"] == ["terraform_state_unavailable"]
+    assert "private-provider-endpoint" not in str(report)
+    with pytest.raises(typer.BadParameter, match="no apply or destroy ran"):
+        tf_mod._require_no_provider_migration("terraform", tmp_path, {})
+
+
+def test_provider_migration_empty_fresh_state_does_not_block(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        tf_mod,
+        "_run_capture",
+        lambda *_args, **_kwargs: _completed(),
+    )
+
+    report = tf_mod._provider_migration_report("terraform", tmp_path, {})
+
+    assert report == {
+        "migration_required": False,
+        "state_present": False,
+        "legacy_provider_addresses": [],
+        "errors": [],
+    }
+    tf_mod._require_no_provider_migration("terraform", tmp_path, {})
+
+
+def test_provider_migration_plan_and_execute_are_explicit(monkeypatch, tmp_path):
+    tf_dir = tmp_path / "cluster"
+    tf_dir.mkdir()
+    legacy_state = {
+        "resources": [
+            {
+                "provider": (
+                    'provider["terraform-provider.storage.eu-north1.nebius.cloud/'
+                    'nebius/nebius"]'
+                )
+            }
+        ]
+    }
+    current_state = {
+        "resources": [{"provider": 'provider["registry.terraform.io/nebius/nebius"]'}]
+    }
+    calls = []
+
+    def capture(args, **_kwargs):
+        calls.append(args)
+        if args[-2:] == ["state", "pull"]:
+            payload = legacy_state if len(calls) == 1 else current_state
+            return _completed(json.dumps(payload))
+        assert args[1:3] == ["state", "replace-provider"]
+        return _completed()
+
+    @contextmanager
+    def isolated(_terraform_dir, _context):
+        scratch = tmp_path / "terraform-data"
+        scratch.mkdir(exist_ok=True)
+        yield scratch
+
+    monkeypatch.setattr(tf_mod, "_require_bin", lambda binary: binary)
+    monkeypatch.setattr(tf_mod, "_preflight_provider_lock", lambda *_args: "linux")
+    monkeypatch.setattr(tf_mod, "_terraform_env", lambda *_args: {})
+    monkeypatch.setattr(tf_mod, "_terraform_init", lambda *_args: None)
+    monkeypatch.setattr(tf_mod, "_run_capture", capture)
+    monkeypatch.setattr(
+        "npa.cli.cluster.terraform_runtime.isolated_terraform_data_dir", isolated
+    )
+
+    planned = runner.invoke(
+        app,
+        ["provider-migration", "--terraform-dir", str(tf_dir), "--json"],
+    )
+    assert planned.exit_code == 0, planned.output
+    assert json.loads(planned.output)["status"] == "planned"
+    assert all("replace-provider" not in call for call in calls)
+
+    calls.clear()
+    executed = runner.invoke(
+        app,
+        [
+            "provider-migration",
+            "--terraform-dir",
+            str(tf_dir),
+            "--execute",
+            "--json",
+        ],
+    )
+    assert executed.exit_code == 0, executed.output
+    document = json.loads(executed.output)
+    assert document["status"] == "completed" and document["executed"] is True
+    replacement = next(call for call in calls if "replace-provider" in call)
+    assert "-auto-approve" in replacement
+    assert replacement[-2:] == [
+        "terraform-provider.storage.eu-north1.nebius.cloud/nebius/nebius",
+        "registry.terraform.io/nebius/nebius",
+    ]
+
+
+def test_normal_lifecycle_refuses_unreviewed_provider_state(monkeypatch, tmp_path):
+    report = {
+        "migration_required": True,
+        "state_present": True,
+        "legacy_provider_addresses": ["retired"],
+        "errors": [],
+    }
+    monkeypatch.setattr(tf_mod, "_provider_migration_report", lambda *_args: report)
+
+    with pytest.raises(typer.BadParameter, match="no apply or destroy ran"):
+        tf_mod._require_no_provider_migration("terraform", tmp_path, {})
+
+
+def _legacy_cluster_state(*, name="cluster-a", parent_id="project-a") -> str:
+    return json.dumps(
+        {
+            "version": 4,
+            "resources": [
+                {
+                    "type": "nebius_mk8s_v1_cluster",
+                    "instances": [
+                        {"attributes": {"name": name, "parent_id": parent_id}}
+                    ],
+                }
+            ],
+        }
+    )
+
+
+def test_direct_storage_default_policy_keeps_trusted_legacy_filesystem_default(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "terraform.tfstate").write_text(_legacy_cluster_state())
+
+    policy = tf_mod._direct_storage_default_policy(
+        tmp_path,
+        {"enable_filestore": True},
+        {},
+        context="cluster-a",
+        project_id="project-a",
+    )
+
+    assert policy == {
+        "state_present": True,
+        "migration_required": False,
+        "errors": [],
+        "filesystem_csi_make_default_storage_class": True,
+        "policy_source": "trusted_legacy_local_state",
+    }
+
+
+def test_direct_storage_default_policy_uses_block_default_for_fresh_install(
+    tmp_path: Path,
+) -> None:
+    policy = tf_mod._direct_storage_default_policy(
+        tmp_path,
+        {"enable_filestore": True},
+        {},
+        context="cluster-a",
+        project_id="project-a",
+    )
+
+    assert policy["filesystem_csi_make_default_storage_class"] is False
+    assert policy["policy_source"] == "fresh"
+    assert policy["migration_required"] is False
+
+
+def test_direct_storage_default_policy_keeps_new_choice_after_state_is_written(
+    tmp_path: Path,
+) -> None:
+    tfvars = {"enable_filestore": True}
+    fresh = tf_mod._direct_storage_default_policy(
+        tmp_path, tfvars, {}, context="cluster-a", project_id="project-a"
+    )
+    assert fresh["filesystem_csi_make_default_storage_class"] is False
+
+    # This is the exact create boundary: record the freshly resolved policy,
+    # then simulate Terraform having written a valid local state before the
+    # process is restarted with the original flag-omitting configuration.
+    tf_mod._persist_direct_storage_default_policy(
+        tmp_path, fresh, context="cluster-a", project_id="project-a"
+    )
+    (tmp_path / "terraform.tfstate").write_text(_legacy_cluster_state())
+
+    resumed = tf_mod._direct_storage_default_policy(
+        tmp_path, tfvars, {}, context="cluster-a", project_id="project-a"
+    )
+
+    assert resumed["filesystem_csi_make_default_storage_class"] is False
+    assert resumed["policy_source"] == "persisted_direct_policy"
+
+
+@pytest.mark.parametrize(
+    ("receipt", "expected_error"),
+    [
+        ("not-json", "storage_default_policy_receipt_invalid"),
+        (
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "context": "other-cluster",
+                    "project_id": "project-a",
+                    "filesystem_csi_make_default_storage_class": False,
+                }
+            ),
+            "storage_default_policy_receipt_identity_mismatch",
+        ),
+    ],
+)
+def test_direct_storage_default_policy_rejects_invalid_or_foreign_receipts(
+    tmp_path: Path, receipt: str, expected_error: str
+) -> None:
+    (tmp_path / ".npa-storage-default-policy.json").write_text(receipt)
+
+    policy = tf_mod._direct_storage_default_policy(
+        tmp_path,
+        {"enable_filestore": True},
+        {},
+        context="cluster-a",
+        project_id="project-a",
+    )
+
+    assert policy["migration_required"] is True
+    assert policy["errors"] == [expected_error]
+
+
+def test_direct_storage_default_policy_uses_matching_npa_metadata_without_state(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from npa.cluster import state as state_module
+
+    monkeypatch.setattr(state_module, "CLUSTERS_DIR", tmp_path / "clusters")
+    state_module.save_cluster_state(
+        state_module.ClusterState(
+            name="cluster-a",
+            cluster_id="cluster-id",
+            project_id="project-a",
+            region="region-a",
+            node_count=1,
+            node_platform="cpu-d3",
+            node_preset="8vcpu-32gb",
+            k8s_version="1.34",
+            subnet_id="subnet-a",
+            created_at="2026-10-22T00:00:00Z",
+        ),
+        metadata={
+            "managed_by": "npa cluster terraform",
+            "filesystem_csi_make_default_storage_class": True,
+        },
+    )
+
+    policy = tf_mod._direct_storage_default_policy(
+        tmp_path,
+        {"enable_filestore": True},
+        {},
+        context="cluster-a",
+        project_id="project-a",
+    )
+
+    assert policy["filesystem_csi_make_default_storage_class"] is True
+    assert policy["policy_source"] == "persisted_npa_cluster_metadata"
+
+
+def test_direct_storage_default_policy_blocks_unrecorded_adoption(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from npa.cluster import state as state_module
+
+    monkeypatch.setattr(state_module, "CLUSTERS_DIR", tmp_path / "clusters")
+    state_module.save_cluster_state(
+        state_module.ClusterState(
+            name="cluster-a",
+            cluster_id="cluster-id",
+            project_id="project-a",
+            region="region-a",
+            node_count=1,
+            node_platform="cpu-d3",
+            node_preset="8vcpu-32gb",
+            k8s_version="1.34",
+            subnet_id="subnet-a",
+            created_at="2026-10-22T00:00:00Z",
+        ),
+        metadata={"managed_by": "npa cluster terraform"},
+    )
+
+    policy = tf_mod._direct_storage_default_policy(
+        tmp_path,
+        {"enable_filestore": True},
+        {},
+        context="cluster-a",
+        project_id="project-a",
+    )
+
+    assert policy["migration_required"] is True
+    assert policy["errors"] == ["adopted_cluster_storage_default_unknown"]
+
+
+@pytest.mark.parametrize(
+    ("tfvars", "env", "expected"),
+    [
+        (
+            {
+                "enable_filestore": True,
+                "filesystem_csi_make_default_storage_class": True,
+            },
+            {},
+            True,
+        ),
+        (
+            {
+                "enable_filestore": True,
+                "filesystem_csi_make_default_storage_class": False,
+            },
+            {},
+            False,
+        ),
+        (
+            {"enable_filestore": True},
+            {"TF_VAR_filesystem_csi_make_default_storage_class": "false"},
+            False,
+        ),
+    ],
+)
+def test_direct_storage_default_policy_honors_explicit_overrides(
+    tmp_path: Path, tfvars: dict[str, object], env: dict[str, str], expected: bool
+) -> None:
+    (tmp_path / "terraform.tfstate").write_text(_legacy_cluster_state())
+
+    policy = tf_mod._direct_storage_default_policy(
+        tmp_path, tfvars, env, context="cluster-a", project_id="project-a"
+    )
+
+    assert policy["filesystem_csi_make_default_storage_class"] is expected
+    assert policy["policy_source"] == "explicit"
+    assert policy["migration_required"] is False
+
+
+@pytest.mark.parametrize(
+    ("state", "expected_error"),
+    [
+        ("not-json", "terraform_state_invalid"),
+        (
+            _legacy_cluster_state(name="different"),
+            "terraform_cluster_identity_mismatch",
+        ),
+    ],
+)
+def test_direct_storage_default_policy_fails_closed_for_untrusted_state(
+    tmp_path: Path, state: str, expected_error: str
+) -> None:
+    (tmp_path / "terraform.tfstate").write_text(state)
+
+    policy = tf_mod._direct_storage_default_policy(
+        tmp_path,
+        {"enable_filestore": True},
+        {},
+        context="cluster-a",
+        project_id="project-a",
+    )
+
+    assert policy["migration_required"] is True
+    assert policy["errors"] == [expected_error]
+    assert policy["policy_source"] == "unresolved"
+
+
+def test_direct_storage_default_policy_fails_closed_for_ambiguous_state(
+    tmp_path: Path,
+) -> None:
+    for name in ("terraform.tfstate", "errored.tfstate"):
+        (tmp_path / name).write_text(_legacy_cluster_state())
+
+    policy = tf_mod._direct_storage_default_policy(
+        tmp_path,
+        {"enable_filestore": True},
+        {},
+        context="cluster-a",
+        project_id="project-a",
+    )
+
+    assert policy["migration_required"] is True
+    assert policy["errors"] == ["terraform_state_ambiguous"]
+
+
+def test_storage_default_policy_command_is_machine_readable_and_read_only(
+    tmp_path: Path,
+) -> None:
+    tf_dir = tmp_path / "cluster"
+    tf_dir.mkdir()
+    (tf_dir / "terraform.tfvars").write_text(
+        'parent_id = "project-a"\ncluster_name = "cluster-a"\nenable_filestore = true\n'
+    )
+    (tf_dir / "terraform.tfstate").write_text(_legacy_cluster_state())
+
+    result = runner.invoke(
+        app, ["storage-default-policy", "--terraform-dir", str(tf_dir), "--json"]
+    )
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output) == {
+        "context": "cluster-a",
+        "errors": [],
+        "filesystem_csi_make_default_storage_class": True,
+        "migration_required": False,
+        "policy_source": "trusted_legacy_local_state",
+        "state_present": True,
+        "status": "ready",
+    }
+    assert not (tf_dir / ".npa-storage-default-policy.json").exists()
+
+
+def test_storage_default_policy_command_reports_recovery_required(
+    tmp_path: Path,
+) -> None:
+    tf_dir = tmp_path / "cluster"
+    tf_dir.mkdir()
+    (tf_dir / "terraform.tfvars").write_text(
+        'parent_id = "project-a"\ncluster_name = "cluster-a"\nenable_filestore = true\n'
+    )
+    (tf_dir / "terraform.tfstate").write_text("not-json")
+
+    result = runner.invoke(
+        app, ["storage-default-policy", "--terraform-dir", str(tf_dir), "--json"]
+    )
+
+    assert result.exit_code == 1
+    document = json.loads(result.output)
+    assert document["status"] == "blocked"
+    assert document["migration_required"] is True
+    assert document["errors"] == ["terraform_state_invalid"]
+
+
+def test_direct_terraform_forwards_the_optional_rtx_driver_profile() -> None:
+    import hcl2
+    from hcl2.utils import SerializationOptions
+
+    cluster_dir = Path(__file__).resolve().parents[3] / "deploy" / "cluster"
+    options = SerializationOptions(
+        with_comments=False, strip_string_quotes=True, explicit_blocks=False
+    )
+    variables = hcl2.loads(
+        (cluster_dir / "variables.tf").read_text(), serialization_options=options
+    )["variable"]
+    profile = next(
+        (
+            item["gpu_operator_rtx_driver_profile"]
+            for item in variables
+            if "gpu_operator_rtx_driver_profile" in item
+        ),
+        None,
+    )
+    assert profile is not None, "Direct root omits the RTX driver profile input"
+    assert profile["default"] is None
+    modules = hcl2.loads(
+        (cluster_dir / "main.tf").read_text(), serialization_options=options
+    )["module"]
+    training = next(item["k8s_training"] for item in modules)
+    assert training["gpu_operator_rtx_driver_profile"] == (
+        "${var.gpu_operator_rtx_driver_profile}"
     )
 
 
@@ -204,7 +702,7 @@ def test_terraform_collision_runner_retains_output_for_classification(
 
 
 @pytest.fixture(autouse=True)
-def _node_group_ssh_key(tmp_path_factory, monkeypatch) -> Path:
+def _node_group_ssh_key(tmp_path_factory, monkeypatch, request) -> Path:
     """The vendored module rejects a node-group key path that does not exist.
 
     The isolated test HOME has no ~/.ssh, so give every up/down run a real key.
@@ -229,6 +727,16 @@ def _node_group_ssh_key(tmp_path_factory, monkeypatch) -> Path:
     monkeypatch.setattr(
         tf_mod, "_preflight_whole_path_capacity", lambda *_args, **_kwargs: None
     )
+    # Existing lifecycle tests use narrowly scoped Terraform subprocess fakes.
+    # Provider-address detection is exercised by the dedicated tests above;
+    # keep these tests focused on their original apply/destroy boundary.
+    if request.node.name not in {
+        "test_normal_lifecycle_refuses_unreviewed_provider_state",
+        "test_provider_migration_unavailable_state_is_sanitized_and_blocks",
+    }:
+        monkeypatch.setattr(
+            tf_mod, "_require_no_provider_migration", lambda *_args, **_kwargs: None
+        )
     return key
 
 
@@ -237,6 +745,98 @@ def _find_call(stream_calls: list[list[str]], *prefix: str) -> list[str] | None:
         if call[: len(prefix)] == list(prefix):
             return call
     return None
+
+
+def _capture_legacy_apply(monkeypatch, directory, flags):
+    directory.mkdir()
+    (directory / "terraform.tfstate").write_text("{}")
+    (directory / "terraform.tfvars").write_text(
+        'parent_id = "project-test"\n'
+        'tenant_id = "tenant-test"\n'
+        'region = "eu-test1"\n'
+        'subnet_id = "subnet-test"\n'
+        'cluster_name = "rtx-test"\n'
+    )
+    calls = []
+
+    def stream(argv, **_kwargs):
+        calls.append(argv)
+        if argv[:2] == ["terraform", "apply"]:
+            raise RuntimeError("mocked apply boundary reached")
+        return _completed()
+
+    monkeypatch.setattr(tf_mod, "_require_bin", lambda name: name)
+    monkeypatch.setattr(tf_mod, "_terraform_env", lambda *_args: {})
+    monkeypatch.setattr(tf_mod, "_preflight_terraform_version", lambda *_args: None)
+    monkeypatch.setattr(tf_mod, "_guard_unmanaged_duplicate", lambda *_args: None)
+    monkeypatch.setattr(tf_mod, "_preflight_filestore_quota", lambda *_args: None)
+    monkeypatch.setattr(tf_mod, "_preflight_gpu_capacity", lambda *_args: None)
+    monkeypatch.setattr(tf_mod, "_run_stream", stream)
+    monkeypatch.setattr(tf_mod, "_run_capture", lambda *_args, **_kwargs: _completed())
+    result = runner.invoke(app, ["up", "--terraform-dir", str(directory), *flags])
+    apply = _find_call(calls, "terraform", "apply", "-auto-approve")
+    assert apply is not None, (result.output, repr(result.exception), calls)
+    assert "mocked apply boundary reached" in result.output
+    return apply
+
+
+@pytest.mark.parametrize("platform", ["gpu-rtx6000", "gpu-rtx6000-a"])
+@pytest.mark.parametrize("preset", ["1gpu-24vcpu-218gb", "8gpu-192vcpu-1744gb"])
+def test_legacy_rtx_provision_carries_exact_profile_to_terraform(
+    monkeypatch, tmp_path, platform, preset
+):
+    apply = _capture_legacy_apply(
+        monkeypatch,
+        tmp_path / "legacy",
+        [
+            "--gpu-workload-profile",
+            "rtx-rendering",
+            "--gpu-platform",
+            platform,
+            "--gpu-preset",
+            preset,
+            # RTX graphics validation now rejects the quarantined tool default
+            # before Terraform. This legacy-argument test needs an explicit
+            # operator-controlled image to reach its Terraform boundary.
+            "--gpu-graphics-smoke-image",
+            "registry.example/graphics:operator",
+        ],
+    )
+    profiles = [
+        item.partition("=")[2]
+        for item in apply
+        if item.startswith("gpu_operator_rtx_driver_profile=")
+    ]
+    assert len(profiles) == 1, "Legacy apply dropped the explicit RTX driver profile"
+    assert json.loads(profiles[0]) == {"platform": platform, "preset": preset}
+
+
+def test_legacy_unprofiled_provision_keeps_operator_values_unset(monkeypatch, tmp_path):
+    apply = _capture_legacy_apply(monkeypatch, tmp_path / "legacy", [])
+    assert not any(
+        item.startswith("gpu_operator_rtx_driver_profile=") for item in apply
+    )
+
+
+def test_sky_smoke_rejects_unsupported_host_before_terraform(monkeypatch, tmp_path):
+    from npa.orchestration.skypilot import local_api
+
+    (tmp_path / "terraform.tfvars").write_text('parent_id = "project-test"\n')
+
+    def unsupported_host():
+        raise local_api.IsolatedApiError(
+            "SkyPilot smoke requires a Linux operator host"
+        )
+
+    monkeypatch.setattr(local_api, "_require_linux_host", unsupported_host)
+    monkeypatch.setattr(
+        tf_mod,
+        "_require_bin",
+        lambda _name: pytest.fail("unsupported host reached Terraform prerequisites"),
+    )
+    result = runner.invoke(app, ["up", "--terraform-dir", str(tmp_path), "--sky-smoke"])
+    assert result.exit_code != 0
+    assert "Linux operator host" in result.output
 
 
 def test_run_stream_capture_output_is_visible_and_retained(capsys) -> None:
@@ -606,9 +1206,7 @@ def test_up_runs_terraform_writes_kubeconfig_and_validates(
     tf_dir = tmp_path / "deploy" / "cluster"
     tf_dir.mkdir(parents=True)
     if legacy_state:
-        (tf_dir / "terraform.tfstate").write_text(
-            json.dumps({"version": 4, "resources": []})
-        )
+        (tf_dir / "terraform.tfstate").write_text(_legacy_cluster_state())
         recipe_dir = tf_dir / "vendor" / "nebius-solutions-library" / "k8s-training"
         recipe_dir.mkdir(parents=True)
         (recipe_dir / "variables.tf").write_text(
@@ -740,7 +1338,11 @@ def test_up_runs_terraform_writes_kubeconfig_and_validates(
                         "items": [
                             {
                                 "metadata": {
-                                    "name": "csi-mounted-fs-path-sc",
+                                    "name": (
+                                        "csi-mounted-fs-path-sc"
+                                        if legacy_state
+                                        else "compute-csi-default-sc"
+                                    ),
                                     "annotations": {
                                         "storageclass.kubernetes.io/is-default-class": "true"
                                     },
@@ -829,6 +1431,17 @@ def test_up_runs_terraform_writes_kubeconfig_and_validates(
     apply_call = _find_call(stream_calls, "terraform", "apply", "-auto-approve")
     assert apply_call is not None
     assert "capacity_block_group=capacityblockgroup-test" in apply_call
+    assert (
+        "filesystem_csi_make_default_storage_class=" + str(legacy_state).lower()
+        in apply_call
+    )
+    assert json.loads((tf_dir / ".npa-storage-default-policy.json").read_text()) == {
+        "context": "cluster-a",
+        "filesystem_csi_make_default_storage_class": legacy_state,
+        "policy_source": ("trusted_legacy_local_state" if legacy_state else "fresh"),
+        "project_id": "project-a",
+        "schema_version": 1,
+    }
     apply_env = stream_envs[stream_calls.index(apply_call)]
     assert apply_env["TF_VAR_capacity_block_group"] == "capacityblockgroup-test"
     assert apply_env["TF_VAR_iam_token"] == "token-a"
@@ -2246,6 +2859,87 @@ def test_down_terminalizes_pre_mutation_operation_without_provider_calls(
     assert payload["resources_removed"] == []
     assert operation.read()["phase"] == "destroyed"
     assert not (tf_dir / ".terraform").exists()
+
+
+@pytest.fixture
+def failed_cluster_inventory(monkeypatch, tmp_path):
+    from npa.provisioning_journal import ProvisioningOperation
+
+    monkeypatch.setenv("NPA_OPERATION_JOURNAL_DIR", str(tmp_path / "operations"))
+    directory = tmp_path / "cluster"
+    directory.mkdir()
+    operation = ProvisioningOperation.prepare(
+        command="npa cluster up",
+        project_alias="demo",
+        project_id="project-demo",
+        tenant_id="tenant-demo",
+        region="eu-test1",
+        backend={"kind": "local-state", "terraform_dir": str(directory)},
+        resource_type="cluster",
+        requested_name="failed-cluster",
+        ownership_source="cluster-terraform",
+        resume_command="npa cluster up --project demo --context failed-cluster",
+        destroy_command="npa cluster down --project demo --context failed-cluster --force",
+    )
+    operation.transition("mutating")
+    operation.record_resource(
+        resource_type="managed_kubernetes_cluster",
+        requested_name="failed-cluster",
+        provider_id="cluster-owned",
+        project_id="project-demo",
+        ownership="created_by_this_operation",
+        ownership_source="provider-create",
+    )
+    operation.transition("recovery-required")
+    monkeypatch.setattr(tf_mod, "_clear_local_cluster_state", lambda _context: None)
+    return directory, operation
+
+
+def _inventory_cleanup_args(directory, operation):
+    return [
+        "down",
+        "--terraform-dir",
+        str(directory),
+        "--project-id",
+        "project-demo",
+        "--tenant-id",
+        "tenant-demo",
+        "--region",
+        "eu-test1",
+        "--context",
+        "failed-cluster",
+        "--cluster-id",
+        "cluster-owned",
+        "--operation-id",
+        operation.operation_id,
+        "--force",
+        "--json",
+    ]
+
+
+@pytest.mark.parametrize("deletion_fails", [False, True])
+def test_inventory_cleanup_closes_journal_only_after_verified_deletion(
+    mocker,
+    failed_cluster_inventory,
+    deletion_fails,
+):
+    directory, operation = failed_cluster_inventory
+    client = mocker.patch("npa.cluster.api.MK8sClient").return_value
+    if deletion_fails:
+        client.delete_cluster.side_effect = RuntimeError("provider unavailable")
+    result = runner.invoke(app, _inventory_cleanup_args(directory, operation))
+    assert result.exit_code == (2 if deletion_fails else 0), result.output
+    assert operation.read()["phase"] == (
+        "recovery-required" if deletion_fails else "destroyed"
+    )
+    client.delete_cluster.assert_called_once_with(
+        "cluster-owned", project_id="project-demo"
+    )
+    if deletion_fails:
+        client.wait_for_deleted.assert_not_called()
+    else:
+        client.wait_for_deleted.assert_called_once()
+        assert json.loads(result.output)["verified"] is True
 
 
 def test_down_checksum_mismatch_is_actionable_and_keeps_lock_immutable(

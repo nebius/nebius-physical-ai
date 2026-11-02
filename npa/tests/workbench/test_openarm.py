@@ -417,7 +417,7 @@ def test_packaging_pins_and_excludes_isaac_payload() -> None:
     assert "isaac-bootstrap ensure" not in dockerfile
     assert "nvcr.io/nvidia/isaac" not in dockerfile
     assert "--require-hashes" in dockerfile
-    assert 'm.version("GitPython") == "3.1.62"' in dockerfile
+    assert 'm.version("GitPython") == "3.2.1"' in dockerfile
     assert 'm.version("fastapi") == "0.136.1"' in dockerfile
     assert 'm.version("starlette") == "1.6.0"' in dockerfile
     assert '"serve", "--host", "0.0.0.0"' in dockerfile
@@ -434,7 +434,7 @@ def test_packaging_pins_and_excludes_isaac_payload() -> None:
     security_lock = (
         ROOT / "npa/docker/workbench/openarm/security-requirements.txt"
     ).read_text(encoding="utf-8")
-    assert "gitpython==3.1.62" in security_lock
+    assert "gitpython==3.2.1" in security_lock
     assert "gitpython==3.1.57" not in security_lock
     assert (ROOT / "npa/docker/workbench/openarm/THIRD_PARTY_NOTICES.md").is_file()
     assert "prune_python_vendor_devel.py" in dockerfile

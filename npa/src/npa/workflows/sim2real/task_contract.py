@@ -349,11 +349,31 @@ def _validate_public_franka_lift_seed(
                 "public Franka seed has malformed staged object evidence"
             )
     frame_records = [record for record in records if "/frames/camera-" in record["uri"]]
-    if len(frame_records) < 4 or len(frame_records) != int(
+    if len(frame_records) < 6 or len(frame_records) != int(
         manifest["camera_observation_count"]
     ):
         raise TaskContractError(
-            "public Franka seed must contain at least four decoded camera frames"
+            "public Franka seed must contain its complete Cosmos3-capable camera sequence"
+        )
+    sequence = provenance.get("primary_camera_sequence")
+    if not isinstance(sequence, dict) or sequence != {
+        "source_path": "final_dataset/videos/chunk-000/image/episode_000000.mp4",
+        "source_camera": "image",
+        "selection": "complete_episode_in_decode_order",
+        "complete": True,
+        "source_video_decoded_frames": len(frame_records),
+        "staged_frame_count": len(frame_records),
+        "minimum_frames_for_cosmos3": 6,
+    }:
+        raise TaskContractError(
+            "public Franka seed lacks complete primary-camera sequence provenance"
+        )
+    frame_indexes = [record.get("source_frame_index") for record in frame_records]
+    if any(
+        not isinstance(index, int) or isinstance(index, bool) for index in frame_indexes
+    ) or sorted(frame_indexes) != list(range(len(frame_records))):
+        raise TaskContractError(
+            "public Franka seed primary-camera frame indexes are not complete"
         )
     record_uris = {record["uri"] for record in records}
     if sample_uri := str(manifest.get("sample_rollout_manifest_uri") or ""):

@@ -48,7 +48,7 @@ Their adjacent readiness records identify the storage and checkpoint inputs to c
 ## Capabilities
 
 Inside the GPU image, or after `pip install -e 'npa[mjlab]'` on a compatible
-Python 3.10–3.13 environment:
+Python 3.11–3.13 environment:
 
 ```bash
 npa workbench mjlab list

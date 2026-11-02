@@ -28,6 +28,7 @@ PAIDF_GUIDE = (
 PAIDF_DEPLOY = (
     REPO_ROOT / "docs" / "workbench" / "guides" / "physical-ai-data-factory-deploy.md"
 )
+SIM2REAL_GUIDE = REPO_ROOT / "docs" / "workbench" / "guides" / "sim2real-workflow.md"
 
 #: Docs a first-time user follows to install. They must agree on the venv path.
 USER_FACING_INSTALL_DOCS = (README, INSTALL, QUICKSTART, GUIDES_README, PAIDF_DEPLOY)
@@ -184,6 +185,22 @@ def test_paidf_whole_path_stages_source_once_and_orders_registry_override() -> N
     assert "npa agent preflight" not in section
     assert "--registry" not in submit
     assert "export NPA_REGISTRY=" not in section
+
+
+def test_sim2real_guide_separates_fresh_submit_from_exact_resume() -> None:
+    """Keep the first Sim2Real launch from falsely requesting durable recovery."""
+    blocks = _submit_blocks(SIM2REAL_GUIDE)
+    fresh = next(
+        block
+        for block in blocks
+        if '--run-id "$RUN_ID"' in block and "--durable-s3" in block
+    )
+    assert "--resume" not in fresh
+
+    text = SIM2REAL_GUIDE.read_text(encoding="utf-8")
+    resume_section = text.split("## Resume and verify", 1)[1]
+    assert '--resume-run "$RUN_ID"' in resume_section
+    assert "--run-id" not in resume_section.split("```", 2)[1]
 
 
 def test_paidf_noninteractive_configure_uses_ids_not_secrets() -> None:

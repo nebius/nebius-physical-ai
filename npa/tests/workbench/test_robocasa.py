@@ -1259,6 +1259,34 @@ def test_worker_supervisor_reaps_escaped_descendant_after_capability_exits() -> 
         os.kill(descendant_pid, 0)
 
 
+@pytest.mark.parametrize(
+    ("outcomes", "expected"),
+    [((False, True), True), ((False, False), False)],
+)
+def test_supervisor_retries_bounded_drain_before_ack(
+    monkeypatch: pytest.MonkeyPatch,
+    outcomes: tuple[bool, bool],
+    expected: bool,
+) -> None:
+    """Retry a transient drain, but never acknowledge an unproven cleanup."""
+    from npa.workbench.robocasa import service
+
+    primary = object()
+    calls: list[object] = []
+    results = iter(outcomes)
+
+    def stop_once_then_prove_stopped(candidate: object) -> bool:
+        calls.append(candidate)
+        return next(results)
+
+    monkeypatch.setattr(
+        service, "_stop_supervised_children", stop_once_then_prove_stopped
+    )
+
+    assert service._drain_supervised_children(primary) is expected
+    assert calls == [primary, primary]
+
+
 def test_worker_supervisor_control_eof_still_reaps_descendants(
     tmp_path: Path,
 ) -> None:

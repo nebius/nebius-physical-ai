@@ -807,11 +807,13 @@ def test_runtime_fetch_verifier_refuses_public_record_shape(tmp_path: Path) -> N
     payload["public_corresponding_source_delivery"] = "accepted-public-immutable"
     lock_bytes = json.dumps(payload).encode()
     lock.write_bytes(lock_bytes)
+    lock.chmod(0o600)
     manifest_copy = tmp_path / "runtime-fetch-manifest.json"
     manifest_payload = json.loads(manifest.read_text(encoding="utf-8"))
     manifest_payload["runtime_fetch"]["corresponding_source_lock_sha256"] = (
         hashlib.sha256(lock_bytes).hexdigest()
     )
     manifest_copy.write_text(json.dumps(manifest_payload), encoding="utf-8")
+    manifest_copy.chmod(0o600)
     with pytest.raises(Exception, match="runtime-fetch-only"):
         verify_runtime_fetch_corresponding_source(manifest_copy, source_lock, lock)

@@ -136,6 +136,16 @@ variable "mig_parted_config" {
   default     = "all-balanced"
 }
 
+variable "gpu_operator_rtx_driver_profile" {
+  description = "Optional exact RTX rendering selector and toolkit configuration for the GPU Operator."
+  type = object({
+    platform             = string
+    preset               = string
+    package_repositories = optional(map(string), {})
+  })
+  default = null
+}
+
 variable "gpu_operator_version" {
   type    = string
   default = "v26.3.3"
@@ -242,6 +252,17 @@ variable "filesystem_csi_chart_repository" {
   description = "Operator-supplied Helm repository for Shared Filesystem CSI. Required when filestore is enabled; NPA has no provider-private default."
   type        = string
   default     = ""
+}
+
+variable "filesystem_csi_make_default_storage_class" {
+  description = "Promote the named Shared Filesystem CSI StorageClass to the default. False preserves the compute/block StorageClass for ordinary PVCs; requires enable_filestore or existing_filestore."
+  type        = bool
+  default     = false
+
+  validation {
+    condition     = !var.filesystem_csi_make_default_storage_class || var.enable_filestore || trimspace(var.existing_filestore) != ""
+    error_message = "filesystem_csi_make_default_storage_class requires enable_filestore or existing_filestore."
+  }
 }
 
 variable "previous_default_storage_class_name" {

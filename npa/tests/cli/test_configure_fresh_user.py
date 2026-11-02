@@ -255,7 +255,7 @@ def test_known_project_configure_preserves_safe_cli_compatibility_error(
     assert result.exit_code == 2, result.output
     output = " ".join(result.output.split())
     assert expected_error in output
-    assert "NEBIUS_CLI_VERSION=0.12.254 bash" in output
+    assert "NEBIUS_CLI_VERSION=0.12.298 bash" in output
     assert "private-sentinel" not in output
     assert "profile cannot authenticate" not in output
     assert version_probe.call_args.args[0] == ["/synthetic/nebius", "version"]

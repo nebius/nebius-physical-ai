@@ -121,6 +121,20 @@ def test_guide_sim2real_promote_plans_finalize_once(
             "--assume-decision",
             "promote_checkpoint",
             "--json",
+            *[
+                argument
+                for key in (
+                    "controller_image",
+                    "cosmos3_image",
+                    "envgen_image",
+                    "isaac_image",
+                    "viewer_image",
+                )
+                for argument in (
+                    "--var",
+                    f"{key}=registry.example.invalid/sim2real-guide@sha256:{'a' * 64}",
+                )
+            ],
         ],
     )
     payload = parse_json_payload(result, forbidden_markers)
@@ -252,6 +266,9 @@ def test_guide_require_inputs_fails_on_missing_artifact(
 def test_guide_loop_back_assume_expands_outer_loop(e2e_project: str | None) -> None:
     live_bucket(e2e_project)
     spec = load_spec(SPECS.parent / "main" / "sim2real.yaml")
+    image = "registry.example.invalid/sim2real-guide@sha256:" + "a" * 64
+    for key in spec.config["required_immutable_images"]:
+        spec.config[key] = image
     plan = build_plan(spec, run_id="guide-loop-back", assume_decision="loop_back")
     states = [step.state for step in plan.steps]
     inner = int(spec.config["inner_iterations"])

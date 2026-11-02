@@ -17,8 +17,11 @@ and image identities uses `--resume` to:
 4. restart only incomplete work; and
 5. continue across nested-loop and finalization barriers.
 
-The single hosted Cosmos3 Stage 8 evaluator therefore commits its output before
-Stage 9 verifies that it covers exactly the authoritative Stage 7 rollout set.
+The single hosted Stage 8 evaluator publishes and reads back an input-bound
+receipt for each rollout before committing the stage output. A retry reuses
+only receipts matching the source, endpoint, model, actions, and frame bytes.
+Stage 9 then verifies that evaluation covers exactly the authoritative Stage 7
+rollout set.
 Finalization similarly resumes from the last completed state and
 retains the exact gold report/render lineage. Mutable image tags and mismatched
 source SHAs fail closed at the stage boundary.

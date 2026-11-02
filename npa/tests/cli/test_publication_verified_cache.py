@@ -269,6 +269,8 @@ def _fail_cache_install(monkeypatch, phase, opened):
     if phase == "identity":
         monkeypatch.setattr(runtime, "_publication_cache_identity", identity_failure)
     elif phase == "open":
+        isolated_os = SimpleNamespace(**vars(runtime._publication_os))
+        monkeypatch.setattr(runtime, "_publication_os", isolated_os)
         fdopen = runtime._publication_os.fdopen
 
         def tracked_fdopen(*args):
@@ -279,8 +281,8 @@ def _fail_cache_install(monkeypatch, phase, opened):
         def failed_stat(*_args):
             raise OSError("synthetic postrename open failure")
 
-        monkeypatch.setattr(runtime._publication_os, "fdopen", tracked_fdopen)
-        monkeypatch.setattr(runtime._publication_os, "fstat", failed_stat)
+        monkeypatch.setattr(isolated_os, "fdopen", tracked_fdopen)
+        monkeypatch.setattr(isolated_os, "fstat", failed_stat)
     else:
         monkeypatch.setattr(runtime, "_publication_cache_open", tracked_open)
 

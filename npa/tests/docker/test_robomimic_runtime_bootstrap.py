@@ -494,9 +494,9 @@ def test_exact_external_runtime_inventory_verifies_without_mutation(
         for path in runtime_root.rglob("*")
         if path.is_file()
     }
-    assert result["package_count"] == 62
-    assert result["artifact_count"] == 62
-    assert result["artifact_payload_bytes"] == 62
+    assert result["package_count"] == 67
+    assert result["artifact_count"] == 67
+    assert result["artifact_payload_bytes"] == 67
     assert result["payload_file_count"] == 1
     assert result["payload_bytes"] == 17
     assert before == after
@@ -874,7 +874,7 @@ def test_snapshot_refuses_resource_overflow_before_payload_hash_or_copy(
     else:
         # The artifact and payload aggregate ceilings are independent.  Empty
         # the inert artifact total so this fixture exercises the payload path,
-        # rather than failing earlier on the 62-entry runtime closure, while
+        # rather than failing earlier on the 67-entry runtime closure, while
         # preserving the full lock-closure mapping check.
         checked_artifacts = verifier._checked_artifacts
 

@@ -240,7 +240,7 @@ def verify_image(
     seed_payload = {_path(row["path"]): row for row in seeds["retained"]}
     if len(seeds["retained"]) != 3 or set(seed_payload) != {
         "usr/share/python-wheels/pip-26.2.1+npa.1-py3-none-any.whl",
-        "usr/share/python-wheels/setuptools-84.0.0-py3-none-any.whl",
+        "usr/share/python-wheels/setuptools-84.2.1-py3-none-any.whl",
         "usr/share/doc/npa-curobo/secure-pip-build.json",
     }:
         raise ImageVerificationError(

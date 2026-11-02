@@ -286,8 +286,17 @@ def test_generate_uses_the_field_the_fetch_result_actually_has(
     assert ran[0][:2] == ["uv", "sync"]
 
 
+@pytest.mark.parametrize(
+    "modern,module",
+    [
+        (True, "huggingface_hub.cli.hf"),
+        (False, "huggingface_hub.commands.huggingface_cli"),
+    ],
+)
 def test_hf_cli_falls_back_to_the_module_when_the_script_is_not_on_path(
     monkeypatch,
+    modern,
+    module,
 ) -> None:
     """Live job 290: `No such file or directory: 'huggingface-cli'`, moments after installing it.
 
@@ -304,11 +313,11 @@ def test_hf_cli_falls_back_to_the_module_when_the_script_is_not_on_path(
     monkeypatch.setattr(
         cosmos3_module.importlib.util,
         "find_spec",
-        lambda name: object() if name else None,
+        lambda name: object() if name == "huggingface_hub" or modern else None,
     )
     argv = cosmos3_module._huggingface_cli()
 
-    assert argv == [sys.executable, "-m", "huggingface_hub.commands.huggingface_cli"]
+    assert argv == [sys.executable, "-m", module]
 
 
 def test_hf_cli_keeps_the_plain_name_when_neither_is_available(monkeypatch) -> None:
@@ -322,14 +331,20 @@ def test_hf_cli_keeps_the_plain_name_when_neither_is_available(monkeypatch) -> N
     assert cosmos3_module._huggingface_cli() == ["huggingface-cli"]
 
 
-def test_hf_cli_prefers_a_real_executable(monkeypatch) -> None:
+@pytest.mark.parametrize("modern", [True, False])
+def test_hf_cli_prefers_a_real_executable(monkeypatch, modern) -> None:
     from npa.workbench.cosmos import cosmos3 as cosmos3_module
 
     monkeypatch.setattr(
-        cosmos3_module.shutil, "which", lambda _name: "/usr/bin/huggingface-cli"
+        cosmos3_module.shutil,
+        "which",
+        lambda name: (
+            f"/usr/bin/{name}" if modern or name == "huggingface-cli" else None
+        ),
     )
 
-    assert cosmos3_module._huggingface_cli() == ["/usr/bin/huggingface-cli"]
+    expected = "hf" if modern else "huggingface-cli"
+    assert cosmos3_module._huggingface_cli() == [f"/usr/bin/{expected}"]
 
 
 def test_uv_argv_prefers_the_module(monkeypatch) -> None:

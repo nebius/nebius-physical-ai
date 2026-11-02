@@ -206,12 +206,13 @@ def test_caption_images_appends_availability_directive(
     )
 
     expected_request = f"{expected_instruction}\n\n{CAPTION_AVAILABILITY_DIRECTIVE}"
-    prompt = captured["body"]["messages"][0]["content"][0]["text"]
+    content = captured["body"]["messages"][0]["content"]
+    assert [part["type"] for part in content] == ["image_url", "text"]
+    prompt = content[1]["text"]
     assert result.instruction == expected_instruction
     assert result.availability_directive == CAPTION_AVAILABILITY_DIRECTIVE
     assert result.request_instruction == expected_request
     assert prompt == expected_request
-    content = captured["body"]["messages"][0]["content"]
     image_parts = [part for part in content if part["type"] == "image_url"]
     assert len(image_parts) == 1
     url = image_parts[0]["image_url"]["url"]
@@ -441,8 +442,15 @@ def test_caption_images_forwards_override_to_every_image(tmp_path: Path) -> None
     )
 
 
-def test_caption_images_default_does_not_guess_unknown_thinking_key(
-    tmp_path: Path,
+@pytest.mark.parametrize(
+    ("model", "expected_template"),
+    [
+        ("openbmb/MiniCPM-V-4_5", None),
+        ("Qwen/Qwen3.8-27B", {"enable_thinking": False}),
+    ],
+)
+def test_caption_images_default_uses_only_registered_thinking_keys(
+    tmp_path: Path, model: str, expected_template: dict[str, bool] | None
 ) -> None:
     image = tmp_path / "frame.png"
     _write_image(image, (10, 20, 30))
@@ -451,11 +459,11 @@ def test_caption_images_default_does_not_guess_unknown_thinking_key(
     caption_images(
         input_path=str(image),
         output_path=str(tmp_path / "out"),
-        model="openbmb/MiniCPM-V-4_5",
+        model=model,
         client=_capturing_client("visible caption", captured),
     )
 
-    assert "chat_template_kwargs" not in captured["body"]
+    assert captured["body"].get("chat_template_kwargs") == expected_template
 
 
 def test_caption_images_reasoning_only_default_has_actionable_hint(

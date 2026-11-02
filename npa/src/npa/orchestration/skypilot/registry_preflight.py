@@ -38,6 +38,8 @@ from npa.exception_notes import add_exception_note
 from npa.orchestration.skypilot._bin import resolve_skypilot_kubeconfig_path
 
 DEFAULT_TIMEOUT_SECONDS = 30
+_TRANSIENT_REGISTRY_FETCH_ATTEMPTS = 2
+_TRANSIENT_REGISTRY_FETCH_DELAY_SECONDS = 0.2
 SKYPILOT_DEFAULT_SERVICE_ACCOUNT_NAME = "skypilot-service-account"
 _SKYPILOT_REMOTE_IDENTITY_SENTINELS = frozenset(
     {"LOCAL_CREDENTIALS", "SERVICE_ACCOUNT", "NO_UPLOAD"}
@@ -330,12 +332,21 @@ def fetch_image_config_metadata(
     def fetch_bounded(
         url: str, request_headers: dict[str, str], phase: str
     ) -> HttpResponse:
-        try:
-            return fetch(url, request_headers, timeout)
-        except OSError as exc:
-            raise RegistryPreflightError(
-                f"{phase} unavailable ({type(exc).__name__})"
-            ) from None
+        for attempt in range(_TRANSIENT_REGISTRY_FETCH_ATTEMPTS):
+            try:
+                return fetch(url, request_headers, timeout)
+            except OSError as exc:
+                # An accepted immutable image can still see a connection reset
+                # between the registry and an otherwise healthy runner. Retry
+                # that narrow transport class once, without broadening access
+                # or treating HTTP authorization/content failures as transient.
+                transient = isinstance(exc, (ConnectionResetError, TimeoutError))
+                if transient and attempt + 1 < _TRANSIENT_REGISTRY_FETCH_ATTEMPTS:
+                    time.sleep(_TRANSIENT_REGISTRY_FETCH_DELAY_SECONDS)
+                    continue
+                raise RegistryPreflightError(
+                    f"{phase} unavailable ({type(exc).__name__})"
+                ) from None
 
     status, response_headers, body = fetch_bounded(
         reference.manifest_url, headers, "registry manifest request"

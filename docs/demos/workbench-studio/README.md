@@ -7,7 +7,7 @@ and no hosted Studio UI or cloud deployment is required for editing.
 
 ## Start with your own media
 
-Install NPA from a checkout containing Studio, with Python 3.10 or newer, and
+Install NPA from a checkout containing Studio, with Python 3.11 or newer, and
 install FFmpeg (including ffprobe and libx264) on your machine:
 
 ```bash

@@ -14,6 +14,8 @@ deploy  Bootstrap an NPA Workbench cluster target with local state and a cached 
 destroy  Delete a Managed Kubernetes cluster through the API and drop its local state.
 up  Create or update the Terraform-managed NPA Kubernetes cluster.
 down  Destroy the Terraform-managed NPA cluster: cloud resources and local state.
+provider-migration  Plan or intentionally execute one exact Terraform provider-address migration.
+storage-default-policy  Inspect the safe StorageClass-default policy for one direct installation.
 reconcile-absent  Reconcile an absent legacy cluster operation; never delete or relaunch.
 status  Show NPA cluster target state from Nebius and the local cache.
 list  List NPA Workbench cluster targets known locally or in the configured project.
@@ -38,6 +40,8 @@ directly.
 | `destroy` | Delete a Managed Kubernetes cluster through the API and drop its local state. |
 | `up` | Create or update the Terraform-managed NPA Kubernetes cluster. |
 | `down` | Destroy the Terraform-managed NPA cluster: cloud resources and local state. |
+| `provider-migration` | Plan or intentionally execute one exact Terraform provider-address migration. |
+| `storage-default-policy` | Inspect the safe StorageClass-default policy for one direct installation. |
 | `reconcile-absent` | Reconcile an absent legacy cluster operation; never delete or relaunch. |
 | `status` | Show NPA cluster target state from Nebius and the local cache. |
 | `list` | List NPA Workbench cluster targets known locally or in the configured project. |

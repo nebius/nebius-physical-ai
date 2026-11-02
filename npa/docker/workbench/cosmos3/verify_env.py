@@ -35,6 +35,11 @@ VISION_MODES = {"image2image", "image2video", "video2video"}
 WEIGHT_SUFFIXES = (".safetensors", ".ckpt", ".pth", ".pt")
 WEIGHT_MIN_BYTES = 50 * 1024 * 1024
 XET_KNOWN_BAD_PAIR = ("1.23.0", "1.5.1")
+SECURITY_OVERLAY_VERSIONS = {
+    "Pillow": "13.0.0",
+    "certifi": "2026.10.23",
+    "uv": "0.13.4",
+}
 
 failures: list[str] = []
 
@@ -101,6 +106,31 @@ def check_hf_transfer_pair() -> str:
             f"huggingface_hub={hub} hf-xet={xet} (huggingface/xet-core#895)"
         )
     return f"huggingface_hub={hub} hf-xet={xet} (Xet enabled)"
+
+
+def check_security_overlay() -> str:
+    """Verify the reviewed portable fixes displaced the frozen vulnerable pins."""
+
+    actual = {name: metadata.version(name) for name in SECURITY_OVERLAY_VERSIONS}
+    if actual != SECURITY_OVERLAY_VERSIONS:
+        raise RuntimeError(
+            "security overlay drifted: "
+            f"expected {SECURITY_OVERLAY_VERSIONS}, got {actual}"
+        )
+    return " ".join(f"{name}={version}" for name, version in actual.items())
+
+
+def check_image_resize() -> str:
+    """Exercise the upstream image-conditioning helper with the secured Pillow ABI."""
+
+    from PIL import Image
+
+    from cosmos_framework.utils.generator.image_resize import resize_pil_image
+
+    resized = resize_pil_image(Image.new("RGB", (2048, 1536)))
+    if resized.size != (1152, 864):
+        raise RuntimeError(f"unexpected Cosmos image resize result: {resized.size}")
+    return f"Pillow image resize -> {resized.size[0]}x{resized.size[1]}"
 
 
 def check_inference_entrypoint() -> str:
@@ -198,8 +228,10 @@ def main() -> int:
     step("flags", check_flags)
     step("torch + flash-attn", check_torch_stack)
     step("Hugging Face transfer pair", check_hf_transfer_pair)
+    step("security overlay", check_security_overlay)
     step("scripts.inference import", check_inference_entrypoint)
     step("inference.model import", check_model_module)
+    step("image conditioning resize", check_image_resize)
     step("guardrail import", check_guardrail)
     step("checkpoint db lookup", check_checkpoint_lookup)
     step("setup + sample resolution", check_mode_resolution)

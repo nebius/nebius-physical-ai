@@ -26,6 +26,7 @@ from npa.clients.project_credential_store import ProjectCredentialStoreError
 from npa.clients.storage import StorageClient
 from npa.guardrails.skypilot import inspect_image_exists
 from npa.lifecycle_intent import OperationIntent, intent_boundary, json_stdout_contract
+from npa.verification import sanitize_reason
 from npa.workflows.credential_preflight import (
     DEFAULT_CREDENTIAL_CHECKS,
     SUPPORTED_CREDENTIAL_CHECKS,
@@ -64,6 +65,7 @@ app = typer.Typer(
 )
 
 _STATUS_ICON = {PASS: "PASS", WARN: "WARN", FAIL: "FAIL", SKIP: "SKIP"}
+_SIM2REAL_PREIMAGE_CHECKS = ("coherence", "s3", "tokens", "cluster")
 _PREFLIGHT_CHECKS_HELP = (
     "Comma-separated checks to run, or 'all'. "
     f"Choices: all, {', '.join(SUPPORTED_CREDENTIAL_CHECKS)}."
@@ -93,6 +95,13 @@ def _image_inspector(image: str) -> bool | None:
         return None
     except Exception:  # noqa: BLE001 - any inspection error means "not verified pullable"
         return False
+
+
+def _project_storage_failure_details(error: Exception) -> tuple[str, ...]:
+    """Return a concise, redacted cause for a selected-project storage failure."""
+
+    detail = sanitize_reason(error, limit=240)
+    return (detail,) if detail else ()
 
 
 def _kube_runner_factory(context: str, kubeconfig: str):
@@ -564,7 +573,7 @@ def sim2real_command(
         None, "--heldout-env-count", help="Held-out env count."
     ),
     k8s_namespace: str = typer.Option(
-        "", "--k8s-namespace", help="Namespace for sibling Jobs."
+        "", "--k8s-namespace", help="Namespace for canonical workflow probes."
     ),
     k8s_context: str = typer.Option(
         "", "--k8s-context", help="Kube context to pin the check to."
@@ -572,11 +581,16 @@ def sim2real_command(
     k8s_kubeconfig: str = typer.Option(
         "", "--k8s-kubeconfig", help="Explicit kubeconfig path."
     ),
+    k8s_isaac_cache_pvc: str = typer.Option(
+        "", "--k8s-isaac-cache-pvc", help="Exact canonical Isaac cache claim."
+    ),
     checks: str = typer.Option(
-        ",".join(ALL_CHECKS),
+        ",".join(_SIM2REAL_PREIMAGE_CHECKS),
         "--checks",
         help=(
-            "Comma-separated checks to run, or 'all'. "
+            "Comma-separated checks to run, or 'all'. The default runs the "
+            "image-independent preimage checks (coherence, s3, tokens, cluster); "
+            "validate canonical role images with `workflow preflight-images`. "
             f"Choices: all, {', '.join(ALL_CHECKS)}."
         ),
     ),
@@ -585,14 +599,15 @@ def sim2real_command(
     ),
     output_json: bool = typer.Option(False, "--json", help="Print the report as JSON."),
 ) -> None:
-    """Validate a sim2real config and check the recurring blockers up front.
+    """Check canonical Sim2Real preimage prerequisites before a workflow run.
 
-    Runs the sim2real preflight suite (config, coherence, s3, registry,
-    tokens, cluster) before submitting the sim2real workflow, so S3,
-    registry, token, kube-context, and GPU blockers surface before launch
-    instead of mid-run. Use ``npa workbench workflow submit`` on the sim2real
-    runbook for the run itself and ``npa workbench workflow status <run-id>``
-    for live progress.
+    The default image-independent checks surface coherence, S3, token,
+    kube-context, and GPU blockers before launch without resolving retired
+    loop images. The canonical five-role image set is verified by ``npa
+    workbench workflow preflight-images``. Pass ``--checks config,registry``
+    or ``--checks all`` only when diagnosing the retained legacy loop config.
+    Use ``npa workbench workflow submit`` on the Sim2Real runbook for the run
+    itself and ``npa workbench workflow status <run-id>`` for live progress.
     """
 
     overrides: dict[str, object] = {
@@ -612,6 +627,7 @@ def sim2real_command(
         "k8s_namespace": k8s_namespace,
         "k8s_context": k8s_context,
         "k8s_kubeconfig": k8s_kubeconfig,
+        "k8s_isaac_cache_pvc": k8s_isaac_cache_pvc,
     }
     if s3_prefix is not None:
         overrides["s3_prefix"] = s3_prefix
@@ -658,11 +674,12 @@ def sim2real_command(
                 overrides["s3_bucket"] = credentials.s3_bucket.removeprefix("s3://")
             if not s3_endpoint.strip():
                 overrides["s3_endpoint"] = credentials.s3_endpoint
-        except (ConfigError, ProjectCredentialStoreError):
+        except (ConfigError, ProjectCredentialStoreError) as exc:
             project_storage_failure = CheckResult(
                 name="s3",
                 status=FAIL,
                 summary="Configured project storage could not be resolved.",
+                details=_project_storage_failure_details(exc),
                 remedy=(
                     "Save a complete isolated storage record for --project, then "
                     "rerun the S3 health check."
@@ -781,6 +798,7 @@ def _sim2real_preflight_config(
         "k8s_namespace",
         "k8s_context",
         "k8s_kubeconfig",
+        "k8s_isaac_cache_pvc",
     }
     if "s3" in selected:
         diagnostic_keys.add("s3_prefix")
@@ -803,4 +821,5 @@ def _sim2real_preflight_config(
         k8s_namespace=str(overrides["k8s_namespace"]),
         k8s_context=str(overrides["k8s_context"]),
         k8s_kubeconfig=str(overrides["k8s_kubeconfig"]),
+        k8s_isaac_cache_pvc=str(overrides["k8s_isaac_cache_pvc"]),
     )

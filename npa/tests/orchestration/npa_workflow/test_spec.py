@@ -31,6 +31,14 @@ SCHEMA = (
     / "schema"
     / "npa.workflow.v0.0.1.schema.json"
 )
+_SIM2REAL_TEST_IMAGE = "registry.example.invalid/sim2real-test@sha256:" + "a" * 64
+
+
+def _sim2real_spec_with_role_images():
+    spec = load_spec(SPECS.parent / "main" / "sim2real.yaml")
+    for key in spec.config["required_immutable_images"]:
+        spec.config[key] = _SIM2REAL_TEST_IMAGE
+    return spec
 
 
 def _write_state_boolean_spec(
@@ -267,7 +275,7 @@ def test_named_loop_token_supports_safe_transform() -> None:
 
 
 def test_sim2real_plan_expands_loops() -> None:
-    spec = load_spec(SPECS.parent / "main" / "sim2real.yaml")
+    spec = _sim2real_spec_with_role_images()
     plan = build_plan(spec, run_id="test-run", assume_decision="loop_back")
     states = [step.state for step in plan.steps]
     expected = int(spec.config["inner_iterations"]) * int(
@@ -286,7 +294,7 @@ def test_sim2real_plan_expands_loops() -> None:
 
 
 def test_sim2real_plan_promote_early_exit() -> None:
-    spec = load_spec(SPECS.parent / "main" / "sim2real.yaml")
+    spec = _sim2real_spec_with_role_images()
     plan = build_plan(spec, run_id="test-run", assume_decision="promote_checkpoint")
     states = [step.state for step in plan.steps]
     assert states.count("stage-07-rollouts") == int(spec.config["inner_iterations"])

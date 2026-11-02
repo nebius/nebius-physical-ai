@@ -90,6 +90,7 @@ module "k8s_training" {
   gpu_mig_manager_version         = var.gpu_mig_manager_version
   gpu_mig_with_reboot             = var.gpu_mig_with_reboot
   gpu_operator_rdma_enabled       = var.gpu_operator_rdma_enabled
+  gpu_operator_rtx_driver_profile = var.gpu_operator_rtx_driver_profile
 
   enable_filestore               = local.enable_filestore
   existing_filestore             = var.existing_filestore
@@ -100,7 +101,7 @@ module "k8s_training" {
     chart_repository                    = var.filesystem_csi_chart_repository
     chart_version                       = var.filesystem_csi_chart_version
     namespace                           = "kube-system"
-    make_default_storage_class          = true
+    make_default_storage_class          = var.filesystem_csi_make_default_storage_class
     previous_default_storage_class_name = var.previous_default_storage_class_name
   }
 
@@ -117,5 +118,5 @@ module "k8s_training" {
   # through a one-entry Fleet and the shared mk8s backend (docs/fleet-kuberay.md).
   enable_kuberay_cluster = false
   enable_kuberay_service = false
-  enable_opa_gatekeeper  = false
+  opa_gatekeeper_enable  = false
 }

@@ -26,6 +26,7 @@ import struct
 import subprocess
 import sys
 import tarfile
+import tempfile
 import threading
 import time
 import urllib.request
@@ -553,13 +554,50 @@ def download_verified(
 
 
 def safe_extract_zip(archive: Path, destination: Path) -> None:
+    """Extract a ZIP archive without allowing ambiguous or escaping members.
+
+    Args:
+        archive: Downloaded archive whose contents have already been verified.
+        destination: Directory into which validated members are written.
+    Returns:
+        None.
+    Raises:
+        RuntimeError: An archive member escapes or duplicates a destination path.
+    """
     root = destination.resolve()
     with zipfile.ZipFile(archive) as bundle:
+        members: list[tuple[zipfile.ZipInfo, Path]] = []
+        seen: set[Path] = set()
         for member in bundle.infolist():
             target = (destination / member.filename).resolve()
             if root not in target.parents and target != root:
                 raise RuntimeError(f"unsafe asset archive member: {member.filename}")
-        bundle.extractall(destination)
+            if target in seen:
+                raise RuntimeError(f"duplicate asset archive member: {member.filename}")
+            seen.add(target)
+            members.append((member, target))
+
+        for member, target in members:
+            if member.is_dir():
+                target.mkdir(parents=True, exist_ok=True)
+                continue
+            target.parent.mkdir(parents=True, exist_ok=True)
+            descriptor, temporary_name = tempfile.mkstemp(
+                dir=target.parent,
+                prefix=f".{target.name}.",
+                suffix=".part",
+            )
+            temporary = Path(temporary_name)
+            try:
+                with (
+                    os.fdopen(descriptor, "wb") as output,
+                    bundle.open(member) as source,
+                ):
+                    shutil.copyfileobj(source, output)
+                temporary.chmod(0o644)
+                temporary.replace(target)
+            finally:
+                temporary.unlink(missing_ok=True)
 
 
 def safe_extract_client(archive: Path, destination: Path) -> None:

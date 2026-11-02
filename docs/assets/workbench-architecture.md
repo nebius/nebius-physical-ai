@@ -2,7 +2,7 @@
 
 The [PNG overview](workbench-architecture.png) maps the solution ecosystem,
 container distribution, control layer, and Nebius services. The
-[README task flow](../../README.md#how-workbench-runs-a-task) describes how an
+[README task explanation](../../README.md#how-workbench-runs-a-task) describes how an
 individual workflow executes.
 
 ## Platform architecture and sources
@@ -17,7 +17,7 @@ individual workflow executes.
 | npa.workflow YAML | Workflow specifications declare states, tool references, and resource profiles for npa to plan and execute. | [Workflow guide](../workbench/npa-workflow-guide.md) |
 | Workflow engine + SkyPilot → Kubernetes | The NPA workflow engine plans execution waves and SkyPilot submits jobs; containerized GPU and CPU workloads execute on Nebius Kubernetes. Kubernetes pulls the selected images from GHCR. | [SkyPilot setup](../orchestration/skypilot-setup.md), [workflow runtime](../../npa/src/npa/orchestration/npa_workflow/runtime.py) |
 | Object Storage | S3 stores inputs, outputs, checkpoints, reports, and durable workflow state. Workload containers read and write artifacts; NPA also persists and reads run state. | [Workflow guide](../workbench/npa-workflow-guide.md), [run lifecycle](../run-lifecycle.md) |
-| Token Factory | A separate hosted inference API, callable directly through NPA or from workload containers. The detailed API connection appears in the README task flow. | [Token Factory integration](../workbench/token-factory.md) |
+| Token Factory | A separate hosted inference API, callable directly through NPA or from workload containers. | [Token Factory integration](../workbench/token-factory.md) |
 
 The integrations column is a selection of integrations represented in the public
 catalog, not an exhaustive inventory. Names identify integrations; the
@@ -36,9 +36,9 @@ image and workload; see the
 
 ## Task-flow reference
 
-The README Mermaid diagram covers requests and results, workflow YAML, the NPA
-engine's execution waves, SkyPilot jobs, S3 artifacts and durable state, and the
-separate Token Factory API. Its sources are the
+The README task explanation covers the NPA engine's execution waves, SkyPilot
+jobs, S3 artifacts and durable state, and the separate Token Factory API. Its
+sources are the
 [workflow guide](../workbench/npa-workflow-guide.md),
 [tool catalog](../workbench/npa-workflow-tool-catalog.md), and
 [run lifecycle](../run-lifecycle.md). Individual VM, container, and service
@@ -53,13 +53,12 @@ The npa control panel and job-submission path are the visual focus; GHCR is a
 quieter supporting component. Keep labels readable at the README's 960-pixel
 display width and retain only a few integration examples. The public catalog
 holds the inventory and the README holds the registry namespace. Preserve the
-accessible image description and the Mermaid `accTitle` / `accDescr`.
+accessible image description.
 
 The PNG was produced with the built-in image-generation tool. The reusable
 generation brief below records its content and layout. Update this reference,
-the PNG, and its accessible description when the architecture changes. Update
-the Mermaid source when execution relationships change. Check every label and
-connector against the sources above after generation.
+the PNG, and its accessible description when the architecture changes. Check
+every label and connector against the sources above after generation.
 
 <details>
 <summary>PNG generation brief</summary>

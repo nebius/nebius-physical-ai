@@ -131,7 +131,7 @@ COPY --chmod=0444 docker/workbench/open3d/notices/mcap-LICENSE.txt \
 # Upgrade the root-installed base tooling as well as the runtime user environment.
 # A user-only upgrade leaves vulnerable setuptools/wheel copies in /usr/local.
 RUN python -m pip install --no-cache-dir --upgrade \
-      pip==26.2.1 setuptools==84.0.0 wheel==0.48.0 \
+      pip==26.2.1 setuptools==84.2.1 wheel==0.48.0 \
     && python -m pip check
 
 USER ubuntu

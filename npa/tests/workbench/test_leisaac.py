@@ -12,6 +12,7 @@ import subprocess
 import sys
 import tarfile
 import threading
+import zipfile
 from types import SimpleNamespace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -68,6 +69,91 @@ def _client_archive(path: Path, client_js: bytes) -> None:
             member = tarfile.TarInfo(name)
             member.size = len(content)
             bundle.addfile(member, io.BytesIO(content))
+
+
+def test_safe_extract_zip_rejects_duplicate_members(tmp_path: Path) -> None:
+    server = _session_server_module()
+    archive = tmp_path / "assets.zip"
+    destination = tmp_path / "assets"
+    with pytest.warns(UserWarning, match="Duplicate name"):
+        with zipfile.ZipFile(archive, mode="w") as bundle:
+            bundle.writestr("scene/scene.usd", b"first")
+            bundle.writestr("scene/scene.usd", b"replacement")
+
+    with pytest.raises(RuntimeError, match="duplicate asset archive member"):
+        server.safe_extract_zip(archive, destination)
+
+    assert not destination.exists()
+
+
+def test_safe_extract_zip_extracts_nested_files(tmp_path: Path) -> None:
+    server = _session_server_module()
+    archive = tmp_path / "assets.zip"
+    destination = tmp_path / "assets"
+    with zipfile.ZipFile(archive, mode="w") as bundle:
+        bundle.writestr("scene/scene.usd", b"verified scene")
+
+    server.safe_extract_zip(archive, destination)
+
+    assert (destination / "scene/scene.usd").read_bytes() == b"verified scene"
+
+
+def test_safe_extract_zip_resumes_partial_extraction_without_removing_siblings(
+    tmp_path: Path,
+) -> None:
+    server = _session_server_module()
+    archive = tmp_path / "assets.zip"
+    destination = tmp_path / "assets"
+    partial = destination / "kitchen" / "mesh.bin"
+    sibling = destination / "table" / "scene.usd"
+    partial.parent.mkdir(parents=True)
+    sibling.parent.mkdir(parents=True)
+    partial.write_bytes(b"interrupted bytes")
+    sibling.write_bytes(b"preserve sibling asset")
+    with zipfile.ZipFile(archive, mode="w") as bundle:
+        bundle.writestr("kitchen/mesh.bin", b"complete mesh")
+        bundle.writestr("kitchen/scene.usd", b"complete scene")
+
+    server.safe_extract_zip(archive, destination)
+
+    assert partial.read_bytes() == b"complete mesh"
+    assert (destination / "kitchen/scene.usd").read_bytes() == b"complete scene"
+    assert sibling.read_bytes() == b"preserve sibling asset"
+    assert not list(destination.rglob("*.part"))
+
+
+def test_safe_extract_zip_rejects_existing_escaping_symlink(tmp_path: Path) -> None:
+    server = _session_server_module()
+    archive = tmp_path / "assets.zip"
+    destination = tmp_path / "assets"
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    destination.mkdir()
+    (destination / "scene").symlink_to(outside, target_is_directory=True)
+    with zipfile.ZipFile(archive, mode="w") as bundle:
+        bundle.writestr("scene/scene.usd", b"must not escape")
+
+    with pytest.raises(RuntimeError, match="unsafe asset archive member"):
+        server.safe_extract_zip(archive, destination)
+
+    assert not (outside / "scene.usd").exists()
+
+
+def test_safe_extract_zip_rejects_escaping_members_before_writes(
+    tmp_path: Path,
+) -> None:
+    server = _session_server_module()
+    archive = tmp_path / "assets.zip"
+    destination = tmp_path / "assets"
+    with zipfile.ZipFile(archive, mode="w") as bundle:
+        bundle.writestr("scene/scene.usd", b"safe member")
+        bundle.writestr("../escape.usd", b"escaping member")
+
+    with pytest.raises(RuntimeError, match="unsafe asset archive member"):
+        server.safe_extract_zip(archive, destination)
+
+    assert not destination.exists()
+    assert not (tmp_path / "escape.usd").exists()
 
 
 def test_runtime_datachannel_offer_is_private_authenticated_and_run_bound(

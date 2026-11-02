@@ -100,7 +100,7 @@ def delivery(native, tmp_path, monkeypatch):
 def installation(delivery, tmp_path, monkeypatch):
     native, lock, artifacts, cache, calls = delivery
     libraries = tmp_path / "libraries"
-    libraries.mkdir()
+    libraries.mkdir(mode=0o700)
     monkeypatch.setattr(native, "LIBRARY_DIRECTORY", libraries)
     monkeypatch.setattr(native, "INSTALL_STATE", tmp_path / "state")
     selected = native._read_input(lock, io.BytesIO(b"".join(artifacts)))

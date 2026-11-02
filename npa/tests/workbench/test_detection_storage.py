@@ -114,7 +114,7 @@ def test_training_checkpoint_and_metrics_use_each_successful_write(
             _assert_metadata(artifact, uri, payload)
             assert artifact.role == "checkpoint" and artifact.epoch == checkpoint_epoch
             assert (
-                torch.load(io.BytesIO(payload), weights_only=False)["epoch"]
+                torch.load(io.BytesIO(payload), weights_only=True)["epoch"]
                 == checkpoint_epoch
             )
         uri, payload = destination.writes[2 * epoch - 1]

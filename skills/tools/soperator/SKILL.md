@@ -36,8 +36,8 @@ apiVersion: npa.soperator/v0.0.1
 name: npasop                 # company_name; kube context = nebius-<name>-slurm
 region: us-central1          # or resolved from ~/.npa config
 control_plane:
-  system: { min_size: 3, max_size: 24 }         # preset omitted: derive XS..XL upstream
-  controller: {}                                # preset omitted: derive with same tier
+  system: { min_size: 3, max_size: 24 }         # preset omitted: NPA's retained XS..XL policy
+  controller: {}                                # preset omitted: NPA resolves the same policy
   login: { preset: 16vcpu-64gb }                 # login needs >= 16vcpu (sufficiency)
 workers:
   - name: cpu8
@@ -58,9 +58,8 @@ workers:
     docker_cache: true
 accounting: false
 # omitted REST preserves the legacy default (follows accounting); GPU checks still run directly
-slurm_operator_version: "4.1.6"
-k8s_version: "1.34"
-node_group_version: "72"
+slurm_operator_version: "4.1.13"
+k8s_version: "1.35"
 ```
 
 ## Procedure
@@ -102,16 +101,23 @@ node_group_version: "72"
    fall back to on-demand capacity.
 5. Deploy: `npa soperator deploy --spec cluster.yaml --terraform-dir <solutions-lib>/soperator`
    (omit `--terraform-dir` to clone the library). The default source is immutable
-   solutions-library commit `7046fb3c68314a940cdb47ff5c4fd23c01a6711e`, not
+   solutions-library commit `107e14e59f3f74ad8af5d0e580e5995e214d24d7`, not
    moving `main`; `--ref` accepts only a full commit SHA. Before any provider
-   mutation NPA verifies the checkout SHA, sizing thresholds, REST/accounting
-   inputs, template patch targets, example Slurm chart `4.1.6`, Kubernetes
-   `1.34`, and node bundle `72`. Requires terraform >= 1.12 (set
+   mutation NPA verifies the checkout SHA, REST/accounting inputs, template
+   patch targets, example Slurm chart `4.1.13`, and Kubernetes
+   `1.35`. Worker groups use `k8s_version`; the upstream
+   `node_group_version` input was removed and NPA rejects it rather than
+   silently ignoring an old value. Requires terraform >= 1.12 (set
    `NPA_TERRAFORM_BIN` if the system terraform is older).
-   Existing default checkouts, including legacy shallow clones on moving
-   `main`, are reconciled in place under a filesystem lock: NPA fetches the
-   exact missing commit and checks it out detached while preserving untracked
-   installations, Terraform state, and operator-owned files. Tracked changes
+   NPA records the chosen semantic tag and immutable commit in each installation
+   sidecar before Terraform mutation. Subsequent deploy, status, and destroy
+   retain that exact source; a conflicting `--ref` fails closed and requires a
+   reviewed migration or replacement. A legacy installation with Terraform
+   state but no recorded source requires its original immutable `--ref` for
+   exact-state recovery; NPA never silently switches it to a newer default.
+   Existing reviewed checkouts are reconciled under a filesystem lock: NPA
+   fetches the exact missing commit and checks it out detached while preserving
+   untracked installations, Terraform state, and operator-owned files. Tracked changes
    or conflicting untracked paths fail with recovery guidance; NPA never
    deletes or recreates an installation to repair source. Destroy uses the
    same resolver. `deploy --source-preflight-only` and
@@ -128,15 +134,17 @@ node_group_version: "72"
    audited local-only refresh resources may replace; subsequent plans contain
    zero replacements. The sidecar is checkpointed only after the guard passes
    and immediately before provider mutation.
-6. Control-plane sizing follows the pinned upstream worker-count tiers:
+6. Control-plane sizing retains NPA's conservative worker-count tiers after
+   the pinned upstream recipe removed its sizing module:
    XS `<10`, S `<100`, M `<500`, L `<2000`, XL `>=2000`. Omitted system,
-   controller, and accounting presets inherit the tier. Explicit presets remain
+   controller, and accounting presets resolve to concrete values from the tier.
+   Explicit presets remain
    compatible when large enough; NPA rejects component-specific undersizing
    before clone/apply (system minimums: 16/16/16/32/64 vCPU across XS..XL).
    The system nodeset defaults to autoscaling from `min_size` through 24.
 7. REST and accounting are explicit but the verified runtime has an important
    boundary: although the pinned Terraform module accepts the switches
-   independently, the exact Slurm operator `4.1.6` implementation skips REST
+   independently, the exact Slurm operator `4.1.13` implementation skips REST
    reconciliation without an accounting database. Omitted REST therefore keeps
    the compatible legacy default (it follows accounting), explicit
    `slurm_rest_enabled: false` is accepted, and explicit REST-on/accounting-off
@@ -184,11 +192,9 @@ node_group_version: "72"
 
 ## Compatibility and migration
 
-- **Slurm operator 4.1.0:** this former default is rejected because it is not in
-  the verified runtime contract. Replace it with `4.1.6` for the default
-  unconfined Enroot/Pyxis setup. `4.1.7` is accepted only with
-  `use_default_apparmor_profile: true` after separately validating that loaded
-  profile on the nodes. Do not re-enable `4.1.0`.
+- **Slurm operator version:** only `4.1.13` is in the verified runtime contract.
+  Replace `4.1.0` and earlier compatibility overrides with `4.1.13` for the
+  default unconfined Enroot/Pyxis setup; do not re-enable them.
 - **System autoscaling ceiling:** older NPA output fixed
   `control_plane.system.max_size` to `min_size`. Omission now renders the pinned
   upstream maximum of **24** (or `min_size` when it is greater than 24), which
@@ -196,18 +202,20 @@ node_group_version: "72"
   `control_plane.system.max_size` to retain a reviewed lower ceiling, provided
   it is at least `min_size`. Rendered tfvars, deploy results, and agent
   validation/dry-run output expose the effective numeric maximum.
-- **Immutable source migration:** default legacy clones are upgraded in place;
-  preserve a clean tracked checkout and keep installations/state untracked.
-  Offline migration works once the pinned object has been fetched. If it is
-  missing, restore access to the checkout's `origin` and retry.
+- **Immutable source migration:** a clean default checkout is reconciled to the
+  current immutable commit while preserving its untracked installation state.
+  The prior `7046fb3c68314a940cdb47ff5c4fd23c01a6711e` recipe remains accepted
+  only for exact-state destroy: invoke destroy with that original ref and
+  Terraform directory. A new deploy with that legacy ref fails before provider
+  mutation. Offline migration works once the required object has been fetched.
 
 ## Gotchas
 
 - **AppArmor**: the custom localhost profile is not loaded by the verified chart;
   the spec defaults `use_default_apparmor_profile: false` (unconfined) so
-  login/worker sshd start. Non-default chart versions are permitted only when the
-  userns override is not needed (`use_default_apparmor_profile: true`); the
-  explicit override allowlist is currently `4.1.6` and `4.1.7`.
+  login/worker sshd start. The verified runtime permits only chart `4.1.13`;
+  validate a new chart and its AppArmor behavior before adding it to the
+  runtime contract.
 - **Worker registration can race readiness.** Post-deploy
   repair sets the nodeset-service FQDN and resumes down nodes. If diagnosing by
   hand, the equivalent is `scontrol update NodeName=<w>

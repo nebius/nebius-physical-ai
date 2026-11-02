@@ -79,6 +79,21 @@ def write_json(uri: str, payload: dict[str, Any], *, directory: Path) -> str:
     return storage().upload_file(str(target), uri)
 
 
+def json_file_sha256(payload: dict[str, Any]) -> str:
+    """Return the SHA-256 of the exact JSON bytes published by ``write_json``.
+
+    Args:
+        payload: JSON object that will be published with ``write_json``.
+    Returns:
+        SHA-256 digest of the UTF-8 encoded, sorted, indented JSON file bytes.
+    Raises:
+        TypeError: If the payload cannot be serialized as JSON.
+    """
+
+    encoded = (json.dumps(payload, indent=2, sort_keys=True) + "\n").encode()
+    return hashlib.sha256(encoded).hexdigest()
+
+
 def declared_loop_uri(
     canonical_uri: str,
     outer_iteration: int,

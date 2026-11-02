@@ -20,6 +20,7 @@ else:
     from . import core as W, oci_graph as G, prepare as P
 
 SCHEMA = "npa.image.oci-verification.v1"
+DIRECT_MANIFEST_SCHEMA = "npa.image.direct-manifest-verification.v1"
 PLATFORM = {"os": "linux", "architecture": "amd64"}
 
 
@@ -36,6 +37,28 @@ def inspect(fd, length, expected_id):
         W.ScanError: Identity, graph closure, or platform verification fails.
     """
     return G.inspect(fd, length, expected_id, platform=PLATFORM)
+
+
+def inspect_direct_manifest(fd, length, expected_id):
+    """Inspect one unattested OCI or Docker runtime manifest.
+
+    Args:
+        fd: Open archive descriptor.
+        length: Exact archive size in bytes.
+        expected_id: Independently obtained runtime-manifest digest.
+    Returns:
+        The verified direct-manifest graph and ordered layer ranges.
+    Raises:
+        W.ScanError: The graph is not a closed direct runtime-manifest archive.
+    """
+    return G.inspect(
+        fd,
+        length,
+        expected_id,
+        platform=PLATFORM,
+        allow_docker_manifest=True,
+        direct_manifest=True,
+    )
 
 
 def bind(result, verification, expected_id):
@@ -73,9 +96,48 @@ def bind(result, verification, expected_id):
         )
 
 
+def bind_direct_manifest(result, verification, expected_id):
+    """Rebind a direct-manifest report to the currently opened archive.
+
+    Args:
+        result: Newly inspected direct-manifest graph.
+        verification: Retained direct-manifest structural report.
+        expected_id: Required runtime-manifest digest.
+    Returns:
+        None.
+    Raises:
+        W.ScanError: Identity, graph mode, layers, or population disagree.
+    """
+    W.require(
+        verification["schema_version"] == DIRECT_MANIFEST_SCHEMA
+        and verification["valid"] is True
+        and verification["expected_image_id"]
+        == expected_id
+        == verification["image_manifest_digest"]
+        and "image_index_digest" not in verification
+        and type(verification["attestation_manifest_count"]) is int
+        and verification["attestation_manifest_count"] == 0,
+        "oci_direct_manifest_identity",
+    )
+    for key in ("image_manifest_digest", "image_config_digest"):
+        W.require(result[key] == verification[key], "oci_direct_manifest_graph_binding")
+    W.require(
+        type(verification["layer_count"]) is int
+        and len(result["layers"]) == verification["layer_count"]
+        and [row["diff_id"] for row in result["layers"]]
+        == verification["verified_layer_diff_ids"],
+        "oci_direct_manifest_layer_binding",
+    )
+    for key in ("regular_files_read", "content_bytes_read"):
+        W.require(
+            type(verification[key]) is int and verification[key] >= 0,
+            "oci_direct_manifest_population",
+        )
+
+
 def _decoded_layer(fd, row):
     raw = W.Slice(fd, row["offset"], row["size"])
-    compressed = row["descriptor"]["mediaType"].endswith("+gzip")
+    compressed = row["descriptor"]["mediaType"].endswith(("+gzip", ".gzip"))
     magic = os.pread(fd, min(2, row["size"]), row["offset"])
     W.require((magic == b"\x1f\x8b") == compressed, "oci_layer_codec_binding")
     if compressed:
@@ -153,12 +215,46 @@ def verify(archive_binding, expected_id):
     return {"schema_version": SCHEMA, **verify_graph(archive_binding, expected_id)}
 
 
+def verify_direct_manifest(archive_binding, expected_id):
+    """Produce generic structural evidence for an unattested runtime manifest.
+
+    Args:
+        archive_binding: Owner-only archive path and SHA-256 binding.
+        expected_id: Independently obtained runtime-manifest digest.
+    Returns:
+        Direct-manifest structural evidence without product acceptance.
+    Raises:
+        W.ScanError: Archive, graph, layer, or population verification fails.
+    """
+    with W.bound_open(archive_binding) as (_path, fd, info):
+        result = inspect_direct_manifest(fd, info.st_size, expected_id)
+        counts = [_layer_population(fd, row) for row in result["layers"]]
+        W.require(
+            W.descriptor_digest(fd) == archive_binding["sha256"],
+            "oci_direct_manifest_archive_changed",
+        )
+        return {
+            "schema_version": DIRECT_MANIFEST_SCHEMA,
+            "valid": True,
+            "expected_image_id": expected_id,
+            "archive_sha256": archive_binding["sha256"],
+            "image_manifest_digest": result["image_manifest_digest"],
+            "image_config_digest": result["image_config_digest"],
+            "attestation_manifest_count": 0,
+            "verified_layer_diff_ids": [row["diff_id"] for row in result["layers"]],
+            "layer_count": len(result["layers"]),
+            "regular_files_read": sum(row[0] for row in counts),
+            "content_bytes_read": sum(row[1] for row in counts),
+        }
+
+
 def _arguments(argv):
     parser = W.SanitizedArgumentParser(description=__doc__)
     parser.add_argument("--analysis-root", type=Path, required=True)
     parser.add_argument("--trusted-root", type=Path, required=True)
     parser.add_argument("--archive", type=Path, required=True)
     parser.add_argument("--expected-image-id", required=True)
+    parser.add_argument("--direct-manifest", action="store_true")
     parser.add_argument("--output-dir", type=Path, required=True)
     return parser.parse_args(argv)
 
@@ -179,7 +275,8 @@ def main(argv=None):
         with W.cancellation_scope():
             args = _arguments(argv)
             with W.authorized_roots(args.analysis_root, args.trusted_root):
-                result = verify(P.binding(args.archive), args.expected_image_id)
+                verifier = verify_direct_manifest if args.direct_manifest else verify
+                result = verifier(P.binding(args.archive), args.expected_image_id)
                 directory, held = W.create_output(args.output_dir)
                 W.write_private_json(directory, "verification.json", result)
         print("OCI graph verification completed")

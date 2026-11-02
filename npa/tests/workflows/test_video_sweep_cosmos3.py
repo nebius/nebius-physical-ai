@@ -70,6 +70,7 @@ def test_native_workflow_routes_to_cosmos3_image_and_literal_backend():
         Path(__file__).resolve().parents[3]
         / "workflows/testing/video-variant-sweep-cosmos3.yaml"
     )
+    assert spec.config["reasoner_model"] == "MiniMaxAI/MiniMax-M3"
     for name in ("worker-0", "worker-1"):
         ref = spec.states[name].tool_ref
         assert tool_image_key(ref) == "cosmos3"

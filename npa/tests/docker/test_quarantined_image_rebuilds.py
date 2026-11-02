@@ -85,7 +85,7 @@ def test_thin_child_sdk_verification_preserves_image_independent_config(monkeypa
         verifier.verify(ROOT / "unrelated-source")
 
 
-@pytest.mark.parametrize("name,floor", [("GitPython", "3.1.62"), ("Werkzeug", "3.1.9")])
+@pytest.mark.parametrize("name,floor", [("GitPython", "3.2.1"), ("Werkzeug", "3.1.9")])
 def test_isaac_2_runtime_dependency_fixes_preserve_the_runtime_family(name, floor):
     requirements = (WORKBENCH / "common/isaac-oss-deps.txt").read_text()
     pin = re.search(rf"^{name}==(\S+)$", requirements, re.MULTILINE)

@@ -5,6 +5,7 @@ FROM nvidia/cuda:${CUDA_BASE_TAG}@sha256:6ff9753ccda37b8f8d711831310d661afd31025
 
 ARG CUDA_BASE_TAG=13.0.1-cudnn-devel-ubuntu22.04
 ARG BUILD_TS=unknown
+ARG NPA_SOURCE_SHA
 ARG TORCH_VERSION=2.13.0
 ARG TORCHVISION_VERSION=0.28.0
 # TorchAudio 2.11 is forward-compatible with later Torch releases.
@@ -36,6 +37,7 @@ LABEL npa.image="cuda13-blackwell" \
       npa.quack_kernels.version="${QUACK_KERNELS_VERSION}" \
       npa.cuda_arch_list="${TORCH_CUDA_ARCH_LIST}" \
       npa.build_ts="${BUILD_TS}" \
+      org.opencontainers.image.revision="${NPA_SOURCE_SHA}" \
       npa.build_info="cuda=${CUDA_BASE_TAG};torch=${TORCH_VERSION}+cu130;torchvision=${TORCHVISION_VERSION}+cu130;torchaudio=${TORCHAUDIO_VERSION};flash_attention_commit=${FLASH_ATTN_COMMIT};cutlass_dsl=${CUTLASS_DSL_VERSION};quack_kernels=${QUACK_KERNELS_VERSION};torch_cuda_arch_list=${TORCH_CUDA_ARCH_LIST}"
 
 ENV DEBIAN_FRONTEND=noninteractive \
@@ -55,6 +57,8 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PATH=/opt/npa/venv/bin:/usr/local/cuda/bin:$PATH
 
 SHELL ["/bin/bash", "-lc"]
+
+RUN [[ "${NPA_SOURCE_SHA}" =~ ^[0-9a-f]{40}$ ]]
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
       ca-certificates \
@@ -112,7 +116,7 @@ RUN python -m pip install \
       numpy \
       opencv-python-headless \
       pandas \
-      pillow \
+      "pillow>=13.0.0,<14.0" \
       pyarrow \
       safetensors \
       scipy \
@@ -177,9 +181,11 @@ else:
 PY
 
 # Baked in so every derived image can validate itself on whatever GPU it lands
-# on, without the caller having to inject a script.
-COPY scripts/check_torch_gpu_arch.py /npa/check_torch_gpu_arch.py
-COPY scripts/gpu_capability_smoke.py /npa/gpu_capability_smoke.py
+# on, without the caller having to inject a script.  The image's runtime user
+# is ``ubuntu``: make these root-owned validation helpers executable and
+# readable there even if a developer's source checkout has restrictive modes.
+COPY --chmod=0555 scripts/check_torch_gpu_arch.py /npa/check_torch_gpu_arch.py
+COPY --chmod=0555 scripts/gpu_capability_smoke.py /npa/gpu_capability_smoke.py
 
 ARG REQUIRE_TORCH_ARCHS
 RUN python -m pip check \
@@ -203,5 +209,11 @@ USER root
 
 RUN dpkg --purge --force-depends linux-libc-dev \
     && rm -rf /var/lib/apt/lists/*
+
+# Derived workbench recipes deliberately install their capability closure as
+# the unprivileged runtime user.  Hand the completed shared Python 3.11 venv
+# to that user before the base switches permanently, or their first pip write
+# fails on root-owned inherited dist-info metadata.
+RUN chown -R ubuntu:ubuntu /opt/npa/venv
 
 USER ubuntu

@@ -57,6 +57,26 @@ npa cleanup --full --yes --project "<alias>"
 npa configure --forget-project "<alias>"
 ```
 
+### Cancel one exact managed job while preserving a shared run cluster
+
+The normal workflow cancellation command drains every active job recorded for
+the run and then tears down the run cluster. When the durable run record and a
+fresh status check prove that one explicit managed job is the run's sole active
+job, use `--preserve-cluster` to cancel only that job without tearing down the
+cluster or the shared SkyPilot controller:
+
+```bash
+npa workbench workflow cancel "<run-id>" --project "<alias>" \
+  --job-id "<exact-managed-job-id>" --preserve-cluster --json
+```
+
+This mode requires `--job-id`, rejects `--cluster`, rechecks the exact identity
+immediately before cancellation, and fails closed if any other active job is
+recorded for the run. It records whether the cluster was preserved in the JSON
+receipt. Confirm the job is terminal with `npa workbench workflow status` and
+that any existing runtime driver has exited before resuming through the
+canonical `npa workbench workflow submit --runtime --resume-run` path.
+
 `storage bucket delete` retires the deleted bucket's saved credentials from
 **both** the legacy top-level `storage` section and the exact project's scoped
 credential-store record in the same atomic rewrite, so a later `npa configure

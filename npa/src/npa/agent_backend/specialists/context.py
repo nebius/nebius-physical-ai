@@ -75,6 +75,28 @@ def _observation(name, result, files, operations, observation_operations):
     return result
 
 
+def _request_sizes(message):
+    return (
+        len(json.dumps(message, ensure_ascii=True).encode("ascii")),
+        len(
+            json.dumps(message, ensure_ascii=False, separators=(",", ":")).encode(
+                "utf-8"
+            )
+        ),
+    )
+
+
+def _smaller_observation(message, result):
+    candidate = {**message, "content": json.dumps(result)}
+    # Preserve both the context-size proxy and HTTPX's UTF-8 request size.
+    if all(
+        after < before
+        for before, after in zip(_request_sizes(message), _request_sizes(candidate))
+    ):
+        return candidate
+    return message
+
+
 def model_messages(messages, *, observation_operations=()):
     """Build a request view with stale source and repeated successful logs omitted.
 
@@ -85,6 +107,8 @@ def model_messages(messages, *, observation_operations=()):
     Returns:
         New list retaining every message and tool-call identifier. Failed observations,
         latest source ranges, latest operation logs and non-tool messages stay intact.
+        An omission is used only when its metadata makes the message smaller in both
+        ASCII JSON and the compact UTF-8 encoding used for HTTP requests.
     Raises:
         None for valid persisted message lists.
     """
@@ -98,5 +122,5 @@ def model_messages(messages, *, observation_operations=()):
         name = calls.get(message.get("tool_call_id"))
         compact = _observation(name, result, files, operations, observation_operations)
         if compact != result:
-            rendered[index] = {**message, "content": json.dumps(compact)}
+            rendered[index] = _smaller_observation(message, compact)
     return rendered

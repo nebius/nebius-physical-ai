@@ -31,11 +31,17 @@ def load(monkeypatch, name, path):
     return module
 
 
+def tighten_fixture_tree(root):
+    """Make the synthetic trusted source satisfy scanner ownership checks."""
+    for path in (root, *root.rglob("*")):
+        path.chmod(0o700 if path.is_dir() else 0o600)
+
+
 @pytest.fixture
 def prepared(tmp_path, monkeypatch):
     tmp_path.chmod(0o700)
     trusted = tmp_path / "synthetic-trusted-source"
-    trusted.mkdir()
+    trusted.mkdir(mode=0o700)
     analysis = tmp_path / "private-analysis"
     analysis.mkdir(mode=0o700)
     original = ROOT / "npa/scripts/image_byte_scan"
@@ -60,6 +66,7 @@ def prepared(tmp_path, monkeypatch):
         target = trusted / name
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(ROOT / name, target)
+    tighten_fixture_tree(trusted)
     W = load(monkeypatch, "image_byte_scan.core", destination / "core.py")
     A = load(monkeypatch, "image_byte_scan.adjudicate", destination / "adjudicate.py")
     P = load(
@@ -100,6 +107,7 @@ def prepared(tmp_path, monkeypatch):
         proof.write_text(
             "Synthetic independently approved noncredential fixture evidence.\n"
         )
+        proof.chmod(0o600)
         proof_binding = {
             "path": str(proof.relative_to(trusted)),
             "sha256": hashlib.sha256(proof.read_bytes()).hexdigest(),
@@ -125,6 +133,7 @@ def prepared(tmp_path, monkeypatch):
         }
         policy = destination / "synthetic-policy.json"
         policy.write_text(json.dumps(catalog))
+        policy.chmod(0o600)
         inventory = Path(auth["literal_inventory"]["path"])
         inventory.write_text(json.dumps({"literals": ["absent confidential fixture"]}))
         auth["literal_inventory"]["sha256"] = hashlib.sha256(

@@ -15,7 +15,7 @@ RUN python /opt/secure-pip/build.py \
 
 # Repair the interpreter before copying it. Neither the Debian donor layers nor
 # its original global/ensurepip installer bytes belong in the final artifact.
-FROM python:3.10-slim-trixie@sha256:6ff506466f8b1e981719b468cc0023b8ef000b983cdec0eafe119d01f379e31d AS python-runtime
+FROM python:3.11.16-slim-bookworm@sha256:528257d48c1da0dcecc2e725d1ae34498d60c965f1241e39cd6a85a8859bdf84 AS python-runtime
 COPY --chmod=0444 docker/workbench/common/refresh_ensurepip.py /opt/npa/wan2-2/refresh_ensurepip.py
 COPY --chmod=0444 docker/workbench/common/secure_pip/inputs.json /opt/npa/wan2-2/installer-inputs.json
 RUN --mount=from=installer-build,source=/opt/repaired-installer,target=/mnt/repaired-installer \
@@ -34,8 +34,8 @@ RUN --mount=from=installer-build,source=/opt/repaired-installer,target=/mnt/repa
     && cp /mnt/repaired-installer/build-receipt.json /opt/npa/wan2-2/installer-build-receipt.json \
     && python -m pip check \
     && test "$(python -m ensurepip --version)" = 'pip 26.2.1+npa.1' \
-    && test -s /usr/local/lib/python3.10/LICENSE.txt \
-    && find /usr/local/lib/python3.10/site-packages -type d -name __pycache__ -prune -exec rm -rf {} +
+    && test -s /usr/local/lib/python3.11/LICENSE.txt \
+    && find /usr/local/lib/python3.11/site-packages -type d -name __pycache__ -prune -exec rm -rf {} +
 
 FROM ubuntu:26.04@sha256:42527649dbc4f9197a6073f426f488cbff0e9cc9f2afce32d91c383e4875634a AS runtime-os
 COPY --from=python-runtime /usr/local /usr/local
@@ -63,7 +63,7 @@ RUN printf '#!/bin/sh\nexit 101\n' > /usr/sbin/policy-rc.d \
     && dpkg --compare-versions "$(dpkg-query -W -f='${Version}' libssl3t64)" ge '3.5.5-1ubuntu3.7' \
     && rm -rf /var/lib/apt/lists/* /var/cache/apt/* \
     && ldconfig \
-    && dependencies="$(ldd /usr/local/bin/python3.10 /usr/local/lib/python3.10/lib-dynload/*.so)" \
+    && dependencies="$(ldd /usr/local/bin/python3.11 /usr/local/lib/python3.11/lib-dynload/*.so)" \
     && ! grep -q 'not found' <<< "$dependencies" \
     && python -c 'import _bz2, _ctypes, _dbm, _gdbm, _lzma, _ssl, _sqlite3, _tkinter, readline, zlib; assert _ssl.OPENSSL_VERSION_NUMBER >= 0x30500050' \
     && (id -u "${NPA_RUNTIME_USER}" >/dev/null 2>&1 \
@@ -96,7 +96,7 @@ LABEL npa.tool="wan2-2" \
 ENV DEBIAN_FRONTEND=noninteractive \
     PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
     LANG=C.UTF-8 \
-    PYTHON_VERSION=3.10.22 \
+    PYTHON_VERSION=3.11.16 \
     NPA_WAN_BASE_PYTHON=/opt/wan-base/bin/python \
     NPA_WAN_RUNTIME_REQUIREMENTS=/opt/npa/wan2-2/runtime-requirements.txt \
     NPA_WAN_RUNTIME_CACHE=/workspace/.cache/npa/wan2-2/runtime \
@@ -177,7 +177,7 @@ RUN python -m venv /opt/wan-base \
          -o -iname 'weights*.pth' \) \
       -print -quit)" \
     && /opt/wan-base/bin/python /opt/npa/wan2-2/dependency_closure.py validate \
-      --baked-site /opt/wan-base/lib/python3.10/site-packages \
+      --baked-site /opt/wan-base/lib/python3.11/site-packages \
       --baked-inventory /opt/byof/npa_baked_python_inventory.txt \
       --runtime-requirements /opt/npa/wan2-2/runtime-requirements.txt \
       --report /opt/byof/npa_dependency_closure_report.json \
@@ -185,7 +185,7 @@ RUN python -m venv /opt/wan-base \
       /opt/byof /opt/npa/wan2-2/dependency_closure.py \
     && test -n "$(find /opt/byof/wan -type f -path '*/__pycache__/*.pyc' -print -quit)" \
     && find /opt/wan-base -type d -name __pycache__ -prune -exec rm -rf {} + \
-    && find /usr/local/lib/python3.10/site-packages -type d -name __pycache__ -prune -exec rm -rf {} + \
+    && find /usr/local/lib/python3.11/site-packages -type d -name __pycache__ -prune -exec rm -rf {} + \
     && test -z "$(find /opt/wan-base -type f -name '*.pyc' -print -quit)" \
     && rm -rf /root/.cache /tmp/pip-* \
     && ln -s /workspace/.cache/npa/wan2-2/runtime/current/venv /opt/byof/.venv

@@ -12,6 +12,21 @@ and follow [installation](../docs/install.md) and
 The [command reference](../docs/cli/workbench.md) lists the installed tools;
 `npa workbench <tool> --help` exposes each tool's actual commands.
 
+Sim2Real's `rerun regen` and `rerun serve --local-record` operate on existing
+artifacts without resolving execution image defaults. Regeneration therefore
+remains available after an old runtime is quarantined. Executing new workloads,
+including `rerun heldout-only`, still requires qualified component images.
+For `rerun regen` and `rerun heldout-only`, explicit `--s3-bucket` and
+`--s3-endpoint` override their corresponding project coordinates. With
+`--project`, a complete isolated project record supplies the remaining bucket,
+endpoint, and client credentials; an unknown or incomplete record refuses rather
+than falling back to host credentials or environment settings. Without
+`--project`, the existing Sim2Real environment settings apply. For `workbench
+health sim2real`, `--project` applies when the selected checks include `s3`: it
+supplies the reachability-probe target and isolated credentials unless the
+corresponding S3 flag is explicit. It has no effect on selections without `s3`.
+See the [Sim2Real guide](../docs/workbench/guides/sim2real-workflow.md).
+
 Existing-project setup supports project-admin credentials. Agent setup,
 `provision-if-absent`, and direct `cluster up` share the same quota scope rules:
 only a tenant-level IAM denial permits fallback to the exact project's complete
@@ -315,8 +330,18 @@ your Python environment; remote workloads use their container dependencies.
 See [installation](../docs/install.md) for supported platforms, virtual
 environments, and the separate SkyPilot environment.
 
+Cosmos checkpoint fetch supports the current Hugging Face `hf` CLI and older
+`huggingface-cli` environments, including installations whose scripts are absent
+from `PATH`. Self-hosted Cosmos Reason supports the official Reason1 7B and
+Reason2 8B/2B models at reviewed immutable revisions. Custom remote repositories
+still require `NPA_COSMOS_REASON_MODEL_REVISION` set to a full 40-character commit
+SHA; model and processor loading keeps remote code execution disabled.
+
 The cluster GPU smoke manages an owned SkyPilot API session through workload
 cleanup; see [SkyPilot setup](../docs/orchestration/skypilot-setup.md#verify).
+GPU submission also checks reviewed SkyPilot bridge labels after node replacement;
+native Ready/allocatable GPU capacity alone does not establish placement. See the
+same setup guide for the exact-context repair and supported workflow resume.
 The [PAIDF starter guide](../workflows/guides/paidf-cosmos3.md#audit-a-completed-default-starter-run)
 also provides a read-only live audit using the selected run URI, project, and
 saved pre-submission UTC timestamp. Its test settings are scoped to the audit
@@ -460,6 +485,13 @@ See [runtime modes](../docs/workbench/runtime-modes.md) for direct deploy,
 BYOVM, and serverless examples. A mode supported by one tool does not imply
 support in every other tool.
 
+Genesis teacher training and LeRobot training or profiling reject quarantined
+public images with an actionable `Error:` and exit code 1 before contacting the
+serverless job provider. Pass `--image <reviewed-image@sha256:digest>` to select
+a separately validated replacement. This does not change the public image
+acceptance policy. Isaac Lab can reconnect to an existing job without selecting
+a new image; creating a new job still enforces quarantine.
+
 <a id="config"></a>
 
 ## Configuration
@@ -538,6 +570,26 @@ For artifact conversion and sharing, see the
 [CLI / SDK walkthrough](../docs/workbench/cli-sdk-yaml-walkthrough.md),
 [Foxglove export](../docs/workbench/foxglove-export.md), and
 [Rerun sharing](../docs/workbench/rerun-sharing.md).
+
+The [Sim2Real runbook](../docs/workbench/guides/sim2real-workflow.md) follows
+the canonical 14-stage graph. Fresh stock-Franka training defaults
+`NPA_BYO_ISAAC_BOOTSTRAP=auto` to `franka-cartesian-gru-distillation-v2`: native
+Cartesian actions, normalized measured observations, and a recurrent actor
+shared by training and inference. At least three retained demonstration fits
+precede a strict actor-only placement check across the complete training split.
+If the initial mixed collection misses its placement guard, another guarded
+teacher-only collection refits the actor before retrying the mixture. The audit
+retains each failed collection and recovery fit; the placement threshold stays fixed.
+Corrective fitting repeats when that check fails, before the complete PPO pass
+begins. `none` disables the training bootstrap; an explicit profile rejects
+ineligible tasks and resumed checkpoints. Native checkpoint
+metadata binds the action scale, observations, model, and reset-clock contract.
+Successful demonstration training freezes its empirical observation statistics
+before PPO. Every checkpoint records that bound and restores it on resume.
+Stock demonstration and resumed transport/convergence passes default to fixed
+PPO updates at `0.00001`, zero entropy, and initial/convergence action noise
+`0.005`; existing learning-rate, entropy, and noise overrides still apply.
+Validation and Gold execute the learned actor alone.
 
 NPA pins its recording SDK and default hosted/share viewers to Rerun 0.38.1.
 Recording inspection uses the supported streaming reader and accepts existing
@@ -751,7 +803,7 @@ The CPU wheel exercises real checkpoint loading without a GPU. See
 gate; some optional checks also use Node, tmux, or Docker.
 
 Pull requests run the full Python 3.12 suite,
-dedicated Cypress job, focused Python 3.10/3.14 checks, and security gates.
+dedicated Cypress job, focused Python 3.11/3.14 checks, and security gates.
 Six duration-balanced coverage shards run with xdist and cached constrained
 installs, then enforce the merged coverage floor. Full suites include smoke
 and CLI install checks without a duplicate subsystem job. The queue verifies
@@ -775,7 +827,7 @@ The focused compatibility check runs before CPU tensor dependencies are
 installed, so async cancellation and isolated SkyPilot fixture regressions
 surface before merge. The existing browser compatibility job also checks
 portable checksums and exception notes, SQLite failure fixtures, and VLM path
-errors on Python 3.10 and 3.14. These focused regressions keep the full
+errors on Python 3.11 and 3.14. These focused regressions keep the full
 compatibility matrix in scheduled audits without adding queue shards.
 Run the stdlib compatibility guard locally with:
 
@@ -804,7 +856,7 @@ Cypress 16's deprecated Electron browser cannot provide that context in CI.
 
 CI uses cached uv installs constrained by `npa/ci/requirements.txt`. After changing
 CI dependency inputs, run `npa/.venv/bin/python npa/scripts/ci_requirements.py
---update` with uv 0.12.5 and commit the refreshed pins. Add `--upgrade` only for an
+--update` with uv 0.13.4 and commit the refreshed pins. Add `--upgrade` only for an
 intentional version refresh. The [contributor CI guide](../CONTRIBUTING.md#ci-dependency-setup-and-timing-reports)
 also explains the automatic `ci-timing-report` job, whose summary and
 JSON artifact separate runner waiting, setup, and execution for completed runs.
@@ -821,7 +873,8 @@ Full-suite PRs retain smoke coverage in their shards; the early precheck runs
 guardrails once before those shards, and unsuccessful or cancelled shards no longer queue a coverage job.
 
 Application and CI dependency scans reject known vulnerabilities even when the
-same pin is already on `main`. Keep the AnyIO security floor at 4.14.2 or newer;
+same pin is already on `main`. Keep the AnyIO security floor at 4.14.2 and the
+certifi trust-store floor at 2026.10.19 or newer;
 update `npa/requirements-lock.txt` and regenerate CI pins when changing package
 requirements. `.github/dependabot.yml` checks Python, browser-test npm, and
 GitHub Actions dependencies daily and groups version updates into one
@@ -1030,7 +1083,7 @@ configuration, offline narration, artifact search and privacy boundaries.
 ### MJLab
 
 Install optional simulator packages with `pip install -e '.[mjlab]'` on Python
-3.10–3.13, or use the dedicated MJLab GPU container recipe. `npa workbench mjlab`
+3.11–3.13, or use the dedicated MJLab GPU container recipe. `npa workbench mjlab`
 provides `train`, `eval`, `export`, `list`, `status`, `system-info`, `deploy`, and
 `workflow`; use `--help` for their options. Training preserves upstream defaults
 unless overridden. Public handoffs are S3 URIs; `--dry-run` plans without metrics

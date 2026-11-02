@@ -89,7 +89,12 @@ def _docker_hub_mirror_reference(image: str) -> str:
 
 
 def preparation_command(
-    entry: dict[str, object], builder: str, archive: Path, context: Path
+    entry: dict[str, object],
+    builder: str,
+    archive: Path,
+    context: Path,
+    *,
+    base_image: str | None = None,
 ) -> list[str] | None:
     """Export a prepared base without loading it into the shared image store.
 
@@ -98,6 +103,7 @@ def preparation_command(
         builder: Scan-owned isolated Buildx builder.
         archive: Private Docker archive output path.
         context: Empty private build context.
+        base_image: Optional immutable reference for the prepared scan target.
     Returns:
         Docker command, or None for an unmodified digest.
     Raises:
@@ -116,7 +122,10 @@ def preparation_command(
         "--no-cache",
     ]
     for name, value in (
-        ("BASE_IMAGE", _docker_hub_mirror_reference(str(entry["image"]))),
+        (
+            "BASE_IMAGE",
+            base_image or _docker_hub_mirror_reference(str(entry["image"])),
+        ),
         ("PURGE_LINUX_LIBC_DEV", str(entry["purge_linux_libc_dev"]).lower()),
         ("UPGRADE_OS", str(entry["upgrade_os"]).lower()),
     ):
@@ -148,6 +157,39 @@ def _create_builder(builder: str, root: Path) -> dict[str, str]:
     return environment
 
 
+def _export_prepared_target(
+    entry: dict[str, object],
+    builder: str,
+    archive: Path,
+    context: Path,
+    base_image: str,
+    environment: dict[str, str],
+) -> Path:
+    """Export one immutable patched target through an owned builder.
+
+    Args:
+        entry: Validated base-image inventory entry.
+        builder: Scan-owned isolated Buildx builder.
+        archive: Private Docker archive output path.
+        context: Empty private build context.
+        base_image: Immutable registry reference to export.
+        environment: Builder-private command environment.
+    Returns:
+        The exported private Docker archive.
+    Raises:
+        subprocess.CalledProcessError: The Buildx export fails.
+    """
+
+    command = preparation_command(
+        entry, builder, archive, context, base_image=base_image
+    )
+    assert command is not None
+    subprocess.run(
+        command, input=_PATCH_DOCKERFILE, text=True, env=environment, check=True
+    )
+    return archive
+
+
 def prepare_target(entry: dict[str, object], root: Path) -> str | Path:
     """Free an entry's isolated builder before scanning its archive.
 
@@ -161,21 +203,32 @@ def prepare_target(entry: dict[str, object], root: Path) -> str | Path:
         _BuilderCleanupError: Owned builder cleanup fails.
     """
 
-    builder = f"npa-base-scan-{uuid4().hex}"
+    image = str(entry["image"])
+    mirror_image = _docker_hub_mirror_reference(image)
     archive = root / "image.tar"
     context = root / "context"
-    command = preparation_command(entry, builder, archive, context)
-    if command is None:
-        return _docker_hub_mirror_reference(str(entry["image"]))
+    if not entry["purge_linux_libc_dev"] and not entry["upgrade_os"]:
+        return mirror_image
     context.mkdir(mode=0o700)
+    builder = f"npa-base-scan-{uuid4().hex}"
     environment = _create_builder(builder, root)
     try:
-        subprocess.run(
-            command, input=_PATCH_DOCKERFILE, text=True, env=environment, check=True
-        )
+        try:
+            return _export_prepared_target(
+                entry, builder, archive, context, mirror_image, environment
+            )
+        except subprocess.CalledProcessError:
+            if mirror_image == image:
+                raise
+            fallback_archive = root / "canonical-image.tar"
+            print(
+                f"{entry['name']}: mirror preparation failed; retrying canonical digest"
+            )
+            return _export_prepared_target(
+                entry, builder, fallback_archive, context, image, environment
+            )
     finally:
         _remove_builder(builder, environment, root)
-    return archive
 
 
 @contextmanager

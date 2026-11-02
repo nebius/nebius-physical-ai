@@ -63,6 +63,27 @@ def resolve_golden_image(
 
     spec = container(tool)
     digest = tag if tag and _DIGEST.fullmatch(tag) else None
+    if digest:
+        # An exact digest is a qualification input, not a release-tag lookup.
+        # Resolve only the repository through the normal policy path (including
+        # redistribution checks), then replace its synthetic development tag with
+        # the independently supplied immutable digest.  In particular, a
+        # quarantined public release must not make an already-built
+        # dev-<source-sha> candidate impossible to qualify by exact bytes.
+        candidate_tag = "dev-" + "0" * 40
+        if spec.internal:
+            resolved_registry = (registry or execution_container_registry()).rstrip("/")
+            image = f"{resolved_registry}/{spec.image}:{candidate_tag}"
+        elif spec.variant_of:
+            image = container_image_for_tool(
+                spec.variant_of,
+                registry=registry,
+                tag=candidate_tag,
+                image_variant=spec.image_variant,
+            )
+        else:
+            image = container_image_for_tool(tool, registry=registry, tag=candidate_tag)
+        return _pin_digest(image, digest)
     selected_tag = None if digest else tag
     if spec.internal:
         resolved_registry = (registry or execution_container_registry()).rstrip("/")
@@ -148,6 +169,18 @@ def submit_golden_eval(
         raise RuntimeError(UNLIMITED_SERVERLESS_ERROR)
     command = spec.golden_eval.command
     gpu = gpu_type or spec.golden_eval.serverless_gpu or DEFAULT_SERVERLESS_GPU
+
+    if expected_image_digest is not None:
+        if not _DIGEST.fullmatch(expected_image_digest):
+            raise RuntimeError(
+                "--expected-image-digest must be an exact sha256:<64 lowercase hex>"
+            )
+        if tag is None or not _DIGEST.fullmatch(tag) or tag != expected_image_digest:
+            raise RuntimeError(
+                "strict golden qualification requires a frozen --tag "
+                "sha256:<exact digest> identical to --expected-image-digest; "
+                "the tag or expected digest differs or is missing"
+            )
 
     image = resolve_golden_image(tool, registry=registry, tag=tag)
     if tool == "curobo":

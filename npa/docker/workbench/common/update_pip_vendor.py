@@ -12,7 +12,7 @@ import sys
 import pip
 from pip._internal.metadata import select_backend
 
-FIXED_VERSIONS = {"msgpack": "1.2.1", "urllib3": "2.8.0"}
+FIXED_VERSIONS = {"msgpack": "1.2.3", "urllib3": "2.8.0"}
 
 
 def replace_vendor_package(vendor: Path, name: str, fixed_version: str) -> None:
@@ -53,8 +53,9 @@ def update_inventory(vendor: Path) -> None:
         i = matches[0]
         indent = lines[i][: len(lines[i]) - len(lines[i].lstrip())]
         lines[i] = f"{indent}{name}=={fixed_version}"
-    if sum(line.startswith("setuptools==") for line in lines) != 1:
-        raise RuntimeError("pip must declare exactly one legacy setuptools subset")
+    setuptools_lines = sum(line.startswith("setuptools==") for line in lines)
+    if setuptools_lines > 1:
+        raise RuntimeError("pip must declare at most one legacy setuptools subset")
     manifest.write_text(
         "\n".join(line for line in lines if not line.startswith("setuptools==")) + "\n"
     )
@@ -63,8 +64,12 @@ def update_inventory(vendor: Path) -> None:
     replacements: dict[str, str | None] = {}
     for name in (*FIXED_VERSIONS, "setuptools"):
         components = [item for item in bom["components"] if item["name"] == name]
-        if len(components) != 1:
-            raise RuntimeError(f"pip must inventory exactly one {name} component")
+        expected = {0, 1} if name == "setuptools" else {1}
+        if len(components) not in expected:
+            qualifier = "at most" if name == "setuptools" else "exactly"
+            raise RuntimeError(f"pip must inventory {qualifier} one {name} component")
+        if not components:
+            continue
         component = components[0]
         previous_ref = component["bom-ref"]
         if name == "setuptools":

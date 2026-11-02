@@ -285,11 +285,15 @@ def _probe_remote_lerobot_version(ssh: Any, cfg: Any) -> str:
     if code != 0:
         return resolve_lerobot_version(None)
     version = (stdout or "").strip().splitlines()[-1].strip() if stdout else ""
+    # Images built from the secure 0.5.1 closure report a valid PEP 440
+    # local version (for example ``0.5.1+npa.secure2``). Compatibility is
+    # selected from the upstream release line, not the integration label.
+    upstream_version = version.split("+", 1)[0]
     try:
-        return resolve_lerobot_version(version)
+        return resolve_lerobot_version(upstream_version)
     except LeRobotVersionError:
         # Unknown patch/build still maps by major.minor when possible.
-        parts = version.split(".")
+        parts = upstream_version.split(".")
         if len(parts) >= 2:
             candidate = f"{parts[0]}.{parts[1]}.0"
             try:
@@ -1036,6 +1040,14 @@ def _train_serverless(
     if not resolved_project_id:
         _fail("LeRobot train --runtime serverless requires a Nebius project ID.")
 
+    platform = _lerobot_gpu_platform(gpu_type)
+    try:
+        resolved_lerobot_version = resolve_lerobot_version(lerobot_version or None)
+        image_tag = resolve_lerobot_image_tag(resolved_lerobot_version)
+        resolved_image = image or container_image_for_tool("lerobot", tag=image_tag)
+    except ValueError as exc:
+        _fail(str(exc))
+        return
     _warn_for_lerobot_gpu_policy(policy_type, gpu_type)
     name = job_name or _lerobot_serverless_job_name(wb_name)
     out = _lerobot_serverless_output_path(proj_alias, wb_name, name, output_path)
@@ -1044,14 +1056,6 @@ def _train_serverless(
         existing = client.get_job(name, resolved_project_id)
     except EndpointNotFoundError:
         existing = None
-    platform = _lerobot_gpu_platform(gpu_type)
-    try:
-        resolved_lerobot_version = resolve_lerobot_version(lerobot_version or None)
-        image_tag = resolve_lerobot_image_tag(resolved_lerobot_version)
-    except LeRobotVersionError as exc:
-        _fail(str(exc))
-        return
-    resolved_image = image or container_image_for_tool("lerobot", tag=image_tag)
     if existing is not None:
         info = existing
         if not submit_only and existing.status not in {
@@ -1272,10 +1276,13 @@ def _profile_train_serverless(
     _warn_for_lerobot_gpu_policy(policy_type, gpu_type)
     name = job_name or _lerobot_serverless_job_name(wb_name)
     out = output_path.rstrip("/") + "/"
-    client = ServerlessClient()
     platform = _lerobot_gpu_platform(gpu_type)
-    resolved_image = image or container_image_for_tool("lerobot")
+    try:
+        resolved_image = image or container_image_for_tool("lerobot")
+    except ValueError as exc:
+        _fail(str(exc))
 
+    client = ServerlessClient()
     try:
         existing = client.get_job(name, resolved_project_id)
     except EndpointNotFoundError:
@@ -2006,7 +2013,9 @@ def serve(
     # Deprecated path alias: keep --checkpoint working for existing scripts.
     checkpoint: str = typer.Option("", "--checkpoint", hidden=True),
     env_type: str = typer.Option(
-        "", "--env-type", help="Environment type (needed for shape resolution)."
+        "",
+        "--env-type",
+        help="Environment type for environment-shaped or PEFT checkpoints.",
     ),
     env_task: str = typer.Option("", "--env-task", help="Environment task."),
     port: int = typer.Option(8080, "--port", help="Server port."),

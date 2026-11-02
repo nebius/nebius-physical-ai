@@ -54,7 +54,6 @@ Build the Sim2Real and Cosmos3 images:
 
 ```bash
 BASE_IMAGE="${NPA_REGISTRY}/npa-base:cuda13-b300-sm80-sm90-sm100-sm103-sm120-v2-latest" \
-GENESIS_IMAGE="${NPA_REGISTRY}/npa-genesis:cuda13-b300-0.4.6-sm80-sm90-sm100-sm103-sm120-20260803T034152Z" \
 npa/docker/workbench/sim2real-build.sh --registry "${NPA_REGISTRY}" --push
 ```
 

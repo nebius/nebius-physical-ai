@@ -414,9 +414,11 @@ def _caption_image(
     thinking: bool | None,
 ) -> CaptionItem:
     label = _relative_label(image_path, local_input)
+    # MiniMax can return the availability sentinel for valid pixels when the
+    # instruction precedes the image. Keep the same pixels and instruction.
     content = [
-        {"type": "text", "text": request_instruction},
         {"type": "image_url", "image_url": {"url": _image_to_data_url(image_path)}},
+        {"type": "text", "text": request_instruction},
     ]
     try:
         text = client.chat_completion_text(

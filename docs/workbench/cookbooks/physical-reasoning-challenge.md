@@ -1,16 +1,17 @@
-# Physical Reasoning Challenge (Token Factory + Cosmos3-Super-Reasoner)
+# Physical Reasoning Challenge (Token Factory + MiniMax-M3)
 
 [Cookbooks](README.md)
 
-> Historical Cosmos3 recipe: its public hosted model was retired under the
+> This cookbook uses the current hosted vision/reasoning default,
+> `MiniMaxAI/MiniMax-M3`, through `https://api.tokenfactory.nebius.com/v1/`.
+> The public `nvidia/Cosmos3-Super-Reasoner` route was retired under the
 > [August 2026 notice](https://docs.tokenfactory.nebius.com/august-2026-deprecation-notice).
-> Use the current [Token Factory guide](../token-factory.md) and
-> [migration verification](../token-factory-deprecation-verification.md)
-> for current defaults. Explicit legacy model IDs require a serving endpoint;
-> this page does not establish their current availability.
+> A dedicated or self-hosted Cosmos3 Reasoner is a separate backend; do not
+> substitute its name for a MiniMax request. Confirm model availability with
+> `npa workbench token-factory models` before the challenge.
 
 A zero-GPU challenge built on Nebius Token Factory's hosted
-`nvidia/Cosmos3-Super-Reasoner`. Teams walk a robot (or just a phone camera) to
+`MiniMaxAI/MiniMax-M3`. Teams walk a robot (or just a phone camera) to
 different scenes around campus, capture images, and use the reasoner to extract
 **scene understanding** and a **plan of action** for a task at that scene.
 
@@ -19,22 +20,24 @@ No GPUs, no servers to manage: inference is hosted, so a team needs only a
 
 ## Why this works
 
-`nvidia/Cosmos3-Super-Reasoner` is a vision-language model post-trained for
-physical-AI common sense and embodied reasoning. Given scene images plus a task,
-it reasons over objects, spatial layout, motion, and physical interactions and
-returns a concrete, ordered plan — exactly the "what do I see, what should I do"
-loop this challenge needs.
+`MiniMaxAI/MiniMax-M3` is the current hosted vision/reasoning backend for this
+challenge. Given scene images plus a task, it returns a concrete, ordered plan
+based on visible objects and spatial layout — the "what do I see, what should I
+do" loop this challenge needs. It does not act, certify physical validity, or
+establish access to a separate Cosmos3 Reasoner backend.
 
 ## Setup (once per team)
 
 ```bash
 npa configure                         # enter the Token Factory API key when prompted
-npa workbench token-factory verify    # confirm auth + that the model is available
-npa workbench token-factory models | grep -i cosmos
+npa workbench token-factory verify    # confirm auth against the current endpoint
+npa workbench token-factory models | grep -F 'MiniMaxAI/MiniMax-M3'
 ```
 
-If `nvidia/Cosmos3-Super-Reasoner` is not listed for your key, ask an organizer
-to enable it (or use whatever Cosmos reasoner id `models` reports via `--model`).
+If `MiniMaxAI/MiniMax-M3` is not listed for your key, stop before inference and
+select a key-accessible supported vision model only after validating its response
+contract. Do not try to restore the retired public Cosmos3 model by changing the
+endpoint or model name.
 
 ## Run the loop (local)
 
@@ -54,18 +57,23 @@ npa workbench token-factory reason \
 
 ## Run at scale (SkyPilot, S3 in/out)
 
-Push scenes to S3 and launch the CPU-only workflow; the key rides in as a secret:
+Push scenes to S3 and submit the CPU-only workflow; the key rides in as a secret:
 
 ```bash
-sky jobs launch \
-  --secret NEBIUS_TOKEN_FACTORY_KEY \
-  --secret AWS_ACCESS_KEY_ID \
-  --secret AWS_SECRET_ACCESS_KEY \
-  workflows/testing/token-factory-cosmos-reason.yaml
+npa workbench workflow submit \
+  workflows/testing/token-factory-cosmos-reason.yaml \
+  --run-id physical-reasoning-<new-run-id> \
+  --var bucket=<your-bucket> \
+  --secret-env NEBIUS_TOKEN_FACTORY_KEY \
+  --secret-env AWS_ACCESS_KEY_ID \
+  --secret-env AWS_SECRET_ACCESS_KEY
 ```
 
-Set `INPUT_URI`, `OUTPUT_URI`, and `TASK` in the YAML's `envs:` (or override at
-launch).
+The historical filename is retained for compatibility; the toolRef resolves the
+current Token Factory reasoner default. This reference derives its scene and
+plan paths from `bucket` and `prefix`, and intentionally retains the reason
+CLI's task/frame defaults. For a custom task, model, or image count, use the
+direct command above or a user-owned spec that explicitly exposes those fields.
 
 ## Suggested scoring rubric
 

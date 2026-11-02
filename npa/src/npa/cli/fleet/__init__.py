@@ -184,8 +184,14 @@ def deploy_cmd(
     k8s_training_ref: str = typer.Option(
         "",
         "--k8s-training-ref",
-        help="Clone nebius-solutions-library at this git ref to consume the latest "
-        "k8s-training recipe (e.g. 'main'). Omit to use the repo-vendored copy.",
+        help="Clone a reviewed nebius-solutions-library ref. The source must exactly "
+        "match the selected immutable MK8s release; moving main is not accepted.",
+    ),
+    mk8s_release: str = typer.Option(
+        "",
+        "--mk8s-release",
+        help="Date-versioned immutable MK8s recipe release. Omit only for a new "
+        "installation to select the current default; existing installs retain their saved release.",
     ),
     create_projects: bool = typer.Option(
         True,
@@ -286,6 +292,7 @@ def deploy_cmd(
             spec,
             k8s_training_dir=k8s_training_dir,
             k8s_training_ref=k8s_training_ref or None,
+            mk8s_release=mk8s_release or None,
             project_prefix=project_prefix or None,
             create_projects=create_projects,
             only_projects=only,

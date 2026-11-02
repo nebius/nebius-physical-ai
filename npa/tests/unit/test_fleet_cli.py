@@ -7,8 +7,10 @@ lifecycle at the call site for deploy/destroy paths.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
+import re
 import stat
 import sys
 import textwrap
@@ -17,6 +19,7 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
+import yaml
 from typer.testing import CliRunner
 
 from npa.cli.main import app
@@ -51,6 +54,7 @@ def _rtx_profile() -> dict:
             "preset": "1gpu-24vcpu-218gb",
         },
         "enable_filestore": True,
+        "filesystem_csi_chart_repository": "oci://charts.example.invalid/nebius",
     }
 
 
@@ -705,7 +709,10 @@ def test_render_tfvars_rtx_single_gpu() -> None:
     assert 'existing_filestore = ""' in tf
     assert 'filestore_mount_path = "/mnt/data"' in tf
     assert 'filestore_mount_tag = "data"' in tf
-    assert 'filesystem_csi = { chart_version = "0.1.6"' in tf
+    assert (
+        'filesystem_csi = { chart_repository = "oci://charts.example.invalid/nebius", '
+        'chart_version = "0.1.6"' in tf
+    )
     # loki has no recipe default and must be emitted, plus o11y stays off.
     assert "loki = { enabled = false" in tf
     assert "enable_grafana           = false" in tf
@@ -726,6 +733,26 @@ def test_render_tfvars_uses_operator_filesystem_csi_repository() -> None:
         "filesystem_csi = { chart_repository = "
         '"oci://charts.example.invalid/nebius", chart_version = "0.1.6"' in tf
     )
+
+
+@pytest.mark.parametrize(
+    ("enable_filestore", "existing_filestore"),
+    [(True, ""), (False, "filesystem-existing")],
+)
+def test_shared_filesystem_requires_explicit_csi_chart_repository(
+    enable_filestore: bool, existing_filestore: str
+) -> None:
+    cluster = ClusterSpec(
+        name="storage",
+        enable_filestore=enable_filestore,
+        existing_filestore=existing_filestore,
+        cpu_nodes=NodePoolSpec(count=1),
+    )
+
+    with pytest.raises(
+        FleetSpecError, match="requires filesystem_csi_chart_repository"
+    ):
+        cluster.validate()
 
 
 def test_render_tfvars_8gpu_cluster_emits_fabric() -> None:
@@ -769,8 +796,11 @@ def test_vendored_filestore_contract_matches_official_guide() -> None:
     )
     assert main_tf.count('attach_mode = "READ_WRITE"') == 2
     assert main_tf.count("mount_tag   = local.filestore.mount_tag") == 2
-    assert main_tf.count("filestore_mount_tag  = local.filestore.mount_tag") == 2
-    assert 'filestore_mount_tag  = "data"' in egress_tf
+    assert (
+        len(re.findall(r"filestore_mount_tag\s*= local.filestore.mount_tag", main_tf))
+        == 2
+    )
+    assert re.search(r'filestore_mount_tag\s*= "data"', egress_tf)
     assert "grep -Fq \\" in mount_validation
     # kubectl 1.36 suppresses attached output and the created pod name under
     # --quiet, defeating both evidence checking and debugger-pod cleanup.
@@ -786,6 +816,21 @@ def test_vendored_filestore_contract_matches_official_guide() -> None:
         'chart_version                       = optional(string, "0.1.6")'
         in variables_tf
     )
+
+
+def test_vendored_binpacking_template_is_module_relative() -> None:
+    """Terraform validation must not depend on the caller's working directory."""
+
+    repo_root = Path(__file__).resolve().parents[3]
+    applications = (
+        repo_root
+        / "deploy/cluster/vendor/nebius-solutions-library/k8s-training/applications.tf"
+    ).read_text()
+
+    assert (
+        'templatefile("${path.module}/../modules/binpacking/files/'
+        'opa_gatekeeper_mutator.yaml.tftpl", {'
+    ) in applications
 
 
 def test_render_tfvars_capacity_block_is_strict() -> None:
@@ -1524,6 +1569,90 @@ def test_deploy_rejects_incompatible_mig_recipe_before_project_mutation(
     assert resolved == []
 
 
+def test_deploy_continues_past_legacy_release_recovery_target(
+    tmp_path, monkeypatch
+) -> None:
+    """A legacy release record must fail only its own deploy target."""
+
+    from npa.fleet import lifecycle as L
+
+    root = _fake_recipe(tmp_path, 'provider "nebius" {}\n')
+    work_root = tmp_path / "work"
+    legacy_install = work_root / "mixed" / "a" / "legacy"
+    legacy_install.mkdir(parents=True)
+    (legacy_install / L._ENV_SIDECAR).write_text("{}\n", encoding="utf-8")
+    applied: list[str] = []
+
+    monkeypatch.setattr(L, "_require_bin", lambda binary: binary)
+    monkeypatch.setattr(L, "_assert_terraform_version", lambda _binary: "1.12.0")
+    monkeypatch.setattr(L, "_resolve_tenant_id", lambda *_args: "tenant-test")
+    monkeypatch.setattr(L, "_resolve_ssh_public_key", lambda _key: "ssh-test")
+    monkeypatch.setattr(L, "_resolve_recipe_root", lambda *_args, **_kwargs: root)
+    monkeypatch.setattr(L, "_find_vendored_recipe_root", lambda: root)
+    monkeypatch.setattr(L, "_nebius_cli_env", lambda: {})
+    monkeypatch.setattr(
+        L, "resolve_project_id", lambda *_args, **_kwargs: ("project-test", False)
+    )
+    monkeypatch.setattr(
+        L, "ensure_subnet", lambda *_args, **_kwargs: ("subnet-test", "")
+    )
+    monkeypatch.setattr(L, "validate_release_source", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        L, "validate_recipe_kuberay_compatibility", lambda *_args, **_kwargs: None
+    )
+    monkeypatch.setattr(
+        L, "validate_recipe_mig_compatibility", lambda *_args, **_kwargs: None
+    )
+    monkeypatch.setattr(
+        L, "validate_recipe_rtx_compatibility", lambda *_args, **_kwargs: None
+    )
+    monkeypatch.setattr(
+        L._mk8s_execution,
+        "validate_kuberay_installation",
+        lambda *_args, **_kwargs: None,
+    )
+
+    def deploy_one(*, project, cluster, **_kwargs):
+        applied.append(cluster.name)
+        return {
+            "backend": "mk8s",
+            "project_key": project.key(),
+            "cluster_name": cluster.name,
+            "status": "deployed",
+        }
+
+    monkeypatch.setattr(L, "_deploy_one_cluster", deploy_one)
+    spec = FleetSpec(
+        name="mixed",
+        region="us-central1",
+        projects=[
+            ProjectSpec(
+                name="a",
+                clusters=[
+                    ClusterSpec(name="legacy", cpu_nodes=NodePoolSpec(count=1)),
+                    ClusterSpec(name="current", cpu_nodes=NodePoolSpec(count=1)),
+                ],
+            )
+        ],
+    )
+
+    result = L.deploy_fleet(spec, work_root=work_root, preflight=False)
+
+    assert applied == ["current"]
+    assert result["deployed"] == 1
+    assert result["failed"] == 1
+    legacy = next(
+        item for item in result["clusters"] if item["cluster_name"] == "legacy"
+    )
+    assert legacy["status"] == "error"
+    assert "predates recipe-release provenance" in legacy["error"]
+    state = json.loads((work_root / "mixed" / L._FLEET_STATE).read_text())
+    assert {(item["cluster_name"], item["status"]) for item in state["clusters"]} == {
+        ("legacy", "error"),
+        ("current", "deployed"),
+    }
+
+
 def test_prepare_install_dir_patches_eu_domain(tmp_path) -> None:
     from npa.fleet import lifecycle as L
 
@@ -1875,6 +2004,40 @@ def test_prepare_install_dir_patches_fetched_recipe_debug_quiet(
             / "01-verify-node-filesystem-mounts.sh"
         ).read_text()
     )
+
+
+def test_ref_selected_recipe_clones_use_distinct_cache_paths(
+    tmp_path, monkeypatch
+) -> None:
+    """A newer requested ref must never reuse a prior ref's checkout."""
+
+    from npa.fleet import lifecycle as L
+
+    cloned: list[Path] = []
+
+    def clone(args, **_kwargs):
+        clone_root = Path(args[-1])
+        cloned.append(clone_root)
+        (clone_root / "k8s-training").mkdir(parents=True)
+        (clone_root / "modules").mkdir()
+
+    monkeypatch.setattr(L, "_require_bin", lambda name: name)
+    monkeypatch.setattr(L, "_run_stream", clone)
+    work_root = tmp_path / "fetch"
+    first_ref = "main-v2026-10-12"
+    second_ref = "main-v2026-10-26"
+
+    first = L._resolve_recipe_root(
+        None, ref=first_ref, work_root=work_root, on_status=None
+    )
+    second = L._resolve_recipe_root(
+        None, ref=second_ref, work_root=work_root, on_status=None
+    )
+
+    assert first != second
+    assert first.name.endswith(hashlib.sha256(first_ref.encode()).hexdigest()[:16])
+    assert second.name.endswith(hashlib.sha256(second_ref.encode()).hexdigest()[:16])
+    assert cloned == [first, second]
 
 
 # --------------------------------------------------------------------------- #
@@ -2354,6 +2517,7 @@ def _tainted_gpu_reconciliation_fixture(
         ),
         enable_filestore=True,
         filestore_mount_tag="npa-shared-fs",
+        filesystem_csi_chart_repository="oci://charts.example.invalid/nebius",
     )
     return state, provider, cluster
 
@@ -2381,6 +2545,7 @@ def _enable_gpu_cluster_for_tainted_fixture(state: dict, provider: dict) -> Clus
         infiniband_fabric="us-central1-a",
         enable_filestore=True,
         filestore_mount_tag="npa-shared-fs",
+        filesystem_csi_chart_repository="oci://charts.example.invalid/nebius",
     )
 
 
@@ -2645,6 +2810,7 @@ def test_tainted_node_group_rejects_malformed_or_mismatched_preemptibility(
         enable_gpu_cluster=False,
         enable_filestore=True,
         filestore_mount_tag="npa-shared-fs",
+        filesystem_csi_chart_repository="oci://charts.example.invalid/nebius",
     )
 
     _assert_tainted_reconciliation_refused(
@@ -4512,6 +4678,7 @@ def test_required_quotas_counts_nodes_vcpu_gpus_and_filesystem() -> None:
                 enable_gpu_cluster=False,
                 enable_filestore=True,
                 filestore_disk_size_gibibytes=2048,
+                filesystem_csi_chart_repository="oci://charts.example.invalid/nebius",
             )
         ]
     )
@@ -4569,6 +4736,7 @@ def test_required_quotas_counts_gpu_cluster_and_skips_existing_filestore() -> No
                 infiniband_fabric="us-central1-a",
                 enable_filestore=True,
                 existing_filestore="computefilesystem-abc",
+                filesystem_csi_chart_repository="oci://charts.example.invalid/nebius",
             )
         ]
     )
@@ -5041,9 +5209,18 @@ def _preflight_boundary(monkeypatch, tmp_path, allowances_json: str, *, rc: int 
 def test_object_storage_quotas_budget_each_class_separately_from_filesystems() -> None:
     from npa.fleet.quotas import required_quotas
 
-    spec = load_spec(
+    example_path = (
         Path(__file__).parents[2] / "examples/fleet/rtxpro-8gpu-five-cluster.yaml"
     )
+    data = yaml.safe_load(example_path.read_text(encoding="utf-8"))
+    data["defaults"].update(
+        {
+            "enable_filestore": True,
+            "filesystem_csi_chart_repository": "oci://charts.example.invalid/nebius",
+        }
+    )
+    spec = spec_from_mapping(data)
+    spec.validate()
     needed = required_quotas(
         [c for p, c in spec.cluster_targets()],
         object_storage=[p.object_storage for p in spec.projects],

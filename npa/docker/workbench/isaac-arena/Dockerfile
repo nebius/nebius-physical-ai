@@ -10,6 +10,8 @@ ARG ISAAC_ARENA_VERSION=0.3.0
 ARG ISAAC_ARENA_REVISION=ed0fd12be862078be316c73eb7cf423ba9b1c5cd
 ARG ISAAC_ARENA_ARCHIVE_SHA256=4e62ddbd7edc40fb47e62a0d5ba523eebc129482b4ce083612f17c79f1fc40a8
 ARG NPA_SOURCE_SHA
+ARG UBUNTU_SNAPSHOT=20261018T000000Z
+ARG LINUX_LIBC_DEV_VERSION=6.8.0-147.147
 
 LABEL npa.tool="isaac-arena" \
       npa.version="${ISAAC_ARENA_VERSION}" \
@@ -47,6 +49,8 @@ COPY --chmod=0755 docker/workbench/common/isaac_bootstrap.sh /opt/npa/bin/isaac-
 COPY docker/workbench/isaac-arena/npa-cli-requirements.txt /opt/npa/docker/workbench/isaac-arena/npa-cli-requirements.txt
 COPY docker/workbench/isaac-arena/runtime-requirements.txt /opt/npa/docker/workbench/isaac-arena/runtime-requirements.txt
 COPY --chmod=0755 docker/workbench/common/workflow_runtime_entrypoint.sh /usr/local/bin/npa-workflow-entrypoint
+COPY --chmod=0755 docker/workbench/common/configure_ubuntu_snapshot.sh /usr/local/bin/configure-ubuntu-snapshot
+COPY --chmod=0755 docker/workbench/common/install_workflow_runtime_prereqs.sh /usr/local/bin/install-workflow-runtime-prereqs
 COPY docker/workbench/isaac-arena/REDISTRIBUTION.md /opt/npa/docker/workbench/isaac-arena/REDISTRIBUTION.md
 COPY docker/workbench/isaac-arena/THIRD_PARTY_NOTICES.md /opt/npa/docker/workbench/isaac-arena/THIRD_PARTY_NOTICES.md
 COPY docker/workbench/isaac-arena/license-evidence.json /opt/npa/docker/workbench/isaac-arena/license-evidence.json
@@ -54,7 +58,8 @@ COPY --chmod=0755 docker/workbench/isaac-arena/smoke_functional.sh /opt/npa/dock
 COPY docker/workbench/isaac-arena/patch_npa_evidence.py /tmp/patch_npa_evidence.py
 COPY docker/workbench/isaac-arena/verify_license_evidence.py /tmp/verify_license_evidence.py
 
-RUN test "$(printf %s "${NPA_SOURCE_SHA}" | wc -c)" -eq 40 \
+RUN /usr/local/bin/install-workflow-runtime-prereqs "${UBUNTU_SNAPSHOT}" "${LINUX_LIBC_DEV_VERSION}" \
+    && test "$(printf %s "${NPA_SOURCE_SHA}" | wc -c)" -eq 40 \
     && dpkg-query -W openssh-server rsync sudo >/dev/null \
     && command -v sshd >/dev/null \
     && grep -Rq 'NOPASSWD' /etc/sudoers /etc/sudoers.d \

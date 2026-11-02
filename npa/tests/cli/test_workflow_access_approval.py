@@ -9,6 +9,7 @@ import typer
 from typer.testing import CliRunner
 
 from npa.cli.main import app
+from npa.orchestration.npa_workflow.spec import NpaWorkflowSpec, StateSpec
 from npa.workbench.model_access import GatedAsset, HF, NGC
 
 RUNNER = CliRunner()
@@ -19,6 +20,19 @@ SPEC = (
     / "nurec-reconstruct.yaml"
 )
 RAY_BATCH_SPEC = SPEC.parent.parent / "testing" / "cosmos3-ray-batch.yaml"
+
+
+def _single_state_spec(name, tool_ref):
+    return NpaWorkflowSpec(
+        api_version="npa.workflow/v0.0.1",
+        kind="Workflow",
+        metadata={"name": "access"},
+        config={},
+        run_defaults={},
+        resources={},
+        initial=name,
+        states={name: StateSpec(name=name, tool_ref=tool_ref, terminal=True)},
+    )
 
 
 def test_plan_reports_exact_toolref_dependency_without_provider_calls(
@@ -86,9 +100,7 @@ def test_execute_json_blocks_before_runtime_without_prompt_or_browser(
 def test_public_unrelated_workflow_has_no_approval_gate() -> None:
     from npa.cli.workbench.workflow import _workflow_access_requirement_payload
 
-    spec = SimpleNamespace(
-        states={"view": SimpleNamespace(tool_ref="workbench.foxglove.convert")}
-    )
+    spec = _single_state_spec("view", "workbench.foxglove.convert")
     assert _workflow_access_requirement_payload(spec) == {
         "hf": 0,
         "ngc": 0,
@@ -158,9 +170,7 @@ def test_enforcement_uses_explicit_project_scoped_credentials(
             ok=token == "hf-project-scoped", status_code=200, error=""
         ),
     )
-    spec = SimpleNamespace(
-        states={"train": SimpleNamespace(tool_ref="workbench.groot.finetune")}
-    )
+    spec = _single_state_spec("train", "workbench.groot.finetune")
 
     plan = _enforce_workflow_access(
         spec,
@@ -280,9 +290,7 @@ def test_nurec_workflow_gate_accepts_provider_validated_registry_credential(
     monkeypatch.setattr(
         "npa.workbench.model_access.check_ngc_artifact_access", validate
     )
-    spec = SimpleNamespace(
-        states={"reconstruct": SimpleNamespace(tool_ref="workbench.nurec.reconstruct")}
-    )
+    spec = _single_state_spec("reconstruct", "workbench.nurec.reconstruct")
 
     plan = _enforce_workflow_access(
         spec,

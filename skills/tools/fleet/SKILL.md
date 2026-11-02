@@ -398,11 +398,15 @@ resolve those values from the provider inventory before deployment.
    that validation does it exclude those GPUs from ordinary GPU quota; all
    node, boot-disk, GPU-cluster, Kubernetes, and storage quotas still apply.
 5. **Preflight quotas at the tenant, before anything else.** Each cluster needs,
-   in the target region: `compute.instance.count` (worker nodes only; the
+   in the target region: `compute.instance.count` (regular worker nodes only; the
    managed control plane is service-owned),
    `compute.instance.non-gpu.vcpu` for the CPU preset,
-   `compute.instance.gpu.<family>` for the GPU preset (on-demand GPU quota is
-   frequently **0**), `compute.disk.count`/`compute.disk.size.network-ssd`,
+   `compute.instance.gpu.<family>` for regular unreserved GPU workers (on-demand
+   GPU quota is frequently **0**). Preemptible GPU workers use
+   `compute.instance.preemptible.count` instead: this counts worker VMs, so an
+   eight-GPU worker needs one slot. They do not consume regular VM or GPU-family
+   quota. CPU workers retain the recipe's regular allocation mode. Both GPU
+   modes still require `compute.disk.count`/`compute.disk.size.network-ssd`,
    `compute.gpucluster.count` when `enable_gpu_cluster`, and
    `compute.filesystem.count` + `compute.filesystem.size.network-ssd` when
    `enable_filestore`. Each private worker consumes two
@@ -480,10 +484,16 @@ resolve those values from the provider inventory before deployment.
    Exact controller cleanup compares `--cluster-name` with the saved
    `provider_name`, while still verifying the immutable project/cluster IDs
    and the saved kubeconfig against the live provider.
-7. **Consume the latest recipe**: `--k8s-training-ref main` clones
-   `nebius-solutions-library` and uses its `k8s-training` (or `--k8s-training-dir`
-   for a local checkout). Omit both to use the repo-vendored, tested copy. NPA
-   applies its compatibility preparation after materializing every source,
+7. **Select the qualified MK8s release**: omit source overrides to create a new
+   installation with the date-versioned `mk8s-v2026-10-19` release. It binds
+   upstream `main-v2026-10-12`, the exact upstream commit, the complete patched
+   bundle digest, the Terraform provider-lock digest, and the component/config
+   contract. NPA writes that record before Terraform applies. Reconcile, status,
+   and destroy retain the saved record; a different `--mk8s-release` requires a
+   reviewed migration or replacement, never an in-place update. `--k8s-training-ref`
+   and `--k8s-training-dir` are reviewed source overrides, not an alias for a
+   moving upstream branch. NPA applies its compatibility preparation after
+   materializing every accepted source,
    including the package-only pinned-ref fallback; currently this removes
    `kubectl debug --quiet` from the filesystem verifier because kubectl 1.36
    otherwise hides both required success evidence and the debugger-pod name.

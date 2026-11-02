@@ -84,8 +84,24 @@ def test_source_overlay_is_selected_by_the_spec(monkeypatch):
         for task in tasks
     )
     baked = [task for task in tasks if task["resources"].get("image_id")]
-    assert baked
+    assert len(baked) == len(tasks)
     assert all(task["envs"]["NPA_SRC_OVERLAY"] == "1" for task in baked)
+    sampler = next(task for task in tasks if "generate_configs" in task["run"])
+    assert sampler["resources"]["image_id"] == "docker:" + container_image_for_tool(
+        "rerun-viewer", registry="registry.example.invalid/operator/validated"
+    )
+    assert not sampler["resources"].get("accelerators")
+    components = {
+        "generate-variants": "cosmos3",
+        "evaluate": "cosmos-evaluator",
+        "cosmos-curate": "cosmos-curate",
+        "curate": "fiftyone",
+    }
+    for state, tool in components.items():
+        task = next(task for task in tasks if task["name"] == state)
+        assert task["resources"]["image_id"] == "docker:" + container_image_for_tool(
+            tool, registry="registry.example.invalid/operator/validated"
+        )
     annotation = next(
         task for task in tasks if "paidf_cosmos3_annotation" in task["run"]
     )

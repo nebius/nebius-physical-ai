@@ -236,7 +236,7 @@ RUN --mount=type=bind,from=seedvr2-bootstrap,source=/opt/secure-pip-wheels,targe
     && apt-get install -y --no-install-recommends \
       ca-certificates ffmpeg libgl1 libglib2.0-0 openssh-server \
       python3.12 python3.12-venv rsync sudo \
-    && echo '51a52592b3b99e102b609654876bd65f19f999935166d1352678931132b0c670  /opt/secure-pip-wheels/setuptools-84.0.0-py3-none-any.whl' | sha256sum -c - \
+    && echo 'ca140b45d5325a9478f880e351484f62fef15f336462e449ca0c03c873d589c2  /opt/secure-pip-wheels/setuptools-84.2.1-py3-none-any.whl' | sha256sum -c - \
     && find /usr/share/python-wheels -maxdepth 1 -type f \
       \( -name 'pip-*.whl' -o -name 'setuptools-*.whl' \) -delete \
     && install -m 0644 /opt/secure-pip-wheels/*.whl /usr/share/python-wheels/ \

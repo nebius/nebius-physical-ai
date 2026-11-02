@@ -501,11 +501,7 @@ def probe_image_capabilities(
         if cleanup == "verified":
             return
         note = f"probe cleanup={cleanup}: {cleanup_detail[:300]}"
-        add_note = getattr(error, "add_note", None)
-        if callable(add_note):
-            add_note(note)
-        else:  # Python 3.10 compatibility; preserve the primary exception.
-            setattr(error, "__npa_cleanup_note__", note)
+        error.add_note(note)
 
     for _attempt in range(3):
         probe_id = str(nonce_factory()).lower()

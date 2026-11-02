@@ -358,6 +358,23 @@ def _write(configuration: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _default_claim(configuration: dict[str, Any]) -> dict[str, Any]:
+    """Write one owned payload through a classless, single-node PVC.
+
+    Unlike the explicit shared-filesystem path, the selected default may be a
+    block volume.  Do not infer a CSI backing path here: successful durable
+    write/read evidence is the portable contract.  The normal cleanup action
+    removes this payload before the owned PVC is deleted.
+    """
+
+    filename = "payload-" + _token(configuration["node_token"])
+    with _owned_directory(configuration, create=True) as (_, _, directory):
+        checksum = _write_file(directory, filename)
+        if _digest_file(directory, filename) != checksum:
+            raise StorageProbeError("probe_payload_mismatch")
+    return {"checksum": checksum, "ordinary_pvc_io": True}
+
+
 def _expected_checksums(configuration: dict[str, Any]) -> dict[str, str]:
     expected = configuration["expected_checksums"]
     if not isinstance(expected, dict) or not expected:
@@ -426,6 +443,11 @@ def _remove_run_directory(run_id: str, parent: int, directory: int) -> None:
 
 def _verify_probe_mount(configuration: dict[str, Any]) -> str | None:
     if configuration["root_path"] == "/data":
+        # The classless ordinary PVC can be a block volume. It has neither the
+        # shared CSI backing path nor the host's virtiofs/fstab contract; its
+        # portable proof is the local write/read in ``_default_claim``.
+        if configuration.get("ordinary_pvc", False):
+            return None
         return _backing_path(configuration)
     _host_state(configuration)
     return None
@@ -496,6 +518,7 @@ def execute_probe(configuration: dict[str, Any]) -> dict[str, Any]:
     actions = {
         "host": _host,
         "write": _write,
+        "default": _default_claim,
         "read": _read,
         "cleanup": _cleanup,
         "audit": _audit,

@@ -9,9 +9,9 @@ The OCI license label uses
 the NPA-authored bytes, while this file and the installed Debian copyright
 records are authoritative for the separately licensed base and package bytes.
 
-- `python:3.10-slim-bookworm`, linux/amd64 manifest
-  `sha256:999137905e8718de681744822ccd965e1950e1baba089035060418e05e1d7496`,
-  is produced by the Docker Official Images Python project. CPython 3.10.21 is
+- `python:3.11.16-slim-bookworm`, linux/amd64 manifest
+  `sha256:b1add8a6f2aca6bcfcf0b9c9b522352f7ce0d62a3d556a2f2f32511aa0cca250`,
+  is produced by the Docker Official Images Python project. CPython 3.11.16 is
   available under the Python Software Foundation License. The base also ships
   pip (MIT), setuptools (MIT), wheel (MIT), and their recorded vendored OSS
   dependencies.

@@ -865,8 +865,9 @@ def cleanup_launched_workflows(
     config_path: Path | None = None,
     sky_bin: SkyBin = None,
     job_drain_timeout: int = DEFAULT_JOB_DRAIN_TIMEOUT_SECONDS,
+    teardown_cluster: bool = True,
 ) -> CleanupResult:
-    """Cancel every exact managed-job record, continuing after partial failures."""
+    """Cancel every exact managed-job record, optionally preserving the run cluster."""
 
     cleanup = CleanupResult()
     seen: set[str] = set()
@@ -897,7 +898,7 @@ def cleanup_launched_workflows(
             )
             continue
         cleanup.extend(result)
-    if cleanup.errors:
+    if cleanup.errors or not teardown_cluster:
         # All jobs share this run cluster. One unverified drain makes cluster
         # teardown unsafe even when other exact jobs converged successfully.
         return cleanup

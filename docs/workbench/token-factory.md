@@ -129,9 +129,10 @@ reads video files directly; extract frames first. Check saved results against
 the source images:
 
 `caption` leaves thinking control unchanged unless `--thinking` or
-`--no-thinking` is explicit. The built-in Lightning and MiniMax defaults already
-disable thinking with their verified model-specific fields; other selected
-models receive the generic `thinking` field only after an explicit override,
+`--no-thinking` is explicit. The built-in Lightning, MiniMax, and exact
+`Qwen/Qwen3.8-27B` profiles already disable thinking with their verified
+model-specific fields; Qwen uses `chat_template_kwargs.enable_thinking=false`.
+Other selected models receive the generic `thinking` field only after an explicit override,
 except known `reasoning_effort` profiles such as Kimi-K3: those reject either
 boolean override before inference, rather than send an unsupported template
 field while silently retaining the existing effort. Omitting the option keeps
@@ -174,6 +175,8 @@ preserve the requested `model` and separately report the actual `served_model`.
 Every hosted model ID must match the provider response exactly, including IDs
 without a registered request profile. An alias that resolves to a different
 model is rejected; select the provider's canonical model ID instead.
+The Qwen direct-output profile is an explicit request profile, not a default
+model selection or a workflow-readiness claim.
 
 When `moonshotai/Kimi-K3` is explicitly selected for hosted VLM evaluation, NPA
 requests low reasoning effort and leaves fixed sampling and output-token limits

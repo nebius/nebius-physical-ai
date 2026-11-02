@@ -131,8 +131,9 @@ observation, four Euler steps, seed, or 32×14 action contract.
 The experimental [B300 workflow](../../workflows/testing/flex-pi-b300-inference.yaml)
 requires the current NPA source overlay and `--expected-gpu B300`. The released
 image's Triton assembler and LLVM cannot compile B300's `sm_103a` target. For
-compiled B300 requests, NPA creates a private runtime with PyTorch 2.8.0+cu129,
-Triton 3.4.0, matching torchvision/torchaudio/torchcodec, and CUDA libraries from
+compiled B300 requests, NPA creates a private runtime with PyTorch 2.13.0+cu129,
+Triton 3.7.1, matching torchvision and the upstream-compatible CPU TorchCodec
+0.13 decoder, and CUDA libraries from
 [hash-pinned official wheels](../../npa/src/npa/workbench/flex_pi/b300-runtime-requirements.txt).
 It requires a successful native compiled reduction before downloading model
 weights. NPA also runtime-fetches `nvidia-cuda-nvcc-cu12==12.9.86`, verifies
@@ -146,6 +147,11 @@ into the existing image or uploaded as an artifact. Eager requests and the B200
 and RTX reference paths retain their existing compiler selection. This runtime
 repair does not establish a B300 training speedup or qualify four single-GPU
 hosts as equivalent to four GPUs on one host.
+
+The PyTorch 2.13.0 candidate has hash-verified CPython 3.11 resolver,
+source-import, and CPU Inductor evidence only. It remains unqualified until a
+B300 completes the native compiled preflight and real policy inference; the
+historical 2.8 runtime evidence below does not transfer to this candidate.
 
 On 2026-09-23, this path completed real compiled inference on one preemptible
 NVIDIA B300 (`sm_103`, compute capability 10.3). The native compiled-reduction

@@ -205,6 +205,31 @@ def test_already_corrected_source_is_not_silently_reaccepted(installed):
     assert path.read_bytes() == sanitized
 
 
+def test_already_corrected_source_requires_exact_opt_in_and_valid_metadata(installed):
+    module, root, path, dist, _source, sanitized, _unrelated = installed
+    first_receipt = module.sanitize_installation(root)
+
+    receipt = module.sanitize_installation(root, allow_corrected=True)
+
+    assert path.read_bytes() == sanitized
+    assert receipt["correction_status"] == "already-corrected"
+    assert receipt["source_sha256"] == receipt["sanitized_sha256"]
+    assert receipt["record_sha256_before"] == receipt["record_sha256_after"]
+    assert receipt["record_sha256_before"] == first_receipt["record_sha256_after"]
+    record = (dist / "RECORD").read_text()
+    (dist / "RECORD").write_text(record.replace(module.MODULE, "other.py", 1))
+    with pytest.raises(ValueError, match="unexpected package RECORD entries"):
+        module.sanitize_installation(root, allow_corrected=True)
+
+
+def test_allow_corrected_does_not_accept_an_unreviewed_source(installed):
+    module, root, path, _dist, _source, _sanitized, _unrelated = installed
+    path.write_bytes(b"unreviewed source")
+
+    with pytest.raises(ValueError, match="unexpected scikit-image"):
+        module.sanitize_installation(root, allow_corrected=True)
+
+
 def test_runtime_statements_cannot_be_removed_as_a_recipe(installed, monkeypatch):
     module, root, _path, _dist, source, _sanitized, _unrelated = installed
     changed = source.replace(
@@ -281,7 +306,6 @@ def test_correction_runs_before_installation_layer_commits():
 def test_correction_consumers_declare_their_capabilities() -> None:
     consumers = {
         "curobo/Dockerfile": "--capability curobo",
-        "sim2real-envgen/Dockerfile": "--capability envgen",
         "fiftyone/Dockerfile": "--capability fiftyone",
         "genesis/Dockerfile": "--capability genesis",
         "genesis/Dockerfile.sm120": "--capability genesis",
@@ -290,3 +314,10 @@ def test_correction_consumers_declare_their_capabilities() -> None:
     workbench = IMAGE.parent
     for relative, capability in consumers.items():
         assert capability in (workbench / relative).read_text()
+
+
+def test_envgen_removes_its_parent_without_consuming_genesis_corrections() -> None:
+    dockerfile = (IMAGE.parent / "sim2real-envgen/Dockerfile").read_text()
+    assert "rm -rf /opt/npa" in dockerfile
+    assert "remove-scikit-image-recipe.py" not in dockerfile
+    assert "--allow-corrected" not in dockerfile

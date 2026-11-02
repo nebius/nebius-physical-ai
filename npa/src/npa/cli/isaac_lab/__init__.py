@@ -397,10 +397,14 @@ def _isaac_lab_serverless_train(
                 output_format,
             )
             return
+        try:
+            selected_image = image or container_image_for_tool("isaac-lab")
+        except ValueError as exc:
+            _fail(str(exc))
         info = client.create_job(
             project_id=resolved_project_id,
             name=name,
-            image=image or container_image_for_tool("isaac-lab"),
+            image=selected_image,
             command=_isaac_lab_serverless_train_command(
                 task,
                 num_envs,

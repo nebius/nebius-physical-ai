@@ -73,8 +73,9 @@ _STAGE_SPECS: tuple[_StageMonitorSpec, ...] = (
     _StageMonitorSpec(
         "stage_03_augment",
         (
-            # Gate on Cosmos Transfer output, not augment/manifest.json alone.
-            _ArtifactRule(("augment/cosmos2-transfer-result.json",), "file"),
+            # Gate on the guarded Cosmos3 structural-transfer receipt, not an
+            # intermediate manifest that could exist before generated frames.
+            _ArtifactRule(("augment/cosmos3-transfer-result.json",), "file"),
         ),
         component_names=("stage_03_augment",),
         stage_numbers=(3,),
@@ -165,7 +166,7 @@ _STAGE_SPECS: tuple[_StageMonitorSpec, ...] = (
     ),
 )
 
-_STAGE_03_COSMOS2_RESULT_KEY = "augment/cosmos2-transfer-result.json"
+_STAGE_03_COSMOS3_RESULT_KEY = "augment/cosmos3-transfer-result.json"
 
 _STAGE_ORDER: tuple[str, ...] = tuple(spec.name for spec in _STAGE_SPECS)
 _STAGE_NUMBER_TO_NAME: dict[int, str] = {
@@ -747,12 +748,12 @@ def _stage_states(
             source = "s3_artifact" if present else ""
             tier = ""
             completed_at = ""
-        if spec.name == "stage_03_augment" and not _stage_03_cosmos2_result_present(
+        if spec.name == "stage_03_augment" and not _stage_03_cosmos3_result_present(
             client, bucket, run_prefix=run_prefix
         ):
             present = False
             if source and source != "s3_artifact":
-                source = "awaiting_cosmos2_result"
+                source = "awaiting_cosmos3_result"
             elif not source:
                 source = ""
         stages[spec.name] = {
@@ -789,13 +790,13 @@ def _stage_states(
     return stages
 
 
-def _stage_03_cosmos2_result_present(
+def _stage_03_cosmos3_result_present(
     client: StorageClient,
     bucket: str,
     *,
     run_prefix: str,
 ) -> bool:
-    key = f"{run_prefix.rstrip('/')}/{_STAGE_03_COSMOS2_RESULT_KEY}"
+    key = f"{run_prefix.rstrip('/')}/{_STAGE_03_COSMOS3_RESULT_KEY}"
     return _s3_object_exists(client, bucket, key)
 
 

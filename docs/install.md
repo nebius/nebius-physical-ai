@@ -3,7 +3,7 @@
 [Docs](README.md)
 
 `npa` targets **macOS**, **Linux**, and **Windows via WSL2**, and works with
-**Python 3.10+**. It is not published to PyPI, so you always install it editable
+**Python 3.11+**. It is not published to PyPI, so you always install it editable
 from a clone of this repository.
 
 The [quickstart install](quickstart.md#3-install-npa) has the short,
@@ -22,7 +22,7 @@ little more.
 `npa` runs cloud workloads (S3, SkyPilot, Kubernetes) that assume a POSIX
 environment, so on Windows do all `npa` work from **WSL2 Ubuntu**.
 
-## 1. Get Python 3.10+
+## 1. Get Python 3.11+
 
 Check what you have:
 
@@ -30,15 +30,20 @@ Check what you have:
 python3 --version
 ```
 
-If it is older than 3.10 (or missing):
+If it is older than 3.11 (or missing):
 
 - **macOS:** `brew install python@3.12`, or download from
   [python.org](https://www.python.org/downloads/), or use
   [pyenv](https://github.com/pyenv/pyenv).
-- **Debian/Ubuntu:** the interpreter is usually current; also install the venv
-  module (shipped separately): `sudo apt-get install -y python3 python3-venv`.
+- **Debian/Ubuntu:** use Python 3.11 or newer (Ubuntu 24.04 provides 3.12).
+  Also install the matching venv module; on Ubuntu 24.04 run
+  `sudo apt-get install -y python3 python3-venv`.
 - **Windows:** use the Debian/Ubuntu commands inside WSL2 Ubuntu. A native
   Windows Python installation is not used by this setup.
+
+Ubuntu 22.04's default Python 3.10 does not meet the client requirement. Install
+a supported interpreter with `uv` or `pyenv` before creating the environment;
+for example, `uv venv --python 3.12 .venv` selects Python 3.12.
 
 ## 2. Clone the repository and create a virtual environment
 
@@ -130,14 +135,21 @@ For removal safeguards, failure receipts, and retries, see
 ```bash
 # macOS / Linux (and inside WSL2)
 curl -fsSL https://storage.eu-north1.nebius.cloud/cli/install.sh \
-  | NEBIUS_CLI_VERSION=0.12.254 bash
+  | NEBIUS_CLI_VERSION=0.12.298 bash
 export PATH="${HOME}/.nebius/bin:${PATH}"   # add to ~/.zshrc or ~/.bashrc to persist
 ```
 
-NPA's recommended/tested version is `0.12.254`; `0.12.227` is also tested and
-continues with a compatibility warning. Untested versions are blocked with an
-exact command to install the recommended version, so the install guide and the
-runtime parser contract cannot silently drift apart.
+NPA's required/tested version is `0.12.298`. Earlier supported versions lack
+the explicit spot-pricing options required for preemptible workloads and are
+blocked before launch with an exact upgrade command. Agent bootstrap installs
+this version on the backend service's PATH. Preemptible jobs, endpoints, and
+standalone workbench VMs follow the current spot price; on-demand selections
+keep their existing pricing.
+
+The VM recipe preserves existing values of the retired preemption-priority
+attribute during updates. The provider still marks that attribute immutable;
+removing it from an existing VM would otherwise trigger replacement. Fresh VMs
+omit it and use the explicit spot-pricing setting.
 
 `npa configure` creates or reuses a local profile for you (no manual
 `nebius profile create` step). See <https://docs.nebius.com/cli/install> for
@@ -203,3 +215,29 @@ These work but are not covered by the copy-paste path:
 
 [Configure your project](configuration.md), choose a [workload](workbench/guides/README.md),
 and prepare its [runtime](workbench/getting-started.md).
+
+### Verify explicit spot pricing after an upgrade
+
+With an authenticated Nebius profile and an explicitly selected project, validate
+both preemptible and on-demand serverless requests without allocating resources:
+
+```bash
+NPA_INTEGRATION_E2E=1 NPA_SPOT_PRICING_LIVE=1 \
+  NPA_E2E_PROJECT_ID="$NPA_PROJECT_ID" \
+  npa/.venv/bin/python -m pytest npa/tests/e2e/test_nebius_spot_pricing_live.py -q
+```
+
+`NPA_SPOT_PRICING_LIVE=1` enables the provider `--dry-run` checks; it is off by
+default. `NPA_E2E_PROJECT_ID` must explicitly identify the authorized test project.
+Set `NPA_E2E_SUBNET_ID` to an existing subnet in that project if it has no default
+subnet; the tests do not create networking.
+The test sends Workbench's generated create requests through the installed CLI
+and stops after validation, before interpreting them as created jobs or endpoints.
+The standalone VM recipe uses provider `~> 0.5.293`, with reviewed checksums for
+Linux and macOS on AMD64 and ARM64. Its mocked Terraform plans exercise both
+pricing selections without cloud mutations:
+
+```bash
+terraform -chdir=npa/src/npa/deploy/terraform init -backend=false -lockfile=readonly
+terraform -chdir=npa/src/npa/deploy/terraform test
+```

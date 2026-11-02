@@ -30,5 +30,5 @@ output "k8s_node_group_service_account_id" {
 
 output "k8s_training_ref" {
   description = "Pinned nebius-solutions-library release used by this wrapper."
-  value       = "main-v2026-05-25+local-cluster-patches"
+  value       = "main-v2026-10-12+local-cluster-patches"
 }

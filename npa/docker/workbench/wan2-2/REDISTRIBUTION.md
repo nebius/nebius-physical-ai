@@ -1,10 +1,10 @@
 # Wan 2.2 container redistribution record
 
 The security candidate uses a digest-pinned Ubuntu 26.04 base and upgrades its
-packages before installing runtime dependencies. Python 3.10.22 is copied from
+packages before installing runtime dependencies. Python 3.11.16 is copied from
 a separate, digest-pinned official Python image after repairing its installers;
 the donor's Debian layers and shared libraries are not copied. Python's license
-remains in `/usr/local/lib/python3.10/LICENSE.txt`. The build checks every
+remains in `/usr/local/lib/python3.11/LICENSE.txt`. The build checks every
 interpreter/extension shared-library dependency against the Ubuntu runtime. It
 copies the prepared filesystem into the final image, excluding the unused
 inherited Pebble service manager and superseded package bytes from every shipped

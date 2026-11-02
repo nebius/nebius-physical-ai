@@ -90,7 +90,7 @@ def plan_only_config_vars(
         ValueError: If the matrix case no longer resolves to a shipped workflow.
     """
     values = dict(case.config_vars)
-    if case.plan_only:
+    if case.plan_only or case.spec == "sim2real.yaml":
         path = resolve_npa_workflow_spec(case.spec)
         if path is None:
             raise ValueError(f"plan-only matrix spec not found: {case.spec}")
@@ -100,14 +100,10 @@ def plan_only_config_vars(
                 f"{registry}/plan-only/{path.stem}-{key}@{_PLAN_ONLY_IMAGE_DIGEST}",
             )
 
-    # Sim2Real's render-only contract predates required_immutable_images and
-    # retains explicit fixtures for all of its role-specific image inputs.
+    # Sim2Real's runtime case still renders a dry-run matrix plan with inert
+    # pins from required_immutable_images, and also needs source attestation
+    # plus a read-only Isaac cache fixture.
     if case.spec == "sim2real.yaml":
-        for role in ("controller", "transfer", "envgen", "isaac", "viewer"):
-            values.setdefault(
-                f"{role}_image",
-                f"{registry}/plan-only/sim2real-{role}@{_PLAN_ONLY_IMAGE_DIGEST}",
-            )
         values.setdefault("source_sha", "0" * 40)
         values.setdefault("isaac_cache_pvc", "plan-only-isaac-cache")
     return tuple(values.items())
@@ -1131,8 +1127,9 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         requires_token_factory=True,
         image_tool="isaac-lab",
         notes=(
-            "Isaac Lab renders Franka frames on a GPU, then a hosted Cosmos3 reasoner plans "
-            "from them on CPU. Needs no seeded input: the first stage produces the second's."
+            "Isaac Lab renders Franka frames on a GPU, then hosted MiniMax-M3 through "
+            "Token Factory plans from them on CPU. Needs no seeded input: the first stage "
+            "produces the second's."
         ),
     ),
     SubmitLiveCase(
@@ -1709,6 +1706,28 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
             "Real dynamic PAIDF Cosmos 3 acceptance using only the repository-owned "
             "synthetic MP4 fixture. Proves source-video-conditioned framework output, "
             "Cosmos Evaluator, Cosmos Curator, FiftyOne Brain, and Rerun evidence."
+        ),
+    ),
+    SubmitLiveCase(
+        "paidf-aloha-cups-fanout.yaml",
+        "gpu",
+        secret_envs=(
+            "NEBIUS_TOKEN_FACTORY_KEY",
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+            "HF_TOKEN",
+        ),
+        requires_token_factory=True,
+        runtime=True,
+        rotation_skip=True,
+        skip_reason=(
+            "Requires a fresh hash-verified pinned ALOHA dataset upload; select "
+            "this case with NPA_E2E_PAIDF_ALOHA_DATASET_URI after source staging."
+        ),
+        notes=(
+            "Twelve full-episode Nano appearance candidates, real evaluation and "
+            "strict terminal review evidence. Public defaults, no refinement or "
+            "training promotion; completed live qualification remains unverified."
         ),
     ),
     SubmitLiveCase(

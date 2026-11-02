@@ -41,14 +41,14 @@ This record is engineering classification, not legal advice.
    The service installer is the source-identified `pip==26.2.1+npa.1`
    derivative documented in `../common/secure_pip/README.md`, not an upstream
    pip release. Ubuntu's pip and setuptools seed wheels are replaced by the
-   derivative and the hash-locked full setuptools 84.0.0 seed in the same
+   derivative and the hash-locked full setuptools 84.2.1 seed in the same
    package-install layer,
    before any final layer export. Standard Python 3.12 venv creation uses this
    repaired seed, and the exact build receipt is retained at
    `/usr/share/doc/npa-seedvr2/secure-pip-build.json`. Temporary upstream
    bootstrap and vendoring tools remain confined to a separate build stage.
    The full seed is separate from the derivative's limited setuptools 80.9.0
-   `pkg_resources` donor. The full 84.0.0 wheel fixes cross-Unicode-normalization
+   `pkg_resources` donor. The full 84.2.1 wheel fixes cross-Unicode-normalization
    `MANIFEST.in` exclusions; a bounded donor disposition does not exempt an
    older full setuptools implementation. This recipe change does not repair
    existing image digests or establish whole-image security acceptance.

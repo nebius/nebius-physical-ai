@@ -105,7 +105,7 @@
           ]
         },
         "plan": {
-          "description": "Render the Sim2Real workflow plan without executing it",
+          "description": "Render the Sim2Real workflow plan without executing it or pulling images",
           "argv": [
             "{python}",
             "-m",
@@ -116,6 +116,16 @@
             "workflows/main/sim2real.yaml",
             "--assume-decision",
             "promote_checkpoint",
+            "--var",
+            "controller_image=registry.example.invalid/npa/sim2real@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "--var",
+            "cosmos3_image=registry.example.invalid/npa/sim2real@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "--var",
+            "envgen_image=registry.example.invalid/npa/sim2real@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "--var",
+            "isaac_image=registry.example.invalid/npa/sim2real@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "--var",
+            "viewer_image=registry.example.invalid/npa/sim2real@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             "--json"
           ]
         }

@@ -96,3 +96,37 @@ assert "--endpoint" in cli_result.output
     )
 
     assert result.returncode == 0, result.stderr
+
+
+def test_viewer_light_workbench_reaches_hosted_caption_without_platform_imports() -> (
+    None
+):
+    result = _run_light_import(
+        """
+import sys
+from typer.testing import CliRunner
+from npa.cli.workbench import app
+from npa.cli.workbench import token_factory
+calls = []
+def caption(**kwargs):
+    calls.append(kwargs)
+    raise token_factory.TokenFactoryToolError("caption-boundary")
+token_factory.caption_images = caption
+result = CliRunner().invoke(app, [
+    "token-factory", "caption", "--input-path", "s3://example-bucket/frames/",
+    "--output-path", "s3://example-bucket/captions/", "--model", "fixture-vision",
+    "--instruction", "Describe visible robot parts", "--max-images", "8",
+])
+assert result.exit_code == 1 and "caption-boundary" in result.output, result.output
+assert len(calls) == 1 and calls[0]["model"] == "fixture-vision"
+assert calls[0]["input_path"] == "s3://example-bucket/frames/"
+assert calls[0]["max_images"] == 8
+assert "npa.cli.fiftyone" not in sys.modules
+assert "npa.cli.groot" not in sys.modules
+assert "npa.cli.workbench.cosmos2" not in sys.modules
+assert "mujoco" not in sys.modules
+""",
+        tool="rerun-viewer",
+    )
+
+    assert result.returncode == 0, result.stderr

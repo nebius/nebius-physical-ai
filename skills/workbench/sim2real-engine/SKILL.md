@@ -48,12 +48,40 @@ or spawn sibling Jobs.
   model-agent accounting. Stage 9 must reject missing, duplicate, or extra
   evaluations or a mismatched configured model/family by comparing that single result with the authoritative Stage 7
   rollout set before PPO or checkpoint selection.
-- The `cosmos3_model` config key, `cosmos3.json` artifact, and evaluator schema/lane
-  names are retained for compatibility; the actual model and `reason_family`
-  identify MiniMax or an explicitly selected legacy Cosmos3 endpoint. Changing
-  the model or upgrading the evaluator contract requires a new run.
-- Train, validation, and gold digests are disjoint. Checkpoint ranking reads
-  validation only; Stage 10 reads gold only and preserves exact render lineage.
+- The canonical Stage 8/9 interface uses `token_factory_model`,
+  `token-factory.json`, and `npa.sim2real.token_factory_evaluator.v1`; it has no
+  canonical Cosmos3 reasoning selector. Only the archived legacy loop retains
+  its source-supported `vlm_cosmos3_model` and `vlm_eval_cosmos3` compatibility
+  interface. Changing the canonical model or evaluator contract requires a new run.
+- Train, validation, and gold digests are disjoint. After the full PPO pass,
+  checkpoint ranking evaluates every saved 100-update checkpoint and the final
+  checkpoint on the same validation split. Preserve actual checkpoint update
+  indices alongside full pass telemetry. Retry requires the complete, exact
+  committed candidate pool. Ranking reads validation only; Stage 10 reads gold only and preserves exact render lineage.
+- Native stock-Franka scenarios share the attested task-space control profile:
+  upstream arm gains and gravity compensation, 200 Hz physics and 50 Hz policy
+  actions. Training demonstrations initialize the actor; validation and Gold
+  execute that learned actor alone. Physics refinement preserves episode duration
+  and PPO update counts, with the strict placement predicate retained.
+- Stock scenario policies share `stock-franka-cartesian-gru-v2`: native absolute
+  TCP-pose actions, measured geometry, initialized observation normalization,
+  a GRU, and the real reset clock saturated at five seconds. Fresh training uses
+  `franka-cartesian-gru-distillation-v2`, retains at least three 32-epoch demonstration
+  fits, and repeats corrective fitting until a strict actor-only handoff across
+  the complete training split passes before PPO. Archive every assessment.
+  A weak initial mixed collection triggers another guarded teacher-only fit and
+  a new mixed collection. Both accepted warmup rounds retain the half-split
+  placement guard; archive every failed collection and recovery fit.
+  Freeze trained observation statistics after the successful actor-only handoff.
+  Stock demonstration and resumed transport/convergence passes default to fixed
+  PPO updates at `0.00001`, zero entropy, and action noise `0.005`, while explicit
+  operator overrides remain effective. Every checkpoint binds the actual
+  normalization count and update bound; exact loads restore that bound.
+  Expert phases only weight training loss. Every periodic and final checkpoint
+  binds the policy semantics; all native inference paths reset
+  recurrent state on actual `dones`. Validation retains the first native
+  checkpoint, including index zero with one completed update, as well as the
+  configured periodic and final checkpoints. Keep the full PPO count and held-out gate.
 - Temporal rewards remain bounded and simulator-grounded. Strict success remains
   stable placement within 5 cm. Pipeline success and policy quality are distinct.
 - Native rollout actions preserve every reset between sparse samples using

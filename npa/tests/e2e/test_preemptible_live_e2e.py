@@ -127,6 +127,9 @@ def test_live_preemptible_lerobot_deploy_and_destroy(
             "preemptible"
         )
         assert preemptible, f"expected preemptible spec, got: {preemptible!r}"
+        assert "follows_spot_price" in (match.get("spec") or match), (
+            "expected explicit follow-spot pricing after preemptible deploy"
+        )
     finally:
         destroy = _run_npa(
             [

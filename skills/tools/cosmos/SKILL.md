@@ -75,10 +75,13 @@ Known constraints:
 
 ## Predict2 CUDA Wheel Contract
 
-The `npa-cosmos` Predict2 1.0.9 image uses NVIDIA's complete v1.2.0
-`cu128_torch27` wheel set: torch 2.7.0, torchvision 0.22.0, flash-attn 2.7.3,
-NATTEN 0.21.0, and Transformer Engine 1.13.0. Keep these as one ABI-locked
-unit. Do not bump torch alone, and do not replace either custom-kernel wheel
+The `npa-cosmos` Predict2 1.0.9 source recipe now uses Python 3.12 and
+NVIDIA's hash-verified v1.2.0 CP312 `cu128_torch27` wheels: torch 2.7.0,
+torchvision 0.22.0, flash-attn 2.6.3, NATTEN 0.21.0, and Transformer Engine
+1.13.0. Pillow 13 requires Python 3.11 or newer. Historical CP310/flash-attn
+2.7.3 GPU evidence does not qualify this new interpreter and kernel tuple;
+repeat the release validation below before promoting a rebuilt image.
+Keep the selected interpreter and CUDA wheels as one ABI-locked unit. Do not bump torch alone, and do not replace either custom-kernel wheel
 with a source build during an image refresh.
 
 Predict2 1.0.9's package metadata still pins triton 3.2.0 for its former torch

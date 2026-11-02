@@ -83,6 +83,12 @@ def _staging_manifest(encoded: bytes) -> dict:
     }
 
 
+def _tighten_fixture_tree(root: Path) -> None:
+    """Make synthetic source inputs satisfy the production trust boundary."""
+    for path in (root, *root.rglob("*")):
+        path.chmod(0o700 if path.is_dir() else 0o600)
+
+
 def _forbid_source_effects(monkeypatch):
     effects = []
     for owner, names in (
@@ -607,9 +613,10 @@ def test_pillow_metadata_patch_is_deterministic_and_fail_closed(tmp_path: Path) 
         "patched_file_sha256": hashlib.sha256(after).hexdigest(),
     }
     root = tmp_path / "source"
-    root.mkdir()
+    root.mkdir(mode=0o700)
     target = root / "pyproject.toml"
     target.write_bytes(before)
+    target.chmod(0o600)
     PREPARER._apply_metadata_patches(root, [patch])
     assert target.read_bytes() == after
     with pytest.raises(PREPARER.SourceError, match="patch input changed"):
@@ -662,13 +669,14 @@ def test_required_pbr_configuration_refuses_omission_or_wrong_content(
 ) -> None:
     required = [MANIFEST["source"]["required_projection_files"][0]]
     root = tmp_path / "source"
-    root.mkdir()
+    root.mkdir(mode=0o700)
     with pytest.raises(PREPARER.SourceError, match="PbrImages.conf"):
         PREPARER._verify_required_source_files(root, required)
 
     config = root / "data/pbr/PbrImages.conf"
     config.parent.mkdir(parents=True)
     config.write_bytes(b"x" * len(PBR_CONFIG))
+    _tighten_fixture_tree(root)
     with pytest.raises(PREPARER.SourceError, match="PbrImages.conf"):
         PREPARER._verify_required_source_files(root, required)
 
@@ -693,6 +701,7 @@ def test_required_pbr_projection_refuses_each_omission_or_wrong_content(
         target = root / path
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(payload)
+    _tighten_fixture_tree(root)
     PREPARER._verify_required_source_files(root, required)
     for row in required:
         target = root / row["path"]
@@ -701,9 +710,11 @@ def test_required_pbr_projection_refuses_each_omission_or_wrong_content(
         with pytest.raises(PREPARER.SourceError, match="required source projection"):
             PREPARER._verify_required_source_files(root, required)
         target.write_bytes(b"x" * len(expected))
+        target.chmod(0o600)
         with pytest.raises(PREPARER.SourceError, match="required source projection"):
             PREPARER._verify_required_source_files(root, required)
         target.write_bytes(expected)
+        target.chmod(0o600)
 
 
 @pytest.mark.parametrize("path", ["../escape", "data/pbr/../escape", "/data/pbr/file"])
@@ -1294,13 +1305,16 @@ def test_internal_vendored_closure_refuses_changed_or_extra_blob(tmp_path) -> No
     selected.mkdir(parents=True)
     blob = selected / "exact.h"
     blob.write_bytes(b"exact")
+    _tighten_fixture_tree(root)
     component = {
         "name": "internal",
         "root": "src/deps/internal",
         "files": [{"path": "exact.h", "sha256": hashlib.sha256(b"exact").hexdigest()}],
     }
     PREPARER._verify_internal_vendored(root, [component])
-    (selected / "undeclared.h").write_bytes(b"extra")
+    undeclared = selected / "undeclared.h"
+    undeclared.write_bytes(b"extra")
+    undeclared.chmod(0o600)
     with pytest.raises(PREPARER.SourceError, match="vendored source closure changed"):
         PREPARER._verify_internal_vendored(root, [component])
 

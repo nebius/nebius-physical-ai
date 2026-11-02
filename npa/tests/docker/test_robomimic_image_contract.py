@@ -142,10 +142,10 @@ def test_neutral_image_boundaries_and_locks_are_explicit() -> None:
         assert forbidden not in lowered
     runtime = json.loads((IMAGE_ROOT / "runtime-requirements.lock").read_text())
     assert runtime["schema"] == "npa.robomimic.runtime-lock.v1"
-    assert len(runtime["packages"]) == 62
+    assert len(runtime["packages"]) == 67
     assert set(baked_names) <= set(runtime["packages"])
-    assert runtime["packages"]["torch"] == "2.7.1+cu128"
-    assert runtime["packages"]["nvidia-cudnn-cu12"] == "9.7.1.26"
+    assert runtime["packages"]["torch"] == "2.13.0+cu130"
+    assert runtime["packages"]["nvidia-cudnn-cu13"] == "9.20.0.48"
     assert runtime["artifact_hash_closure"] == "required-in-runtime-inventory"
     entitlement = runtime["customer_entitlement"]
     assert entitlement["schema"] == "npa.robomimic.customer-runtime-entitlement.v1"

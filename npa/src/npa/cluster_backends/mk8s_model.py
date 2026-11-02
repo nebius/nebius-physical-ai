@@ -98,6 +98,7 @@ class MK8sDesired:
     filestore_mount_path: str = "/mnt/data"
     filestore_mount_tag: str = "data"
     filesystem_csi_chart_repository: str = ""
+    filesystem_csi_make_default_storage_class: bool = False
     gpu_driver_mode: str = "auto"
     managed_driver_preset: str = DEFAULT_MANAGED_DRIVER_PRESET
     allow_unsafe_nvswitch_operator: bool = False
@@ -245,6 +246,13 @@ class MK8sDesired:
                 raise ValueError(
                     "mk8s filesystem CSI chart repository must not contain whitespace"
                 )
+        if self.filesystem_csi_make_default_storage_class and not (
+            self.enable_filestore or self.existing_filestore.strip()
+        ):
+            raise ValueError(
+                "mk8s filesystem_csi_make_default_storage_class requires "
+                "enable_filestore or existing_filestore"
+            )
         if gpu and gpu.count > 0 and self.resolved_gpu_disk_size_gib() <= 0:
             raise ValueError("mk8s GPU disk size must be positive")
         if self.mig is not None:

@@ -1,4 +1,4 @@
-"""Sim2Real policy-image functional golden eval (variant + envgen + Genesis CUDA)."""
+"""Reference-policy contract smoke (variant plus EnvGen scenario records only)."""
 
 from __future__ import annotations
 

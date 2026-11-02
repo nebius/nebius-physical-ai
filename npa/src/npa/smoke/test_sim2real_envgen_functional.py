@@ -1,4 +1,4 @@
-"""Sim2Real envgen container functional golden eval (env manifest + Genesis CUDA)."""
+"""Sim2Real EnvGen role smoke (scenario records and exact source readability)."""
 
 from __future__ import annotations
 
@@ -51,7 +51,7 @@ def check_raw_env_generation() -> CheckResult:
 
 
 def check_non_root_runtime_readability() -> CheckResult:
-    """Prove the flattened image can import its exact source without PYTHONPATH."""
+    """Prove the flattened role imports its exact source without PYTHONPATH."""
 
     uid = os.geteuid()
     if uid == 0:
@@ -63,9 +63,11 @@ def check_non_root_runtime_readability() -> CheckResult:
     environment = os.environ.copy()
     environment.pop("PYTHONPATH", None)
     probe = (
-        "import os; from pathlib import Path; import tetgen; "
+        "import os; from pathlib import Path; "
         "from npa.workflows import sim2real_envgen; "
-        "paths=(Path(tetgen.__file__), Path(sim2real_envgen.__file__)); "
+        "from npa.workflows.sim2real.workflow_stage import main; "
+        "assert callable(sim2real_envgen.main) and callable(main); "
+        "paths=(Path(sim2real_envgen.__file__),); "
         "assert all(path.is_file() and os.access(path, os.R_OK) for path in paths); "
         "print(*(str(path) for path in paths), sep=' | ')"
     )
@@ -87,36 +89,10 @@ def check_non_root_runtime_readability() -> CheckResult:
     )
 
 
-def check_genesis_cuda_step() -> CheckResult:
-    import torch
-
-    if not torch.cuda.is_available():
-        return CheckResult("genesis cuda step", False, "CUDA unavailable")
-    try:
-        from npa.genesis.env_pick_place import EnvConfig, FrankaPickPlaceEnv
-    except Exception as exc:
-        return CheckResult("genesis cuda step", False, f"import failed: {exc}")
-    env = FrankaPickPlaceEnv(
-        EnvConfig(
-            n_envs=1,
-            enable_cameras=False,
-            max_episode_steps=8,
-            domain_randomize=False,
-        )
-    )
-    obs = env.reset()
-    if obs is None:
-        return CheckResult("genesis cuda step", False, "reset returned None")
-    action = torch.zeros((1, env.act_dim), device=env.device)
-    env.step(action)
-    return CheckResult("genesis cuda step", True, f"device={env.device}")
-
-
 def main() -> int:
     checks: list[Callable[[], CheckResult]] = [
         check_non_root_runtime_readability,
         check_raw_env_generation,
-        check_genesis_cuda_step,
     ]
     failed = 0
     for check in checks:

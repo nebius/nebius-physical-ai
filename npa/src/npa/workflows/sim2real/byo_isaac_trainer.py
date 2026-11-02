@@ -1,27 +1,19 @@
-"""BYO trainer: real Isaac-Lab RSL-RL PPO for the sim2real inner loop.
+"""Run Isaac Lab RSL-RL PPO for the canonical Sim2Real inner loop.
 
-Wired in via ``sim2real run --byo-trainer-command 'python3 -m
-npa.workflows.sim2real.byo_isaac_trainer'``. This satisfies the
-``_run_trainer_via_command`` contract (engine.py): read the parsed VLM signal
-batch from ``NPA_SIM2REAL_SIGNAL_JSON`` and write a ``VlmSignalUpdateResult``
-JSON to ``NPA_SIM2REAL_OUTPUT_JSON`` with at least ``reward_head_after``,
-``policy_output_after`` (non-empty list), and ``policy_delta_l2``.
+Stage 9 of ``workflows/main/sim2real.yaml`` executes this adapter inside its
+already admitted SkyPilot GPU task, using the immutable Isaac image. The adapter
+runs the baked native Isaac wrapper on ``Isaac-Lift-Cube-Franka-v0``, initializes
+fresh stock-Franka actors from training-only demonstrations, runs the full PPO
+pass, uploads actual ``model_*.pt`` checkpoints, and
+selects the checkpoint with validation data. Canonical execution reports
+``npa_workflow_skypilot_task`` and creates no sibling Kubernetes Job.
 
-Unlike the in-process *reference* hook (``run_vlm_signal_training_step`` — a
-single SGD step on a scalar adapter), this runs **genuine RL training**: it
-submits an Isaac-Lab sibling k8s Job (``npa-isaac-lab`` image) that runs
-``scripts/reinforcement_learning/rsl_rl/train.py`` on
-``Isaac-Lift-Cube-Franka-v0`` for real iterations, produces a real
-``model_*.pt`` policy checkpoint, and uploads it to S3. The emitted
-``checkpoint_path`` is that real checkpoint, so promote can mark it deployable.
-
-The trainer runs **inside the orchestrator pod** (lerobot-vlm-rl image, no
-Isaac), so it cannot run Isaac in-process. It submits the sibling Job through
-the typed Kubernetes API client and reconciles structured Job and Pod state.
-
-``NPA_BYO_ISAAC_DRYRUN=1`` skips the Kubernetes API/S3 entirely and emits a deterministic
-result derived from the signal batch — used by unit tests and for wiring checks
-without a GPU.
+The component reads temporal VLM signals from ``NPA_SIM2REAL_SIGNAL_JSON`` and
+writes ``NPA_SIM2REAL_OUTPUT_JSON`` with the real checkpoint path, PPO telemetry,
+and signal-adapter measurements. The older command-hook interface and typed
+Kubernetes launcher remain finite compatibility paths outside the canonical
+workflow. ``NPA_BYO_ISAAC_DRYRUN=1`` provides deterministic unit-test output;
+it is not GPU training evidence.
 """
 
 from __future__ import annotations
@@ -65,8 +57,8 @@ DEFAULT_ENTROPY_COEF = "0.006"
 DEFAULT_ENTROPY_FINAL_COEF = "0.0005"
 DEFAULT_ENTROPY_ANNEAL_FRACTION = "0.6"
 DEFAULT_PPO_OPTIMIZER_LEARNING_RATE = "0.001"
-# A resumed policy has already crossed the reach/grasp/lift exploration wall.
-# Re-applying the first-pass exploration schedule on every inner/outer pass kept
+# Once validation proves consistent grasp/lift, the resumed policy can consolidate.
+# Re-applying the first-pass exploration schedule on every qualified pass kept
 # deterministic placement noisy in live validation. Resume uses a separate,
 # operator-tunable convergence phase: short low-entropy adaptation followed by
 # zero entropy and a smaller PPO optimizer rate.
@@ -85,7 +77,13 @@ DEFAULT_RESUME_PPO_OPTIMIZER_LEARNING_RATE = "0.0001"
 # validation actually executes.  The baked Isaac wrapper applies and verifies
 # this value only after loading the exact resume checkpoint.
 DEFAULT_RESUME_CONVERGENCE_ACTION_NOISE_STD = "0.05"
+DEFAULT_BOOTSTRAP_ENTROPY_COEF = "0.0"
+DEFAULT_BOOTSTRAP_PPO_LEARNING_RATE = "0.00001"
+DEFAULT_BOOTSTRAP_ACTION_NOISE_STD = "0.005"
 _STOCK_ENTROPY_SENTINELS = frozenset({"stock", "default", "none", ""})
+_RESUME_PHASES = frozenset({"exploration", "transport", "convergence"})
+
+
 TRAIN_SCRIPT = "/workspace/isaaclab/scripts/reinforcement_learning/rsl_rl/train.py"
 # rsl_rl experiment_name for the Franka Lift task (logs/rsl_rl/<experiment_name>/).
 # Overridable via NPA_BYO_ISAAC_EXPERIMENT_NAME for non-default tasks; the outer-loop
@@ -155,14 +153,31 @@ def robot_asset_preflight_script(robot_spec: dict[str, Any]) -> str:
     return command
 
 
-def embodiment_evidence(robot_spec: dict[str, Any] | None) -> dict[str, Any]:
-    """Evidence attached only after the in-Isaac dimension checks pass."""
+def embodiment_evidence(
+    robot_spec: dict[str, Any] | None, *, stock_scenarios: bool = False
+) -> dict[str, Any]:
+    """Describe embodiment dimensions after the native runtime checks pass.
+
+    Args:
+        robot_spec: Resolved robot metadata, including explicit custom dimensions.
+        stock_scenarios: Whether stock Franka uses the curated Cartesian GRU task.
+    Returns:
+        Embodiment evidence with the task's default or explicit robot dimensions.
+    Raises:
+        ValueError: An explicit robot dimension cannot be converted to an integer.
+    """
 
     spec = dict(robot_spec or {})
+    stock_policy = (
+        stock_scenarios and spec.get("robot_source", "stock_franka") == "stock_franka"
+    )
+    observation_dim = 39 if stock_policy else 36
     return {
         "embodiment_digest": str(spec.get("embodiment_digest") or "stock_franka"),
         "expected_action_dim": int(spec.get("expected_action_dim") or 8),
-        "expected_observation_dim": int(spec.get("expected_observation_dim") or 36),
+        "expected_observation_dim": int(
+            spec.get("expected_observation_dim") or observation_dim
+        ),
         "resolved_usd_uri": str(spec.get("resolved_usd_uri") or ""),
         "resolved_manifest_uri": str(spec.get("resolved_manifest_uri") or ""),
         "runtime_dimension_validation": "passed",
@@ -407,12 +422,12 @@ _PPO_FIELDS = {
         "stable_placement_termination_rate"
     ),
     "Total timesteps": "total_timesteps",
+    "Total steps": "total_timesteps",
 }
 
 
-def parse_ppo_training_log(text: str) -> dict[str, Any]:
-    """Parse RSL-RL's iteration table into durable manipulation telemetry."""
-
+def _ppo_iteration_records(text: str) -> tuple[list[dict[str, Any]], int]:
+    """Read native update losses even before an episode return becomes available."""
     iterations: list[dict[str, Any]] = []
     current: dict[str, Any] | None = None
     configured_iterations = 0
@@ -435,26 +450,52 @@ def parse_ppo_training_log(text: str) -> dict[str, Any]:
         if not key:
             continue
         value = float(metric_match.group(2))
+        if not math.isfinite(value):
+            raise ValueError("RSL-RL PPO telemetry contains a nonfinite metric")
         current[key] = int(value) if key == "total_timesteps" else value
 
+    return iterations, configured_iterations
+
+
+def _complete_ppo_updates(iterations: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Require unique consecutive updates with both measured optimizer losses."""
     if not iterations:
         raise ValueError("RSL-RL log contains no Learning iteration records")
-    # rsl-rl >= 5.0 no longer prints "Total timesteps" in the iteration table;
-    # treat it as optional evidence rather than a completeness requirement.
-    required = {"episode_return", "value_loss", "surrogate_loss"}
+    required = {"value_loss", "surrogate_loss"}
     complete = [item for item in iterations if required.issubset(item)]
     if not complete:
         raise ValueError("RSL-RL log contains no complete PPO telemetry iteration")
-    final = complete[-1]
+    indices = [item["iteration"] for item in complete]
+    if indices != list(range(indices[0], indices[-1] + 1)):
+        raise ValueError("RSL-RL PPO update records must be unique and consecutive")
+    return complete
+
+
+def parse_ppo_training_log(text: str) -> dict[str, Any]:
+    """Parse native PPO updates without inventing unfinished episode returns.
+
+    Args:
+        text: The untruncated native RSL-RL console log.
+    Returns:
+        Loss-bearing update records and separately counted observed episode returns.
+    Raises:
+        ValueError: No complete loss record exists, or updates repeat or have gaps.
+    """
+    iterations, configured_iterations = _ppo_iteration_records(text)
+    complete = _complete_ppo_updates(iterations)
+    returns = [item for item in complete if "episode_return" in item]
     return {
         "schema": "npa.sim2real.ppo_telemetry.v1",
         "backend": "isaac_rsl_rl_ppo",
         "configured_iterations": configured_iterations,
         "observed_iterations": len(complete),
+        "iterations_with_episode_return": len(returns),
         "first_iteration": complete[0],
-        "final_iteration": final,
+        "final_iteration": complete[-1],
         "best_episode_return": max(
-            complete, key=lambda item: (item["episode_return"], item["iteration"])
+            returns,
+            key=lambda item: (item["episode_return"], item["iteration"]),
+            default={},
         ),
         "minimum_object_position_error": min(
             (
@@ -516,10 +557,62 @@ def _load_s3_json(uri: str, *, endpoint: str) -> dict[str, Any]:
 def enumerate_periodic_checkpoints(
     *, s3_output: str, endpoint: str, validation_interval: int
 ) -> list[dict[str, Any]]:
-    """Enumerate durable RSL checkpoints selected for fixed-validation sweeps."""
+    """Retain and identify periodic native checkpoints for validation selection.
+
+    Args:
+        s3_output: Durable trainer output prefix containing numbered checkpoints.
+        endpoint: Configured S3 endpoint, or an empty string for the SDK default.
+        validation_interval: Positive interval between periodic update indices.
+    Returns:
+        Ordered checkpoint identities with exact native completed-update counts.
+        Every periodic native checkpoint remains eligible for the later
+        validation-only ranking. A zero-based ``model_0`` is the bytes after
+        one complete native update, not an unevaluated teacher or a manual
+        baseline; excluding it would let iteration order override measured
+        held-out validation.
+    Raises:
+        ValueError: The validation interval is not positive.
+        RuntimeError: The trainer published no numbered native checkpoints.
+    """
 
     if validation_interval <= 0:
         raise ValueError("validation checkpoint interval must be positive")
+    discovered = _published_native_checkpoints(s3_output, endpoint)
+    if not discovered:
+        raise RuntimeError("trainer published no numbered RSL checkpoints")
+    highest = max(discovered)
+    selected = [
+        iteration
+        for iteration in sorted(discovered)
+        if iteration % validation_interval == 0 or iteration == highest
+    ]
+    checkpoints = []
+    for iteration in sorted(set(selected)):
+        checkpoint_uri = discovered[iteration]
+        identity = s3_object_identity(checkpoint_uri, endpoint=endpoint)
+        checkpoints.append(
+            {
+                "training_iteration": iteration,
+                "checkpoint_completed_updates": iteration + 1,
+                "checkpoint_iteration_semantics": "last_completed_zero_based",
+                "checkpoint_uri": checkpoint_uri,
+                # This is measured from the native model object, rather than
+                # inferred from an S3 list response or a later evaluator.
+                "checkpoint_sha256": identity["sha256"],
+                "checkpoint_size_bytes": identity["size_bytes"],
+                "generator_policy_sha256": identity["sha256"],
+                # ``model_0`` follows one complete native update. It is
+                # byte-bound and receives the same held-out validation report
+                # as every later periodic actor, so selection must rank it by
+                # that evidence rather than exclude it based on index alone.
+                "validation_selection_eligible": True,
+            }
+        )
+    return checkpoints
+
+
+def _published_native_checkpoints(s3_output: str, endpoint: str) -> dict[int, str]:
+    """Read numbered native checkpoint identities from the trainer's S3 prefix."""
     import boto3
     from urllib.parse import urlparse
 
@@ -528,31 +621,14 @@ def enumerate_periodic_checkpoints(
     paginator = boto3.client("s3", endpoint_url=endpoint or None).get_paginator(
         "list_objects_v2"
     )
-    discovered: dict[int, str] = {}
+    discovered = {}
     for page in paginator.paginate(Bucket=parsed.netloc, Prefix=prefix):
         for item in page.get("Contents", []) or []:
             key = str(item.get("Key") or "")
             match = re.search(r"/model_(\d+)\.pt$", f"/{key}")
             if match:
-                discovered[int(match.group(1))] = key
-    if not discovered:
-        raise RuntimeError("trainer published no numbered RSL checkpoints")
-    highest = max(discovered)
-    selected = [
-        iteration
-        for iteration in sorted(discovered)
-        if iteration > 0
-        and (iteration % validation_interval == 0 or iteration == highest)
-    ]
-    if highest not in selected:
-        selected.append(highest)
-    return [
-        {
-            "training_iteration": iteration,
-            "checkpoint_uri": f"s3://{parsed.netloc}/{discovered[iteration]}",
-        }
-        for iteration in sorted(set(selected))
-    ]
+                discovered[int(match.group(1))] = f"s3://{parsed.netloc}/{key}"
+    return discovered
 
 
 def read_generated_train_envs(
@@ -697,6 +773,7 @@ def build_isaac_job_manifest(
     success_termination_enabled: bool = False,
     validation_interval: int = 100,
     resume_uri: str = "",
+    resume_phase: str = "convergence",
     resume_sha256: str = "",
     experiment_name: str = DEFAULT_EXPERIMENT_NAME,
     robot_spec: dict[str, Any] | None = None,
@@ -705,6 +782,7 @@ def build_isaac_job_manifest(
     scenarios_jsonl: str = "",
     scenarios_uri: str = "",
     scenarios_sha256: str = "",
+    bootstrap_profile: str = "none",
 ) -> dict[str, Any]:
     """Build the Isaac-Lab RSL-RL training Job manifest (proven by recon).
 
@@ -720,6 +798,10 @@ def build_isaac_job_manifest(
     ``seed`` only controls reproducibility and never substitutes for scenario
     application. ``physics`` remains a legacy single-configuration compatibility
     path and is not used by the canonical real-required distribution workflow.
+    ``resume_phase="exploration"`` repeats the training-only goal curriculum;
+    ``convergence`` keeps exact goals. Canonical stages choose it from the resumed
+    checkpoint's simulator validation. The standalone compatibility default
+    remains ``convergence``.
     """
 
     scenarios_uri = scenarios_uri.strip()
@@ -793,7 +875,21 @@ def build_isaac_job_manifest(
         overrides["agent.resume"] = "true"
         overrides["agent.load_run"] = RESUME_RUN_DIR
         overrides["agent.load_checkpoint"] = RESUME_CKPT_NAME
-    goal_curriculum_enabled = not resume_uri and not physics
+    if resume_phase not in _RESUME_PHASES:
+        raise ValueError("resume_phase must be exploration, transport or convergence")
+    bootstrap_profile = _manifest_training_bootstrap(
+        bootstrap_profile,
+        task,
+        robot_spec,
+        physics,
+        resume_uri,
+        bool(scenarios_uri or scenarios_jsonl),
+    )
+    goal_curriculum_enabled = (
+        (not resume_uri or resume_phase == "exploration")
+        and not physics
+        and bootstrap_profile == "none"
+    )
     goal_curriculum_full_step = max(1, int(iterations * steps_per_env * 0.60))
     # shlex.quote each value: scale tuples "(0.8, 0.8, 0.8)" and URLs contain shell
     # metacharacters (parens, spaces) that otherwise break the bash train command.
@@ -914,6 +1010,9 @@ def build_isaac_job_manifest(
             + "export ROBOT_REWARD_OVERRIDES_JSON="
             + shlex.quote(json.dumps(reward_overrides or {}, sort_keys=True))
             + "\n"
+            + "export ROBOT_BOOTSTRAP_PROFILE="
+            + shlex.quote(bootstrap_profile)
+            + "\n"
             + "export ROBOT_PPO_LEARNING_RATE="
             + shlex.quote(str(ppo_optimizer_learning_rate or ""))
             + "\n"
@@ -932,13 +1031,10 @@ def build_isaac_job_manifest(
             + "export ROBOT_OBJECT_SCALE="
             + shlex.quote(str(object_scale or ""))
             + "\n"
-            # tee the FULL wrapper output to /tmp/train_full.log before tailing: the
-            # retarget plan + the honest task/robot compatibility verdict are printed
-            # right after AppLauncher boot, so `| tail -120` alone discards them
-            # behind the training-loop logs (and entirely when an incompatible robot
-            # fails at env build). The markers are re-dumped from this file post-run,
-            # and the file IS the per-iteration reward curve uploaded for plotting.
-            + '"$PY" /opt/npa/isaac-runtime/isaac_robot_train.py 2>&1 | tee /tmp/train_full.log | tail -120\n'
+            # Keep the complete curve for durable telemetry while streaming progress
+            # from the workflow-owned task. A terminal `tail` buffers the trainer's
+            # output until exit, which hides bootstrap and recovery failures.
+            + '"$PY" /opt/npa/isaac-runtime/isaac_robot_train.py 2>&1 | tee /tmp/train_full.log\n'
         )
     elif physics:
         # Generated-physics path runs the task module + post-boot wrapper baked
@@ -1273,8 +1369,14 @@ def latest_byo_checkpoint_uri(
         return ""
 
 
-def s3_object_sha256(uri: str, *, endpoint: str = "") -> str:
-    """Hash one S3 object so a discovered resume is verified again in the GPU Pod."""
+def s3_object_identity(uri: str, *, endpoint: str = "") -> dict[str, int | str]:
+    """Measure the exact SHA-256 and byte count of one checkpoint object.
+
+    A listed S3 key is not a checkpoint identity. The native trainer records
+    this measurement for each validation candidate, so the validator and Gold
+    evaluator can bind themselves to the same bytes without inventing a size
+    from metadata or a later report.
+    """
 
     normalized = str(uri or "").strip()
     if not normalized.startswith("s3://"):
@@ -1287,16 +1389,433 @@ def s3_object_sha256(uri: str, *, endpoint: str = "") -> str:
         raise ValueError("checkpoint URI must include a bucket and object key")
     import boto3
 
-    body = boto3.client("s3", endpoint_url=endpoint or None).get_object(
+    response = boto3.client("s3", endpoint_url=endpoint or None).get_object(
         Bucket=bucket, Key=key
-    )["Body"]
+    )
+    body = response["Body"]
     digest = hashlib.sha256()
+    size_bytes = 0
     try:
         while chunk := body.read(1024 * 1024):
             digest.update(chunk)
+            size_bytes += len(chunk)
     finally:
         body.close()
-    return digest.hexdigest()
+    if size_bytes <= 0:
+        raise RuntimeError("checkpoint object is empty")
+    declared_size = response.get("ContentLength")
+    if declared_size is not None and (
+        type(declared_size) is not int or declared_size != size_bytes
+    ):
+        raise RuntimeError("checkpoint object byte count disagrees with S3 response")
+    return {"sha256": digest.hexdigest(), "size_bytes": size_bytes}
+
+
+def s3_object_sha256(uri: str, *, endpoint: str = "") -> str:
+    """Hash one S3 object so a discovered resume is verified again in the GPU Pod."""
+
+    return str(s3_object_identity(uri, endpoint=endpoint)["sha256"])
+
+
+def _resume_schedule_defaults(
+    phase: str, *, stock_policy: bool = False
+) -> dict[str, str]:
+    """Retain trainable noise while learning transport toward the exact goal."""
+    if stock_policy:
+        return {
+            "entropy": DEFAULT_BOOTSTRAP_ENTROPY_COEF,
+            "final_entropy": DEFAULT_RESUME_ENTROPY_FINAL_COEF,
+            "fraction": DEFAULT_RESUME_ENTROPY_ANNEAL_FRACTION,
+            "learning_rate": DEFAULT_BOOTSTRAP_PPO_LEARNING_RATE,
+            "noise": DEFAULT_BOOTSTRAP_ACTION_NOISE_STD,
+        }
+    if phase == "transport":
+        return {
+            "entropy": "0.006",
+            "final_entropy": "0.001",
+            "fraction": "0.8",
+            "learning_rate": "0.0003",
+            "noise": "stock",
+        }
+    return {
+        "entropy": DEFAULT_RESUME_ENTROPY_COEF,
+        "final_entropy": DEFAULT_RESUME_ENTROPY_FINAL_COEF,
+        "fraction": DEFAULT_RESUME_ENTROPY_ANNEAL_FRACTION,
+        "learning_rate": DEFAULT_RESUME_PPO_OPTIMIZER_LEARNING_RATE,
+        "noise": DEFAULT_RESUME_CONVERGENCE_ACTION_NOISE_STD,
+    }
+
+
+def _manifest_training_bootstrap(profile, task, spec, physics, resume_uri, scenarios):
+    """Scope demonstrations to fresh curated stock-Franka training."""
+    from npa.workflows.sim2real.isaac_franka_bootstrap import resolve_training_bootstrap
+
+    eligible = (
+        _stock_franka_scenarios(task, spec, scenarios, physics) and not resume_uri
+    )
+    return resolve_training_bootstrap(profile, eligible=bool(eligible))
+
+
+def _stock_franka_scenarios(task, spec, scenarios, physics):
+    from npa.workflows.sim2real.isaac_scenario_task import (
+        STOCK_TASK_ID,
+        SCENARIO_TASK_ID,
+    )
+
+    return bool(
+        task in {STOCK_TASK_ID, SCENARIO_TASK_ID}
+        and (spec or {}).get("robot_source") == "stock_franka"
+        and not physics
+        and scenarios
+    )
+
+
+def _bootstrap_schedule() -> dict[str, str]:
+    """Use small PPO exploration around the demonstration-trained actor mean."""
+    schedule = {
+        "entropy": _env("NPA_BYO_ISAAC_ENTROPY_COEF", DEFAULT_BOOTSTRAP_ENTROPY_COEF),
+        "final_entropy": _env(
+            "NPA_BYO_ISAAC_ENTROPY_FINAL_COEF", DEFAULT_RESUME_ENTROPY_FINAL_COEF
+        ),
+        "fraction": _env(
+            "NPA_BYO_ISAAC_ENTROPY_ANNEAL_FRACTION",
+            DEFAULT_RESUME_ENTROPY_ANNEAL_FRACTION,
+        ),
+        "learning_rate": _env(
+            "NPA_BYO_ISAAC_PPO_LEARNING_RATE",
+            DEFAULT_BOOTSTRAP_PPO_LEARNING_RATE,
+        ),
+        "initial_noise": _env(
+            "NPA_BYO_ISAAC_INIT_NOISE_STD", DEFAULT_BOOTSTRAP_ACTION_NOISE_STD
+        ),
+        "noise": _env(
+            "NPA_BYO_ISAAC_RESUME_CONVERGENCE_ACTION_NOISE_STD",
+            DEFAULT_BOOTSTRAP_ACTION_NOISE_STD,
+        ),
+    }
+    for key in ("entropy", "initial_noise", "noise"):
+        if schedule[key].lower() in _STOCK_ENTROPY_SENTINELS:
+            schedule[key] = ""
+    if not schedule["entropy"]:
+        for key in ("final_entropy", "fraction", "noise"):
+            schedule[key] = ""
+    return schedule
+
+
+def _validated_bootstrap_round(row, *, index, scenario_count):
+    """Require measured placement demonstrations and finite supervised updates."""
+    integer_fields = (
+        "round",
+        "training_scenarios",
+        "teacher_stable_placements",
+        "examples",
+        "optimizer_updates",
+    )
+    if not isinstance(row, dict) or any(
+        type(row.get(name)) is not int for name in integer_fields
+    ):
+        raise RuntimeError(
+            "native demonstration round requires literal integer evidence"
+        )
+    if (
+        row["round"] != index
+        or row["training_scenarios"] != scenario_count
+        or not scenario_count / 2 <= row["teacher_stable_placements"] <= scenario_count
+        or row["examples"] <= 0
+        or row["optimizer_updates"] <= 0
+    ):
+        raise RuntimeError("native demonstration round is incomplete or unsuccessful")
+    _validated_terminal_placement_evidence(
+        row, scenario_count=scenario_count, successes=row["teacher_stable_placements"]
+    )
+    _validated_fitting_losses(row)
+
+
+def _validated_terminal_placement_evidence(row, *, scenario_count, successes):
+    """Require complete first-episode terminal outcomes, with ever-events diagnostic only."""
+    completed = row.get("terminal_training_scenarios")
+    ever = row.get("ever_training_placements")
+    if (
+        row.get("placement_criterion") != "first_episode_last_pre_reset"
+        or type(completed) is not int
+        or completed != scenario_count
+        or type(ever) is not int
+        or not successes <= ever <= scenario_count
+    ):
+        raise RuntimeError(
+            "native training collection lacks complete first-episode terminal evidence"
+        )
+
+
+def _validated_fitting_losses(row):
+    for name in ("first_loss", "last_loss"):
+        loss = row.get(name)
+        if type(loss) not in (float, int) or not math.isfinite(loss) or loss < 0:
+            raise RuntimeError(
+                "native demonstration round lacks measured finite fitting loss"
+            )
+
+
+def _require_literal_bootstrap_evidence(audit, control_contract):
+    """Reject boolean/numeric coercion in native training and control evidence."""
+    if (
+        audit.get("gold_used") is not False
+        or audit.get("training_goals_exact") is not True
+        or type(audit.get("ppo_updates")) is not int
+        or type(audit.get("training_scenarios")) is not int
+        or any(
+            type(audit["robot_control"][name]) is not type(value)
+            for name, value in control_contract.items()
+        )
+    ):
+        raise RuntimeError(
+            "native demonstration audit requires literal training-only evidence"
+        )
+
+
+def _validated_bootstrap_audit(audit, *, profile, checksum, scenario_count):
+    """Bind native demonstration evidence to the exact consumed training split."""
+    from npa.workflows.sim2real.isaac_franka_control import franka_control_contract
+
+    expected = {
+        "schema": "npa.sim2real.franka_bootstrap.v3",
+        "profile": profile,
+        "scope": "sealed_training_only",
+        "gold_used": False,
+        "inference_composition": "learned_actor_only",
+        "ppo_updates": 0,
+        "training_goals_exact": True,
+        "robot_control": franka_control_contract(),
+        "training_scenarios": scenario_count,
+        "training_scenarios_sha256": checksum,
+    }
+    if any(audit.get(name) != value for name, value in expected.items()):
+        raise RuntimeError(
+            "native demonstration audit differs from the training boundary"
+        )
+    _require_literal_bootstrap_evidence(audit, expected["robot_control"])
+    rounds = audit.get("rounds")
+    if not isinstance(rounds, list) or len(rounds) != 2:
+        raise RuntimeError("native demonstration audit lacks both supervised rounds")
+    for index, row in enumerate(rounds):
+        _validated_bootstrap_round(row, index=index, scenario_count=scenario_count)
+    _validated_recurrent_training_audit(audit, scenario_count)
+    return audit
+
+
+def _validated_actor_collection(row, *, fraction, scenario_count, require_success):
+    expected = {
+        "scope": "sealed_training_only",
+        "training_scenarios": scenario_count,
+        "learner_fraction": fraction,
+        "inference_composition": "learned_actor_only"
+        if fraction == 1.0
+        else "training_demonstration_mixture",
+        "gold_used": False,
+        "ppo_updates": 0,
+    }
+    if not isinstance(row, dict) or any(
+        row.get(name) != value or type(row.get(name)) is not type(value)
+        for name, value in expected.items()
+    ):
+        raise RuntimeError(
+            "native actor collection lacks literal training-only evidence"
+        )
+    count = row.get("strict_training_placements")
+    if type(count) is not int or not 0 <= count <= scenario_count:
+        raise RuntimeError(
+            "native actor collection has invalid strict placement evidence"
+        )
+    _validated_terminal_placement_evidence(
+        row, scenario_count=scenario_count, successes=count
+    )
+    if require_success and count * 2 < scenario_count:
+        raise RuntimeError(
+            "native learned actor did not establish the training handoff"
+        )
+    for name in ("arm_label_mse", "gripper_label_mse"):
+        value = row.get(name)
+        if type(value) not in (int, float) or not math.isfinite(value) or value < 0:
+            raise RuntimeError(
+                "native actor collection lacks finite prediction evidence"
+            )
+
+
+def _validated_recurrent_fit(fit, *, batches, examples, samples):
+    expected = {
+        "native_recurrent_model": "RNNModel-GRU",
+        "recurrent_hidden_dim": 128,
+        "real_reset_boundaries": True,
+        "expert_phase_is_observation": False,
+        "observation_normalization": True,
+        "normalization_mean_nonzero": True,
+        "fitting_epochs": 32,
+        "replay_batches": batches,
+        "replay_examples": examples,
+        "normalization_sample_count": samples,
+    }
+    if not isinstance(fit, dict) or any(
+        fit.get(name) != value or type(fit.get(name)) is not type(value)
+        for name, value in expected.items()
+    ):
+        raise RuntimeError(
+            "native recurrent fit lacks exact replay and normalization evidence"
+        )
+    if any(
+        type(fit.get(name)) is not int or fit[name] <= 0
+        for name in ("optimizer_updates", "replay_episodes")
+    ):
+        raise RuntimeError("native recurrent fit lacks measured sequence updates")
+    counts = fit.get("training_phase_example_counts")
+    if (
+        not isinstance(counts, list)
+        or len(counts) != 5
+        or any(type(count) is not int or count < 0 for count in counts)
+        or sum(counts) != examples
+    ):
+        raise RuntimeError(
+            "native recurrent fit has invalid training-only phase counts"
+        )
+    _validated_fitting_losses(fit)
+
+
+def _validated_recurrent_training_audit(audit, scenario_count):
+    from npa.workflows.sim2real.isaac_franka_policy import (
+        SCENARIO_TASK_ID,
+        validate_stock_franka_checkpoint,
+    )
+
+    validate_stock_franka_checkpoint(
+        {"npa_stock_franka_policy": audit.get("policy_model")}, task=SCENARIO_TASK_ID
+    )
+    for name, fraction, required in (
+        ("actor_baseline", 1.0, False),
+        ("corrective_fit", 0.75, False),
+        ("actor_handoff", 1.0, True),
+    ):
+        _validated_actor_collection(
+            audit.get(name),
+            fraction=fraction,
+            scenario_count=scenario_count,
+            require_success=required,
+        )
+    examples = audit["rounds"][0]["examples"]
+    additional = _validated_handoff_assessments(audit, scenario_count)
+    fits = _validated_warmup_fits(audit, scenario_count)
+    fits.append(audit["corrective_fit"].get("fit"))
+    for correction in additional:
+        _validated_actor_collection(
+            correction,
+            fraction=0.75,
+            scenario_count=scenario_count,
+            require_success=False,
+        )
+        fits.append(correction.get("fit"))
+    samples = 0
+    for batches, fit in enumerate(fits, start=1):
+        samples += examples * batches
+        _validated_recurrent_fit(
+            fit, batches=batches, examples=examples * batches, samples=samples
+        )
+    _validated_normalization_freeze(audit.get("normalization_freeze"), samples)
+
+
+def _validated_normalization_freeze(freeze, samples):
+    expected = {
+        "schema": "npa.sim2real.franka_normalization.v1",
+        "scope": "sealed_training_only",
+        "gold_used": False,
+        "frozen": True,
+        "count": samples,
+        "until": samples,
+    }
+    if (
+        not isinstance(freeze, dict)
+        or freeze != expected
+        or any(type(freeze[key]) is not type(value) for key, value in expected.items())
+    ):
+        raise RuntimeError(
+            "native bootstrap lacks frozen training-only normalization statistics"
+        )
+
+
+def _validated_warmup_fits(audit, scenario_count):
+    rounds = audit["rounds"]
+    if rounds[0].get("warmup_recovery", []) != []:
+        raise RuntimeError(
+            "native bootstrap cannot replace unsuccessful teacher evidence"
+        )
+    recovery = rounds[1].get("warmup_recovery", [])
+    if not isinstance(recovery, list):
+        raise RuntimeError("native bootstrap has invalid warmup recovery history")
+    fits = [rounds[0]]
+    for row in recovery:
+        if not isinstance(row, dict):
+            raise RuntimeError("native bootstrap has invalid warmup recovery evidence")
+        failed = row.get("failed_mixed_collection")
+        teacher = row.get("teacher_recovery_fit")
+        _validated_actor_collection(
+            failed, fraction=0.5, scenario_count=scenario_count, require_success=False
+        )
+        if failed["strict_training_placements"] * 2 >= scenario_count:
+            raise RuntimeError(
+                "native bootstrap replaced successful mixed demonstrations"
+            )
+        _validated_actor_collection(
+            teacher, fraction=0.0, scenario_count=scenario_count, require_success=True
+        )
+        if (
+            type(teacher.get("examples")) is not int
+            or teacher["examples"] != rounds[0]["examples"]
+        ):
+            raise RuntimeError(
+                "native warmup recovery has inconsistent training examples"
+            )
+        fits.append(teacher.get("fit"))
+    return [*fits, rounds[1]]
+
+
+def _validated_handoff_assessments(audit, scenario_count):
+    additional = audit.get("additional_corrective_fits")
+    assessments = audit.get("actor_handoff_assessments")
+    if not isinstance(additional, list) or not isinstance(assessments, list):
+        raise RuntimeError("native bootstrap lacks corrective fitting history")
+    if len(assessments) != len(additional) + 1:
+        raise RuntimeError("native bootstrap has incomplete actor assessment history")
+    for index, assessment in enumerate(assessments):
+        _validated_actor_collection(
+            assessment,
+            fraction=1.0,
+            scenario_count=scenario_count,
+            require_success=index == len(assessments) - 1,
+        )
+        if index < len(assessments) - 1 and (
+            assessment["strict_training_placements"] * 2 >= scenario_count
+        ):
+            raise RuntimeError(
+                "native corrective fitting replaced a successful handoff"
+            )
+    if assessments[-1] != audit["actor_handoff"]:
+        raise RuntimeError("native actor handoff differs from its final assessment")
+    return additional
+
+
+def _resume_curriculum_audit(
+    checkpoint: str, checksum: str, phase: str
+) -> dict[str, Any] | None:
+    raw = _env("NPA_SIM2REAL_RESUME_CURRICULUM_JSON")
+    if not raw:
+        return None
+    audit = json.loads(raw)
+    if not isinstance(audit, dict) or (
+        audit.get("checkpoint_uri"),
+        audit.get("checkpoint_sha256"),
+        audit.get("phase"),
+    ) != (checkpoint, checksum, phase):
+        raise ValueError(
+            "resume curriculum audit differs from the selected checkpoint or phase"
+        )
+    return audit
 
 
 def run_isaac_training_job(run_id: str, *, signal_json: str) -> dict[str, Any]:
@@ -1531,32 +2050,51 @@ def run_isaac_training_job(run_id: str, *, signal_json: str) -> dict[str, Any]:
                 flush=True,
             )
 
-    # The first pass needs enough exploration to discover reach/grasp/lift. A
-    # resumed pass has already crossed that wall and must instead consolidate a
-    # deterministic, motion-stable placement. Keeping these knobs separate
-    # prevents each inner/outer resume from reintroducing the high exploration
-    # that live validation measured as target fly-through.
+    # A saved checkpoint does not prove grasp/lift discovery. Canonical stages
+    # select exploration or consolidation using that checkpoint's validation.
+    resume_phase = _env("NPA_BYO_ISAAC_RESUME_PHASE", "convergence")
+    if resume_phase not in _RESUME_PHASES:
+        raise ValueError(
+            "NPA_BYO_ISAAC_RESUME_PHASE must be exploration, transport or convergence"
+        )
+    resume_exact_goals = (
+        bool(resume_uri)
+        and not physics
+        and resume_phase in {"transport", "convergence"}
+    )
+    resume_curriculum = _resume_curriculum_audit(
+        resume_uri, resume_sha256, resume_phase
+    )
+    training_phase = "exploration"
     if resume_uri and not physics:
+        training_phase = f"resume_{resume_phase}"
+    if resume_exact_goals:
+        stock_policy = _stock_franka_scenarios(
+            task, robot_spec_dict, bool(train_envs_uri), physics
+        )
+        schedule_defaults = _resume_schedule_defaults(
+            resume_phase, stock_policy=stock_policy
+        )
         raw_ent = _env(
             "NPA_BYO_ISAAC_RESUME_ENTROPY_COEF",
-            DEFAULT_RESUME_ENTROPY_COEF,
+            schedule_defaults["entropy"],
         )
         entropy_coef = "" if raw_ent.lower() in _STOCK_ENTROPY_SENTINELS else raw_ent
         entropy_final_coef = _env(
             "NPA_BYO_ISAAC_RESUME_ENTROPY_FINAL_COEF",
-            DEFAULT_RESUME_ENTROPY_FINAL_COEF,
+            schedule_defaults["final_entropy"],
         )
         entropy_anneal_fraction = _env(
             "NPA_BYO_ISAAC_RESUME_ENTROPY_ANNEAL_FRACTION",
-            DEFAULT_RESUME_ENTROPY_ANNEAL_FRACTION,
+            schedule_defaults["fraction"],
         )
         ppo_optimizer_learning_rate = _env(
             "NPA_BYO_ISAAC_RESUME_PPO_LEARNING_RATE",
-            DEFAULT_RESUME_PPO_OPTIMIZER_LEARNING_RATE,
+            schedule_defaults["learning_rate"],
         )
         raw_convergence_std = _env(
             "NPA_BYO_ISAAC_RESUME_CONVERGENCE_ACTION_NOISE_STD",
-            DEFAULT_RESUME_CONVERGENCE_ACTION_NOISE_STD,
+            schedule_defaults["noise"],
         )
         convergence_action_noise_std = (
             ""
@@ -1570,6 +2108,24 @@ def run_isaac_training_job(run_id: str, *, signal_json: str) -> dict[str, Any]:
     else:
         convergence_action_noise_std = ""
 
+    bootstrap_profile = _manifest_training_bootstrap(
+        _env("NPA_BYO_ISAAC_BOOTSTRAP", "auto"),
+        task,
+        robot_spec_dict,
+        physics,
+        resume_uri,
+        bool(train_envs_uri),
+    )
+    if bootstrap_profile != "none":
+        schedule = _bootstrap_schedule()
+        entropy_coef = schedule["entropy"]
+        entropy_final_coef = schedule["final_entropy"]
+        entropy_anneal_fraction = schedule["fraction"]
+        ppo_optimizer_learning_rate = schedule["learning_rate"]
+        init_noise_std = schedule["initial_noise"]
+        convergence_action_noise_std = schedule["noise"]
+        training_phase = "franka_ik_bootstrap"
+
     raw_success_termination = _env("NPA_BYO_ISAAC_ENABLE_SUCCESS_TERMINATION", "0")
     if raw_success_termination not in {"0", "1"}:
         raise ValueError("NPA_BYO_ISAAC_ENABLE_SUCCESS_TERMINATION must be 0 or 1")
@@ -1579,7 +2135,7 @@ def run_isaac_training_job(run_id: str, *, signal_json: str) -> dict[str, Any]:
             "byo_isaac_trainer: PPO entropy curriculum -> "
             f"{entropy_coef} then {entropy_final_coef} after "
             f"{entropy_anneal_fraction} of "
-            f"{'resume convergence' if resume_uri and not physics else 'exploration'}",
+            f"{'resume ' + resume_phase if resume_exact_goals else 'exploration'}",
             flush=True,
         )
     print(
@@ -1618,6 +2174,7 @@ def run_isaac_training_job(run_id: str, *, signal_json: str) -> dict[str, Any]:
         success_termination_enabled=success_termination_enabled,
         validation_interval=validation_interval,
         resume_uri=resume_uri,
+        resume_phase=resume_phase,
         resume_sha256=resume_sha256,
         experiment_name=experiment_name,
         robot_spec=robot_spec_dict,
@@ -1626,6 +2183,7 @@ def run_isaac_training_job(run_id: str, *, signal_json: str) -> dict[str, Any]:
         scenarios_jsonl="" if train_envs_uri else scenarios_jsonl,
         scenarios_uri=train_envs_uri,
         scenarios_sha256=scenarios_sha256,
+        bootstrap_profile=bootstrap_profile,
     )
     start = time.time()
     if _env("NPA_SIM2REAL_INLINE_TASK") == "1":
@@ -1710,7 +2268,13 @@ def run_isaac_training_job(run_id: str, *, signal_json: str) -> dict[str, Any]:
     result["ppo_hyperparameters"] = {
         "signal_adapter_learning_rate": learning_rate,
         "ppo_optimizer_initial_learning_rate": float(ppo_optimizer_learning_rate),
-        "ppo_optimizer_schedule": "task_registry_adaptive_schedule",
+        "ppo_optimizer_schedule": (
+            "fixed_stock_franka"
+            if _stock_franka_scenarios(
+                task, robot_spec_dict, bool(train_envs_uri), physics
+            )
+            else "task_registry_adaptive_schedule"
+        ),
         "entropy_coef": float(entropy_coef) if entropy_coef else "task_default",
         "entropy_final_coef": (
             float(entropy_final_coef) if entropy_final_coef else "task_default"
@@ -1727,9 +2291,7 @@ def run_isaac_training_job(run_id: str, *, signal_json: str) -> dict[str, Any]:
             else "task_default"
         ),
         "convergence_action_noise_frozen": bool(convergence_action_noise_std),
-        "training_phase": (
-            "resume_convergence" if resume_uri and not physics else "exploration"
-        ),
+        "training_phase": training_phase,
         "success_termination_enabled": success_termination_enabled,
         "strict_dwell_training_contract": (
             "sustained_until_episode_end"
@@ -1746,12 +2308,42 @@ def run_isaac_training_job(run_id: str, *, signal_json: str) -> dict[str, Any]:
         endpoint=endpoint,
         validation_interval=validation_interval,
     )
+    final_checkpoint_record = result["periodic_checkpoints"][-1]
+    final_checkpoint = final_checkpoint_record["checkpoint_uri"]
+    final_identity = {
+        "sha256": final_checkpoint_record["checkpoint_sha256"],
+        "size_bytes": final_checkpoint_record["checkpoint_size_bytes"],
+    }
+    alias_identity = s3_object_identity(checkpoint_uri, endpoint=endpoint)
+    if final_identity != alias_identity:
+        raise RuntimeError("Final native checkpoint differs from its latest alias")
+    result.update(
+        checkpoint_sha256=alias_identity["sha256"],
+        checkpoint_size_bytes=alias_identity["size_bytes"],
+        final_checkpoint_uri=final_checkpoint,
+        final_checkpoint_sha256=final_identity["sha256"],
+        final_checkpoint_size_bytes=final_identity["size_bytes"],
+        final_checkpoint_alias_verified=True,
+    )
     result["ppo_hyperparameters"]["validation_checkpoint_interval"] = (
         validation_interval
     )
     result["resume_checkpoint_uri"] = resume_uri if not physics else ""
     result["resume_checkpoint_sha256"] = resume_sha256 if not physics else ""
-    result["embodiment"] = embodiment_evidence(robot_spec_dict)
+    result["resume_curriculum"] = resume_curriculum
+    result["embodiment"] = embodiment_evidence(
+        robot_spec_dict, stock_scenarios=bool(train_envs)
+    )
+    result["training_bootstrap"] = {"profile": bootstrap_profile}
+    if bootstrap_profile != "none":
+        audit_uri = s3_output + "bootstrap-audit.json"
+        result["training_bootstrap"] = _validated_bootstrap_audit(
+            _load_s3_json(audit_uri, endpoint=endpoint),
+            profile=bootstrap_profile,
+            checksum=scenarios_sha256,
+            scenario_count=len(train_envs),
+        )
+        result["training_bootstrap"]["audit_uri"] = audit_uri
     return result
 
 

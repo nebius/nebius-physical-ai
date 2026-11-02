@@ -28,13 +28,30 @@ def test_portable_overlay_hashes_and_application_order(image: str) -> None:
     for requirement, hashes in entries:
         assert re.search(r"--hash=sha256:[0-9a-f]{64}", requirement + hashes)
     docker = (directory / "Dockerfile").read_text()
-    assert "--no-deps --require-hashes" in docker
     sync = docker.index("uv sync")
-    overlay = docker.index("--no-deps --require-hashes", sync)
+    if image == "cosmos3-ray-serve":
+        resolver = "uv pip install --python .venv/bin/python --require-hashes"
+        assert "--find-links /tmp/gradio-derivative" in docker
+    else:
+        resolver = "--no-deps --require-hashes"
+    overlay = docker.index(resolver, sync)
     check = docker.index('"pip","check"' if image == "openpi" else "pip check", overlay)
     assert sync < overlay < check
-    assert "pillow==12.3.0" in lock
-    assert "setuptools==84.0.0" in lock
+    if image == "cosmos3-ray-serve":
+        assert "--no-deps" not in docker[overlay:check]
+        for requirement in (
+            "aiohttp==3.14.4",
+            "certifi==2026.10.19",
+            "opentelemetry-api==1.45.1",
+        ):
+            assert requirement in lock
+    assert "pillow==13.0.0" in lock
+    if image in {"openpi", "cosmos3", "cosmos3-ray-serve"}:
+        assert "msgpack==1.2.3" in lock
+    assert "setuptools==84.2.1" in lock
+    if image == "cosmos3":
+        assert "certifi==2026.10.23" in lock
+        assert "uv==0.13.4" in lock
 
 
 def test_hardened_nltk_source_install_contract() -> None:
@@ -69,6 +86,7 @@ def test_hardened_nltk_source_install_contract() -> None:
         assert "/opt/npa/verify_hardened_nltk.py" in docker
 
     nano_requirements = affected["cosmos3-nano-video"].read_text()
+    assert re.search(r"^aiohttp==3\.14\.4$", nano_requirements, re.M)
     for dependency in ("click", "defusedxml", "joblib", "regex", "tqdm"):
         assert re.search(rf"^{dependency}==", nano_requirements, re.M)
 
@@ -86,8 +104,8 @@ def test_transfer_overlay_retains_exact_verified_wheel_urls() -> None:
         for line in requirements
     )
     assert "pillow-12.3.0" in text
-    assert "gitpython-3.1.62" in text
-    assert "hydra_core-1.3.7" in text
+    assert "gitpython-3.2.1" in text
+    assert "hydra_core-1.3.8" in text
     assert "urllib3-2.8.0" in text
     assert "msal-1.38.0" in text
     assert "protobuf-6.33.5" in text
@@ -150,6 +168,12 @@ def test_python_ray_runtime_excludes_unused_java_worker_bundle() -> None:
 @pytest.mark.parametrize("image", ["cosmos3", "cosmos3-ray-serve"])
 def test_cosmos_images_patch_every_bootstrap_interpreter(image: str) -> None:
     docker = (ROOT / image / "Dockerfile").read_text()
+    # This lock is applied to every uv-managed interpreter that survives into
+    # these images. Keep its pip vendor closure above the certifi advisory fix.
+    shared_lock = (ROOT / "sonic" / "packaging-requirements.txt").read_text()
+    assert "pip==26.2.2" in shared_lock
+    assert "pip==26.2.1" not in shared_lock
+    assert "setuptools==84.2.1" in shared_lock
     assert "docker/workbench/sonic/packaging-requirements.txt" in docker
     assert 'Path("/opt/uv/python").glob("*/bin/python3")' in docker
     assert '"--no-deps","--require-hashes"' in docker

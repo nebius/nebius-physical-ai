@@ -1,6 +1,7 @@
 .coverage
 .pytest_cache/
 .venv/
+.venv-local/
 __pycache__/
 *.py[cod]
 # The two rules above only reach the context root. A build scan found

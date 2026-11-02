@@ -17,6 +17,16 @@ def test_curobo_golden_image_resolves_exact_digest():
     )
 
 
+def test_quarantined_cosmos3_golden_image_resolves_exact_digest():
+    digest = "sha256:" + "a" * 64
+    assert (
+        serverless_runner.resolve_golden_image(
+            "cosmos3", registry="ghcr.io/example", tag=digest
+        )
+        == f"ghcr.io/example/npa-cosmos3@{digest}"
+    )
+
+
 def test_curobo_serverless_refuses_mutable_tag_before_provider_access(monkeypatch):
     monkeypatch.setattr(
         serverless_runner,

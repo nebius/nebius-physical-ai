@@ -63,11 +63,15 @@ enable_k8s_node_group_sa = false
 #   infiniband_fabric  = "<fabric-name>"
 #
 # ── Opt-in: Shared Filesystem (SFS) ───────────────────────────────────────
-# Only needed for workloads that require a cross-node shared /mnt/data + the
-# filesystem CSI default StorageClass. Requires Shared Filesystem SSD quota.
+# Only needed for workloads that require a cross-node shared /mnt/data. The
+# named filesystem CSI StorageClass stays explicit; ordinary PVCs continue to
+# use the compute/block default. Requires Shared Filesystem SSD quota.
 #
 #   enable_filestore              = true
 #   filestore_disk_size_gibibytes = 1024
+#   # Optional, deliberate promotion for workloads whose ordinary PVCs must use
+#   # the shared filesystem instead of the block default:
+#   # filesystem_csi_make_default_storage_class = true
 #   # ...or attach an existing one instead of creating it (setting
 #   # existing_filestore alone is enough; it implies enable_filestore):
 #   existing_filestore            = "<computefilesystem-id>"

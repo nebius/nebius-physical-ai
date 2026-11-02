@@ -37,7 +37,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--sources-uri", default="")
     parser.add_argument("--variants-uri", default="")
-    parser.add_argument("--reasoner-model", default="nvidia/Cosmos3-Super-Reasoner")
+    parser.add_argument("--reasoner-model", default="MiniMaxAI/MiniMax-M3")
     parser.add_argument("--merge-model", default="nvidia/Nemotron-3_5-Lightning")
     parser.add_argument("--samples", type=int, default=8)
     parser.add_argument("--threshold", type=float, default=0.8)

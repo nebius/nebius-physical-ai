@@ -534,8 +534,8 @@ SUPPORTED_TOOL_VERSIONS = {
     "ncore": "59c698d206da92b406a4f72619fce3b3a2c64bfd-unbuilt",
     "robotwin": "2.0-curobo-v0.7.8-rtfetch-unbuilt",
     "libero": "public-neutral-bootstrap-unbuilt",
-    "nebius-cli": "0.12.254",
-    "terraform": "~> 0.5.201",
+    "nebius-cli": "0.12.298",
+    "terraform": "~> 0.5.293",
     "terraform-cli": "1.13.3",
 }
 
@@ -2454,17 +2454,13 @@ def supported_tool_version(tool: str) -> str:
         OSError: Project TOML or SONIC metadata cannot be read.
         ValueError: Invalid TOML/JSON or unusable SONIC image metadata.
         KeyError, TypeError, AttributeError: Required metadata is malformed.
-        ImportError: Neither the standard nor fallback TOML loader exists.
     """
     if tool == "sonic":
         return str(_default_sonic_image()["tag"])
     if tool in NEUTRAL_UNBUILT_CANDIDATE_TOOLS:
         return NEUTRAL_UNBUILT_DISPLAY_TAGS[tool]
 
-    try:
-        import tomllib
-    except ModuleNotFoundError:
-        import tomli as tomllib
+    import tomllib
 
     for directory in Path(__file__).resolve().parents:
         pyproject = directory / "pyproject.toml"

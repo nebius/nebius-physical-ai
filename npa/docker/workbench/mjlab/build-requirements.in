@@ -1,1 +1,5 @@
 hatchling==1.29.0
+aiohttp==3.14.4
+opentelemetry-api==1.45.1
+filelock==4.2.4
+setuptools==84.2.1

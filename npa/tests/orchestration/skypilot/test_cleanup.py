@@ -449,6 +449,37 @@ def test_cleanup_launched_workflows_preserves_shared_cluster_on_unverified_job(
     assert any("unreadable/unverified" in error for error in result.errors)
 
 
+def test_cleanup_launched_workflows_can_preserve_cluster_after_exact_cancel(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, bool]] = []
+
+    def cleanup(
+        job_id: str, *_args, teardown_cluster: bool, **_kwargs
+    ) -> CleanupResult:
+        calls.append((job_id, teardown_cluster))
+        return CleanupResult(resources_removed=[f"job:{job_id}"])
+
+    monkeypatch.setattr(cleanup_module, "cleanup_launched_workflow", cleanup)
+    monkeypatch.setattr(
+        cleanup_module,
+        "sky_down",
+        lambda *_args, **_kwargs: pytest.fail(
+            "preserved clusters must not be torn down"
+        ),
+    )
+
+    result = cleanup_module.cleanup_launched_workflows(
+        [("73", "ordinary-run")],
+        "ordinary-run",
+        teardown_cluster=False,
+    )
+
+    assert result.errors == []
+    assert result.resources_removed == ["job:73"]
+    assert calls == [("73", False)]
+
+
 def test_cluster_name_patterns_for_run_rejects_short_run_id() -> None:
     with pytest.raises(InvalidRunIdError, match="at least 12 characters"):
         cluster_name_patterns_for_run("run-1234567")

@@ -4,7 +4,11 @@ from __future__ import annotations
 
 from typing import Any
 
-from npa.workflows.sim2real.checkpoint_selection import select_best_checkpoint
+from npa.workflows.sim2real.checkpoint_selection import (
+    require_complete_checkpoint_candidate_pool,
+    select_best_checkpoint,
+)
+from npa.workflows.sim2real.stage9_checkpoints import validate_replay_checkpoint_pool
 
 
 def existing_replay(
@@ -18,13 +22,37 @@ def existing_replay(
     sample_vlm_eval: dict[str, Any],
     sample_signal: dict[str, Any],
 ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]] | None:
-    """Validate and adopt evidence from an exact Stage 9 retry.
+    """Adopt exact committed PPO and checkpoint-sweep evidence on a Job retry.
 
-    Stage 9 writes its durable evidence before the Kubernetes Job becomes terminal.
-    A replacement Job therefore treats an exact record at the same loop coordinate
-    as committed output. Any partial, divergent, or out-of-order record fails closed.
+    Args:
+        prior: Durable evidence from the same outer loop.
+        outer_iteration: Requested outer-loop coordinate.
+        inner_iteration: Requested completed training-pass coordinate.
+        actions_uri, evaluation_uri, signal_uri: Current authoritative S3 prefixes.
+        sample_vlm_eval: Verified first evaluator result.
+        sample_signal: Verified first training signal.
+    Returns:
+        The current candidate, global selection, and trainer output, or None.
+    Raises:
+        RuntimeError: Evidence is partial, divergent, or out of order.
     """
+    matches = _same_iteration(prior, outer_iteration, inner_iteration)
+    if matches is None:
+        return None
+    iteration, candidates = matches
+    _validate_iteration_inputs(
+        iteration,
+        inner_iteration,
+        actions_uri,
+        evaluation_uri,
+        signal_uri,
+        sample_vlm_eval,
+        sample_signal,
+    )
+    return _select_replay_checkpoint(prior, iteration, candidates)
 
+
+def _same_iteration(prior, outer_iteration, inner_iteration):
     iterations = list(prior.get("iterations") or [])
     candidates = list(prior.get("checkpoint_candidates") or [])
     iteration_matches = [
@@ -46,7 +74,7 @@ def existing_replay(
                 "Stage 9 cannot insert evidence before a later iteration"
             )
         return None
-    if len(iteration_matches) != 1 or len(candidate_matches) != 1:
+    if len(iteration_matches) != 1 or not candidate_matches:
         raise RuntimeError("Stage 9 found partial or duplicate same-iteration evidence")
     if int(prior.get("outer_iteration") or 0) != outer_iteration:
         raise RuntimeError(
@@ -54,9 +82,18 @@ def existing_replay(
         )
     if max(int(item.get("iteration") or 0) for item in iterations) != inner_iteration:
         raise RuntimeError("Stage 9 may replay only the latest committed iteration")
+    return iteration_matches[0], candidate_matches
 
-    iteration = iteration_matches[0]
-    candidate = candidate_matches[0]
+
+def _validate_iteration_inputs(
+    iteration,
+    inner_iteration,
+    actions_uri,
+    evaluation_uri,
+    signal_uri,
+    sample_vlm_eval,
+    sample_signal,
+):
     expected = {
         "iteration": inner_iteration,
         "actions_uri": actions_uri,
@@ -69,12 +106,27 @@ def existing_replay(
         raise RuntimeError(
             "Stage 9 same-iteration replay conflicts with durable evidence"
         )
+
+
+def _select_replay_checkpoint(prior, iteration, candidates):
     update = dict(iteration.get("update") or {})
-    if candidate.get("evaluation_split") != "validation" or candidate.get(
-        "checkpoint_uri"
-    ) != update.get("checkpoint_path"):
+    if any(row.get("evaluation_split") != "validation" for row in candidates):
         raise RuntimeError("Stage 9 replay checkpoint lineage is inconsistent")
-    selection = select_best_checkpoint(candidates)
+    validate_replay_checkpoint_pool(update, candidates)
+    all_candidates = list(prior.get("checkpoint_candidates") or [])
+    try:
+        require_complete_checkpoint_candidate_pool(all_candidates)
+    except ValueError as exc:
+        raise RuntimeError(
+            "Stage 9 replay checkpoint lineage lacks complete byte identity"
+        ) from exc
+    current_selection = select_best_checkpoint(candidates)
+    candidate = next(
+        row
+        for row in candidates
+        if row["checkpoint_uri"] == current_selection["checkpoint_uri"]
+    )
+    selection = select_best_checkpoint(all_candidates)
     if (
         prior.get("selected_checkpoint_uri") != selection["checkpoint_uri"]
         or prior.get("final_checkpoint_uri") != selection["checkpoint_uri"]

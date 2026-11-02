@@ -1,11 +1,28 @@
 # Public Genesis runtime
 
-The stock CUDA 12.4 recipe retains Genesis 0.4.6, Python 3.10, Torch 2.6 and
-TorchVision 0.21. It packages rigid Panda/Box simulation, teacher training,
+The canonical recipe uses a digest-pinned CUDA 12.4 base, Python 3.12, and
+records the exact NPA source SHA in its OCI revision label. It retains Genesis 0.4.6 and packages rigid Panda/Box simulation, teacher training,
 checkpoint export, camera-demo conversion, native LeRobotDataset reading through
 PyAV, and ACT student dependencies. A rebuilt candidate must pass its normal
 publication gates and real GPU teacher/export/camera qualification before it
 can become a public default. The old release remains quarantined.
+
+Genesis creates `/opt/genesis/venv` with Python 3.12 and selects it with both
+`PATH` and `NPA_BAKED_PYTHON`. Its native LeRobot/ACT closure is contained
+within the Genesis role; the dedicated EnvGen role has its own NPA-only runtime
+and does not inherit Genesis or LeRobot dependencies.
+
+## Current source build boundary
+
+The canonical wrapper builds the source-attested Python 3.12 recipe directly
+from its digest-pinned CUDA base. It rejects a missing or mismatched source SHA
+before build and verifies the resulting OCI revision label before it can push.
+This fixes the old Python 3.11 ancestor path; it does not itself qualify GPU
+physics, policy quality, camera rendering, hardware transfer, or release
+promotion. The additive SM120 recipe remains a separate Python 3.11/CUDA 13
+variant and retains its explicit source-attested-parent and secure-closure gate.
+The independent EnvGen role is documented in `../sim2real-envgen/README.md`;
+EnvGen evidence is not Genesis evidence.
 
 The public recipe excludes TetGen's AGPL distribution and rejects volume
 tetrahedralization through a repository-owned import shim. Rigid-body scenes
@@ -49,6 +66,18 @@ backend, constructs ACT, performs an action, and saves/reloads the checkpoint
 and normalization processors through the NPA student loader. It prevents
 network fetches and unexpected excluded-package imports. This smoke proves
 dependency behavior; it does not prove Genesis GPU physics, policy quality or
-camera rendering. The additive `Dockerfile.sm120` still requires a separately
-qualified parent and policy/decoder closure; the stock proof does not qualify
-that variant.
+camera rendering. The canonical `Dockerfile` uses Python 3.12 and records the
+exact NPA source SHA. Build it directly from the checked-out source:
+
+```bash
+SOURCE_SHA="$(git rev-parse HEAD)"
+NPA_SOURCE_SHA="${SOURCE_SHA}" npa/docker/workbench/genesis/build.sh \
+  --tag "dev-${SOURCE_SHA}"
+
+```
+
+The wrapper's local-label check is build provenance only. `sim2real-build.sh`
+does not route EnvGen through Genesis: it builds a source-attested EnvGen role
+from the freshly built Cosmos3 reason parent. Neither Genesis's CPU proof nor
+EnvGen's role smoke qualifies Genesis GPU physics, policy quality, or hardware
+transfer.

@@ -31,7 +31,7 @@ upstream URL alone is not used as delivery evidence.
 
 `baked-requirements.lock` remains byte-identical historical source evidence; it
 is not copied into the image and its 40 distributions are not installed in the
-public bootstrap. The complete 62-entry public/CUDA/PyTorch/vendor package map
+public bootstrap. The complete 67-entry public/CUDA/PyTorch/vendor package map
 is declared by `runtime-requirements.lock` and is fetched only into a
 customer-owned runtime volume. The customer supplies the exact official wheel
 URLs, credential and independently selected inventory; the bootstrap downloads

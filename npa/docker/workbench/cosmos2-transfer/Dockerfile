@@ -4,11 +4,11 @@
 #
 # This build intentionally starts from NVIDIA's public CUDA container, not from a
 # privately assembled npa-cosmos2-transfer parent. The source and every Python
-# dependency are immutable inputs: the source checkout is a full commit SHA and
-# `uv sync --locked` consumes the upstream hash-bearing lockfile. No credential is
-# accepted or needed during the build. Gated model weights are fetched only at run
-# time into HF_HOME after the operator supplies HF_TOKEN and accepts the NVIDIA Open
-# Model License.
+# dependency are immutable inputs: the public source archive is addressed by a full
+# commit SHA and verified by SHA-256, while `uv sync --locked` consumes the upstream
+# hash-bearing lockfile. No credential is accepted or needed during the build. Gated
+# model weights are fetched only at run time into HF_HOME after the operator supplies
+# HF_TOKEN and accepts the NVIDIA Open Model License.
 ARG CUDA_BASE_IMAGE=nvidia/cuda:12.8.1-cudnn-devel-ubuntu24.04@sha256:3986465b3dd3b4d602c07061f2cff417e0bfb24810129408d4eb12e111015a6c
 ARG CUDA_RUNTIME_IMAGE=nvidia/cuda:12.8.1-cudnn-runtime-ubuntu24.04@sha256:9175fa92f96de35a8cfb9493f0dfcf9435c7a597e9d95ad41d2cae382a95e3f9
 ARG UV_IMAGE=ghcr.io/astral-sh/uv:0.8.12@sha256:e1d7fa999ae39871fc2fd6c9c572d970cc877a239d2a16238a204c23772d1c0e
@@ -19,6 +19,7 @@ FROM ${UV_IMAGE} AS uv-bin
 FROM ${CUDA_BASE_IMAGE} AS build
 
 ARG COSMOS_TRANSFER_REVISION=67d56b7d550a3911024a32dc23ae0bae5258e633
+ARG COSMOS_TRANSFER_ARCHIVE_SHA256=978bfb03a49213669551701659641ae7b8414649480eb45c4c9c1f8d5e5a92a8
 ARG SAM2_REVISION=2b90b9f5ceec907a1c18123530e92e794ad901a4
 ARG COSMOS_PYTHON_VERSION=3.10.18
 ARG UBUNTU_SNAPSHOT
@@ -41,24 +42,26 @@ RUN rm -f /etc/apt/sources.list /etc/apt/sources.list.d/*.list \
       'Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg' \
       > /etc/apt/sources.list.d/ubuntu.sources \
     && apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates git \
+    && apt-get install -y --no-install-recommends ca-certificates curl git \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /opt/cosmos/cosmos-transfer2.5
 
-# Both fetch and checkout explicitly disable LFS smudging. Fetching the immutable
-# SHA directly avoids depending on a moving branch or tag. The entire Git database,
-# all upstream assets (including LFS pointers), examples other than the real
-# inference entrypoint, docs, tests, and caches are removed before this RUN is
-# committed, so they never appear in an image layer.
+# Git smart-HTTP returned 403 from a GitHub-hosted BuildKit worker even though the
+# public immutable commit remained reachable. Fetch the same public commit through
+# GitHub's archive endpoint instead, verify its pinned checksum before extraction,
+# and never fall back to an unverified branch, tag, or credentialed source. The
+# archive contains LFS pointers rather than payload bytes. Upstream assets, examples
+# other than the real inference entrypoint, docs, tests, and caches are removed before
+# this RUN is committed, so they never appear in an image layer.
 RUN set -eux; \
-    git init; \
-    git remote add origin https://github.com/nvidia-cosmos/cosmos-transfer2.5.git; \
-    GIT_LFS_SKIP_SMUDGE=1 git -c filter.lfs.smudge= -c filter.lfs.required=false \
-      fetch --depth=1 --filter=blob:none origin "${COSMOS_TRANSFER_REVISION}"; \
-    GIT_LFS_SKIP_SMUDGE=1 git -c filter.lfs.smudge= -c filter.lfs.required=false \
-      checkout --detach FETCH_HEAD; \
-    test "$(git rev-parse HEAD)" = "${COSMOS_TRANSFER_REVISION}"; \
+    archive="$(mktemp)"; \
+    curl --fail --location --silent --show-error --proto '=https' --tlsv1.2 \
+      --output "${archive}" \
+      "https://codeload.github.com/nvidia-cosmos/cosmos-transfer2.5/tar.gz/${COSMOS_TRANSFER_REVISION}"; \
+    echo "${COSMOS_TRANSFER_ARCHIVE_SHA256}  ${archive}" | sha256sum --check --status; \
+    tar -xzf "${archive}" --strip-components=1; \
+    rm -f "${archive}"; \
     grep -q 'filter=lfs' .gitattributes; \
     rm -rf .git assets .github docker docs scripts tests; \
     find examples -mindepth 1 -maxdepth 1 ! -name inference.py -exec rm -rf -- {} +; \
@@ -155,6 +158,7 @@ RUN set -eux; \
 FROM ${CUDA_RUNTIME_IMAGE} AS runtime
 
 ARG COSMOS_TRANSFER_REVISION=67d56b7d550a3911024a32dc23ae0bae5258e633
+ARG COSMOS_TRANSFER_ARCHIVE_SHA256=978bfb03a49213669551701659641ae7b8414649480eb45c4c9c1f8d5e5a92a8
 ARG SAM2_REVISION=2b90b9f5ceec907a1c18123530e92e794ad901a4
 ARG UBUNTU_SNAPSHOT
 ARG NPA_SOURCE_SHA
@@ -163,6 +167,7 @@ LABEL org.opencontainers.image.title="NPA Cosmos Transfer 2.5" \
       org.opencontainers.image.description="Cosmos Transfer 2.5 source runtime; model weights are operator-fetched at run time" \
       org.opencontainers.image.source="https://github.com/nvidia-cosmos/cosmos-transfer2.5" \
       org.opencontainers.image.revision="${COSMOS_TRANSFER_REVISION}" \
+      org.nebius.npa.cosmos_transfer_archive_sha256="${COSMOS_TRANSFER_ARCHIVE_SHA256}" \
       org.opencontainers.image.licenses="Apache-2.0 AND BSD-3-Clause AND LicenseRef-NVIDIA-Deep-Learning-Container" \
       org.nebius.npa.sam2_source="https://github.com/facebookresearch/sam2" \
       org.nebius.npa.sam2_revision="${SAM2_REVISION}" \
@@ -202,7 +207,7 @@ RUN rm -f /etc/apt/sources.list /etc/apt/sources.list.d/*.list \
     && apt-get update \
     && apt-get upgrade -y \
     && apt-get install -y --no-install-recommends \
-      ca-certificates ffmpeg netcat-openbsd openssh-server procps rsync sudo \
+      ca-certificates ffmpeg netcat-openbsd openssh-server procps python3 python3-venv rsync sudo \
     && rm -rf /var/lib/apt/lists/* \
     && rm -f /etc/ssh/ssh_host_* \
     && test -z "$(find /etc/ssh -maxdepth 1 -type f -name 'ssh_host_*' -print -quit)" \
@@ -236,15 +241,20 @@ COPY --chmod=755 src/npa/workbench/cosmos/fixture.py \
 COPY docker/workbench/cosmos2-transfer/REDISTRIBUTION.md \
     /usr/share/doc/npa-cosmos2-transfer/REDISTRIBUTION.md
 
-# This purpose-built component image runs the exact NPA source tree without
-# invoking a PEP 517 backend.  The source is already immutable via
-# NPA_SOURCE_SHA; avoiding a package build also removes any implicit Hatchling
-# download or mutable build-isolation environment. Keep package initialization
-# lazy so importing the attestation and Cosmos component modules does not
-# require CLI/viewer extras.
+# This purpose-built component image keeps the vendor's CPython 3.10 inference
+# environment intact, but runs the NPA control/source overlay under Ubuntu 24.04
+# Python 3.12.  Pillow 13 and the NPA package require Python >=3.11; installing
+# current NPA source into the CPython 3.10 vendor venv would make the image's
+# declared dependency contract false.  The two interpreters communicate only
+# through the explicit subprocess seam in npa.workbench.cosmos.transfer.
+#
+# The source is already immutable via NPA_SOURCE_SHA. Avoid a PEP 517 editable
+# install so no Hatchling build-isolation download can alter the image: the
+# control venv has a durable, explicit .pth record for the checked-in source.
 ENV NPA_SKIP_EAGER_IMPORTS=1 \
-    PYTHONPATH=/opt/npa/src \
-    NPA_BAKED_PYTHON=/opt/cosmos/cosmos-transfer2.5/.venv/bin/python \
+    NPA_CONTROL_PYTHON=/opt/npa/control-venv/bin/python \
+    NPA_BAKED_PYTHON=/opt/npa/control-venv/bin/python \
+    COSMOS_TRANSFER_PYTHON=/opt/cosmos/cosmos-transfer2.5/.venv/bin/python \
     IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg
 
 # Deliberately shadow the global python3: SkyPilot and orchestrator-supplied
@@ -258,8 +268,6 @@ RUN set -eux; \
     /opt/cosmos/cosmos-transfer2.5/.venv/bin/python -c \
       'import imageio_ffmpeg; assert imageio_ffmpeg.get_ffmpeg_exe() == "/usr/bin/ffmpeg"'; \
     id -u ubuntu >/dev/null 2>&1 || useradd -m -s /bin/bash -u 1000 ubuntu; \
-    ln -sfn /opt/npa/src/npa \
-      /opt/cosmos/cosmos-transfer2.5/.venv/lib/python3.10/site-packages/npa; \
     printf '%s\n' 'ubuntu ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/ubuntu; \
     chmod 0440 /etc/sudoers.d/ubuntu; \
     printf '%s\n' '#!/bin/sh' \
@@ -292,24 +300,29 @@ RUN set -eux; \
     su ubuntu -s /bin/bash -c \
       'test -w /opt/cosmos/model-cache/huggingface && test -x /opt/cosmos/cosmos-transfer2.5/.venv/bin/python'
 
-# Install the capability CLI's exact, hash-verified dependency overlay without
-# resolving or upgrading the vendor lock. The lightweight console entry detects
-# `workbench cosmos2 transfer` before importing the full platform command tree,
-# then dispatches to the copied Cosmos2 source directly. The wrapper is authored
-# locally from fixed text; no build backend or package index is consulted.
+# Install the capability CLI's exact, hash-verified dependency overlay in the
+# Python >=3.11 control venv without resolving or upgrading the vendor lock.
+# The lightweight console entry detects `workbench cosmos2 transfer` before
+# importing the full platform command tree, then dispatches to the copied
+# Cosmos2 source directly. No build backend or package index is consulted.
 RUN set -eux; \
-    uv pip install --python /opt/cosmos/cosmos-transfer2.5/.venv/bin/python \
+    /usr/bin/python3 -c 'import sys; assert sys.version_info >= (3, 11)'; \
+    uv venv --python /usr/bin/python3 /opt/npa/control-venv; \
+    control_site="$(${NPA_CONTROL_PYTHON} -c 'import site; print(site.getsitepackages()[0])')"; \
+    printf '%s\n' /opt/npa/src > "${control_site}/npa-exact-source.pth"; \
+    uv pip install --python "${NPA_CONTROL_PYTHON}" \
       --no-deps --require-hashes \
       --requirement /tmp/npa-cli-requirements.txt; \
+    env -u PYTHONPATH "${NPA_CONTROL_PYTHON}" -c 'import npa.cli.entry; import npa.workflows.sim2real.runtime_attestation'; \
     printf '%s\n' '#!/bin/sh' \
-      'exec /opt/cosmos/cosmos-transfer2.5/.venv/bin/python -m npa.cli.entry "$@"' \
-      > /opt/cosmos/cosmos-transfer2.5/.venv/bin/npa; \
-    chmod 0755 /opt/cosmos/cosmos-transfer2.5/.venv/bin/npa; \
+      'exec /opt/npa/control-venv/bin/python -m npa.cli.entry "$@"' \
+      > /usr/local/bin/npa; \
+    chmod 0755 /usr/local/bin/npa; \
     env -u PYTHONPATH "${NPA_BAKED_PYTHON}" -c \
       'import npa.cli.entry; import npa.workflows.sim2real.runtime_attestation'; \
-    "${NPA_BAKED_PYTHON}" -c \
+    "${COSMOS_TRANSFER_PYTHON}" -c \
       'import importlib.metadata as m; assert m.version("PyJWT") == "2.15.1"'; \
-    /opt/cosmos/cosmos-transfer2.5/.venv/bin/npa \
+    /usr/local/bin/npa \
       workbench cosmos2 transfer --help > /tmp/npa-cosmos2-help.txt; \
     grep -q -- '--control-asset' /tmp/npa-cosmos2-help.txt; \
     grep -q -- '--segmentation-mode' /tmp/npa-cosmos2-help.txt; \

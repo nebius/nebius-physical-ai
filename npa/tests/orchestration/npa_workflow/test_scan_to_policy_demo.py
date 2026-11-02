@@ -76,5 +76,14 @@ def test_sample_render_preserves_cpu_geometry_and_rtx_native_runtime(monkeypatch
         assert {"name": "NVIDIA_DRIVER_CAPABILITIES", "value": "all"} in pod[
             "containers"
         ][0]["env"]
+    cpu_indices = [
+        index
+        for index, task in enumerate(tasks)
+        if "accelerators" not in task["resources"]
+    ]
+    assert cpu_indices == [0, 1, 2, 3, 5]
+    assert all(
+        "/opt/npa/sim/venv/bin/python" in tasks[index]["run"] for index in cpu_indices
+    )
     assert "usd-core==26.8" in tasks[2]["run"]
     assert all(task["envs"]["NPA_SRC_OVERLAY"] == "1" for task in tasks)

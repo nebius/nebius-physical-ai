@@ -6,8 +6,9 @@ tfvars: a trimmed control plane, one worker nodeset per spec pool (mixed presets
 supported), optional per-pool node-local Docker/Enroot image cache
 (``NETWORK_SSD_IO_M3``), NFS-in-k8s, accounting/telemetry/backups off by
 default, REST resolved through the pinned operator compatibility contract,
-upstream-derived control-plane sizing, and ``use_default_apparmor_profile``
-wired from the spec. Mandatory direct GPU creation checks live in the lifecycle.
+NPA's retained control-plane sizing policy, and
+``use_default_apparmor_profile`` wired from the spec. Mandatory direct GPU
+creation checks live in the lifecycle.
 """
 
 from __future__ import annotations
@@ -50,10 +51,6 @@ def _tfstr(value: str) -> str:
     return json.dumps(escaped, ensure_ascii=True)
 
 
-def _nullable_tfstr(value: str | None) -> str:
-    return "null" if value is None else _tfstr(value)
-
-
 def _render_worker(pool: WorkerPoolSpec) -> str:
     lines: list[str] = []
     lines.append("  {")
@@ -81,7 +78,14 @@ def _render_worker(pool: WorkerPoolSpec) -> str:
             f"worker pool {pool.name}: capacity block name must be provider-resolved "
             "before rendering Terraform"
         )
-    lines.append(f"    preemptible = {'{}' if pool.preemptible else 'null'}")
+    # The current Nebius provider requires the preemption action whenever the
+    # nested preemptible block is present; an empty object is rejected by the
+    # live MK8s node-group API as an invalid pricing model.
+    lines.append(
+        '    preemptible = { on_preemption = "STOP", priority = 1 }'
+        if pool.preemptible
+        else "    preemptible = null"
+    )
     if reservation_id:
         # STRICT is the only safe reservation policy for an explicit capacity
         # block. AUTO could silently fall back to ordinary on-demand capacity.
@@ -132,7 +136,7 @@ def render_tfvars(spec: SoperatorSpec) -> str:
     # (variables.tf validation rejects ""), so on CPU-only clusters use "essential",
     # which sets runAfterCreation=false for every GPU/NCCL/IB/perf check and only
     # runs CPU-safe checks (ssh-check, etc.).
-    # The pinned Terraform surface exposes REST independently, but its 4.1.6
+    # The pinned Terraform surface exposes REST independently, but its 4.1.13
     # operator skips REST reconciliation without accounting. Only select the
     # REST-backed dev checks for the runnable combination. NPA performs direct
     # login-jail CUDA creation checks for every GPU pool, including accounting-
@@ -185,7 +189,7 @@ allow_empty_jail_submounts = true
 
 nfs_in_k8s = {{
   enabled         = true
-  version         = "1.2.0"
+  version         = "1.2.2"
   use_stable_repo = true
   size_gibibytes  = 186
   disk_type       = "NETWORK_SSD_IO_M3"
@@ -219,7 +223,7 @@ slurm_nodeset_system = {{
   max_size = {spec.effective_system_max_size()}
   resource = {{
     platform = "cpu-d3"
-    preset   = {_nullable_tfstr(spec.system_preset)}
+    preset   = {_tfstr(spec.effective_control_plane_preset("system"))}
   }}
   boot_disk = {{
     type                 = "NETWORK_SSD"
@@ -232,7 +236,7 @@ slurm_nodeset_controller = {{
   size = 1
   resource = {{
     platform = "cpu-d3"
-    preset   = {_nullable_tfstr(spec.controller_preset)}
+    preset   = {_tfstr(spec.effective_control_plane_preset("controller"))}
   }}
   boot_disk = {{
     type                 = "NETWORK_SSD"
@@ -265,7 +269,7 @@ slurm_nodeset_login = {{
 slurm_nodeset_accounting = {{
   resource = {{
     platform = "cpu-d3"
-    preset   = {_nullable_tfstr(spec.accounting_preset)}
+    preset   = {_tfstr(spec.effective_control_plane_preset("accounting"))}
   }}
   boot_disk = {{
     type                 = "NETWORK_SSD"
@@ -290,9 +294,7 @@ maintenance_ignore_node_groups = ["controller", "nfs"]
 telemetry_enabled        = {telemetry}
 public_o11y_enabled      = {telemetry}
 dcgm_job_mapping_enabled = {telemetry}
-opentelemetry_delete_jail_logs_after_read = false
 soperator_notifier   = {{ enabled = false }}
-nccl_inspector_profiling = {{ enabled = false }}
 
 accounting_enabled = {_bool(spec.accounting)}
 slurm_rest_enabled = {_bool(rest_enabled)}
@@ -305,7 +307,6 @@ backups_retention         = {{ keepDaily = 7 }}
 cleanup_bucket_on_destroy = false
 
 k8s_version        = {_tfstr(spec.k8s_version)}
-node_group_version = {_tfstr(spec.node_group_version)}
 nvidia_config_lines = [
   "options nvidia NVreg_RestrictProfilingToAdminUsers=0",
   "options nvidia NVreg_EnableStreamMemOPs=1",

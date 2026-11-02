@@ -53,6 +53,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     NPA_COSMOS3_OUTPUT_DIR=/tmp/npa-cosmos3-generate \
     NPA_IMAGE_SOURCE_SHA=${NPA_SOURCE_SHA} \
     NPA_BAKED_PYTHON=/opt/npa/.venv/bin/python \
+    UV_CACHE_DIR=/tmp/uv-cache \
     COSMOS_TRAINING=0 \
     HF_HOME=/tmp/hf_home \
     COSMOS_DOWNLOAD_CACHE_DIR=/tmp/hf_home/cosmos-downloads \
@@ -90,7 +91,7 @@ RUN apt-get update \
     && test -z "$(find /opt/nvidia/nsight-compute -type f \
          -path '*/plugins/efa_metrics/nic_sampler' -print -quit)"
 
-COPY --from=ghcr.io/astral-sh/uv:0.11.28@sha256:0f36cb9361a3346885ca3677e3767016687b5a170c1a6b88465ec14aefec90aa /uv /uvx /usr/local/bin/
+COPY --from=ghcr.io/astral-sh/uv:0.13.4@sha256:9f130421e930bfbdc563c00740466603f8723158e90297d07957c2294640262b /uv /uvx /usr/local/bin/
 
 # The runtime user owns its trees BEFORE the heavy layers, and every later layer
 # runs as that user. A trailing `chown -R` would instead rewrite the whole 9.3 GB
@@ -157,7 +158,9 @@ RUN UV_CACHE_DIR=/tmp/uv-cache uv venv --python 3.12 /opt/npa/.venv \
     && /opt/npa/.venv/bin/python -c 'from pathlib import Path; import subprocess; interpreters=sorted({p.resolve() for p in Path("/opt/uv/python").glob("*/bin/python3")}); assert interpreters; [subprocess.run(["uv","pip","install","--break-system-packages","--python",str(p),"--no-deps","--require-hashes","-r","/tmp/cosmos3-packaging-requirements.txt"],check=True) for p in interpreters]' \
     && rm -f /tmp/cosmos3-packaging-requirements.txt \
     && test "$(printf %s "${NPA_SOURCE_SHA}" | wc -c)" -eq 40 \
-    && rm -rf /tmp/uv-cache
+    && rm -rf /tmp/uv-cache /home/ubuntu/.cache/uv \
+    && test ! -e /tmp/uv-cache \
+    && test ! -e /home/ubuntu/.cache/uv
 
 COPY --chown=ubuntu:ubuntu --chmod=755 docker/workbench/cosmos3/smoke_functional.sh /opt/cosmos3/smoke_functional.sh
 COPY --chown=ubuntu:ubuntu --chmod=755 docker/workbench/cosmos3/entrypoint.sh /usr/local/bin/entrypoint.sh

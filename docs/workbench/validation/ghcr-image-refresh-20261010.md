@@ -15,8 +15,9 @@ functional qualification before promotion.
 - Cosmos Transfer: pin the fixed PyJWT 2.15.1 wheel with its upstream hash.
 - Envgen: select the October 9 Ubuntu snapshot and fixed userspace headers;
   retain the existing exact-source scikit-image recipe removal before flattening.
-- FiftyOne: pin GraphQL Core 3.2.11, compatible with its Strawberry 0.316 dependency,
-  install its multimodal extra with the upstream-pinned Protobuf runtime, and
+- FiftyOne: the published refresh pinned GraphQL Core 3.2.11, compatible with its
+  Strawberry 0.316 dependency. Current source advances that compatible 3.2 line to
+  3.2.13; both forms install its multimodal extra with the upstream-pinned Protobuf runtime and
   require all four environment checks including the LeRobot temporal API.
 - Lyra: install the hash-pinned cryptography 50.0.2 wheel required by current NPA.
 - OpenArm: refresh unavailable deadsnakes artifacts using exact package-index

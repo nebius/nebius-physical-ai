@@ -5,7 +5,6 @@ from __future__ import annotations
 from typing import Any
 
 from npa.orchestration.npa_workflow.catalog import TOOL_CATALOG
-from npa.workbench.isaac_arena import capabilities as isaac_arena_capabilities
 
 
 def coerce_cli_list(value: Any) -> list[str]:
@@ -29,6 +28,8 @@ def coerce_cli_list(value: Any) -> list[str]:
 
 def tool_catalog_payload() -> dict[str, dict[str, Any]]:
     """Return the stable JSON-ready tool catalog embedded in agent bootstrap."""
+
+    from npa.workbench.isaac_arena import capabilities as isaac_arena_capabilities
 
     payload = {
         key: {

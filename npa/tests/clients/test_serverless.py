@@ -122,10 +122,42 @@ def test_create_endpoint_builds_expected_args() -> None:
             "--working-dir",
             "/workspace",
             "--preemptible",
+            "--follows-spot-price",
             "--format",
             "json",
         ]
     ]
+
+
+@pytest.mark.parametrize("preemptible", [False, True])
+@pytest.mark.parametrize("resource", ["job", "endpoint"])
+def test_preemptible_requests_explicitly_follow_spot_price(resource, preemptible):
+    calls = []
+
+    def capture_request(args, **kwargs):
+        calls.append(args)
+        payload = _job_json() if resource == "job" else _endpoint_json()
+        return _result(args, 0, payload)
+
+    client = ServerlessClient(nebius_bin="nebius", subprocess_runner=capture_request)
+    if resource == "job":
+        _create_job(client, preemptible=preemptible)
+    else:
+        client.create_endpoint(
+            EndpointSpec(
+                name="cosmos",
+                project_id="project-1",
+                image="registry/cosmos:cuda12",
+                platform="gpu-h200-sxm",
+                preset="1gpu-16vcpu-200gb",
+                preemptible=preemptible,
+            )
+        )
+
+    assert len(calls) == 1
+    assert ("--preemptible" in calls[0]) is preemptible
+    assert ("--follows-spot-price" in calls[0]) is preemptible
+    assert "--spot-pricing-policy-id" not in calls[0]
 
 
 def test_create_endpoint_extra_env_none_adds_no_env_flags() -> None:

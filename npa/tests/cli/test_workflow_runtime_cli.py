@@ -17,9 +17,11 @@ import typer
 from typer.testing import CliRunner
 
 from npa.cli.main import app
+from npa.cli.workbench import workflow as workflow_cli
 from npa.cli.workbench.workflow import (
     _execution_target_preflight as REAL_EXECUTION_TARGET_PREFLIGHT,
 )
+from npa.orchestration.npa_workflow.errors import NpaWorkflowError
 from npa.orchestration.npa_workflow.runtime import RuntimeReport
 from npa.orchestration.npa_workflow.run_resolution import RunResolution
 from npa.orchestration.npa_workflow.run_state import RunManifest
@@ -33,6 +35,19 @@ GATE_LOOP = SPECS / "token-factory-gate-loop.yaml"
 PAIDF_COSMOS3 = REPO_ROOT / "workflows" / "main" / "paidf-cosmos3.yaml"
 EMBODIEDGEN = SPECS / "byof-embodiedgen.yaml"
 RUNNER = CliRunner()
+
+
+def test_candidate_disclosure_log_redacts_active_submit_values(caplog) -> None:
+    token = workflow_cli._SUBMIT_PRIVATE_REDACTIONS.set(("redacted-candidate-value",))
+    try:
+        workflow_cli._log_workflow_validation_candidate_disclosure_failure(
+            ValueError("candidate disclosure redacted-candidate-value failure")
+        )
+    finally:
+        workflow_cli._SUBMIT_PRIVATE_REDACTIONS.reset(token)
+
+    assert "redacted-candidate-value" not in caplog.text
+    assert "<redacted>" in caplog.text
 
 
 def _selected_storage_credentials():
@@ -498,6 +513,8 @@ def test_submit_runtime_passes_options_and_emits_json(
     assert payload["status"] == "succeeded"
     assert payload["wave_count"] == 2
     assert payload["runtime_state_uri"].endswith("/npa-workflow/runtime.json")
+    assert payload["workflow_validation_candidates"] == []
+    assert payload["workflow_validation_candidates_status"] == "available"
 
 
 @pytest.mark.parametrize("selected", ["", "review"])
@@ -647,6 +664,90 @@ def test_submit_runtime_resume_flag_is_forwarded(fake_runtime) -> None:
     assert fake_runtime["options"].resume is True
 
 
+def test_submit_runtime_forwards_explicit_terminal_recovery_id(fake_runtime) -> None:
+    result = RUNNER.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(FANOUT),
+            "--resume-run",
+            "rt-cli-terminal-recovery",
+            "--runtime",
+            "--recover-managed-job-id",
+            "2",
+            "--var",
+            "bucket=rt-bucket",
+            "--output-format",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert fake_runtime["options"].resume is True
+    assert fake_runtime["options"].recover_managed_job_id == "2"
+
+
+@pytest.mark.parametrize(
+    ("arguments", "message"),
+    [
+        (
+            ["--runtime", "--recover-managed-job-id", "2"],
+            "requires an explicit --resume-run ID",
+        ),
+        (
+            [
+                "--resume-run",
+                "rt-cli-terminal-recovery",
+                "--recover-managed-job-id",
+                "2",
+            ],
+            "--recover-managed-job-id requires --runtime",
+        ),
+        (
+            [
+                "--resume-run",
+                "rt-cli-terminal-recovery",
+                "--runtime",
+                "--recover-managed-job-id",
+                "job-two",
+            ],
+            "must be one decimal managed-job ID",
+        ),
+        (
+            [
+                "--resume-run",
+                "rt-cli-terminal-recovery",
+                "--runtime",
+                "--plan-only",
+                "--recover-managed-job-id",
+                "2",
+            ],
+            "--recover-managed-job-id cannot be combined with --plan-only",
+        ),
+    ],
+)
+def test_explicit_terminal_recovery_requires_resume_and_exact_id(
+    arguments: list[str], message: str
+) -> None:
+    result = RUNNER.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(FANOUT),
+            *arguments,
+            "--var",
+            "bucket=rt-bucket",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert message in result.output
+
+
 @pytest.fixture()
 def gpu_then_cpu_spec(tmp_path: Path) -> Path:
     spec = tmp_path / "gpu-then-cpu.yaml"
@@ -720,6 +821,69 @@ def test_runtime_defers_free_capacity_to_the_actual_wave(
     )
     fake_runtime["options"].pre_submit_hook(wave)
     capacity.assert_not_called()
+
+
+def test_runtime_refresh_reuses_explicit_identity_environment(
+    fake_runtime,
+    gpu_then_cpu_spec: Path,
+    tmp_path: Path,
+    mocker,
+) -> None:
+    """Every accelerator discovery must bind the same selected principal."""
+    environments: list[dict[str, str]] = []
+
+    def resolve(*_args, **kwargs):  # noqa: ANN001
+        environment = kwargs.get("environment")
+        assert isinstance(environment, dict)
+        environments.append(dict(environment))
+        return {}
+
+    mocker.patch(
+        "npa.cli.workbench.workflow._resolve_submit_accelerators",
+        side_effect=resolve,
+    )
+    mocker.patch("npa.cli.workbench.workflow._adopt_npa_kubeconfig", return_value=True)
+    mocker.patch("npa.cli.workbench.workflow._verify_submit_controller_owner")
+    mocker.patch(
+        "npa.orchestration.npa_workflow.model_cache_preflight.adopt_model_cache_claim",
+        return_value="",
+    )
+    mocker.patch(
+        "npa.cli.workbench.workflow._execution_target_preflight",
+        return_value=(None, {}),
+    )
+    wave = tmp_path / "identity-refresh.yaml"
+    wave.write_text("name: generate\nrun: 'true'\n")
+
+    def run(spec, **kwargs):  # noqa: ANN001
+        kwargs["options"].pre_submit_hook(wave)
+        return RuntimeReport(
+            workflow=spec.name, run_id=kwargs["run_id"], status="succeeded"
+        )
+
+    mocker.patch(
+        "npa.orchestration.npa_workflow.runtime.run_workflow_runtime", side_effect=run
+    )
+    result = RUNNER.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(gpu_then_cpu_spec),
+            "--run-id",
+            "identity-refresh",
+            "--runtime",
+            "--infra",
+            "k8s/unit-context",
+            "--no-deploy-if-absent",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert len(environments) == 2
+    assert environments[0] == environments[1]
+    assert environments[0]["NPA_S3_BUCKET"] == "rt-bucket"
 
 
 def test_runtime_uses_configured_secrets_for_local_ledger_without_leaking_env(
@@ -853,6 +1017,7 @@ def configured_gpu_runtime(mocker, monkeypatch, satisfied_preflight):
     expected = {
         "AWS_ACCESS_KEY_ID": "project-access",
         "AWS_SECRET_ACCESS_KEY": "project-secret",
+        "NPA_SKYPILOT_PROJECT": "selected-project",
         "NPA_S3_BUCKET": "rt-bucket",
         "NPA_S3_PREFIX": "runs/identity-test",
         **dict.fromkeys(STORAGE_ENDPOINT_ENV_NAMES, "https://storage.example.invalid"),
@@ -861,6 +1026,7 @@ def configured_gpu_runtime(mocker, monkeypatch, satisfied_preflight):
         monkeypatch.delenv(key, raising=False)
     monkeypatch.delenv("NPA_WORKFLOW_GPU_ACCELERATOR", raising=False)
     monkeypatch.setenv("AWS_ENDPOINT_URL", "https://ambient.example.invalid")
+    monkeypatch.setenv("NPA_SKYPILOT_PROJECT", "ambient-project")
     original_environment = {key: os.environ.get(key) for key in expected}
     mocker.patch(
         "npa.orchestration.npa_workflow.submit_credentials.resolve_project_storage",
@@ -929,6 +1095,8 @@ def test_runtime_discovery_preserves_resolved_identity_and_restores_environment(
             str(gpu_then_cpu_spec),
             "--run-id",
             "identity-test",
+            "--project",
+            "selected-project",
             "--runtime",
             "--infra",
             "k8s/unit-context",
@@ -967,6 +1135,127 @@ def test_submit_runtime_text_output_lists_waves_and_decisions(fake_runtime) -> N
     assert "waves: 2" in result.output
     assert "[parallel]" in result.output
     assert "decision: promote_checkpoint" in result.output
+
+
+def test_runtime_submit_json_reports_candidate_status(fake_runtime, mocker) -> None:
+    """Runtime output carries the supplied non-release signal unchanged."""
+
+    candidate = {
+        "tool_ref": "workbench.example.candidate",
+        "image": "ghcr.io/example/candidate@sha256:" + "a" * 64,
+        "release_status": "workflow_validation_candidate",
+        "selection_scope": "reachable_branches",
+    }
+    mocker.patch(
+        "npa.cli.workbench.workflow._workflow_validation_candidate_payload",
+        return_value=[candidate],
+    )
+    result = RUNNER.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(FANOUT),
+            "--run-id",
+            "runtime-candidate",
+            "--runtime",
+            "--skip-preflight",
+            "--no-preflight-images",
+            "--no-resolve-accelerators",
+            "--var",
+            "bucket=rt-bucket",
+            "--output-format",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["workflow_validation_candidates"] == [candidate]
+    assert payload["workflow_validation_candidates_status"] == "available"
+
+
+@pytest.mark.parametrize("error_type", [NpaWorkflowError, ValueError])
+def test_runtime_candidate_disclosure_planning_failure_is_observational(
+    fake_runtime, mocker, error_type, caplog
+) -> None:
+    """A disclosure planning failure retains the runtime's established behavior."""
+
+    mocker.patch(
+        "npa.cli.workbench.workflow._image_preflight_steps",
+        side_effect=error_type("synthetic candidate planning failure"),
+    )
+
+    result = RUNNER.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(FANOUT),
+            "--run-id",
+            "runtime-candidate-planning-failure",
+            "--runtime",
+            "--skip-preflight",
+            "--no-preflight-images",
+            "--no-resolve-accelerators",
+            "--var",
+            "bucket=rt-bucket",
+            "--output-format",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert fake_runtime["spec"].name == "token-factory-parallel-fanout"
+    payload = json.loads(result.stdout)
+    assert payload["workflow_validation_candidates"] == []
+    assert payload["workflow_validation_candidates_status"] == "unavailable"
+    assert "candidate disclosure is unavailable" in result.stderr
+    assert (
+        "workflow validation candidate disclosure failed: synthetic candidate "
+        in caplog.text
+    )
+
+
+def test_submit_plan_candidate_disclosure_failure_is_observational(
+    mocker, caplog
+) -> None:
+    mocker.patch(
+        "npa.cli.workbench.workflow._workflow_validation_candidate_payload",
+        side_effect=ValueError("synthetic candidate disclosure failure"),
+    )
+
+    result = RUNNER.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(FANOUT),
+            "--plan-only",
+            "--no-deploy-if-absent",
+            "--infra",
+            "k8s/stock-test",
+            "--run-id",
+            "plan-candidate-disclosure-failure",
+            "--var",
+            "bucket=rt-bucket",
+            "--output-format",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["workflow_validation_candidates"] == []
+    assert payload["workflow_validation_candidates_status"] == "unavailable"
+    assert "candidate disclosure is unavailable" in result.stderr
+    assert (
+        "workflow validation candidate disclosure failed: synthetic candidate "
+        in caplog.text
+    )
 
 
 def test_runtime_required_workflow_selects_runtime_automatically(
@@ -1106,10 +1395,15 @@ def test_non_runtime_submit_records_the_exact_controller_route(
             "--no-runtime",
             "--var",
             "bucket=rt-bucket",
+            "--output-format",
+            "json",
         ],
     )
 
     assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["workflow_validation_candidates"] == []
+    assert payload["workflow_validation_candidates_status"] == "available"
     receipt = load_submission_state("unit", "non-runtime-controller-route")
     assert receipt["controller"] == {
         "schema": "npa.workflow.controller-route.v1",
@@ -2157,6 +2451,96 @@ def _write_local_receipt(monkeypatch, tmp_path: Path, run_id: str, raw: str) -> 
     path = submission_state_path("unit", run_id)
     path.parent.mkdir(parents=True)
     path.write_text(raw, encoding="utf-8")
+
+
+def test_cli_resume_recovers_the_plan_from_failed_prelaunch_preflight(
+    fake_runtime, monkeypatch, tmp_path: Path
+) -> None:
+    from npa.clients import config
+    from npa.orchestration.npa_workflow import submission_state
+
+    monkeypatch.setattr(config, "CONFIG_PATH", tmp_path / "config.yaml")
+    run_id = "prelaunch-recovery"
+    submission_state.record_submission_plan(
+        "unit",
+        run_id,
+        workflow={
+            "name": "token-factory-parallel-fanout",
+            "kind": "npa.workflow/v0.0.1",
+        },
+        planning={"state": "durable", "source_action": "not-required"},
+    )
+    original = submission_state.load_submission_state("unit", run_id)
+    assert "run_prefix_uri" not in original["workflow"]
+    assert "launch" not in original
+
+    result = RUNNER.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(FANOUT),
+            "--runtime",
+            "--resume",
+            "--run-id",
+            run_id,
+            "--project",
+            "unit",
+            "--var",
+            "bucket=rt-bucket",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert fake_runtime["run_id"] == run_id
+    assert fake_runtime["state_store"] is None
+    recovered = submission_state.load_submission_state("unit", run_id)
+    assert recovered["workflow"]["run_prefix_uri"].startswith("s3://rt-bucket/")
+    assert "launch" in recovered
+
+
+@pytest.mark.parametrize(
+    "override",
+    [
+        {"launch": {}},
+        {"launch": {"status": "failed"}},
+        {"launch": {"status": "launching", "job_id": ""}},
+        {"schema_version": "npa.workflow.submission.v0"},
+        {"project": "other"},
+        {"run_id": "other"},
+        {"workflow": None},
+    ],
+)
+def test_resume_without_prefix_rejects_launch_evidence_or_uncertain_identity(
+    monkeypatch, override
+) -> None:
+    from types import SimpleNamespace
+
+    from npa.cli.workbench.workflow import _recorded_runtime_store
+    from npa.orchestration.npa_workflow import submission_state
+
+    payload = {
+        "schema_version": submission_state.SCHEMA_VERSION,
+        "project": "unit",
+        "run_id": "prelaunch-recovery",
+        "launch_state": "planned",
+        "workflow": {"name": "test"},
+        **override,
+    }
+    monkeypatch.setattr(
+        submission_state,
+        "inspect_submission_state",
+        lambda *_: SimpleNamespace(outcome="found", payload=payload),
+    )
+
+    with pytest.raises(ValueError, match="resume receipt"):
+        _recorded_runtime_store(
+            "unit",
+            "prelaunch-recovery",
+            resume=True,
+            credentials=_selected_storage_credentials(),
+        )
 
 
 def test_cli_resume_preserves_recorded_legacy_store(

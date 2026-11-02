@@ -26,7 +26,14 @@ _NON_USER_DOCS = {"archive", "architecture", "cli", "security", "testing"}
 def _documentation_paths(root: Path) -> list[Path]:
     paths = {root / "README.md", root / "CONTRIBUTING.md"}
     for directory in ("docs", "workflows", "benchmark"):
-        paths.update((root / directory).rglob("*.md"))
+        paths.update(
+            path
+            for path in (root / directory).rglob("*.md")
+            if not any(
+                part.startswith(".")
+                for part in path.relative_to(root / directory).parts
+            )
+        )
     for directory in ("npa", "deploy", "workbench", "research"):
         for parent, directories, files in os.walk(root / directory):
             directories[:] = [

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 import hashlib
 import json
 from pathlib import Path
@@ -14,6 +15,7 @@ from npa.orchestration.skypilot.k8s_gpu_catalog import (
     KubernetesGpuCatalogError,
     KubernetesGpuInventory,
     KubernetesGpuNode,
+    SkyPilotGpuLabelError,
     UnsatisfiableAcceleratorError,
     context_from_infra,
     discover_kubernetes_gpu_catalog,
@@ -21,8 +23,10 @@ from npa.orchestration.skypilot.k8s_gpu_catalog import (
     label_known_kubernetes_gpus_for_skypilot,
     parse_kubernetes_gpu_catalog,
     preflight_kubernetes_gpu_gang,
+    preflight_skypilot_gpu_gang,
     _recover_idle_validation_scope,
     resolve_kubernetes_accelerator,
+    skypilot_label_ready_nodes,
     spec_accelerators,
     wait_for_kubernetes_accelerators,
 )
@@ -1036,6 +1040,186 @@ def test_non_alias_families_keep_exact_provider_name_compatibility(
 
 
 @pytest.mark.parametrize(
+    ("label_key", "product"),
+    [
+        ("nvidia.com/gpu.product", "NVIDIA-B200"),
+        ("nebius.com/gpu-name", "B200"),
+    ],
+)
+def test_skypilot_label_fallback_accepts_native_b200_without_sky_label(
+    label_key: str, product: str
+) -> None:
+    node = replace(
+        _node("native-b200", product=product), labels=((label_key, product),)
+    )
+    inventory = KubernetesGpuInventory(
+        context="exact-context",
+        ready_nodes=1,
+        eligible_gpu_nodes=1,
+        capacity=1,
+        allocatable=1,
+        products=(product,),
+        node_labels={"native-b200": {label_key: product}},
+        nodes=(node,),
+    )
+
+    assert [node.name for node in skypilot_label_ready_nodes(inventory, "B200:1")] == [
+        "native-b200"
+    ]
+    evidence = preflight_skypilot_gpu_gang(
+        inventory, accelerator="B200:1", node_count=1
+    )
+
+    assert evidence["compatible_free_nodes"] == 1
+    assert evidence["selected_nodes"] == ["native-b200"]
+
+
+def test_skypilot_label_fallback_rejects_compact_nebius_rtx_alias_without_sky_label() -> (
+    None
+):
+    product = "RTX6000"
+    node = replace(
+        _node("native-rtx", product=product),
+        labels=(("nebius.com/gpu-name", product),),
+    )
+    inventory = KubernetesGpuInventory(
+        context="exact-context",
+        ready_nodes=1,
+        eligible_gpu_nodes=1,
+        capacity=1,
+        allocatable=1,
+        products=(product,),
+        node_labels={"native-rtx": {"nebius.com/gpu-name": product}},
+        nodes=(node,),
+    )
+
+    assert "skypilot.co/accelerator" not in dict(node.labels)
+    assert skypilot_label_ready_nodes(inventory, "RTXPRO6000:1") == ()
+    with pytest.raises(SkyPilotGpuLabelError, match="effective accelerator selector"):
+        preflight_skypilot_gpu_gang(inventory, accelerator="RTXPRO6000:1", node_count=1)
+
+
+def test_skypilot_label_selection_uses_upstream_gke_priority_over_nebius() -> None:
+    node = replace(
+        _node("mixed-format", product="B200"),
+        labels=(
+            ("cloud.google.com/gke-accelerator", "nvidia-tesla-h100"),
+            ("nebius.com/gpu-name", "B200"),
+        ),
+    )
+    inventory = KubernetesGpuInventory(
+        context="exact-context",
+        ready_nodes=1,
+        eligible_gpu_nodes=1,
+        capacity=1,
+        allocatable=1,
+        products=("B200",),
+        node_labels={
+            "mixed-format": {
+                "cloud.google.com/gke-accelerator": "nvidia-tesla-h100",
+                "nebius.com/gpu-name": "B200",
+            }
+        },
+        nodes=(node,),
+    )
+
+    # SkyPilot 0.12.2 detects the formatter by registry priority across the
+    # context.  The valid GKE label therefore wins before Nebius is considered.
+    assert skypilot_label_ready_nodes(inventory, "B200:1") == ()
+
+
+@pytest.mark.parametrize(
+    ("label_key", "label_value", "accelerator"),
+    [
+        ("skypilot.co/accelerator", "h200", "H200:1"),
+        ("cloud.google.com/gke-accelerator", "nvidia-tesla-a100", "A100:1"),
+        ("karpenter.k8s.aws/instance-gpu-name", "h200", "H200:1"),
+        ("nvidia.com/gpu.product", "NVIDIA-H100-80GB-HBM3", "H100:1"),
+        ("gpu.nvidia.com/class", "H100_NVLINK_80GB", "H100:1"),
+        ("nebius.com/gpu-name", "B200", "B200:1"),
+    ],
+)
+def test_skypilot_label_selection_mirrors_each_pinned_formatter(
+    label_key: str, label_value: str, accelerator: str
+) -> None:
+    node = replace(
+        _node("formatter-node", product=label_value),
+        labels=((label_key, label_value),),
+    )
+    inventory = KubernetesGpuInventory(
+        context="exact-context",
+        ready_nodes=1,
+        eligible_gpu_nodes=1,
+        capacity=1,
+        allocatable=1,
+        products=(label_value,),
+        node_labels={"formatter-node": {label_key: label_value}},
+        nodes=(node,),
+    )
+
+    assert skypilot_label_ready_nodes(inventory, accelerator) == (node,)
+
+
+def test_skypilot_label_selection_skips_invalid_earlier_formatter() -> None:
+    node = replace(
+        _node("fallback-node", product="B200"),
+        labels=(
+            ("skypilot.co/accelerator", "B200"),
+            ("nebius.com/gpu-name", "B200"),
+        ),
+    )
+    inventory = KubernetesGpuInventory(
+        context="exact-context",
+        ready_nodes=1,
+        eligible_gpu_nodes=1,
+        capacity=1,
+        allocatable=1,
+        products=("B200",),
+        node_labels={
+            "fallback-node": {
+                "skypilot.co/accelerator": "B200",
+                "nebius.com/gpu-name": "B200",
+            }
+        },
+        nodes=(node,),
+    )
+
+    # The uppercase SkyPilot label invalidates that formatter; the valid Nebius
+    # formatter is selected only after the ordered fallback.
+    assert skypilot_label_ready_nodes(inventory, "B200:1") == (node,)
+
+
+def test_skypilot_label_selection_keeps_first_matching_raw_selector_value() -> None:
+    first = replace(
+        _node("first", product="H200-SXM-141GB"),
+        labels=(("skypilot.co/accelerator", "h200-sxm-141gb"),),
+    )
+    second = replace(
+        _node("second", product="H200"),
+        labels=(("skypilot.co/accelerator", "h200"),),
+    )
+    inventory = KubernetesGpuInventory(
+        context="exact-context",
+        ready_nodes=2,
+        eligible_gpu_nodes=2,
+        capacity=2,
+        allocatable=2,
+        products=("H200", "H200-SXM-141GB"),
+        node_labels={
+            "first": {"skypilot.co/accelerator": "h200-sxm-141gb"},
+            "second": {"skypilot.co/accelerator": "h200"},
+        },
+        nodes=(first, second),
+    )
+
+    # SkyPilot accepts the hyphen-compatible first value, then renders that
+    # exact raw value into the node selector; it does not union per-node aliases.
+    assert [node.name for node in skypilot_label_ready_nodes(inventory, "H200:1")] == [
+        "first"
+    ]
+
+
+@pytest.mark.parametrize(
     ("label", "product"),
     [
         ("nebius.com/gpu-name", "RTX6000"),
@@ -1762,6 +1946,57 @@ def test_validation_environment_migrates_changed_config_only_after_safe_recovery
     assert yaml.safe_load(stale_config.read_text(encoding="utf-8"))[
         "allowed_clouds"
     ] == ["kubernetes"]
+
+
+def test_validation_environment_drops_parent_api_endpoint(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A scope-owned validation API cannot inherit its parent's endpoint."""
+
+    kubeconfig = tmp_path / "kubeconfig"
+    kubeconfig.write_text("apiVersion: v1\n", encoding="utf-8")
+    parent_config = tmp_path / "controller-config.yaml"
+    parent_config.write_text(
+        yaml.safe_dump(
+            {
+                "allowed_clouds": ["kubernetes", "nebius"],
+                "api_server": {"endpoint": "http://127.0.0.1:36471"},
+                "kubernetes": {"allowed_contexts": ["parent-context"]},
+            }
+        ),
+        encoding="utf-8",
+    )
+    isolated_root = tmp_path / "isolated"
+    monkeypatch.setenv("NPA_SKYPILOT_ISOLATED_CONFIG_DIR", str(isolated_root))
+    monkeypatch.setenv("SKYPILOT_GLOBAL_CONFIG", str(parent_config))
+
+    from npa.orchestration.skypilot import cleanup, local_api
+
+    client_configs: list[dict] = []
+
+    def fake_sky_environment(
+        _scope: Path, *, environment: dict[str, str]
+    ) -> dict[str, str]:
+        client_configs.append(
+            yaml.safe_load(
+                Path(environment["SKYPILOT_GLOBAL_CONFIG"]).read_text(encoding="utf-8")
+            )
+        )
+        return dict(environment)
+
+    monkeypatch.setattr(cleanup, "sky_environment", fake_sky_environment)
+    monkeypatch.setattr(local_api, "ensure_isolated_api", lambda **_kwargs: None)
+
+    gpu_catalog.kubernetes_sky_environment(
+        context="exact-context",
+        kubeconfig=kubeconfig,
+        sky_executable="/opt/sky/bin/sky",
+    )
+
+    assert len(client_configs) == 1
+    assert "api_server" not in client_configs[0]
+    assert client_configs[0]["allowed_clouds"] == ["kubernetes"]
+    assert client_configs[0]["kubernetes"]["allowed_contexts"] == ["exact-context"]
 
 
 def test_readiness_retries_quarantined_snapshot_before_healthy_inventory(monkeypatch):

@@ -22,6 +22,7 @@ def _spec():
     cluster = ClusterSpec(
         name="training",
         enable_filestore=True,
+        filesystem_csi_chart_repository="oci://charts.example.invalid/nebius",
         cpu_nodes=NodePoolSpec(count=1, platform="cpu-d3", preset="2vcpu-8gb"),
     )
     project = ProjectSpec(name="team", project_id="project-test", clusters=[cluster])

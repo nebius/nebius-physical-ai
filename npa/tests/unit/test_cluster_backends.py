@@ -824,6 +824,118 @@ def test_standalone_mk8s_apply_adopts_native_one_target_result(
     assert saved.node_group_id == "node-group-test"
 
 
+def test_standalone_mk8s_apply_adopts_native_gpu_health_evidence(
+    tmp_path, monkeypatch
+) -> None:
+    from npa.cluster import state
+    from npa.cluster_backends import mk8s_execution
+
+    monkeypatch.setattr(state, "CLUSTERS_DIR", tmp_path / "clusters")
+    source_dir = tmp_path / "backend"
+    source_dir.mkdir()
+    source = source_dir / "kubeconfig"
+    source.write_text(
+        "apiVersion: v1\nkind: Config\ncurrent-context: fleet-generated\n"
+        "contexts:\n- name: fleet-generated\n  context: {cluster: c, user: u}\n"
+    )
+    health = source_dir / "gpu-health.json"
+    health.write_text(json.dumps({"status": "healthy", "graphics_smokes": []}))
+    desired = ClusterSpec(
+        name="provider-name",
+        gpu_nodes=NodePoolSpec(
+            count=1, platform="gpu-rtx6000", preset="1gpu-24vcpu-218gb"
+        ),
+    )
+    project = ProjectSpec(
+        name="standalone-target", project_id="project-test", clusters=[desired]
+    )
+    spec = FleetSpec(
+        name="standalone",
+        tenant_id="tenant-test",
+        region="region-test",
+        projects=[project],
+    )
+
+    monkeypatch.setattr(
+        mk8s_execution,
+        "deploy_cluster",
+        lambda **_kwargs: {
+            "status": "deployed",
+            "cluster_id": "cluster-test",
+            "kube_context": "fleet-generated",
+            "kubeconfig": str(source),
+            "gpu_health_evidence": str(health),
+        },
+    )
+    target = tmp_path / "standalone" / "kubeconfig"
+    result = get_backend("mk8s").apply(
+        desired,
+        MK8sApplyRequest(
+            **_mk8s_execution_identity(spec, project),
+            project_id="project-test",
+            region="region-test",
+            tenant_id="tenant-test",
+            fleet_root=tmp_path / "clusters" / "requested" / "backend-state",
+            recipe_root=tmp_path / "recipe",
+            terraform_bin="terraform",
+            nebius_bin="nebius",
+            standalone_context="requested",
+            standalone_kubeconfig=target,
+        ),
+    )
+
+    adopted = target.parent / "gpu-health.json"
+    assert result["gpu_health_evidence"] == str(adopted)
+    assert adopted.read_bytes() == health.read_bytes()
+    assert adopted.stat().st_mode & 0o777 == 0o600
+    metadata = json.loads((tmp_path / "clusters/requested/metadata.json").read_text())
+    assert metadata["gpu_health_evidence"] == str(adopted)
+
+    monkeypatch.setattr(
+        mk8s_execution,
+        "deploy_cluster",
+        lambda **_kwargs: {
+            "status": "deployed",
+            "cluster_id": "cluster-test",
+            "kube_context": "fleet-generated",
+            "kubeconfig": str(source),
+        },
+    )
+    with pytest.raises(RuntimeError, match="without durable GPU health evidence"):
+        get_backend("mk8s").apply(
+            desired,
+            MK8sApplyRequest(
+                **_mk8s_execution_identity(spec, project),
+                project_id="project-test",
+                region="region-test",
+                tenant_id="tenant-test",
+                fleet_root=tmp_path / "clusters" / "missing" / "backend-state",
+                recipe_root=tmp_path / "recipe",
+                terraform_bin="terraform",
+                nebius_bin="nebius",
+                standalone_context="missing",
+                standalone_kubeconfig=tmp_path / "missing" / "kubeconfig",
+            ),
+        )
+    assert not (tmp_path / "missing" / "kubeconfig").exists()
+
+
+def test_standalone_gpu_health_adoption_rejects_unhealthy_report(tmp_path) -> None:
+    from npa.cluster_backends.mk8s import _read_gpu_health_evidence
+
+    source = tmp_path / "backend" / "kubeconfig"
+    source.parent.mkdir()
+    source.write_text("apiVersion: v1\n")
+    health = source.parent / "gpu-health.json"
+    health.write_text(json.dumps({"status": "failed"}))
+
+    with pytest.raises(RuntimeError, match="not healthy"):
+        _read_gpu_health_evidence(
+            result={"gpu_health_evidence": str(health)},
+            source_kubeconfig=source,
+        )
+
+
 def test_mk8s_preflight_reuses_provider_verified_zero_increment(
     tmp_path, monkeypatch
 ) -> None:

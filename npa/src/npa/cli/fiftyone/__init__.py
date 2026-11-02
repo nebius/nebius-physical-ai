@@ -143,6 +143,7 @@ _project_alias: str = ""
 _workbench_name: str = ""
 
 FIFTYONE_VERSION = "1.22.0"
+FIFTYONE_GRAPHQL_CORE_REQUIREMENT = "graphql-core>=3.2.13,<3.3"
 FIFTYONE_MONGODB_VERSION = "7.0.40"
 FIFTYONE_MONGODB_SHA256 = (
     "e4b3d7a11818f983d897ec9fcbf25779a6e122f0e7b7e25fa4ab8ac5d78a5a89"
@@ -1585,6 +1586,10 @@ valid = metadata.version("fiftyone") == "{FIFTYONE_VERSION}"
 valid = valid and Version(metadata.version("datasets")) >= Version("5.0.1")
 valid = valid and Version(metadata.version("pillow")) >= Version("12.3.0")
 valid = valid and Version(metadata.version("paramiko")) >= Version("5.0.0")
+graphql_core = Version(metadata.version("graphql-core"))
+valid = valid and Version("3.2.13") <= graphql_core < Version("3.3")
+from fiftyone import types
+valid = valid and hasattr(types, "LeRobotDataset")
 import hashlib
 binary = metadata.distribution("fiftyone-db").locate_file("fiftyone/db/bin/mongod")
 digest = hashlib.sha256()
@@ -1598,7 +1603,7 @@ then
   rm -rf {FIFTYONE_VENV}
   python3 -m venv {FIFTYONE_VENV}
   {FIFTYONE_VENV}/bin/python -m pip install --upgrade pip setuptools wheel
-  {FIFTYONE_VENV}/bin/python -m pip install "fiftyone=={FIFTYONE_VERSION}" boto3 "datasets>=5.0.1" huggingface_hub pyarrow "pillow>=12.3.0" "paramiko>=5.0.0"
+  {FIFTYONE_VENV}/bin/python -m pip install "fiftyone[multimodal]=={FIFTYONE_VERSION}" "{FIFTYONE_GRAPHQL_CORE_REQUIREMENT}" boto3 "datasets>=5.0.1" huggingface_hub pyarrow "pillow>=12.3.0" "paramiko>=5.0.0"
   (
     mongodb_tmp="$(mktemp -d)"
     trap 'rm -rf -- "$mongodb_tmp"' EXIT
@@ -1629,10 +1634,15 @@ cat > "$HOME/.fiftyone/config.json" <<'JSON'
 JSON
 {FIFTYONE_VENV}/bin/python - <<'PY'
 from importlib import metadata
+from packaging.version import Version
+import fiftyone
 
 version = metadata.version("fiftyone")
 if version != "{FIFTYONE_VERSION}":
     raise RuntimeError(f"expected fiftyone {FIFTYONE_VERSION}, found {{version}}")
+graphql_core = Version(metadata.version("graphql-core"))
+if not Version("3.2.13") <= graphql_core < Version("3.3"):
+    raise RuntimeError(f"expected graphql-core >=3.2.13,<3.3, found {{graphql_core}}")
 print("FIFTYONE_ENV_SMOKE_OK")
 PY
 {_service_setup_script(port, address=address)}

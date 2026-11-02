@@ -76,7 +76,7 @@ release. The upstream MIT grant, complete vendored notices, actual vendor list
 and BOM, and `pip/NPA_VENDOR_REPAIR.json` are retained in the wheel and installed
 service environment. The pkg_resources donor's exact setuptools grant is also
 retained as `pip/_vendor/pkg_resources/LICENSE.setuptools`; that limited donor
-remains setuptools 80.9.0. The separate full setuptools 84.0.0 bootstrap seed
+remains setuptools 80.9.0. The separate full setuptools 84.2.1 bootstrap seed
 wheel retains its original complete distribution notices.
 The final image's exact derivative wheel hash and source/build inputs are in
 `/usr/share/doc/npa-seedvr2/secure-pip-build.json`. No model payload or scientific

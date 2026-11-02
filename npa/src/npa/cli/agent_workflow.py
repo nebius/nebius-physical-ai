@@ -38,6 +38,19 @@ _STATIC_WORKFLOW_TEMPLATES = {
     "paidf-event-video-generation": "paidf-event-video-generation.yaml",
 }
 
+# The canonical Sim2Real graph has five independently executing image roles.
+# A backend profile must select the complete role set; reusing similarly named
+# legacy pipeline images would make the rendered graph look attested while
+# binding unrelated runtime bytes.
+_SIM2REAL_ROLE_IMAGE_KEYS = (
+    "controller_image",
+    "cosmos3_image",
+    "envgen_image",
+    "isaac_image",
+    "viewer_image",
+)
+_CANONICAL_SIM2REAL_TEMPLATES = frozenset({"sim2real-staged", "vlm-rl-loop"})
+
 
 class _FoldedStr(str):
     """YAML scalar rendered with folded (>) style."""
@@ -2762,8 +2775,36 @@ def resolve_workflow_infrastructure(
         "trainer_image": str(raw.get("trainer_image") or "").strip(),
         "vlm_image": str(raw.get("vlm_image") or "").strip(),
         "eval_image": str(raw.get("eval_image") or "").strip(),
+        "controller_image": str(raw.get("controller_image") or "").strip(),
+        "cosmos3_image": str(raw.get("cosmos3_image") or "").strip(),
         "isaac_image": str(raw.get("isaac_image") or "").strip(),
+        "viewer_image": str(raw.get("viewer_image") or "").strip(),
     }
+
+
+def _sim2real_role_images(resolved_infrastructure: dict[str, Any]) -> dict[str, str]:
+    """Return a selected canonical role set only when it is complete.
+
+    The profile is an operator-owned selection boundary.  Do not combine a
+    subset of its role image fields with the portable workflow defaults: that
+    would leave a draft with a misleading mixed authority set.  The planner
+    remains the single validator for registry-qualified immutable references.
+    """
+    images = {
+        key: str(resolved_infrastructure.get(key) or "").strip()
+        for key in _SIM2REAL_ROLE_IMAGE_KEYS
+    }
+    return images if all(images.values()) else {}
+
+
+def _apply_sim2real_role_images(
+    config: dict[str, Any], infrastructure: dict[str, Any] | None
+) -> dict[str, str]:
+    """Apply the selected complete Sim2Real role set to a canonical draft."""
+    images = _sim2real_role_images(resolve_workflow_infrastructure(infrastructure))
+    if images:
+        config.update(images)
+    return images
 
 
 def _gpu_product_for_accelerator(accelerator: str) -> str:
@@ -2888,10 +2929,11 @@ def _build_spec(
             infrastructure=infrastructure,
         )
         return root
-    if normalized in {"vlm-rl-loop", "sim2real-staged"}:
+    if normalized in _CANONICAL_SIM2REAL_TEMPLATES:
         canonical = _canonical_sim2real_spec(bucket=bucket, name=name)
         if params:
             _apply_sim2real_params(canonical["config"], params)
+        _apply_sim2real_role_images(canonical["config"], infrastructure)
         return canonical
     catalog = _workflow_specs()
     spec = catalog[normalized]
@@ -3065,6 +3107,18 @@ def generate_workflow_draft(
     resolved_infra = resolve_workflow_infrastructure(infrastructure)
     warnings: list[str] = []
     context_errors: list[str] = list(parameter_errors)
+    if selected_template in _CANONICAL_SIM2REAL_TEMPLATES:
+        role_images = _sim2real_role_images(resolved_infra)
+        if not role_images:
+            missing_roles = [
+                key
+                for key in _SIM2REAL_ROLE_IMAGE_KEYS
+                if not str(resolved_infra.get(key) or "").strip()
+            ]
+            context_errors.append(
+                "the selected Sim2Real backend requires one immutable image for "
+                "each execution role before planning: " + ", ".join(missing_roles)
+            )
     resolved_bucket = str(bucket or "").strip()
     if not resolved_bucket:
         resolved_bucket = "<configure-s3-bucket>"
@@ -3928,9 +3982,17 @@ def generate_vlm_rl_loop_yaml(
     *,
     bucket: str = "example-bucket",
     name: str = "sim2real",
+    infrastructure: dict[str, Any] | None = None,
 ) -> str:
-    """Compatibility wrapper for VLM-RL loop template generation."""
-    return _render_spec_yaml(_build_spec("vlm-rl-loop", bucket=bucket, name=name))
+    """Render the canonical VLM-RL loop with an optional selected backend profile."""
+    return _render_spec_yaml(
+        _build_spec(
+            "vlm-rl-loop",
+            bucket=bucket,
+            name=name,
+            infrastructure=infrastructure,
+        )
+    )
 
 
 def generate_token_factory_gate_yaml(

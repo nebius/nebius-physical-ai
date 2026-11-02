@@ -41,7 +41,9 @@ from npa.cluster_backends.process import (
 from npa.clients.config import resolve_environment
 from npa.soperator.spec import (
     DEFAULT_SOLUTIONS_LIBRARY_REF,
+    DEFAULT_SOLUTIONS_LIBRARY_TAG,
     DEFAULT_SLURM_OPERATOR_VERSION,
+    LEGACY_SOLUTIONS_LIBRARY_REF,
     SoperatorSpec,
     WorkerPoolSpec,
     validate_ssh_public_key_record,
@@ -229,6 +231,8 @@ def _write_env_sidecar(
     cluster_name: str = "",
     provider_cluster_name: str = "",
     owned_auxiliary_resources: list[dict[str, str]] | None = None,
+    solutions_library_ref: str = DEFAULT_SOLUTIONS_LIBRARY_REF,
+    solutions_library_tag: str = DEFAULT_SOLUTIONS_LIBRARY_TAG,
 ) -> None:
     path = install_dir / _ENV_SIDECAR
     temporary = install_dir / f".{_ENV_SIDECAR}.{uuid.uuid4().hex}.tmp"
@@ -252,6 +256,8 @@ def _write_env_sidecar(
                     "owned_filesystem_ids": list(owned_filesystem_ids or []),
                     "owned_allocation_ids": list(owned_allocation_ids or []),
                     "owned_auxiliary_resources": list(owned_auxiliary_resources or []),
+                    "solutions_library_ref": solutions_library_ref,
+                    "solutions_library_tag": solutions_library_tag,
                 },
                 indent=2,
             )
@@ -433,6 +439,62 @@ def _status_installation_dir(
     return existing[0] if existing else None
 
 
+def _select_solutions_library_ref(
+    name: str,
+    *,
+    terraform_dir: Path | None,
+    work_root: Path,
+    requested_ref: str | None,
+) -> str:
+    """Choose the source commit once and retain an existing installation's commit.
+
+    Args:
+        name: Soperator cluster name.
+        terraform_dir: Optional authoritative source directory.
+        work_root: Private local root containing managed installations.
+        requested_ref: Explicit source commit, or None for default selection.
+
+    Returns:
+        Immutable solutions-library commit for this lifecycle action.
+
+    Raises:
+        UpstreamContractError: If existing source provenance is unsafe to use.
+        ValueError: If an explicit commit conflicts with persisted provenance.
+    """
+
+    install_dir = _status_installation_dir(
+        name, terraform_dir=terraform_dir, work_root=work_root
+    )
+    if install_dir is None:
+        return _validate_immutable_solutions_library_ref(
+            requested_ref or DEFAULT_SOLUTIONS_LIBRARY_REF
+        )
+    saved = _load_env_sidecar(install_dir)
+    persisted = str((saved or {}).get("solutions_library_ref") or "")
+    if not persisted:
+        if not (install_dir / "terraform.tfstate").is_file():
+            return _validate_immutable_solutions_library_ref(
+                requested_ref or DEFAULT_SOLUTIONS_LIBRARY_REF
+            )
+        if requested_ref is None:
+            raise UpstreamContractError(
+                "existing Soperator installation predates source provenance; pass its "
+                "original immutable --ref for exact-state recovery or create a reviewed "
+                "replacement instead of reconciling against a new default"
+            )
+        return _validate_immutable_solutions_library_ref(requested_ref)
+    selected = _validate_immutable_solutions_library_ref(persisted)
+    if (
+        requested_ref is not None
+        and selected != _validate_immutable_solutions_library_ref(requested_ref)
+    ):
+        raise UpstreamContractError(
+            "existing Soperator installation is pinned to a different source commit; "
+            "use a reviewed migration or replacement rather than an in-place update"
+        )
+    return selected
+
+
 def worker_capacity_status(
     name: str,
     *,
@@ -543,6 +605,10 @@ def cluster_status(
     workers = worker_capacity_status(
         name, terraform_dir=terraform_dir, work_root=work_root
     )
+    install_dir = _status_installation_dir(
+        name, terraform_dir=terraform_dir, work_root=work_root
+    )
+    saved = _load_env_sidecar(install_dir) if install_dir else None
     return {
         "name": name,
         "context": context,
@@ -550,6 +616,8 @@ def cluster_status(
         "workers": workers,
         "capacity_status": "applied" if workers else "unknown",
         "status": "running",
+        "solutions_library_ref": str((saved or {}).get("solutions_library_ref") or ""),
+        "solutions_library_tag": str((saved or {}).get("solutions_library_tag") or ""),
     }
 
 
@@ -1489,6 +1557,44 @@ _STABLE_KUBECTL_CONTEXT_MARKER = (
 _STABLE_LOGIN_IP_MARKER = (
     "# npa: regenerate the login script only when its public IP changes"
 )
+_PREEMPTIBLE_SPOT_MARKER = "# npa: pair preemptible workers with spot pricing"
+
+
+def _patch_preemptible_spot_pricing_text(text: str) -> tuple[str, bool]:
+    """Patch the pinned recipe for the provider's current preemptible contract."""
+
+    if _PREEMPTIBLE_SPOT_MARKER in text:
+        return text, False
+    original = (
+        "    preemptible = var.node_group_workers_v2[count.index].preemptible\n\n"
+        "    reservation_policy = var.node_group_workers_v2[count.index].reservation_policy\n"
+    )
+    replacement = (
+        "    preemptible = var.node_group_workers_v2[count.index].preemptible\n"
+        f"    {_PREEMPTIBLE_SPOT_MARKER}\n"
+        "    follows_spot_price = var.node_group_workers_v2[count.index].preemptible != null ? {} : null\n\n"
+        "    reservation_policy = var.node_group_workers_v2[count.index].reservation_policy\n"
+    )
+    if text.count(original) != 1:
+        raise UpstreamContractError(
+            "pinned worker node-group preemptible block does not match the verified contract"
+        )
+    return text.replace(original, replacement), True
+
+
+def _allowed_pinned_contract_forms(
+    relative_path: str, pristine: str, *, ref: str
+) -> tuple[str, ...]:
+    """Return the exact source forms permitted before any provider action."""
+
+    allowed = (pristine,)
+    if (
+        ref != LEGACY_SOLUTIONS_LIBRARY_REF
+        and relative_path == "soperator/modules/k8s/k8s_ng_workers_v2.tf"
+    ):
+        patched, _ = _patch_preemptible_spot_pricing_text(pristine)
+        allowed += (patched,)
+    return allowed
 
 
 def _patch_kubectl_context_trigger_text(text: str) -> tuple[str, bool]:
@@ -1780,28 +1886,26 @@ def _assert_solutions_library_contract(
     critical_fragments = {
         "soperator/installations/example/terraform.tfvars": (
             f'slurm_operator_version = "{DEFAULT_SLURM_OPERATOR_VERSION}"',
-            "k8s_version = 1.34",
-            "node_group_version = 72",
+            "k8s_version = 1.35",
         ),
         "soperator/installations/example/main.tf": (
-            "rest_enabled                    = var.slurm_rest_enabled",
-            "accounting_enabled              = var.accounting_enabled",
-            "sizing_tier_override = module.sizing.sizing_tier",
+            "rest_enabled        = var.slurm_rest_enabled",
+            "accounting_enabled  = var.accounting_enabled",
+            "node_group_workers_v2 = [",
         ),
         "soperator/installations/example/variables.tf": (
             'variable "slurm_rest_enabled"',
             'variable "accounting_enabled"',
-            'variable "sizing_tier_override"',
+            'variable "platform_driver_presets"',
+            'variable "slurm_nodeset_system"',
         ),
-        "soperator/modules/sizing_tier/main.tf": (
-            'var.worker_count < 10 ? "XS"',
-            'var.worker_count < 100 ? "S"',
-            'var.worker_count < 500 ? "M"',
-            'var.worker_count < 2000 ? "L" : "XL"',
-            'L  = "32vcpu-128gb"',
-            'XL = "64vcpu-256gb"',
+        "soperator/modules/k8s/k8s_ng_workers_v2.tf": (
+            "version = var.k8s_version",
+            "reservation_policy",
         ),
     }
+    if ref == LEGACY_SOLUTIONS_LIBRARY_REF:
+        critical_fragments = _legacy_source_contract()
     for relative, fragments in critical_fragments.items():
         pristine = _git_checkout_text(repo_root, ref, relative)
         current_path = repo_root / relative
@@ -1811,7 +1915,12 @@ def _assert_solutions_library_contract(
             raise UpstreamContractError(
                 f"missing pinned contract file {relative}"
             ) from exc
-        if current != pristine:
+        # This module is intentionally rewritten by the audited provider
+        # compatibility patch below. A later deploy or destroy must therefore
+        # accept exactly that generated form while continuing to reject every
+        # other local edit before a provider action.
+        allowed = _allowed_pinned_contract_forms(relative, pristine, ref=ref)
+        if current not in allowed:
             raise UpstreamContractError(
                 f"unexpected local mutation in pinned contract file {relative}"
             )
@@ -1823,6 +1932,10 @@ def _assert_solutions_library_contract(
             )
 
     patch_contracts = (
+        (
+            "soperator/modules/k8s/k8s_ng_workers_v2.tf",
+            _patch_preemptible_spot_pricing_text,
+        ),
         (
             "soperator/modules/k8s/k8s_cluster.tf",
             _patch_kubectl_context_trigger_text,
@@ -1861,9 +1974,42 @@ def _assert_solutions_library_contract(
             )
 
 
+def _legacy_source_contract() -> dict[str, tuple[str, ...]]:
+    """Retain the previous immutable source contract for exact-state teardown."""
+
+    return {
+        "soperator/installations/example/terraform.tfvars": (
+            'slurm_operator_version = "4.1.6"',
+            "k8s_version = 1.34",
+            "node_group_version = 72",
+        ),
+        "soperator/installations/example/main.tf": (
+            "rest_enabled                    = var.slurm_rest_enabled",
+            "accounting_enabled              = var.accounting_enabled",
+            "sizing_tier_override = module.sizing.sizing_tier",
+        ),
+        "soperator/installations/example/variables.tf": (
+            'variable "slurm_rest_enabled"',
+            'variable "accounting_enabled"',
+            'variable "sizing_tier_override"',
+        ),
+        "soperator/modules/sizing_tier/main.tf": (
+            'var.worker_count < 10 ? "XS"',
+            'var.worker_count < 100 ? "S"',
+            'var.worker_count < 500 ? "M"',
+            'var.worker_count < 2000 ? "L" : "XL"',
+            'L  = "32vcpu-128gb"',
+            'XL = "64vcpu-256gb"',
+        ),
+    }
+
+
 def _prepare_installation(recipe_dir: Path, spec: SoperatorSpec, region: str) -> Path:
     """Create installations/<name> with the recipe files + generated tfvars."""
 
+    worker_module = recipe_dir / "modules" / "k8s" / "k8s_ng_workers_v2.tf"
+    patched_workers, _ = _patch_preemptible_spot_pricing_text(worker_module.read_text())
+    worker_module.write_text(patched_workers)
     _patch_active_checks_locals(recipe_dir)
     _patch_stable_local_reconciliation_triggers(recipe_dir)
     if not spec.use_default_apparmor_profile:
@@ -3220,7 +3366,7 @@ def deploy_cluster(
     *,
     terraform_dir: Path | None = None,
     work_root: Path | None = None,
-    solutions_library_ref: str = DEFAULT_SOLUTIONS_LIBRARY_REF,
+    solutions_library_ref: str | None = None,
     root_login_ssh_public_key_file: Path | None = None,
     project: str | None = None,
     timeout_minutes: int = 90,
@@ -3234,6 +3380,19 @@ def deploy_cluster(
     """Deploy or reconcile *spec* after pinned-contract and key preflight."""
 
     spec.validate()
+    work_root = (work_root or Path.home() / ".npa" / "soperator").expanduser()
+    source_ref = _select_solutions_library_ref(
+        spec.name,
+        terraform_dir=terraform_dir,
+        work_root=work_root,
+        requested_ref=solutions_library_ref,
+    )
+    if source_ref == LEGACY_SOLUTIONS_LIBRARY_REF:
+        raise UpstreamContractError(
+            "the previous recipe is supported for exact-state destroy only; "
+            "use its original Workbench version to reconcile it, or deploy a "
+            "new target with the current release"
+        )
     _validate_gpu_creation_check_timeout(gpu_creation_check_timeout_seconds)
     root_login_key = _resolve_root_login_ssh_public_key(
         spec, explicit_file=root_login_ssh_public_key_file
@@ -3249,12 +3408,9 @@ def deploy_cluster(
         "login-node root SSH access enabled: "
         f"source={root_login_key.source}; fingerprint={root_login_key.fingerprint}",
     )
-    work_root = (work_root or Path.home() / ".npa" / "soperator").expanduser()
-    recipe_dir = _resolve_solutions_library(
-        terraform_dir, work_root, solutions_library_ref
-    )
-    _assert_solutions_library_contract(recipe_dir, ref=solutions_library_ref)
-    _log(on_status, f"verified solutions-library contract {solutions_library_ref[:12]}")
+    recipe_dir = _resolve_solutions_library(terraform_dir, work_root, source_ref)
+    _assert_solutions_library_contract(recipe_dir, ref=source_ref)
+    _log(on_status, f"verified solutions-library contract {source_ref[:12]}")
     region, tenant_id, project_id, persisted_subnet_id, _saved = (
         _resolve_deploy_environment(spec, recipe_dir, project=project)
     )
@@ -3273,7 +3429,12 @@ def deploy_cluster(
                 "system_max_size": spec.effective_system_max_size(),
             },
             "workers": worker_capacity_summary(spec),
-            "solutions_library_ref": solutions_library_ref,
+            "solutions_library_ref": source_ref,
+            "solutions_library_tag": (
+                DEFAULT_SOLUTIONS_LIBRARY_TAG
+                if source_ref == DEFAULT_SOLUTIONS_LIBRARY_REF
+                else ""
+            ),
             "status": "source-preflight-passed",
             "provider_mutation": False,
         }
@@ -3335,6 +3496,12 @@ def deploy_cluster(
             owned_allocation_ids=list((_saved or {}).get("owned_allocation_ids") or []),
             owned_auxiliary_resources=list(
                 (_saved or {}).get("owned_auxiliary_resources") or []
+            ),
+            solutions_library_ref=source_ref,
+            solutions_library_tag=(
+                DEFAULT_SOLUTIONS_LIBRARY_TAG
+                if source_ref == DEFAULT_SOLUTIONS_LIBRARY_REF
+                else ""
             ),
         )
         sidecar_persisted = True
@@ -3408,6 +3575,12 @@ def deploy_cluster(
                 ),
                 owned_auxiliary_resources=list(
                     (_saved or {}).get("owned_auxiliary_resources") or []
+                ),
+                solutions_library_ref=source_ref,
+                solutions_library_tag=(
+                    DEFAULT_SOLUTIONS_LIBRARY_TAG
+                    if source_ref == DEFAULT_SOLUTIONS_LIBRARY_REF
+                    else ""
                 ),
             )
             _log(on_status, "refreshing kube admin credentials")
@@ -3518,6 +3691,12 @@ def deploy_cluster(
         owned_filesystem_ids=owned_filesystem_ids,
         owned_allocation_ids=owned_allocation_ids,
         owned_auxiliary_resources=owned_auxiliary_resources,
+        solutions_library_ref=source_ref,
+        solutions_library_tag=(
+            DEFAULT_SOLUTIONS_LIBRARY_TAG
+            if source_ref == DEFAULT_SOLUTIONS_LIBRARY_REF
+            else ""
+        ),
     )
 
     result: dict[str, Any] = {
@@ -3539,6 +3718,12 @@ def deploy_cluster(
             "replacement_count": 0,
             "safe_local_replacements_applied": safe_local_replacements_applied,
         },
+        "solutions_library_ref": source_ref,
+        "solutions_library_tag": (
+            DEFAULT_SOLUTIONS_LIBRARY_TAG
+            if source_ref == DEFAULT_SOLUTIONS_LIBRARY_REF
+            else ""
+        ),
     }
 
     if apply_fixes:
@@ -3597,7 +3782,7 @@ def destroy_cluster(
     *,
     terraform_dir: Path | None = None,
     work_root: Path | None = None,
-    solutions_library_ref: str = DEFAULT_SOLUTIONS_LIBRARY_REF,
+    solutions_library_ref: str | None = None,
     project: str | None = None,
     timeout_minutes: int = 90,
     source_preflight_only: bool = False,
@@ -3607,10 +3792,14 @@ def destroy_cluster(
     """Destroy an npa-managed soperator cluster by name."""
 
     work_root = (work_root or Path.home() / ".npa" / "soperator").expanduser()
-    recipe_dir = _resolve_solutions_library(
-        terraform_dir, work_root, solutions_library_ref
+    source_ref = _select_solutions_library_ref(
+        name,
+        terraform_dir=terraform_dir,
+        work_root=work_root,
+        requested_ref=solutions_library_ref,
     )
-    _assert_solutions_library_contract(recipe_dir, ref=solutions_library_ref)
+    recipe_dir = _resolve_solutions_library(terraform_dir, work_root, source_ref)
+    _assert_solutions_library_contract(recipe_dir, ref=source_ref)
     install_dir = recipe_dir / "installations" / name
     if not install_dir.exists():
         raise ValueError(f"no installation found for cluster {name!r} at {install_dir}")
@@ -3619,7 +3808,7 @@ def destroy_cluster(
             "name": name,
             "status": "source-preflight-passed",
             "install_dir": str(install_dir),
-            "solutions_library_ref": solutions_library_ref,
+            "solutions_library_ref": source_ref,
             "provider_mutation": False,
         }
         _log(
@@ -3895,20 +4084,7 @@ def destroy_cluster(
                     ],
                 }
 
-    # A direct exact-ID cluster delete cannot prove that Terraform-owned
-    # filesystems, allocations, node groups, and cache disks were reclaimed.
-    # Retain the complete installation/state whenever Terraform itself failed;
-    # a later retry can reconcile those exact resource IDs. Never replace that
-    # ownership proof with prefix/name sweeps.
-    if destroy.returncode != 0:
-        return {
-            "name": name,
-            "status": "destroy-incomplete",
-            "install_dir": str(install_dir),
-            "errors": [
-                "Terraform teardown failed; exact auxiliary-resource state retained"
-            ],
-        }
+    terraform_destroy_failed = destroy.returncode != 0
 
     # Clean up only exact IDs captured from the applied Terraform state. Provider
     # inventory, delete, and post-delete absence evidence are all mandatory;
@@ -3972,6 +4148,18 @@ def destroy_cluster(
             "install_dir": str(install_dir),
             "errors": auxiliary_errors,
         }
+
+    if terraform_destroy_failed:
+        # Terraform can lose its Kubernetes-provider connection after a
+        # preemptible worker disappears even though the exact cluster deletion
+        # above succeeds. Once the saved IDs have each been inventoried and
+        # verified absent by the bounded cleanup below, that failure is no
+        # longer an ownership ambiguity. Do not retain stale state merely to
+        # force a retry that cannot add evidence.
+        _log(
+            on_status,
+            "terraform fallback cleanup verified all exact auxiliary resources absent",
+        )
 
     # Reset local terraform state so the install dir is clean for a redeploy.
     for stale in install_dir.glob("terraform.tfstate*"):
@@ -4366,7 +4554,7 @@ def _run_gpu_creation_checks(
 ) -> list[dict[str, Any]]:
     """Run real CUDA samples on every GPU worker through the login jail.
 
-    The pinned 4.1.6 Terraform surface exposes REST separately from accounting,
+    The pinned 4.1.13 Terraform surface exposes REST separately from accounting,
     but the exact operator implementation skips REST reconciliation when
     accounting is disabled. Its REST-backed ActiveCheck controller therefore
     cannot provide creation-time GPU validation for that combination. This

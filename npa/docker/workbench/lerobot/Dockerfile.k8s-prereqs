@@ -65,8 +65,8 @@ RUN apt-get update \
 ENV PATH=/usr/bin:$PATH
 
 # Drop the baked PARTIAL npa from PYTHONPATH. The shipped image copies only
-# src/npa/__init__.py, src/npa/server and src/npa/smoke into /opt/npa/src for its own server
-# entrypoint, and exports PYTHONPATH=/opt/npa/src. That stub then SHADOWS the real npa a stage
+# src/npa/__init__.py, src/npa/clients, src/npa/server and src/npa/smoke into /opt/npa/src for
+# its own server entrypoint, and exports PYTHONPATH=/opt/npa/src. That stub then SHADOWS the real npa a stage
 # installs: `import npa` succeeds while `import npa.workbench` fails with
 # "No module named 'npa.workbench'" (live job 250, after the vendor-interpreter switch worked).
 # A stage brings its own complete npa, so this variant must not pre-empt it.

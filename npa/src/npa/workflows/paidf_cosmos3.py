@@ -125,7 +125,6 @@ def validate_committed_augment_manifest(
         raise PaidfCosmos3Error("canonical Cosmos 3 augment manifest is not an object")
     required = {
         "schema": MANIFEST_SCHEMA,
-        "engine": ENGINE,
         "status": "executed",
         "mode": VIDEO_MODE,
         "input_conditioned": True,
@@ -137,6 +136,8 @@ def validate_committed_augment_manifest(
     invalid = [
         key for key, expected in required.items() if document.get(key) != expected
     ]
+    if document.get("engine") not in {ENGINE, "nebius-stream"}:
+        invalid.append("engine")
     lineage = document.get("lineage")
     if (
         not isinstance(lineage, dict)
@@ -202,6 +203,14 @@ def validate_committed_augment_manifest(
                 "canonical Cosmos 3 augment manifest has invalid variant metadata"
             ) from exc
         expected_prefix = f"{root}{clip}/"
+        if document.get("engine") == "nebius-stream" and (
+            not item.get("endpoint_job_id")
+            or item.get("endpoint_execution_uri")
+            != expected_prefix + "endpoint_execution.json"
+        ):
+            raise PaidfCosmos3Error(
+                "hosted variant is missing endpoint execution evidence"
+            )
         if (
             not clip
             or clip in seen_clips
@@ -957,7 +966,7 @@ def _variant_metadata(
     payload = {
         "schema": MANIFEST_SCHEMA,
         "status": "executed",
-        "engine": ENGINE,
+        "engine": metadata.get("engine", ENGINE),
         "mode": VIDEO_MODE,
         "clip": clip,
         "variables": dict(variables),
@@ -1129,6 +1138,11 @@ def _publish_variant(
                 _native_receipt(result), base + "native_execution.json", storage=storage
             )
             clip_meta["native_execution_uri"] = base + "native_execution.json"
+        if result.get("endpoint_execution") is not None:
+            receipt = result["endpoint_execution"]
+            _write_json(receipt, base + "endpoint_execution.json", storage=storage)
+            clip_meta["endpoint_execution_uri"] = base + "endpoint_execution.json"
+            clip_meta["endpoint_job_id"] = receipt["job_id"]
         _write_json(clip_meta, base + "metadata.json", storage=storage)
     return {
         "clip": clip,
@@ -1140,6 +1154,14 @@ def _publish_variant(
         "steps": clip_meta["steps"],
         "variables": dict(variables),
         "motion_preservation": None,
+        **(
+            {
+                key: clip_meta[key]
+                for key in ("endpoint_execution_uri", "endpoint_job_id")
+            }
+            if "endpoint_job_id" in clip_meta
+            else {}
+        ),
         **(
             {"padding_preservation": clip_meta["padding_preservation"]}
             if "padding_preservation" in clip_meta
@@ -1190,6 +1212,11 @@ def generate_variants(
     transfer_first_chunk_conditional_frames: int = 1,
     transfer_cfg_normalization: str = "disabled",
     variant_recovery: str = "auto",
+    hosted_endpoint: bool = False,
+    endpoint: str = "",
+    endpoint_key_file: str = "",
+    endpoint_input_connection: str = "",
+    endpoint_output_connection: str = "",
 ) -> dict[str, Any]:
     """Run one real Cosmos 3 video2video inference per configured variant."""
 
@@ -1272,10 +1299,45 @@ def generate_variants(
         raise PaidfCosmos3Error(
             "effective retry guidance/steps are outside supported bounds"
         )
-    gpu_ids = _visible_gpu_ids(environ)
-    if not gpu_ids:
+    hosted = None
+    if hosted_endpoint:
+        from npa.workbench.cosmos.stream_augmentation import StreamAugmentation
+
+        if (
+            structural_control != "edge"
+            or conditioning_fps != 24
+            or transfer_chunk_frames != 93
+            or transfer_edge_threshold != "medium"
+            or transfer_rgb_weight != 0
+            or transfer_first_chunk_conditional_frames != 1
+            or transfer_cfg_normalization != "disabled"
+            or negative_prompt
+            or variant_recovery != "auto"
+            or parallelism_preset != "latency"
+        ):
+            raise PaidfCosmos3Error(
+                "Hosted V2V requires edge at 24 FPS; negative prompts and custom native "
+                "chunk/RGB/CFG/recovery/topology controls are not exposed by the endpoint"
+            )
+        hosted = StreamAugmentation(
+            origin=endpoint,
+            key_file=endpoint_key_file,
+            input_connection=endpoint_input_connection,
+            output_connection=endpoint_output_connection,
+            input_uri=input_video_uri,
+            output_uri=output_uri,
+            checkpoint=checkpoint,
+            storage=client,
+            environ=environ if environ is not None else os.environ,
+        )
+    gpu_ids = [] if hosted else _visible_gpu_ids(environ)
+    if not hosted and not gpu_ids:
         raise PaidfCosmos3Error("Cosmos 3 generation requires a visible GPU")
-    concurrency = min(count, requested_parallelism, len(gpu_ids))
+    concurrency = (
+        min(count, requested_parallelism)
+        if hosted
+        else min(count, requested_parallelism, len(gpu_ids))
+    )
     available_gpus: queue.Queue[str] = queue.Queue()
     for gpu in gpu_ids[:concurrency]:
         available_gpus.put(gpu)
@@ -1331,7 +1393,7 @@ def generate_variants(
         effective_steps,
         transfer,
     )
-    if recovery_enabled(
+    if not hosted and recovery_enabled(
         checkpoint, structural_control, run_id, generation_env, variant_recovery
     ):
         generation_env.setdefault("HF_HOME", str(Path.home() / ".cache/huggingface"))
@@ -1368,25 +1430,39 @@ def generate_variants(
         )
         variant_seed = base_seed + attempt * seed_stride + index
         env = dict(generation_env)
-        with _generation_gpu(available_gpus) as gpu:
-            env["CUDA_VISIBLE_DEVICES"] = gpu
-            result = run_generate(
-                mode=VIDEO_MODE,
-                prompt=variant_prompt,
-                name=f"variant-{index:04d}",
-                checkpoint=checkpoint,
-                input_path=local_input,
-                output_path=str(work_root / f"variant-{index:04d}"),
-                negative_prompt=negative_prompt,
-                seed=variant_seed,
-                num_steps=effective_steps,
-                guidance=effective_guidance,
-                no_guardrails=False,
-                parallelism_preset=parallelism_preset,
+        if hosted:
+            result = hosted.generate(
+                index=index,
+                attempt=attempt,
                 run_id=run_id,
-                environ=env,
-                **({"transfer": transfer} if transfer is not None else {}),
+                source=Path(local_input),
+                directory=work_root / f"variant-{index:04d}",
+                prompt=variant_prompt,
+                seed=variant_seed,
+                steps=effective_steps,
+                guidance=effective_guidance,
+                control_guidance=control_guidance,
             )
+        else:
+            with _generation_gpu(available_gpus) as gpu:
+                env["CUDA_VISIBLE_DEVICES"] = gpu
+                result = run_generate(
+                    mode=VIDEO_MODE,
+                    prompt=variant_prompt,
+                    name=f"variant-{index:04d}",
+                    checkpoint=checkpoint,
+                    input_path=local_input,
+                    output_path=str(work_root / f"variant-{index:04d}"),
+                    negative_prompt=negative_prompt,
+                    seed=variant_seed,
+                    num_steps=effective_steps,
+                    guidance=effective_guidance,
+                    no_guardrails=False,
+                    parallelism_preset=parallelism_preset,
+                    run_id=run_id,
+                    environ=env,
+                    **({"transfer": transfer} if transfer is not None else {}),
+                )
         if transfer is not None:
             from npa.workflows.paidf_cosmos3_media import verify_pair
 
@@ -1411,6 +1487,7 @@ def generate_variants(
             variables=combo,
             metadata={
                 "prompt": variant_prompt,
+                "engine": "nebius-stream" if hosted else ENGINE,
                 "model": checkpoint,
                 "seed": base_seed + attempt * seed_stride + index,
                 "guidance": effective_guidance,
@@ -1470,11 +1547,13 @@ def generate_variants(
                 attempt=attempt,
             )
     finally:
+        if hosted:
+            hosted.api.close()
         shutil.rmtree(work_root, ignore_errors=True)
     manifest = {
         "schema": MANIFEST_SCHEMA,
         "status": "executed",
-        "engine": ENGINE,
+        "engine": "nebius-stream" if hosted else ENGINE,
         "mode": VIDEO_MODE,
         "input_conditioned": True,
         "input_conditioning": "source-video",
@@ -1663,7 +1742,6 @@ def finalize(
     required_manifest = {
         "schema": MANIFEST_SCHEMA,
         "status": "executed",
-        "engine": ENGINE,
         "mode": VIDEO_MODE,
         "input_conditioned": True,
         "input_conditioning": "source-video",
@@ -1676,6 +1754,10 @@ def finalize(
         for field, expected in required_manifest.items()
         if manifest.get(field) != expected
     ]
+    if manifest.get("engine") not in {ENGINE, "nebius-stream"}:
+        missing_or_invalid.append("engine")
+    if manifest.get("engine") == "nebius-stream":
+        validate_committed_augment_manifest(manifest, root + "cosmos_augmented/")
     model = manifest.get("model")
     lineage = manifest.get("lineage")
     variants = manifest.get("variants")
@@ -1740,7 +1822,7 @@ def finalize(
     payload = {
         "schema": FINAL_SCHEMA,
         "status": "completed",
-        "engine": ENGINE,
+        "engine": manifest["engine"],
         "mode": VIDEO_MODE,
         "input_conditioned": True,
         "model": model,

@@ -162,7 +162,7 @@ WORKBENCH_ASSETS: tuple[GatedAsset, ...] = (
     GatedAsset(
         "nvidia/Cosmos-Transfer2.5-2B",
         HF,
-        ("cosmos2", "paidf", "sim2real"),
+        ("cosmos2", "paidf"),
         True,
         revision="b67b64abda3801a9aceddbff2bdb86126c06db74",
         probe_path="auto/multiview/4ecc66e9-df19-4aed-9802-0d11e057287a_ema_bf16.pt",
@@ -172,7 +172,7 @@ WORKBENCH_ASSETS: tuple[GatedAsset, ...] = (
     GatedAsset(
         "nvidia/Cosmos-Transfer2.5-2B",
         HF,
-        ("cosmos2", "paidf", "sim2real"),
+        ("cosmos2", "paidf"),
         True,
         revision="eb5325b77d358944da58a690157dd2b8071bbf85",
         probe_path="auto/multiview/4ecc66e9-df19-4aed-9802-0d11e057287a_ema_bf16.pt",
@@ -182,7 +182,7 @@ WORKBENCH_ASSETS: tuple[GatedAsset, ...] = (
     GatedAsset(
         "nvidia/Cosmos-Transfer2.5-2B",
         HF,
-        ("cosmos2", "paidf", "sim2real"),
+        ("cosmos2", "paidf"),
         True,
         revision="dea7737ca29dd8d9086413c6dc5724b8250a0bb4",
         probe_path="auto/multiview/4ecc66e9-df19-4aed-9802-0d11e057287a_ema_bf16.pt",
@@ -192,7 +192,7 @@ WORKBENCH_ASSETS: tuple[GatedAsset, ...] = (
     GatedAsset(
         "nvidia/Cosmos-Transfer2.5-2B",
         HF,
-        ("cosmos2", "paidf", "sim2real"),
+        ("cosmos2", "paidf"),
         True,
         revision="23057a4167b89de89a4a397fdbf3887994d115eb",
         probe_path="auto/multiview/4ecc66e9-df19-4aed-9802-0d11e057287a_ema_bf16.pt",
@@ -234,7 +234,7 @@ WORKBENCH_ASSETS: tuple[GatedAsset, ...] = (
     GatedAsset(
         "nvidia/Cosmos3-Nano",
         HF,
-        ("cosmos3", "paidf", "paidf-dig"),
+        ("cosmos3", "paidf", "paidf-dig", "sim2real"),
         False,
         revision="411f42a8fdfb8c5b2583cb8786e0938f49796eaa",
         probe_path="transformer/diffusion_pytorch_model-00001-of-00007.safetensors",
@@ -332,7 +332,7 @@ WORKBENCH_ASSETS: tuple[GatedAsset, ...] = (
     GatedAsset(
         "nvidia/Cosmos-Predict2.5-2B",
         HF,
-        ("cosmos2", "sim2real"),
+        ("cosmos2",),
         True,
         revision="85f8ae7bfe8f5525c8d103429524dcf12f98bf7b",
         probe_path="tokenizer.pth",
@@ -374,9 +374,7 @@ WORKBENCH_ASSETS: tuple[GatedAsset, ...] = (
         note="Hosted text model; verify Token Factory access, not Hugging Face gating.",
     ),
     GatedAsset("Qwen/Qwen2-VL-7B-Instruct", HF, ("vlm_eval",), False),
-    GatedAsset(
-        "lerobot/pusht", HF, ("lerobot", "sim2real"), False, repo_type="dataset"
-    ),
+    GatedAsset("lerobot/pusht", HF, ("lerobot",), False, repo_type="dataset"),
     GatedAsset(
         "nvcr.io/nvidia/nre/nre-ga:26.04",
         NGC,

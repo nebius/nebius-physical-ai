@@ -344,6 +344,17 @@ def test_fresh_stage9_evidence_carries_run_identity(
     sample_eval = {"rollout_id": "rollout-1"}
     update = {
         "checkpoint_path": CHECKPOINT,
+        "periodic_checkpoints": [
+            {
+                "checkpoint_uri": CHECKPOINT,
+                "checkpoint_sha256": DIGEST,
+                "checkpoint_size_bytes": 128,
+                "generator_policy_sha256": DIGEST,
+                "training_iteration": 9,
+                "checkpoint_completed_updates": 10,
+                "checkpoint_iteration_semantics": "last_completed_zero_based",
+            }
+        ],
         "component_invocation": {"mode": "npa_workflow_skypilot_task"},
     }
 
@@ -373,7 +384,7 @@ def test_fresh_stage9_evidence_carries_run_identity(
         workflow_stage,
         "read_json",
         lambda uri, **_kwargs: (
-            {"evaluator_usage": {}} if uri.endswith("cosmos3.json") else {}
+            {"evaluator_usage": {}} if uri.endswith("token-factory.json") else {}
         ),
     )
     monkeypatch.setattr(
@@ -410,6 +421,7 @@ def test_fresh_stage9_evidence_carries_run_identity(
             root_uri=ROOT,
             run_id=RUN_ID,
             reason_model="reasoner",
+            token_factory_base_url="https://api.tokenfactory.nebius.com/v1/",
             outer_iteration=1,
             inner_iteration=1,
             threshold=0.5,

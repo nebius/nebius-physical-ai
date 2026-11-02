@@ -46,7 +46,7 @@ RUN [[ "$NPA_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]] \
     && [[ "$SOURCE_DATE_EPOCH" =~ ^[1-9][0-9]*$ ]] \
     && [[ "$UBUNTU_SNAPSHOT" == "20260920T000000Z" ]]
 RUN --mount=type=bind,from=secure-pip-builder,source=/opt/secure-pip-wheels,target=/opt/secure-pip-wheels,ro \
-    --mount=type=bind,from=secure-pip-builder,source=/opt/setuptools-seed/setuptools-84.0.0-py3-none-any.whl,target=/opt/setuptools-84.0.0-py3-none-any.whl,ro \
+    --mount=type=bind,from=secure-pip-builder,source=/opt/setuptools-seed/setuptools-84.2.1-py3-none-any.whl,target=/opt/setuptools-84.2.1-py3-none-any.whl,ro \
     rm -f /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources \
     && printf '%s\n' \
        'Types: deb' \
@@ -71,11 +71,11 @@ RUN --mount=type=bind,from=secure-pip-builder,source=/opt/secure-pip-wheels,targ
     && printf '%s\n' 'ubuntu ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/npa-runtime \
     && chmod 0440 /etc/sudoers.d/npa-runtime \
     && python3.12 -c 'import hashlib,json,pathlib; p=pathlib.Path("/opt/secure-pip-wheels"); r=json.loads((p/"build-receipt.json").read_text()); w=p/r["wheel"]; assert w.name == "pip-26.2.1+npa.1-py3-none-any.whl"; assert hashlib.sha256(w.read_bytes()).hexdigest() == r["sha256"]' \
-    && echo '51a52592b3b99e102b609654876bd65f19f999935166d1352678931132b0c670  /opt/setuptools-84.0.0-py3-none-any.whl' | sha256sum -c - \
+    && echo 'ca140b45d5325a9478f880e351484f62fef15f336462e449ca0c03c873d589c2  /opt/setuptools-84.2.1-py3-none-any.whl' | sha256sum -c - \
     && python3.12 -c 'from pathlib import Path; p=Path("/usr/share/python-wheels"); assert {f.name for f in p.glob("*.whl")} == {"pip-24.0-py3-none-any.whl", "setuptools-68.1.2-py3-none-any.whl"}' \
     && rm /usr/share/python-wheels/pip-24.0-py3-none-any.whl /usr/share/python-wheels/setuptools-68.1.2-py3-none-any.whl \
     && install -m 0444 /opt/secure-pip-wheels/pip-26.2.1+npa.1-py3-none-any.whl /usr/share/python-wheels/ \
-    && install -m 0444 /opt/setuptools-84.0.0-py3-none-any.whl /usr/share/python-wheels/ \
+    && install -m 0444 /opt/setuptools-84.2.1-py3-none-any.whl /usr/share/python-wheels/ \
     && python3.12 -m venv /opt/npa-venv \
     && /opt/npa-venv/bin/python -c 'import pip; from pip._vendor import urllib3,msgpack; assert pip.__version__ == "26.2.1+npa.1"; assert urllib3.__version__ == "2.8.0"; assert msgpack.__version__ == "1.2.1"'
 COPY --from=secure-pip-builder --chmod=0444 /opt/secure-pip-wheels/build-receipt.json /usr/share/doc/npa-curobo/secure-pip-build.json

@@ -17,6 +17,10 @@ from types import SimpleNamespace
 import pytest
 
 from npa.workflows.sim2real import isaac_byo_robot_task as rt
+from npa.workflows.sim2real.isaac_franka_policy import (
+    create_stock_franka_runner,
+    validate_stock_franka_checkpoint,
+)
 
 
 def _byo_spec(**over):
@@ -514,6 +518,10 @@ def _execute_training_phases(output, resume=None):
     )
     namespace = {
         "OnPolicyRunner": _UpstreamLastIndexRunner,
+        "create_stock_franka_runner": create_stock_franka_runner,
+        "validate_stock_franka_checkpoint": validate_stock_franka_checkpoint,
+        "task": "Isaac-Lift-Cube-Franka-v0",
+        "stock_policy": False,
         "env": object(),
         "acfg": {},
         "OUT": str(output),

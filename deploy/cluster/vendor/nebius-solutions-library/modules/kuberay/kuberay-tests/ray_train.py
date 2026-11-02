@@ -76,20 +76,6 @@ scaling_config = ray.train.ScalingConfig(
     num_workers=3, use_gpu=True, resources_per_worker={"CPU": 14, "GPU": 1}
 )
 
-# s3_fs = s3fs.S3FileSystem(
-# AWS_ACCESS_KEY_ID
-# AWS_SECRET_ACCESS_KEY
-# AWS_REGION
-# AWS_ENDPOINT_URL_S3
-#    key=os.environ["AWS_ACCESS_KEY_ID"],
-#    secret=os.environ["AWS_SECRET_ACCESS_KEY"],
-#    endpoint_url="https://storage.eu-north1.nebius.cloud:443",
-#    client_kwargs={
-#        "region_name": "eu-north1",
-#    },
-# )
-# custom_fs = PyFileSystem(FSSpecHandler(s3_fs))
-
 # [5] Launch distributed training job.
 trainer = ray.train.torch.TorchTrainer(
     train_func,
@@ -108,7 +94,7 @@ result = trainer.fit()
 # [6] Load the trained model.
 with result.checkpoint.as_directory() as checkpoint_dir:
     model_state_dict = torch.load(
-        os.path.join(checkpoint_dir, "model.pt"), map_location="cpu"
+        os.path.join(checkpoint_dir, "model.pt"), map_location="cpu", weights_only=True
     )
     model = resnet18(num_classes=10)
     model.conv1 = torch.nn.Conv2d(

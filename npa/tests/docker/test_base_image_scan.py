@@ -147,6 +147,92 @@ def test_failed_preparation_never_returns_a_scan_target(
     assert error.value.returncode == 17
 
 
+def test_mirror_preparation_retries_the_same_canonical_digest(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Retry a missing mirror layer against the unchanged canonical digest.
+
+    Args:
+        monkeypatch: Isolated subprocess replacement.
+        tmp_path: Private build/export directory.
+    Returns:
+        None.
+    Raises:
+        AssertionError: The retry changes identity, skips cleanup, or omits the retry.
+    """
+
+    entry = next(
+        item
+        for item in _entries()
+        if item["name"] == "nvidia-cuda-12-8-1-cudnn-devel-ubuntu22-04"
+    )
+    commands: list[list[str]] = []
+
+    def record(command, **arguments):
+        commands.append(command)
+        if command[:3] == ["docker", "buildx", "build"] and any(
+            argument.startswith("BASE_IMAGE=mirror.gcr.io/") for argument in command
+        ):
+            raise subprocess.CalledProcessError(19, command)
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(scanner.subprocess, "run", record)
+
+    target = scanner.prepare_target(entry, tmp_path)
+
+    builds = [
+        command for command in commands if command[:3] == ["docker", "buildx", "build"]
+    ]
+    assert target == tmp_path / "canonical-image.tar"
+    assert len(builds) == 2
+    assert any(
+        argument.startswith("BASE_IMAGE=mirror.gcr.io/") for argument in builds[0]
+    )
+    assert f"BASE_IMAGE={entry['image']}" in builds[1]
+    assert commands[-1][0:3] == ["docker", "buildx", "rm"]
+
+
+def test_canonical_retry_failure_remains_blocking(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Keep a canonical preparation failure fail closed after a mirror failure.
+
+    Args:
+        monkeypatch: Isolated subprocess replacement.
+        tmp_path: Private build/export directory.
+    Returns:
+        None.
+    Raises:
+        AssertionError: A failed canonical preparation is accepted.
+    """
+
+    entry = next(
+        item
+        for item in _entries()
+        if item["name"] == "nvidia-cuda-12-8-1-cudnn-devel-ubuntu22-04"
+    )
+    commands: list[list[str]] = []
+
+    def fail_build(command, **arguments):
+        commands.append(command)
+        if command[:3] == ["docker", "buildx", "build"]:
+            raise subprocess.CalledProcessError(23, command)
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(scanner.subprocess, "run", fail_build)
+
+    with pytest.raises(subprocess.CalledProcessError) as error:
+        scanner.prepare_target(entry, tmp_path)
+
+    builds = [
+        command for command in commands if command[:3] == ["docker", "buildx", "build"]
+    ]
+    assert error.value.returncode == 23
+    assert len(builds) == 2
+    assert f"BASE_IMAGE={entry['image']}" in builds[1]
+    assert commands[-1][0:3] == ["docker", "buildx", "rm"]
+
+
 def _record_package_commands(tmp_path: Path, failed_command: str) -> None:
     for name in ("apt-get", "dpkg", "rm"):
         executable = tmp_path / name

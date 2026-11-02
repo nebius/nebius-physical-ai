@@ -20,5 +20,8 @@
     "cypress": "^16.1.1",
     "playwright-core": "1.63.0",
     "pngjs": "7.0.0"
+  },
+  "overrides": {
+    "systeminformation": "5.33.16"
   }
 }

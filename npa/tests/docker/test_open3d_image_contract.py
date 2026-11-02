@@ -292,7 +292,7 @@ def test_fresh_runtime_security_floors_are_enforced_in_the_built_image():
         "rsync": "MIN_RSYNC_VERSION",
     }.items():
         assert f'"{package} ${{{floor}}}"' in text
-    assert text.index("pip==26.2.1 setuptools==84.0.0 wheel==0.48.0") < text.index(
+    assert text.index("pip==26.2.1 setuptools==84.2.1 wheel==0.48.0") < text.index(
         "USER ubuntu"
     )
     assert "urllib3==2.8.0" in (IMAGE / "requirements.txt").read_text().splitlines()

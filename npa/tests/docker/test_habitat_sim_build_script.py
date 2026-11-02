@@ -105,6 +105,9 @@ def _committed_fixture(tmp_path: Path) -> tuple[Path, Path]:
         ],
         check=True,
     )
+    for path in (repository, *repository.rglob("*")):
+        if path.is_dir():
+            path.chmod(0o700)
     return repository, repository / "npa/docker/workbench/habitat-sim/build.sh"
 
 
@@ -174,7 +177,7 @@ def test_builder_refuses_existing_relative_output_from_original_cwd(
     repository, script = _committed_fixture(tmp_path)
     env, log, _capture = _stubbed_environment(tmp_path)
     caller = tmp_path / "outside"
-    caller.mkdir()
+    caller.mkdir(mode=0o700)
     output = repository / "existing.oci.tar"
     output.write_bytes(b"owner data")
     relative_output = os.path.relpath(output, caller)
@@ -191,7 +194,7 @@ def test_builder_keeps_relative_output_bound_to_original_cwd(tmp_path: Path) -> 
     repository, script = _committed_fixture(tmp_path)
     env, log, _capture = _stubbed_environment(tmp_path)
     caller = tmp_path / "outside"
-    caller.mkdir()
+    caller.mkdir(mode=0o700)
     repository_output = repository / "candidate.oci.tar"
     repository_output.write_bytes(b"repository owner data")
     (repository / ".git/info/exclude").write_text(

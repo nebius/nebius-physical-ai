@@ -2,12 +2,12 @@
 
 # Nebius Physical AI
 
-**The control plane your coding agent uses to run physical-AI workloads on Nebius.**
+**The agent control plane for Physical AI on Nebius.**
 
 <img src="docs/assets/workbench-architecture.png" alt="Workbench architecture: selected NVIDIA and open-ecosystem integrations are packaged into public GHCR images. npa uses workflow YAML, its workflow engine, and SkyPilot to run workloads on Nebius Kubernetes. Kubernetes pulls images; Object Storage holds artifacts and run state. Token Factory provides hosted inference. Models and vendor runtimes are fetched at runtime where required." width="960" />
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
-[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 [![Platforms: macOS · Linux · WSL2](https://img.shields.io/badge/platforms-macOS%20%7C%20Linux%20%7C%20WSL2-lightgrey.svg)](docs/install.md)
 [![Test](https://github.com/nebius/nebius-physical-ai/actions/workflows/test.yml/badge.svg)](https://github.com/nebius/nebius-physical-ai/actions/workflows/test.yml)
 [![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
@@ -37,54 +37,29 @@ Operators managing Kubernetes directly can use
 [team namespaces](docs/workbench/namespaces.md) to select namespaces and private
 SkyPilot contexts with `npa workbench namespace`.
 
+For Cosmos3 hosted inference, use the
+[Nebius Stream beta skill](skills/tools/nebius-stream-beta/SKILL.md).
+The portable Python client uses an operator-supplied HTTPS origin
+(`WMH_BASE_URL`) and private inference/S3 credential files
+(`WMH_API_KEY_FILE`, `WMH_S3_CREDENTIAL_FILE`). The
+[customer guide](skills/tools/nebius-stream-beta/references/iteration.md)
+explains setup, `WMH_WORK_DIR`, Nano/Super capability discovery, video
+augmentation, bucket batches, recovery, and usage exports. Input may use
+approved S3-compatible storage; output must be verified Nebius Object Storage.
+Beta access is issued separately by the operator.
+
 ## What is Workbench?
 
-Workbench is the agent-facing control plane for physical AI on Nebius. You
-describe the outcome; Codex, Claude Code, or another coding agent with terminal
-access to this checkout uses `npa` to configure the project, check access, plan
-resources, run containerized tools and workflows, and inspect the result with
-you. You can drive the same operations directly through the CLI, and supported
-tools also expose Python interfaces.
+Workbench is NPA's agent control plane for Physical AI on Nebius AI Cloud,
+covering infrastructure setup and management, simulation, robot policy training,
+synthetic data, and evaluation. Codex, Claude Code, or another coding agent with
+terminal access to this checkout uses repository skills and `npa` to configure
+projects, check access, provision GPU clusters and object storage, run
+containerized tools and workflows, and inspect artifacts with you. You can use
+the same operations directly through the CLI; supported tools also expose
+Python interfaces.
 
 ### How Workbench runs a task
-
-```mermaid
-%%{init: {"theme": "base", "fontFamily": "Arial, sans-serif", "themeVariables": {"fontFamily": "Arial, sans-serif", "fontSize": "16px", "primaryColor": "#E0FF4F", "primaryTextColor": "#052B42", "primaryBorderColor": "#052B42", "lineColor": "#526575", "edgeLabelBackground": "#FFFFFF", "clusterBkg": "#EEF3FF", "clusterBorder": "#B4C9DC", "clusterTextColor": "#052B42", "tertiaryTextColor": "#052B42"}, "flowchart": {"htmlLabels": true, "curve": "linear", "nodeSpacing": 32, "rankSpacing": 48}}}%%
-flowchart TB
-    accTitle: How Workbench runs a task on Nebius
-    accDescr: You use a coding agent or the CLI and supported Python interfaces to control npa. Workflow YAML drives the workflow engine and SkyPilot, which launch containerized GPU and CPU jobs on Nebius Kubernetes. Tools read and write S3 artifacts; npa reads and writes durable run state. Token Factory is a separate hosted inference API. Results return through npa for inspection.
-
-    access["You + your coding agent<br/>or direct CLI / supported Python interfaces"]
-    control["npa control plane<br/>Configure · preflight · plan · submit · inspect"]
-    spec["npa.workflow YAML<br/>States · toolRefs · resource profiles"]
-    workflow["Workflow engine + SkyPilot<br/>Plan waves · submit jobs · track status"]
-
-    access <-->|"requests / results"| control
-    spec --> control
-    control <-->|"submit / monitor / resume"| workflow
-
-    subgraph nebius["Nebius AI Cloud"]
-        tools["Containerized tools · Kubernetes<br/>GPU + CPU<br/>Simulate · train · generate<br/>Curate · reconstruct · evaluate"]
-        storage["Object Storage · S3<br/>Inputs · checkpoints · media<br/>Reports · durable run state"]
-        hosted["Token Factory<br/>Hosted inference API<br/>No customer GPU required"]
-        tools <-->|"read / write"| storage
-    end
-
-    workflow <-->|"jobs / status / logs"| tools
-    control <-->|"direct API"| hosted
-    control <-.->|"artifacts / durable state"| storage
-
-    classDef access fill:#FFFFFF,stroke:#B4C9DC,color:#052B42,stroke-width:1.5px,rx:12,ry:12;
-    classDef control fill:#E0FF4F,stroke:#052B42,color:#052B42,stroke-width:2px,rx:12,ry:12;
-    classDef orchestration fill:#EEF3FF,stroke:#052B42,color:#052B42,stroke-width:1.5px,rx:12,ry:12;
-    classDef service fill:#FFFFFF,stroke:#052B42,color:#052B42,stroke-width:1.5px,rx:12,ry:12;
-    classDef data fill:#052B42,stroke:#052B42,color:#FFFFFF,stroke-width:1.5px,rx:12,ry:12;
-    class access,spec access;
-    class control control;
-    class workflow orchestration;
-    class tools,hosted service;
-    class storage data;
-```
 
 The architecture overview maps selected NVIDIA and open-ecosystem solutions to
 NPA's [public GHCR container catalog](docs/workbench/container-image-catalog.md)
@@ -92,7 +67,7 @@ at `ghcr.io/nebius/nebius-physical-ai` and the Nebius services that run and supp
 them. Some images fetch models or vendor runtimes at execution time; the
 [packaging contract](docs/workbench/container-packaging.md) records those boundaries.
 
-The task flow above shows the standard Kubernetes workflow path. The
+For the standard Kubernetes workflow path, the
 [workflow engine](docs/workbench/npa-workflow-guide.md#runtime-orchestrator---runtime)
 plans execution waves, submits them through SkyPilot, and uses S3 artifacts and
 durable run state to evaluate decisions and resume runs. The operator-side
@@ -130,7 +105,7 @@ install the shared service or its LoadBalancer.
 
 ### 1. Install
 
-Use Python **3.10+** on macOS, Linux, or WSL2 Ubuntu. Clone the repository,
+Use Python **3.11+** on macOS, Linux, or WSL2 Ubuntu. Clone the repository,
 then run the remaining commands from its root:
 
 ```bash
@@ -152,7 +127,7 @@ Install the tested Nebius CLI and configure your project:
 
 ```bash
 curl -fsSL https://storage.eu-north1.nebius.cloud/cli/install.sh \
-  | NEBIUS_CLI_VERSION=0.12.254 bash
+  | NEBIUS_CLI_VERSION=0.12.298 bash
 export PATH="${HOME}/.nebius/bin:${PATH}"
 npa configure
 npa workbench health preflight --checks nebius --json
@@ -244,6 +219,17 @@ release gate before provisioning; running it requires no agent deployment.
 Its [data contracts](docs/workbench/guides/sim2real-data-contracts.md) preserve
 simulator episode resets across sparse samples and exclude reset intervals from
 training credit. The older `sim2real/runbook.yaml` is a legacy path.
+
+Fresh stock-Franka training uses `NPA_BYO_ISAAC_BOOTSTRAP=auto` to initialize its
+learned actor from native Isaac demonstrations on the sealed training split,
+then runs the full PPO pass. Resumed checkpoints and custom robots retain their
+existing training path. Set `NPA_BYO_ISAAC_BOOTSTRAP=none` to disable the warm
+start, or use `franka-cartesian-gru-distillation-v2` to require its supported
+task boundary.
+See the [training and evaluation contract](docs/workbench/guides/sim2real-workflow.md).
+The canonical stock-Franka scenario task uses upstream task-space arm drives
+with robot gravity compensation and 200 Hz physics. Its policy still acts at
+50 Hz. Training and held-out artifacts attest this same control profile.
 
 <a id="whats-in-the-box"></a>
 

@@ -226,6 +226,13 @@ def test_byo_manifest_exports_task_config_and_entropy():
     assert "tee /tmp/train_full.log" in script
 
 
+def test_byo_manifest_streams_live_training_output():
+    script = _byo_manifest({"action_scale": 0.3})
+
+    assert "tee /tmp/train_full.log\n" in script
+    assert "tee /tmp/train_full.log | tail -120" not in script
+
+
 def test_byo_manifest_omits_task_config_when_absent():
     script = _byo_manifest(None, entropy_coef="")
     assert "export NPA_BYO_TASK_CONFIG_JSON=" not in script

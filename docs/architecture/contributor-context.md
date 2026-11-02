@@ -57,7 +57,7 @@ Never duplicate logic across layers. If you add a new Workbench capability, it g
 
 Reference: `docs/workbench/getting-started.md` for the full setup guide. Key points:
 
-- Python 3.10+
+- Python 3.11+
 - Install: `pip install -e npa/[dev]` from repo root
 - Run tests: `npa/.venv/bin/python -m pytest npa/tests/ --ignore=npa/tests/e2e --timeout=120 -q`
 - Linting: `npa/.venv/bin/python -m ruff check npa/src/`

@@ -83,6 +83,7 @@ TOOL_REF_IMAGE_TOOL: dict[str, str | None] = {
     "workbench.cosmos3.policy_feedback": "cosmos3",
     "workbench.cosmos3.failure_candidates": "cosmos3",
     "workbench.cosmos3.generate_variants": "cosmos3",
+    "workbench.cosmos3.generate_variants_endpoint": "rerun-viewer",
     "workbench.cosmos3.prepare_video_input": "cosmos3",
     "workbench.cosmos3.checkpoint_eval": "cosmos3",
     # The image's command-forwarding entrypoint runs only the CPU/S3 client for
@@ -132,6 +133,7 @@ HABITAT_SIM_ACCELERATOR = "RTXPRO-6000-BLACKWELL-SERVER-EDITION:1"
 OPENPI_TERMS_ENV = "NPA_OPENPI_ACCEPT_GEMMA_TERMS"
 
 SECRET_ENV_HINTS: dict[str, tuple[str, ...]] = {
+    "workbench.cosmos3.generate_variants_endpoint": ("WMH_API_KEY",),
     "workbench.marble.pallet_preflight": ("WLT_API_KEY",),
     "workflow.policy_public": ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
     "workflow.policy_training": ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
@@ -389,7 +391,7 @@ def tool_vendor_interpreters(tool_ref: str) -> tuple[str, ...]:
 
 
 def render_vendor_interpreter_setup(candidates: Sequence[str]) -> str:
-    """Install npa into the vendor image's interpreter and make it the stage interpreter."""
+    """Install npa into a supported vendor interpreter and make it the stage interpreter."""
 
     if not candidates:
         return ""
@@ -429,6 +431,14 @@ def render_vendor_interpreter_setup(candidates: Sequence[str]) -> str:
         "# there and that interpreter has to be the one the stage runs.\n"
         f"for npa_vendor_python in {listed}; do\n"
         '  [ -x "$npa_vendor_python" ] || continue\n'
+        # The checkout declares Python >=3.11.  Some upstream vendor runtimes
+        # remain on 3.10 for their compiled ABI, but NPA must not be installed
+        # into those environments: pip's eventual Requires-Python failure hid
+        # the actionable interpreter mismatch behind dependency noise.
+        '  if ! "$npa_vendor_python" -c "import sys; raise SystemExit(sys.version_info < (3, 11))"; then\n'
+        '    echo "skipping unsupported NPA vendor interpreter (requires Python >=3.11): $npa_vendor_python" >&2\n'
+        "    continue\n"
+        "  fi\n"
         '  npa_vendor_src=""\n'
         "  if [ -s /tmp/npa-src-root ]; then\n"
         '    npa_vendor_src="$(cat /tmp/npa-src-root)"\n'
@@ -1135,6 +1145,110 @@ def validate_immutable_image_override_bindings(
         )
 
 
+WORKFLOW_VALIDATION_CANDIDATE_RELEASE_STATUS = "workflow_validation_candidate"
+WORKFLOW_VALIDATION_CANDIDATE_SELECTION_SCOPE_PLANNED_STEPS = "planned_steps"
+WORKFLOW_VALIDATION_CANDIDATE_SELECTION_SCOPE_REACHABLE_BRANCHES = "reachable_branches"
+
+
+@dataclass(frozen=True)
+class WorkflowValidationCandidateSelection:
+    """One planned toolRef that resolves to a non-accepted image candidate."""
+
+    tool_ref: str
+    image: str
+    selection_scope: str
+
+    def to_dict(self) -> dict[str, str]:
+        """Return the stable control-plane representation for CLI output.
+
+        Args:
+            None.
+
+        Returns:
+            Candidate provenance with its image-selection scope.
+
+        Raises:
+            None.
+        """
+
+        return {
+            "tool_ref": self.tool_ref,
+            "image": self.image,
+            "release_status": WORKFLOW_VALIDATION_CANDIDATE_RELEASE_STATUS,
+            "selection_scope": self.selection_scope,
+        }
+
+
+def workflow_validation_candidate_selections(
+    spec: NpaWorkflowSpec,
+    steps: Sequence[PlanStep],
+    *,
+    run_id: str,
+    options: SkypilotRenderOptions,
+    selection_scope: str = WORKFLOW_VALIDATION_CANDIDATE_SELECTION_SCOPE_PLANNED_STEPS,
+) -> tuple[WorkflowValidationCandidateSelection, ...]:
+    """Report candidate defaults selected after all image-override precedence.
+
+    The image reference is digest-pinned, but that does not mean it is in the
+    accepted-release inventory. Keep this provenance signal at the same rendering
+    boundary that applies exact, family, wildcard, resource, registry, and
+    digest-pin precedence.
+
+    Args:
+        spec: Parsed workflow specification being rendered.
+        steps: Planned workflow steps whose selected images are evaluated.
+        run_id: Stable identifier used to render task configuration.
+        options: Image registry, override, and digest-pin choices.
+        selection_scope: Machine-readable meaning of the supplied step set.
+
+    Returns:
+        Candidate selections whose resolved image remains the candidate default.
+
+    Raises:
+        RuntimeError: If the public workflow candidate manifest is invalid.
+    """
+
+    from npa.deploy.images import public_workflow_image_default
+    from npa.orchestration.npa_workflow.errors import NpaWorkflowError
+
+    selections: list[WorkflowValidationCandidateSelection] = []
+    seen: set[tuple[str, str]] = set()
+    for step in steps:
+        task = build_scheduler_task(spec, step, run_id=run_id)
+        tool_ref = str(task.get("tool_ref") or "")
+        tool = tool_image_key(tool_ref)
+        if not tool:
+            continue
+        candidate = public_workflow_image_default(
+            tool, tool_ref=tool_ref, registry=options.registry or None
+        )
+        if not candidate:
+            continue
+        try:
+            image = resolve_task_image(
+                tool_ref, task.get("resources") or {}, options=options
+            )
+        except NpaWorkflowError:
+            # Candidate disclosure is observational. Leave a branch whose image
+            # cannot currently resolve to the workflow's normal validation and
+            # runtime error path instead of making disclosure a new gate.
+            continue
+        selected_image = str(
+            options.image_digest_pins.get(candidate, candidate)
+        ).strip()
+        selection = (tool_ref, selected_image)
+        if image == selected_image and selection not in seen:
+            seen.add(selection)
+            selections.append(
+                WorkflowValidationCandidateSelection(
+                    tool_ref=tool_ref,
+                    image=selected_image,
+                    selection_scope=selection_scope,
+                )
+            )
+    return tuple(selections)
+
+
 #: How long to wait for a self-hosted model server to answer /health, and how often to ask.
 #: The server has to download a multi-GB checkpoint and load it onto the GPU first. The
 #: retired ``vlm-eval.yaml`` allowed 120 x 5 s = 600 s; a *cold* HF download of a 7B
@@ -1670,6 +1784,34 @@ def default_npa_setup() -> str:
         '|| ! "$npa_setup_python" -c "import sys" >/dev/null 2>&1; then\n'
         '  npa_setup_python="$(command -v python3)"\n'
         "fi\n"
+        # Current NPA metadata requires Python >=3.11. Prefer a compatible
+        # control interpreter before touching an image's dependency closure;
+        # a vendor's retained Python 3.10 inference ABI is not an NPA runtime.
+        'if ! "$npa_setup_python" -c "import sys; raise SystemExit(sys.version_info < (3, 11))" >/dev/null 2>&1; then\n'
+        "  for npa_candidate_python in python3.12 python3.11; do\n"
+        '    npa_candidate_path="$(command -v "$npa_candidate_python" 2>/dev/null || true)"\n'
+        '    if [ -n "$npa_candidate_path" ] && "$npa_candidate_path" -c "import sys; raise SystemExit(sys.version_info < (3, 11))" >/dev/null 2>&1; then\n'
+        '      npa_setup_python="$npa_candidate_path"\n'
+        "      break\n"
+        "    fi\n"
+        "  done\n"
+        "fi\n"
+        # SkyPilot's default worker can expose only Python 3.10. Prepare a
+        # separate control environment rather than changing a vendor runtime
+        # or weakening NPA's dependency requirements. Seed pip for later
+        # tool-specific setup that invokes the recorded interpreter directly.
+        'if ! "$npa_setup_python" -c "import sys; raise SystemExit(sys.version_info < (3, 11))" >/dev/null 2>&1; then\n'
+        "  if command -v uv >/dev/null 2>&1; then\n"
+        '    npa_setup_env="$(mktemp -d /tmp/npa-setup-venv.XXXXXX)"\n'
+        '    uv venv --python 3.12 --seed "$npa_setup_env"\n'
+        '    npa_setup_python="$npa_setup_env/bin/python"\n'
+        '    export PATH="$npa_setup_env/bin:$PATH"\n'
+        "  fi\n"
+        "fi\n"
+        'if ! "$npa_setup_python" -c "import sys; raise SystemExit(sys.version_info < (3, 11))" >/dev/null 2>&1; then\n'
+        '  echo "NPA source requires Python >=3.11; supply a compatible control interpreter or uv to prepare one" >&2\n'
+        "  exit 1\n"
+        "fi\n"
         # Thin workbench images keep the installable project at /opt/npa rather than the
         # legacy /opt/nebius-physical-ai/npa path.  Record it even when the baked `npa`
         # launcher is already on PATH: vendor-interpreter setup still needs the source root
@@ -1722,14 +1864,20 @@ def default_npa_setup() -> str:
         '[ "$npa_setup_python" = "${NPA_BAKED_PYTHON:-}" ] && '
         "\"$npa_setup_python\" -c 'import npa.cli.main' >/dev/null 2>&1; then\n"
         '  mkdir -p "$HOME/.local/bin"\n'
-        '  printf "%s\\n" "#!/bin/sh" "exec ${npa_setup_python@Q} -c \'from npa.cli.entry import main; main()\' \\"\\$@\\"" '
-        '> "$HOME/.local/bin/npa"\n'
+        '  npa_quoted_python="$("$npa_setup_python" -c '
+        "'import shlex, sys; print(shlex.quote(sys.argv[1]))' "
+        '"$npa_setup_python")"\n'
+        '  printf \'#!/bin/sh\\nexec %s -c "from npa.cli.entry import main; main()" "$@"\\n\' '
+        '"$npa_quoted_python" > "$HOME/.local/bin/npa"\n'
         '  chmod 0755 "$HOME/.local/bin/npa"\n'
         "fi\n"
         # An explicit staged overlay is the complete source of truth. Thin vendor
         # images may contain a partial /opt/npa tree without the build hook; do
         # not try installing it before the requested overlay can be fetched.
-        "if ! command -v npa >/dev/null 2>&1 && { "
+        # A launcher left on PATH by the old interpreter does not make NPA
+        # available inside a newly prepared control environment.
+        "if { ! command -v npa >/dev/null 2>&1 || "
+        "! \"$npa_setup_python\" -c 'import npa.cli.main' >/dev/null 2>&1; } && { "
         '[ "$NPA_SRC_OVERLAY" != "1" ] || [ -z "$NPA_SRC_S3_URI" ]; }; then\n'
         # The active runtime-fetch images intentionally ship the installable
         # project under /opt/npa but not a shell-visible `npa` launcher. Recording
@@ -2215,10 +2363,14 @@ def render_setup_for_tool(
             from npa.orchestration.npa_workflow.sim2real_evaluator_probe import (
                 render_evaluator_probe,
             )
-            from npa.workflows.sim2real.constants import DEFAULT_COSMOS3_MODEL
+            from npa.clients.token_factory import DEFAULT_BASE_URL
+            from npa.workflows.sim2real.constants import DEFAULT_TOKEN_FACTORY_MODEL
 
             evaluator_probe = render_evaluator_probe(
-                str(config.get("cosmos3_model") or DEFAULT_COSMOS3_MODEL).strip()
+                str(
+                    config.get("token_factory_model") or DEFAULT_TOKEN_FACTORY_MODEL
+                ).strip(),
+                str(config.get("token_factory_base_url") or DEFAULT_BASE_URL).strip(),
             )
         return (
             "set -e\n"

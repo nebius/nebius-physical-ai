@@ -892,6 +892,7 @@ def test_single_node_gpu_preflight_rejects_wrong_product(provider, monkeypatch):
                 allocatable_cpu_millis=4000,
                 allocatable_memory_bytes=16 * 10**9,
                 allocatable_pods=1,
+                labels=(("nvidia.com/gpu.product", "NVIDIA-B200"),),
             ),
         ),
     )
@@ -1055,6 +1056,7 @@ def gpu_inventory(monkeypatch):
         allocatable_cpu_millis=16000,
         allocatable_memory_bytes=128 * 10**9,
         allocatable_pods=1,
+        labels=(("skypilot.co/accelerator", "b200"),),
     )
     inventory = KubernetesGpuInventory(
         "unit-context", 1, 1, 1, 1, ("NVIDIA-B200",), {}, nodes=(node,)
@@ -2012,6 +2014,7 @@ def test_sky_resource_units_preserve_exact_gpu_capacity_checks(
                 allocatable_pods=1,
                 allocatable_ephemeral_storage_bytes=100 * 10**9,
                 free_ephemeral_storage_bytes=100 * 10**9 - int(shortfall == "storage"),
+                labels=(("skypilot.co/accelerator", "b200"),),
             ),
         ),
     )
@@ -2088,6 +2091,7 @@ def test_sky_gpu_preflight_accepts_skypilot_allowed_node_names_shape(
                 allocatable_cpu_millis=8000,
                 allocatable_memory_bytes=32 * 10**9,
                 allocatable_pods=1,
+                labels=(("skypilot.co/accelerator", "b200"),),
             ),
         ),
     )
@@ -2141,6 +2145,221 @@ def test_rendered_cpu_wave_does_not_require_free_gpus(
     assert provider.s3.calls
 
 
+def _replacement_gpu_node(name, product, sky_label=None):
+    from npa.orchestration.skypilot.k8s_gpu_catalog import KubernetesGpuNode
+
+    labels = {"nvidia.com/gpu.product": product}
+    if sky_label is not None:
+        labels["skypilot.co/accelerator"] = sky_label
+    return KubernetesGpuNode(
+        name,
+        True,
+        True,
+        (product,),
+        1,
+        1,
+        0,
+        1,
+        allocatable_cpu_millis=24000,
+        free_cpu_millis=24000,
+        allocatable_memory_bytes=218 * 1024**3,
+        free_memory_bytes=218 * 1024**3,
+        allocatable_pods=100,
+        free_pod_slots=100,
+        labels=tuple(labels.items()),
+    )
+
+
+def _replacement_gpu_inventory(monkeypatch, nodes):
+    from npa.orchestration.skypilot.k8s_gpu_catalog import KubernetesGpuInventory
+
+    inventory = KubernetesGpuInventory(
+        "unit-context",
+        len(nodes),
+        len(nodes),
+        len(nodes),
+        len(nodes),
+        tuple(node.products[0] for node in nodes),
+        {node.name: dict(node.labels) for node in nodes},
+        nodes=tuple(nodes),
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.k8s_gpu_catalog.discover_kubernetes_gpu_inventory",
+        lambda **kwargs: inventory,
+    )
+    return inventory
+
+
+@pytest.mark.parametrize("sky_label", [None, "", "RTXPRO6000", "rtx6000", "h100"])
+@pytest.mark.parametrize(
+    "product,accelerator",
+    [
+        ("NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition", "RTXPRO6000:1"),
+        ("NVIDIA-B200", "B200:1"),
+    ],
+)
+def test_sky_gpu_preflight_rejects_replacement_without_effective_label(
+    provider,
+    configured,
+    monkeypatch,
+    sky_label,
+    product,
+    accelerator,
+):
+    from npa.execution_preflight import preflight_skypilot_submission
+    from npa.orchestration.skypilot.k8s_gpu_catalog import preflight_kubernetes_gpu_gang
+
+    nodes = [_replacement_gpu_node("replacement-node", product, sky_label)]
+    if accelerator == "B200:1":
+        nodes.insert(0, _replacement_gpu_node("other-product-node", "H100", "h100"))
+    inventory = _replacement_gpu_inventory(monkeypatch, nodes)
+    # Native hardware fits; the rejection must establish SkyPilot label readiness.
+    preflight_kubernetes_gpu_gang(
+        inventory,
+        accelerator=accelerator,
+        node_count=1,
+        cpus=16,
+        memory="128G",
+    )
+    document = raw_task()
+    document["resources"].update(
+        {"accelerators": accelerator, "cpus": 16, "memory": 128}
+    )
+
+    with pytest.raises(
+        ExecutionPreflightError, match="effective accelerator selector"
+    ) as caught:
+        preflight_skypilot_submission(
+            [document], project="unit", infra="k8s/unit-context"
+        )
+
+    assert caught.value.check == "gpu"
+    assert not provider.s3.calls
+
+
+@pytest.mark.parametrize(
+    "product,accelerator,sky_label",
+    [
+        ("NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition", "RTXPRO6000:1", "rtxpro6000"),
+        ("NVIDIA-B200", "B200:1", "b200"),
+        ("NVIDIA-B200", "B200:1", None),
+        ("NVIDIA-B200", "B200:1", "B200"),
+        (
+            "NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
+            "RTXPRO-6000-BLACKWELL-SERVER-EDITION:1",
+            None,
+        ),
+        (
+            "NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
+            "RTXPRO-6000-BLACKWELL-SERVER-EDITION:1",
+            "RTXPRO6000",
+        ),
+        ("H100", "H100:1", None),
+        ("NVIDIA-RTX-6000-Ada-Generation", "NVIDIA-RTX-6000-Ada-Generation:1", None),
+    ],
+)
+def test_sky_gpu_preflight_preserves_supported_labelled_and_native_products(
+    provider,
+    configured,
+    monkeypatch,
+    product,
+    accelerator,
+    sky_label,
+):
+    from npa.execution_preflight import preflight_skypilot_submission
+
+    _replacement_gpu_inventory(
+        monkeypatch,
+        [
+            _replacement_gpu_node("compatible-node", product, sky_label),
+        ],
+    )
+    document = raw_task()
+    document["resources"].update(
+        {"accelerators": accelerator, "cpus": 16, "memory": 128}
+    )
+
+    _, report, _ = preflight_skypilot_submission(
+        [document],
+        project="unit",
+        infra="k8s/unit-context",
+    )
+
+    assert report["checks"]["gpu"] == "pass"
+
+
+def test_sky_gpu_preflight_admits_labelled_capacity_in_mixed_pool(
+    provider,
+    configured,
+    monkeypatch,
+):
+    from npa.execution_preflight import preflight_skypilot_submission
+
+    product = "NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition"
+    _replacement_gpu_inventory(
+        monkeypatch,
+        [
+            _replacement_gpu_node("unlabelled-node", product),
+            _replacement_gpu_node("labelled-node", product, "rtxpro6000"),
+        ],
+    )
+    document = raw_task()
+    document["resources"].update(
+        {"accelerators": "RTXPRO6000:1", "cpus": 16, "memory": 128}
+    )
+
+    _, report, _ = preflight_skypilot_submission(
+        [document],
+        project="unit",
+        infra="k8s/unit-context",
+    )
+
+    assert report["checks"]["gpu"] == "pass"
+
+
+@pytest.mark.parametrize(
+    "product,accelerator,sky_label,passes",
+    [
+        ("NVIDIA-B200", "B200:1", "b200", True),
+        (
+            "NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
+            "RTXPRO6000:1",
+            "rtxpro6000",
+            False,
+        ),
+    ],
+)
+def test_sky_gpu_preflight_follows_first_invalid_context_label_fallback(
+    provider, configured, monkeypatch, product, accelerator, sky_label, passes
+):
+    from npa.execution_preflight import preflight_skypilot_submission
+
+    _replacement_gpu_inventory(
+        monkeypatch,
+        [
+            _replacement_gpu_node("first-node", "H100", "H100"),
+            _replacement_gpu_node("requested-node", product, sky_label),
+        ],
+    )
+    document = raw_task()
+    document["resources"].update(
+        {"accelerators": accelerator, "cpus": 16, "memory": 128}
+    )
+    if passes:
+        _, report, _ = preflight_skypilot_submission(
+            [document], project="unit", infra="k8s/unit-context"
+        )
+        assert report["checks"]["gpu"] == "pass"
+    else:
+        with pytest.raises(
+            ExecutionPreflightError, match="effective accelerator selector"
+        ):
+            preflight_skypilot_submission(
+                [document], project="unit", infra="k8s/unit-context"
+            )
+        assert not provider.s3.calls
+
+
 @pytest.mark.parametrize("location", ["resources", "config"])
 @pytest.mark.parametrize("pool", ["available", "missing"])
 @pytest.mark.parametrize("nodes", [1, 2])
@@ -2181,7 +2400,10 @@ def test_rendered_gpu_wave_respects_placement_and_gang_size(
                 free_cpu_millis=4000,
                 free_memory_bytes=16 * 10**9,
                 free_pod_slots=1,
-                labels=(("pool", "available"),),
+                labels=(
+                    ("pool", "available"),
+                    ("skypilot.co/accelerator", "b200"),
+                ),
                 allocatable_cpu_millis=4000,
                 allocatable_memory_bytes=16 * 10**9,
                 allocatable_pods=1,

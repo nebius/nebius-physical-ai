@@ -354,8 +354,11 @@ def test_node_pinning_default_class_and_names_are_concurrency_safe():
     assert term["nodeSelectorTerms"][0]["matchFields"][0]["values"] == [
         node.metadata.name
     ]
+    ordinary = storage_resources.ordinary_claim_manifest(_RUN_ID)
+    assert "storageClassName" not in ordinary["spec"]
+    assert ordinary["spec"]["accessModes"] == ["ReadWriteOnce"]
     claim = storage_resources.claim_manifest(_RUN_ID)
-    assert "storageClassName" not in claim["spec"]
+    assert claim["spec"]["storageClassName"] == STORAGE_CLASS
     assert claim["spec"]["accessModes"] == ["ReadWriteMany"]
     assert first["spec"]["automountServiceAccountToken"] is False
     assert first["spec"]["containers"][0]["image"] == PROBE_IMAGE
@@ -429,6 +432,32 @@ def test_csi_health_failures_are_closed(driver_resources, failure):
         )
 
 
+def test_compute_default_keeps_named_filesystem_csi_available(driver_resources):
+    filesystem = driver_resources.storage.list_storage_class.return_value.items[0]
+    filesystem.metadata.annotations = {}
+    compute = SimpleNamespace(
+        metadata=_metadata("compute-csi-default-sc"),
+        reclaim_policy="Delete",
+        provisioner="compute.csi.nebius.ai",
+    )
+    compute.metadata.annotations = {
+        "storageclass.kubernetes.io/is-default-class": "true"
+    }
+    driver_resources.storage.list_storage_class.return_value.items = [
+        compute,
+        filesystem,
+    ]
+
+    assert (
+        storage_checks.verify_storage_driver(
+            driver_resources,
+            [_node("cpu"), _node("gpu")],
+            expected_default_storage_class="compute-csi-default-sc",
+        )
+        == _DRIVER
+    )
+
+
 def test_bound_claim_and_volume_require_exact_owned_link(binding):
     resources, claim, volume = binding
     assert storage_checks.verify_bound_claim(resources, claim, _DRIVER) is volume
@@ -438,6 +467,45 @@ def test_bound_claim_and_volume_require_exact_owned_link(binding):
         match="volume_claim_identity_mismatch",
     ):
         storage_checks.verify_bound_claim(resources, claim, _DRIVER)
+
+
+@pytest.mark.parametrize(
+    "failure",
+    ["pending", "class", "missing_volume", "wrong_claim", "retain"],
+)
+def test_classless_default_claim_requires_selected_class_and_owned_volume(
+    binding, failure
+):
+    resources, claim, volume = binding
+    expected = "compute-csi-default-sc"
+    claim.spec.storage_class_name = expected
+    claim.status.access_modes = ["ReadWriteOnce"]
+    volume.spec.storage_class_name = expected
+    if failure == "pending":
+        claim.status.phase = "Pending"
+    elif failure == "class":
+        claim.spec.storage_class_name = "wrong-class"
+    elif failure == "missing_volume":
+        claim.spec.volume_name = ""
+    elif failure == "wrong_claim":
+        volume.spec.claim_ref.uid = "unrelated-uid"
+    elif failure == "retain":
+        volume.spec.persistent_volume_reclaim_policy = "Retain"
+    if failure:
+        with pytest.raises(storage_resources.StorageVerificationError):
+            storage_checks.verify_default_bound_claim(resources, claim, expected)
+
+
+def test_classless_default_claim_returns_owned_reclaimable_volume(binding):
+    resources, claim, volume = binding
+    expected = "compute-csi-default-sc"
+    claim.spec.storage_class_name = expected
+    claim.status.access_modes = ["ReadWriteOnce"]
+    volume.spec.storage_class_name = expected
+
+    assert (
+        storage_checks.verify_default_bound_claim(resources, claim, expected) is volume
+    )
 
 
 @pytest.mark.parametrize(

@@ -339,12 +339,17 @@ class KubernetesJobClient:
         kubeconfig: str = "",
         context: str = "",
         bearer_token: str = "",
+        prefer_kubeconfig: bool = False,
     ) -> "KubernetesJobClient":
-        """Load in-cluster credentials or one explicitly isolated kubeconfig.
+        """Load in-cluster credentials or one explicitly selected kubeconfig.
 
         ``bearer_token`` is an in-memory override for out-of-cluster calls that
         already performed a fresh IAM exchange.  It is never written back to the
         kubeconfig because ``persist_config`` remains disabled.
+
+        ``prefer_kubeconfig`` is for an operator command which names an exact
+        Kubernetes context.  It prevents an incidental in-cluster service
+        account from silently overriding that requested target.
         """
 
         from kubernetes import client, config, watch
@@ -352,7 +357,7 @@ class KubernetesJobClient:
         service_account_token = Path(
             "/var/run/secrets/kubernetes.io/serviceaccount/token"
         )
-        in_cluster = bool(
+        in_cluster = not prefer_kubeconfig and bool(
             os.environ.get("KUBERNETES_SERVICE_HOST")
             and service_account_token.is_file()
         )

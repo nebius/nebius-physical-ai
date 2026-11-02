@@ -25,6 +25,7 @@ def _command(**kwargs):
     ("version", "flag"),
     [
         ("0.5.1", "--eval_freq=1000000"),
+        ("0.5.1+npa.secure1", "--eval_freq=1000000"),
         ("0.6.0", "--env_eval_freq=1000000"),
         ("0.6.1+npa2", "--env_eval_freq=1000000"),
     ],
@@ -196,6 +197,14 @@ def test_explicit_selected_version_matches_real_metadata(
     distribution.version = version
     monkeypatch.setenv("NPA_LEROBOT_VERSION", version)
     assert trainer._installed_training_version("act") == version
+
+
+def test_secure_local_version_matches_selected_upstream_version(installed, monkeypatch):
+    distribution, _ = installed
+    distribution.version = "0.5.1+npa.secure1"
+    monkeypatch.setenv("NPA_LEROBOT_VERSION", "0.5.1")
+
+    assert trainer._installed_training_version("act") == "0.5.1+npa.secure1"
 
 
 @pytest.mark.parametrize("selected", ["0.5.1", "0.6.0", "0.6.1", "0.6.1+npa3"])

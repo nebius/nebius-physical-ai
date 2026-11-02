@@ -213,7 +213,7 @@ def test_stage_states_prefers_workflow_state_over_missing_s3_markers(
     client = _mock_s3_client(
         {
             state_key: json.dumps(workflow_state),
-            "sim2real-b/run-1/augment/cosmos2-transfer-result.json": "{}",
+            "sim2real-b/run-1/augment/cosmos3-transfer-result.json": "{}",
         }
     )
 
@@ -264,7 +264,7 @@ def test_stage_states_detects_consumed_asset_specs_on_s3(
     assert stages["stage_02_assets"]["source"] == "s3_artifact"
 
 
-def test_stage_states_augment_requires_cosmos2_transfer_result(
+def test_stage_states_augment_requires_cosmos3_transfer_result(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     keys = {"sim2real-b/run-1/augment/manifest.json"}
@@ -283,7 +283,18 @@ def test_stage_states_augment_requires_cosmos2_transfer_result(
     )
     assert stages["stage_03_augment"]["state"] == "PENDING"
 
+    # Archived Cosmos Transfer 2.5 receipts remain readable lineage but cannot
+    # satisfy canonical Stage 3 status.
     keys.add("sim2real-b/run-1/augment/cosmos2-transfer-result.json")
+    stages = _stage_states(
+        bucket="demo-bucket",
+        run_id="run-1",
+        s3_prefix="sim2real-b",
+        endpoint="https://storage.example",
+    )
+    assert stages["stage_03_augment"]["state"] == "PENDING"
+
+    keys.add("sim2real-b/run-1/augment/cosmos3-transfer-result.json")
     stages = _stage_states(
         bucket="demo-bucket",
         run_id="run-1",
@@ -320,7 +331,7 @@ def test_stage_states_tokens_succeeds_when_folded_into_envgen_split(
 def test_stage_states_infers_trigger_from_later_stage_artifacts(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    keys = {"sim2real-b/run-1/augment/cosmos2-transfer-result.json"}
+    keys = {"sim2real-b/run-1/augment/cosmos3-transfer-result.json"}
     client = _mock_s3_client(keys)
 
     monkeypatch.setattr(

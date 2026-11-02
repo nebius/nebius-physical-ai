@@ -3,9 +3,29 @@
 from pathlib import Path
 import re
 
+from packaging.requirements import Requirement
+
+try:
+    import tomllib
+except ModuleNotFoundError:
+    import tomli as tomllib
+
 
 ROOT = Path(__file__).resolve().parents[3]
 IMAGE = ROOT / "npa/docker/workbench/mjlab"
+
+
+def test_no_deps_install_includes_current_npa_security_dependencies():
+    requirements = tomllib.loads((ROOT / "npa/pyproject.toml").read_text())["project"][
+        "dependencies"
+    ]
+    lock = (IMAGE / "requirements.lock").read_text().lower()
+    for requirement in map(Requirement, requirements):
+        if requirement.name.lower() not in {"defusedxml", "pyjwt", "cryptography"}:
+            continue
+        pin = re.search(rf"^{requirement.name.lower()}==([^\s]+)", lock, re.MULTILINE)
+        assert pin, f"missing NPA dependency: {requirement.name}"
+        assert pin[1] in requirement.specifier
 
 
 def test_cudnn_sdk_is_removed_in_the_install_layer():

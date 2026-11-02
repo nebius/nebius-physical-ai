@@ -2,12 +2,12 @@
 ray[serve]==2.56.0
 httpx==0.28.1
 # Security updates for dependencies inherited from the pinned vendor runtime.
-aiohttp==3.14.3
+aiohttp==3.14.4
 cryptography==50.0.0
 # NLTK is installed by common/install_hardened_nltk.sh from the pinned fix commit.
 click==8.3.3
 defusedxml==0.7.1
 joblib==1.6.0
 regex==2026.9.3
-setuptools==84.0.0
+setuptools==84.2.1
 tqdm==4.70.0

@@ -10,14 +10,24 @@ It is not detected or submitted through a Sim2Real-specific controller.
 Each real solution boundary is a workflow state with its own immutable image,
 resource request, inputs, and outputs. CPU contract states surround Cosmos
 Transfer, parallel environment-generation shards, Isaac policy rollouts,
-a CPU-only hosted Cosmos3 evaluator, BYO Isaac RSL-RL PPO, Isaac gold evaluation, and
+a CPU-only hosted vision-language evaluator, BYO Isaac RSL-RL PPO, Isaac gold evaluation, and
 Rerun/MCAP finalization. Stage 12 is intentionally an external `SEAM`; it is
 recorded as such and is never reported as `WORKS`.
 
 The outer and inner loops are ordinary workflow loops. Named `{{loop.*}}`
 tokens scope iteration artifacts, while the standard decision artifact controls
-the outer gate. The reduced merge proof sets both bounds to one and disables
-early exit; higher iteration counts are a post-merge efficacy choice.
+the outer gate. Production defaults allow three inner iterations per outer
+iteration and three outer iterations, with early exit after the strict quality
+threshold passes. Reduced integration runs prove orchestration only; they do
+not qualify policy efficacy.
+
+Stage 8 uses the canonical hosted evaluator, MiniMaxAI/MiniMax-M3 on Token
+Factory; its results retain that model identity. Stage 3 separately performs
+real Cosmos3-Nano generation. A Cosmos3 reasoning backend is not selectable in
+the canonical workflow: it requires separate implementation and evaluator-contract
+validation. See the
+[execution guide](../workbench/guides/sim2real-workflow.md) for model access,
+concurrency, full-frame evaluation, and verified per-rollout resume receipts.
 
 ## Artifact and restart contract
 
@@ -26,8 +36,10 @@ Every stage consumes explicit S3 URIs and publishes an immutable result plus a
 a content-addressed copy under `components/history/stage_XX/<sha256>.json`.
 Records attest the source SHA, workflow-owned image digest, input/output URIs,
 and GPU evidence where applicable. Train, validation, and gold paths remain
-disjoint; checkpoint selection records the exact checkpoint URI, SHA-256, and
-training iteration. Gold reports retain their exact render prefix.
+disjoint; the native trainer stream-measures SHA-256 and byte size for every
+first, periodic, and final checkpoint candidate. Selection records that exact
+URI, digest, byte size, and training iteration; Gold reloads the same measured
+bytes. Gold reports retain their exact render prefix.
 
 The standard workflow runtime persists its ledger at
 `<run-prefix>/npa-workflow/runtime.json`. On `--resume` it adopts an in-flight

@@ -204,21 +204,26 @@ def _metadata(source):
     }
 
 
-def test_publication_preserves_raw_output_and_publishes_corrected_video(padded):
+@pytest.mark.parametrize("engine", [workflow.ENGINE, "nebius-stream"])
+def test_publication_preserves_raw_output_and_publishes_corrected_video(padded, engine):
     source, raw, _, _ = padded
     storage = _Storage()
     root = "s3://example-bucket/output/"
+    result = {"output_path": str(raw)}
+    if engine == "nebius-stream":
+        result["endpoint_execution"] = {"job_id": "job-synthetic", "engine": engine}
     manifest = workflow._publish_variant(
-        result={"output_path": str(raw)},
+        result=result,
         output_uri=root,
         clip="variant-0000",
         variables={"lighting": "daylight"},
-        metadata=_metadata(source),
+        metadata={**_metadata(source), "engine": engine},
         storage=storage,
         source_video=source,
     )
     base = root + "variant-0000/"
     metadata = json.loads(storage.objects[base + "metadata.json"])
+    assert metadata["engine"] == engine
     assert storage.objects[base + "raw_model_video.mp4"] == raw.read_bytes()
     assert storage.objects[base + "augmented_video.mp4"] != raw.read_bytes()
     assert (

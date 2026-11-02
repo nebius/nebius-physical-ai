@@ -7,11 +7,51 @@ spend zero tokens and touch no infra/GPU.
 from __future__ import annotations
 
 import json
+from pathlib import Path
+import subprocess
+import sys
 
 import pytest
 
 from npa.cli import agent_actions as A
 from npa.cli.agent_payloads import tool_catalog_payload
+
+
+def test_groot_help_does_not_load_unrelated_arena_dependencies(monkeypatch) -> None:
+    """GR00T's minimal CLI must not import another tool's runtime dependencies."""
+    monkeypatch.setenv("NPA_SKIP_EAGER_IMPORTS", "1")
+    monkeypatch.setenv("NPA_LIGHT_WORKBENCH_TOOL", "groot")
+    source = Path(__file__).resolve().parents[3] / "npa/src"
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-I",
+            "-c",
+            """
+import importlib.abc
+import sys
+
+class BlockArena(importlib.abc.MetaPathFinder):
+    def find_spec(self, name, *args):
+        if name in {'tomllib', 'tomli'} or name.startswith('npa.workbench.isaac_arena'):
+            raise ModuleNotFoundError('unrelated Arena dependency loaded', name=name)
+
+sys.path.insert(0, sys.argv.pop(1))
+sys.meta_path.insert(0, BlockArena())
+from npa.cli.entry import main
+main()
+""",
+            str(source),
+            "workbench",
+            "groot",
+            "finetune",
+            "--help",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "finetune" in result.stdout
 
 
 def _completion(obj: dict) -> dict:

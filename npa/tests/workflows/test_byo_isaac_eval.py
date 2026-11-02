@@ -5,6 +5,7 @@ from __future__ import annotations
 import ast
 import hashlib
 import json
+import runpy
 from pathlib import Path
 import types
 
@@ -18,6 +19,42 @@ from npa.workflows.sim2real.isaac_job_payload import decode_compressed_bash_args
 def _manifest_script(manifest):
     container = manifest["spec"]["template"]["spec"]["containers"][0]
     return decode_compressed_bash_args(container["args"])
+
+
+def test_native_camera_synchronization_failure_rejects_evaluation(
+    monkeypatch, tmp_path
+):
+    failure = RuntimeError("missing declared camera object")
+
+    class Storage:
+        def download_file(self, *args):
+            raise failure
+
+    monkeypatch.setattr("boto3.client", lambda *args, **kwargs: Storage())
+    import inspect
+
+    tree = ast.parse(inspect.getsource(ev.run_isaac_eval_job))
+    block = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Try)
+        and any(
+            isinstance(item, ast.Attribute) and item.attr == "download_file"
+            for item in ast.walk(node)
+        )
+    )
+    namespace = {
+        "renders_prefix": "s3://bucket/renders",
+        "_env": lambda name: "",
+        "episodes": [{"env_id": "env-0001", "frames": ["camera.png"]}],
+        "_RENDERS_LOCAL_DIR": tmp_path,
+        "safe_s3_download_target": ev.safe_s3_download_target,
+    }
+    script = tmp_path / "camera-sync.py"
+    script.write_text(ast.unparse(block))
+    with pytest.raises(RuntimeError, match="camera synchronization failed") as raised:
+        runpy.run_path(str(script), init_globals=namespace)
+    assert raised.value.__cause__ is failure
 
 
 def test_extract_checkpoint_uri_from_inner_evidence():
@@ -366,6 +403,8 @@ def test_publish_eval_scenarios_is_content_addressed():
 
 def test_run_isaac_eval_job_uses_outer_iteration_artifact_tag(monkeypatch):
     captured: dict[str, str] = {}
+    # This contract exercises job tags; earlier evaluations may retain a camera root.
+    monkeypatch.setattr(ev, "_RENDERS_LOCAL_DIR", None)
 
     def fake_build(**kwargs):
         captured["job_name"] = kwargs["job_name"]

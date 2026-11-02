@@ -1,9 +1,10 @@
-"""Catch unsupported stdlib calls before the overnight interpreter audit."""
+"""Catch Python 3.12-only stdlib calls before the interpreter audit."""
 
 import ast
 import hashlib
 from pathlib import Path
 import subprocess
+import tomllib
 
 import pytest
 
@@ -23,27 +24,29 @@ PRODUCTION_ROOTS = (
 
 def _unsupported_api(node):
     if isinstance(node, ast.ImportFrom):
-        unsupported = {"datetime": "UTC", "hashlib": "file_digest"}
+        unsupported = {
+            "itertools": "batched",
+            "typing": "override",
+        }
         return any(alias.name == unsupported.get(node.module) for alias in node.names)
     if isinstance(node, ast.Attribute):
-        if node.attr == "add_note":
-            return True
         return isinstance(node.value, ast.Name) and (node.value.id, node.attr) in {
-            ("hashlib", "file_digest"),
-            ("datetime", "UTC"),
+            ("asyncio", "eager_task_factory"),
+            ("itertools", "batched"),
+            ("typing", "override"),
         }
     return False
 
 
-def test_production_code_keeps_python310_stdlib_compatibility():
-    """Reject known unsupported stdlib APIs across shipped source and scripts.
+def test_production_code_keeps_python311_stdlib_compatibility():
+    """Reject known Python 3.12-only stdlib APIs across shipped source and scripts.
 
     Args:
         None.
     Returns:
         None.
     Raises:
-        AssertionError: Production code requires a Python 3.11-only API.
+        AssertionError: Production code requires a Python 3.12-only API.
     """
     paths = subprocess.run(
         ["git", "ls-files", "-z", "--", "*.py"],
@@ -57,30 +60,36 @@ def test_production_code_keeps_python310_stdlib_compatibility():
         if not name.startswith(PRODUCTION_ROOTS):
             continue
         source = (ROOT / name).read_text()
-        if not any(token in source for token in ("file_digest", "UTC", "add_note")):
+        if not any(
+            token in source
+            for token in ("batched", "eager_task_factory", "typing import override")
+        ):
             continue
         for node in ast.walk(ast.parse(source)):
             if _unsupported_api(node):
                 violations.append(f"{name}:{node.lineno}")
-    assert not violations, "Python 3.11-only stdlib APIs: " + ", ".join(violations)
+    assert not violations, "Python 3.12-only stdlib APIs: " + ", ".join(violations)
+
+
+def test_package_metadata_declares_the_python311_floor():
+    """Keep the package metadata and its compatibility guard on one floor."""
+
+    pyproject = tomllib.loads((ROOT / "npa/pyproject.toml").read_text())
+    assert pyproject["project"]["requires-python"] == ">=3.11"
 
 
 @pytest.mark.parametrize("error_type", [RuntimeError, KeyboardInterrupt, SystemExit])
-@pytest.mark.parametrize("native_notes", [False, True])
-def test_secondary_failure_notes_preserve_original_error(error_type, native_notes):
+def test_secondary_failure_notes_preserve_original_error(error_type):
     """Retain all secondary notes and the exact original exception.
 
     Args:
         error_type: Failure or interruption class.
-        native_notes: Whether the native note method remains available.
     Returns:
         None.
     Raises:
         AssertionError: Notes disappear or the authoritative failure changes.
     """
     error = error_type("original failure")
-    if not native_notes:
-        error.add_note = None
     add_exception_note(error, "cleanup failed")
     add_exception_note(error, "receipt failed")
     assert error.__notes__ == ["cleanup failed", "receipt failed"]

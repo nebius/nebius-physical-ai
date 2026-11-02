@@ -491,7 +491,7 @@ def artifact_uris_for_run(
         "task_contract": f"{root}/stage_02_assets/task-contract.json",
         "stage_02_assets": f"{root}/stage_02_assets/consumed_scene_spec.json",
         "stage_02_assets_stub": f"{root}/stage_02_assets/consumed_scene_spec.json",
-        "stage_03_augment": f"{root}/augment/cosmos2-transfer-result.json",
+        "stage_03_augment": f"{root}/augment/cosmos3-transfer-result.json",
         "stage_04_envs_raw": f"{root}/envs/raw/",
         "curation_manifest": f"{root}/envs/manifest/curation-manifest.json",
         "scenario_split_manifest": f"{root}/envs/manifest/split-manifest.json",

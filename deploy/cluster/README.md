@@ -97,6 +97,35 @@ npa cluster up --project "$project_alias" --terraform-dir deploy/cluster \
 The reservation uses strict placement. `TF_VAR_capacity_block_group` is the
 equivalent environment setting; an explicit CLI flag takes precedence.
 
+For RTX rendering, add `--gpu-workload-profile rtx-rendering`. Both the shared
+backend and this direct wrapper forward the exact platform and preset to the
+GPU Operator. Its RTX toolkit configuration reads the containerd file with
+`RUNTIME_CONFIG_SOURCE=file`, preserving the on-disk config schema when
+containerd's command output would migrate it to a newer version.
+
+The default SkyPilot smoke requires a Linux operator host with `/proc` for
+process ownership verification. NPA checks this before provisioning. On another
+host, use `--skip-sky-smoke` for provisioning and run SkyPilot validation from
+the Linux operator host before submitting workflows; the GPU, CUDA, and graphics
+validation gates still run.
+`provision-if-absent` makes the same early check when `--accelerator` or
+`--sky-smoke` requests SkyPilot setup. Its `--dry-run` plans and `--skip-k8s`
+storage operations remain usable on other hosts.
+
+The direct RTX release has a read-only live acceptance test. Keep its JSON
+configuration outside Git with `terraform_state_path`, `kubeconfig_path`,
+`kube_context`, `platform`, `preset`, and `gpu_nodes` for the owned cluster:
+
+```bash
+NPA_INTEGRATION_E2E=1 \
+NPA_CLUSTER_RTX_TOOLKIT_LIVE_CONFIG="$private_verification_config" \
+  npa/.venv/bin/python -m pytest \
+    npa/tests/e2e/test_cluster_rtx_toolkit_live.py -q
+```
+
+It verifies the direct release's configuration revision, the exact RTX driver
+selector, Ready GPU nodes, and Ready toolkit pods using the file schema source.
+
 ## Change the topology
 
 > **Security note: the Kubernetes API endpoint is public by default.**
@@ -115,10 +144,34 @@ equivalent environment setting; an explicit CLI flag takes precedence.
 | New shared filesystem | Set `enable_filestore = true` and its size; requires Shared Filesystem SSD quota and the approved CSI chart repository |
 | Existing shared filesystem | Set `existing_filestore`; it implies filesystem enablement and does not create a second filesystem |
 
-Shared filesystem enablement promotes its CSI StorageClass to the cluster
-default. Otherwise, platform block storage remains the default. See
-[filesystem verification](../../docs/fleet-storage-verification.md) before
-using a shared volume for multi-node work.
+Shared filesystem enablement keeps its CSI StorageClass explicit; platform
+block storage remains the default for ordinary PVCs. Set
+`filesystem_csi_make_default_storage_class = true` only when a workload
+deliberately requires filesystem-backed ordinary claims. See [filesystem
+verification](../../docs/fleet-storage-verification.md) before using a shared
+volume for multi-node work.
+
+### Existing direct-installation storage defaults
+
+Direct Terraform installations created before this switch made the filesystem
+StorageClass the default. When that installation has an unambiguous local state
+whose cluster name and project match the requested configuration, `npa cluster
+up` preserves the filesystem default in both its Terraform apply and readiness
+check. For a new direct apply, NPA writes an identity-bound resolved-policy
+receipt beside the Terraform state before apply, so a resumed flag-omitting
+reconcile retains its original compute/block choice rather than treating its
+new state as legacy. The read-only policy command never writes that receipt.
+An explicit `filesystem_csi_make_default_storage_class` setting always wins.
+
+If local state or a resolved-policy receipt is malformed, ambiguous, or belongs
+to another cluster, NPA does not guess or apply a default change. The same is
+true when NPA knows an adopted cluster but has no recorded StorageClass policy.
+Inspect the read-only recovery result, then repair or migrate the exact owned
+installation before retrying:
+
+```bash
+npa cluster storage-default-policy --terraform-dir deploy/cluster --json
+```
 
 ## GPU health and driver changes
 
@@ -137,7 +190,7 @@ common failures.
 
 ## Terraform reproducibility
 
-The vendored recipe is based on `main-v2026-05-25` with local reservation,
+The vendored recipe is based on `main-v2026-10-12` with local reservation,
 managed-driver, spot-pricing, and node-group patches. Preemptible GPU nodes set
 `follows_spot_price = {}` as required by the
 [Nebius spot API](https://docs.nebius.com/compute/virtual-machines/preemptible);
@@ -147,6 +200,24 @@ on AMD64 and ARM64. NPA checks the SHA-bound platform metadata, initializes with
 `-lockfile=readonly`, and stores provider caches outside this source directory.
 On a lock mismatch, intentionally regenerate and review the provider lock;
 removing it would discard the verification contract.
+
+### Existing-state provider migration
+
+This wrapper now uses the official `registry.terraform.io/nebius/nebius`
+provider address. A pre-refresh, operator-owned Terraform state can still record
+the retired regional provider address. Ordinary `npa cluster up` and `down`
+detect that state and stop before apply or destroy. First inspect the exact
+installation with NPA's machine-readable, no-rewrite plan:
+
+```bash
+npa cluster provider-migration --terraform-dir deploy/cluster --json
+npa cluster provider-migration --terraform-dir deploy/cluster --execute --json
+```
+
+`--execute` is an intentional state-address migration boundary. It uses the
+same backend/workspace as the owned installation and does not create, replace,
+or delete cloud resources. Do not run it against shared or unverified state.
+After a completed result, review a no-apply Terraform plan before reconciliation.
 
 ### Provider request deadlines
 

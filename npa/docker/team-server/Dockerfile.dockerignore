@@ -17,3 +17,4 @@
 **/*.pem
 **/*.key
 **/.venv/
+**/.venv-local/

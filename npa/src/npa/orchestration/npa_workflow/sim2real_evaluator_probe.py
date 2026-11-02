@@ -5,40 +5,77 @@ from __future__ import annotations
 import textwrap
 
 
-def render_evaluator_probe(model: str) -> str:
-    """Check the selected evaluator in the image before the first GPU wave.
+def _training_compatibility_probe() -> str:
+    """Require transport training and complete artifact publication in the image."""
+    return textwrap.dedent("""\
+        from npa.workflows.sim2real.byo_isaac_trainer import _RESUME_PHASES
+        from npa.workflows.sim2real.isaac_job_io import upload_capture
+        from npa.workflows.sim2real.isaac_franka_bootstrap import bootstrap_franka_actor
+        if 'transport' not in _RESUME_PHASES or not callable(upload_capture):
+            raise RuntimeError('image lacks goal transport and complete camera publication')
+        if not callable(bootstrap_franka_actor):
+            raise RuntimeError('image lacks native Franka training bootstrap')
+        """)
+
+
+def _evaluator_contract_probe(model: str, endpoint: str) -> str:
+    """Verify the selected model, endpoint parser, and fail-closed boundary."""
+    return textwrap.dedent(f"""\
+        from npa.workbench.cosmos.reason import hosted_rollout_model_family
+        from npa.workflows.sim2real.stage9_evaluator import (
+            EvaluatorContractError, validate_hosted_evaluator,
+        )
+        family = hosted_rollout_model_family({model!r})
+        from npa.workflows.sim2real.hosted_evaluation import (
+            evaluate_rollouts, validate_token_factory_endpoint,
+        )
+        from npa.workflows.sim2real.workflow_stage import build_parser
+        options = build_parser().parse_args([
+            '--stage', '8', '--root-uri', 's3://probe/run', '--run-id', 'probe',
+            '--reason-model', {model!r}, '--token-factory-base-url', {endpoint!r},
+            '--evaluation-concurrency', '8', '--evaluation-max-frames', '0',
+        ])
+        if (not callable(evaluate_rollouts) or
+                options.evaluation_concurrency != 8 or
+                options.evaluation_max_frames != 0 or
+                options.reason_model != {model!r} or
+                validate_token_factory_endpoint(options.token_factory_base_url) != {endpoint!r}):
+            raise RuntimeError('image lacks exact concurrent hosted rollout evaluation')
+        try:
+            validate_hosted_evaluator(
+                stage7={{}}, evaluator={{}}, stage8_record={{}},
+                expected_model={model!r}, expected_source_sha=actual,
+                expected_token_factory_endpoint={endpoint!r},
+                evaluator_uri='', outer_iteration=0, inner_iteration=0,
+            )
+        except EvaluatorContractError:
+            pass
+        else:
+            raise RuntimeError('evaluator accepted an empty Stage 8 boundary')
+        """)
+
+
+def render_evaluator_probe(model: str, endpoint: str) -> str:
+    """Check the selected evaluator and pipeline before the first GPU wave.
 
     Args:
         model: Exact operator-selected hosted model ID.
-
+        endpoint: Exact credential-free Token Factory endpoint configured for it.
     Returns:
         Python source executed by the image's baked NPA interpreter.
-
     Raises:
         None.
     """
-    return textwrap.dedent(f"""\
-        try:
-            from npa.workbench.cosmos.reason import hosted_rollout_model_family
-            from npa.workflows.sim2real.stage9_evaluator import (
-                EvaluatorContractError, validate_hosted_evaluator,
-            )
-            family = hosted_rollout_model_family({model!r})
-            try:
-                validate_hosted_evaluator(
-                    stage7={{}}, evaluator={{}}, stage8_record={{}},
-                    expected_model={model!r}, expected_source_sha=actual,
-                    evaluator_uri='', outer_iteration=0, inner_iteration=0,
-                )
-            except EvaluatorContractError:
-                pass
-            else:
-                raise RuntimeError('evaluator accepted an empty Stage 8 boundary')
+    checks = _training_compatibility_probe() + _evaluator_contract_probe(
+        model, endpoint
+    )
+    failure = textwrap.dedent(f"""\
         except (ImportError, ValueError, RuntimeError, TypeError) as exc:
             raise SystemExit(
                 'Sim2Real evaluator image is incompatible with the selected model '
                 + {model!r} + ': ' + str(exc) + '. Select a coherent image set '
                 'with the current Stage 8/9 evaluator contract and use a new run ID.'
             ) from exc
-        print('baked Sim2Real evaluator verified', {model!r}, family)
+        print('baked Sim2Real evaluator verified', {model!r}, family, {endpoint!r})
         """)
+    return "try:\n" + textwrap.indent(checks, "    ") + failure

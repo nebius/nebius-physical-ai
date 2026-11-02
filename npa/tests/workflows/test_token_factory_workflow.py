@@ -27,6 +27,10 @@ from npa.orchestration.npa_workflow.spec import load_spec
 
 ROOT = Path(__file__).resolve().parents[3]
 SPECS = ROOT / "workflows" / "testing"
+VIDEO_SWEEP_GUIDE = ROOT / "workflows" / "guides" / "video-variant-sweep.md"
+PHYSICAL_REASONING_CHALLENGE = (
+    ROOT / "docs" / "workbench" / "cookbooks" / "physical-reasoning-challenge.md"
+)
 
 
 def test_robot_sdg_installs_simulator_and_headless_rendering():
@@ -191,6 +195,21 @@ def test_cosmos_reason_spec_preserves_default_and_explicit_model(
         assert DEFAULT_REASONER_MODEL == "MiniMaxAI/MiniMax-M3"
     else:
         assert step.argv[step.argv.index("--model") + 1] == model
+
+
+def test_current_token_factory_guides_do_not_present_retired_cosmos_as_default() -> (
+    None
+):
+    sweep = VIDEO_SWEEP_GUIDE.read_text(encoding="utf-8")
+    challenge = PHYSICAL_REASONING_CHALLENGE.read_text(encoding="utf-8")
+
+    assert "current hosted reference reasoner is `MiniMaxAI/MiniMax-M3`" in sweep
+    assert "reference reasoner is `nvidia/Cosmos3-Super-Reasoner`" not in sweep
+    assert "# Physical Reasoning Challenge (Token Factory + MiniMax-M3)" in challenge
+    assert "`MiniMaxAI/MiniMax-M3`" in challenge
+    assert "public `nvidia/Cosmos3-Super-Reasoner` route was retired" in challenge
+    assert "npa workbench workflow submit" in challenge
+    assert "sky jobs launch" not in challenge
 
 
 def test_vlm_eval_token_factory_spec_uses_the_hosted_api_backend() -> None:

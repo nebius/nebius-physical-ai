@@ -377,7 +377,12 @@ def test_governed_matrix_cases_are_render_only_with_exact_plan_pins() -> None:
     registry = "registry.example.invalid/matrix"
     digest = "sha256:" + "0" * 64
     for case in (case for case in SUBMIT_LIVE_MATRIX if case.spec in governed):
-        assert case.plan_only and case.rotation_skip, case.spec
+        if case.spec == "sim2real.yaml":
+            # Sim2Real's matrix owns a live runtime tier; this helper supplies
+            # inert pins solely while rendering its matrix plan.
+            assert case.runtime and not case.plan_only
+        else:
+            assert case.plan_only and case.rotation_skip, case.spec
         path = resolve_npa_workflow_spec(case.spec)
         assert path is not None, case.spec
         supplied = dict(plan_only_config_vars(case, registry))

@@ -28,6 +28,25 @@ matching source inputs and 36 independently verified provenance/SBOM signatures.
 Supported release defaults still select their previously qualified digests;
 the GPU chart describes those release digests. MJLab is outside this refresh.
 
+The client now requires Python 3.11+ and Pillow 13. Source dependency repairs
+update GitPython, certifi, virtualenv, and their affected locks; they do not
+establish a rebuilt or qualified image. Genesis, Cosmos, and GR00T use isolated vendor environments with a source
+launcher for their NPA adapters. Their current source recipes use Python 3.12
+and Pillow 13 alongside the separately pinned runtime dependencies. These source changes require independent
+image rebuild, byte scanning, and capability validation before release promotion.
+
+The October 27 source dependency repair advances maintained Hydra Core inputs
+and their artifact hashes to 1.3.8, including the Libero runtime identity and
+the Flex-Pi source dependency patch. It addresses
+[GHSA-wf6j-7hvr-gr93](https://github.com/advisories/GHSA-wf6j-7hvr-gr93).
+These source updates add no published image, change no supported image digest,
+and establish no new GPU qualification; the retained release evidence below
+continues to apply to its recorded bytes.
+The shared Jammy bootstrap also pins the available Python 3.12.16 Debian
+packages by SHA-256 after the previous package version left the upstream pool.
+LeRobot's post-install interpreter check requires that same 3.12.16 release;
+the build guard is tested against the pinned release and neighboring patch versions.
+
 [Marble workflows](marble.md) reuse the existing EnvGen CUDA/compiler image
 for gsplat and Warp consumers, with pinned dependencies installed at runtime.
 The manufacturing pallet experiment additionally reuses the existing
@@ -161,8 +180,8 @@ corresponding-source closure exists. Runtime fetching later changes delivery
 only, not use, derivative, output, or service rights. No accepted release,
 anonymous pull, or current GPU capability is claimed.
 
-LeRobot 0.6.0 is selectable package support with an accepted optional public
-image. The resolver uses the additive `0.6.0-d6-extras-20260912` tag and exact
+LeRobot 0.6.0 is selectable package support with a historical optional public
+image pin. Its version manifest records the additive `0.6.0-d6-extras-20260912` tag and exact
 digest recorded in `lerobot_version_manifest.json`; the `0.6.0` tag is only a
 compatibility alias for those same bytes. The rebuilt image passed the standard
 publication gates plus the checked-in Blackwell validator and real
@@ -170,10 +189,28 @@ publication gates plus the checked-in Blackwell validator and real
 0.5.1 as the current default or add a second `lerobot` row to the default public
 release plan.
 
+Automatic public-image selection currently rejects both versions under
+LeRobot's tool-level quarantine. Optional 0.6.0 requires independent current
+byte and real ACT train/eval qualification before version-scoped consumption
+can be restored. Its Dockerfile now removes the exact reviewed inert
+scikit-image recipe containing a historical token in the installing layer,
+preserving executable behavior and recording the correction. Pip caches are
+disabled so the original dependency archive is not retained in the image.
+This source repair does not accept a new image or lift either version's
+quarantine.
+
+A fresh generic 0.5.1 rebuild subsequently failed its independent installed
+dependency and native default camera-decoder checks. Its narrow CPU ACT
+optimizer/checkpoint result does not qualify the image. See the
+[exact-image failure and compatible-closure repair](validation/lerobot-default-native-closure-20261006.md);
+a later candidate passed its scoped publication and native CPU gates but remains
+quarantined pending default/GPU capability qualification. It does not add a
+public release row or change the default.
+
 The four-wave [LeRobot transfer experiment](guides/lerobot-transfer.md) selects
 that optional 0.6.0 image by digest and stages its adapters from the checkout.
 It uses the image's non-root runtime user and baked SkyPilot prerequisites;
-no new image publication is required for the experiment.
+the exact selected bytes still require current operator qualification.
 
 SAM 3.1 has a [public GHCR development image](https://github.com/orgs/nebius/packages/container/package/nebius-physical-ai%2Fnpa-sam3).
 Its immutable tag is `dev-f287041cffa5a703270413e1746348dccb8e7591`;
@@ -182,6 +219,17 @@ the independently pulled digest, both verified attestations and clean layer scan
 Use the [runtime-fetch instructions](../../npa/docker/workbench/sam3/README.md).
 Gated checkpoint access and real GPU qualification remain pending; this does
 not replace the accepted SAM 2.1 release or add a supported release row.
+
+The NPA application now requires Python 3.11 or newer and Pillow 13. Source
+recipes that install NPA use compatible interpreters and refreshed dependency
+locks; the Jammy Cosmos, Genesis, and GR00T environments use Python 3.12.
+The security overlay also updates GitPython to 3.2.1, including hash-bound
+runtime-fetch inputs and their matching license records. These source changes
+do not qualify rebuilt GPU artifacts or replace the
+accepted digests below. In particular, the Cosmos CP312 custom-kernel tuple
+requires fresh B200 kernel and checkpoint-backed inference evidence before
+release promotion. Standalone vendor workers that do not install NPA retain
+their separately pinned Python/CUDA compatibility contracts.
 
 ## 2026-09-17 flex-pi r2 publication
 
@@ -433,21 +481,38 @@ the public layers contain none of those bytes. The exact controller digest also
 passed a real Kubernetes rootless-bootstrap pod start with UID 1000,
 runtime-generated SSH host keys, ready `sshd`, `rsync`, and forwarded worker
 arguments before cleanup. This is a coherent image and capability release, not
-a claim that the complete 14-stage workflow ran; the canonical run was blocked
-before launch because the required hosted Cosmos3 model was stopped upstream.
+evidence that the complete 14-stage workflow ran. In the historical attempt
+covered here, launch did not begin because the required hosted Cosmos3 model
+was stopped upstream.
 
 This historical set predates the current MiniMax-compatible Stage 8/9 evaluator
-contract. It remains anonymously pullable, but cannot run the current canonical
-Sim2Real workflow with its MiniMax-M3 default. Select a newer coherent image set
-for that workflow; the [operator runbook](guides/sim2real-workflow.md#5-buildpush-once-and-prove-the-exact-image-pulls)
+contract. Although anonymously pullable, this historical image set is
+incompatible with the current canonical workflow when that workflow uses its
+MiniMax-M3 default. Select a newer coherent image set for that configuration;
+the [operator runbook](guides/sim2real-workflow.md#5-buildpush-once-and-prove-the-exact-image-pulls)
 explains explicit Cosmos 3 selection and the baked evaluator compatibility check.
 
-Current EnvGen build sources replace the pinned Genesis parent's GitPython
-3.1.57 with 3.1.62 before flattening the published filesystem. This addresses
-the GitPython security findings that blocked a subsequent development build;
-see the [upstream security releases](https://gitpython.readthedocs.io/en/latest/changes.html).
-The shared Genesis requirements own this installation pin. Regression checks
-require EnvGen's installed-version assertion to match that shared pin.
+The current EnvGen candidate deliberately no longer derives from the Genesis
+runtime, so GitPython and the Genesis/scikit-image correction are not part of
+its closure. It removes the inherited NPA tree, creates a dedicated
+uv-managed CPython 3.12.14 NPA-only scenario-record environment with Pillow 13
+and fsspec 2026.6.0, and rejects Genesis, LeRobot, datasets, and Torch. The
+Apache-2.0 OR MIT `uv` build helper is removed before flattening; the retained
+interpreter is PSF-2.0. Its new source-attested digest still requires complete
+byte/security scans and a current role evaluation; the preceding Genesis-based
+release does not supply that evidence.
+
+The canonical EnvGen recipe now selects the October 9 Ubuntu snapshot and
+`linux-libc-dev=5.15.0-198.208`, replacing the inherited headers that failed
+the fixed-critical publication gate. The Isaac 3 OSS dependency closure and
+Cosmos Transfer's hash-pinned security overlay select PyJWT 2.15.1, which includes the
+[CVE-2026-102268 fix](https://github.com/jpadilla/pyjwt/security/advisories/GHSA-ffc3-869f-jxw9)
+and the subsequent supported [2.15 security updates](https://github.com/jpadilla/pyjwt/releases).
+These source changes require new exact-image scans and runtime qualification;
+they do not retroactively qualify older image digests.
+The shipped Isaac functional smoke also applies the canonical exact stock-Franka
+asset remap before creating its environment. A rebuilt image must pass this
+unmodified smoke on the target RTX GPU; source inspection does not qualify it.
 Historical image digests retain their original dependency bytes. This source
 update does not change the accepted release pins above.
 
@@ -593,22 +658,20 @@ required operator images from legacy automatic public-image selection.
 
 The Ray Serve Dockerfile now derives from PAIDF's repaired Cosmos3 digest rather
 than retaining the withdrawn parent's SSH-key layers. The Isaac 3 OSS dependency
-lock selects PyJWT 2.15.0, while Transfer's hash-verified security override pins
-PyJWT 2.15.1; both carry the signature-verification fix that blocked rebuilt
+lock and Transfer's hash-verified security override both select PyJWT 2.15.1,
+which fixes the critical signature-verification issue that blocked their rebuilt
 image scans. The controller and viewer use the immutable 2026-10-02 Debian
 snapshot with fixed Perl, GLib and Mbed TLS, and both upgrade inherited packages.
-EnvGen uses the 2026-10-09 Ubuntu snapshot and Loop Eval uses the 2026-10-02
-Ubuntu snapshot; both pin the fixed `linux-libc-dev` 5.15.0-198.208 package.
-EnvGen also applies cuRobo's
-existing exact-source correction to an inert scikit-image recipe containing a
-historical token. The correction preserves executable behavior and removes
-the original source and bytecode before flattening the sanitized filesystem;
-derivatives must be rebuilt from that corrected parent to discard the old
-bytes from their layers. These are source repairs:
+EnvGen uses the 2026-10-09 Ubuntu snapshot and the legacy Loop Eval recipe
+uses the 2026-10-02 Ubuntu snapshot; both pin the fixed `linux-libc-dev`
+5.15.0-198.208 package. The dedicated EnvGen role removes the complete inherited
+NPA tree and creates its own NPA-only Python 3.12 environment, so its flattened
+runtime contains neither the Genesis nor LeRobot dependency closure and does not
+modify the historical scikit-image recipe. The cuRobo source correction remains
+scoped to images that actually install that package. These are source repairs:
 newly built images must still pass all publication scans and real capability
-validation before any public default is restored. The affected historical
-releases remain quarantined; this source repair does not change other published
-defaults.
+validation before any public default is restored. Historical releases remain
+quarantined; this source repair does not change other published defaults.
 
 The scan-to-policy workflow selects repaired immutable development candidates
 for Isaac Lab and SONIC, and the GR00T training workflow selects a development
@@ -665,7 +728,7 @@ original image identities.
 | Cosmos Transfer 2.5 | `npa-cosmos2-transfer` | `2.5.1-sim2real-coherent-20260904` | 2026-09-04 | Cosmos Transfer 2.5 Sim2Real video augmentation, built from source at an immutable commit with hash-locked dependencies. Gated weights and the pinned guardrail tokenizer data are fetched at runtime with `HF_TOKEN`; the NLTK-safe cache materialization keeps guardrails enabled, and baked-byte scans remain a release gate. |
 | Rerun 0.31.4 | `npa-rerun-viewer` | `0.31.4-sim2real-coherent-20260904` | 2026-09-04 | Published non-root `ubuntu` SkyPilot worker and Rerun viewer/server on ports 9876/9090 for `.rrd` robotics traces. It includes the attested bootstrap contract and exact-source Sim2Real Stage 14 runtime, and bakes no models, datasets, credentials, or runtime caches. The coherent release converted an actual three-sample robot joint trace, reopened its RRD entity through the CLI, and served/read the artifact over HTTP. |
 | Sim2Real Controller 0.1.2 | `npa-sim2real-control` | `0.1.2-sim2real-coherent-20260904` | 2026-09-04 | Non-root CPU controller containing the canonical 14-stage orchestration capability. The coherent release expanded and validated both the checkpoint-promotion and loop-back decision branches; it contains no model weights, datasets, credentials, or runtime caches. |
-| Sim2Real EnvGen 0.1.2 | `npa-envgen` | `0.1.2-sim2real-coherent-20260904` | 2026-09-04 | Generates randomized Sim2Real environments and scenes on the Genesis base. The coherent exact-source release bakes the snapshot-pinned non-root SkyPilot Kubernetes bootstrap closure (`sudo`, SSH, and rsync) and was validated through real environment generation plus a Genesis CUDA physics step. On 2026-09-28, the accepted digest `sha256:08eb75118f5a04194d33a60308212db7706dd9c339d74afc5471a58608bf0422` resolved anonymously and passed a fresh UID 1000 readability probe: `/opt/npa/compat` was `0755`, `tetgen.py` and `npa-exact-source.pth` were `0644`, and both the compatibility shim and exact NPA source imported with `PYTHONPATH` removed. Current source pins those modes explicitly rather than depending on checkout permissions. It is built from `sim2real-envgen/Dockerfile`. |
+| Sim2Real EnvGen 0.1.2 | `npa-envgen` | `0.1.2-sim2real-coherent-20260904` | 2026-09-04 | **Historical predecessor only.** That Genesis-based release baked the snapshot-pinned non-root SkyPilot Kubernetes bootstrap closure and was validated through environment generation plus a Genesis CUDA step. Its accepted digest and UID-1000 readability probe remain historical evidence, not evidence for current source. The current `sim2real-envgen/Dockerfile` creates a source-attested Python 3.12 NPA-only scenario-record runtime with Pillow 13/fsspec 2026.6.0 and no Genesis/LeRobot stack. The [current development image-set receipt](validation/sim2real-development-image-set-20261028.md) records its public immutable pin and source/image audit; each canonical run verifies its own target and measured policy result. |
 | BDD100K Detection Training | `npa-detection-training` | `runtime-v1-20260905` | 2026-09-05 | Authenticated object-detector train/eval service on port 8790 with token-free readiness, explicit label maps, and persistent run/artifact discovery. |
 | Enactic OpenArm | `npa-openarm` | `2.2.0-isaac0.1.0-rtfetch` | 2026-09-15 | OpenArm v2 bimanual MuJoCo simulation plus upstream OpenArm Isaac Lab reach rollout and RSL-RL training. Apache-2.0 OpenArm source and simulator assets are baked; Isaac Sim/Lab are exact runtime fetches after the operator's EULA decision. The exact release digest passed byte/supply-chain gates and a complete RTX PRO 6000 dual-simulator workflow with independently checked traces, rendered video, checkpoint, and qualification report. See [OpenArm](openarm.md). |
 | FiftyOne 1.21.0 (Voxel51) | `npa-fiftyone` | `1.21.0-skypilot-v1-20260915` | 2026-09-15 | CPU dataset curation and loopback visualization on port 5151, including real Brain uniqueness, similarity, and embedding visualization. The non-root SkyPilot worker includes MongoDB 7.0.40 with matching source and notices, and supports the current NPA dependency environment. |
@@ -1049,6 +1112,29 @@ table. The independently rebuilt `sonic-mujoco:0.2.0-runtime` and zero-payload
 `cosmos3-serving:0.2.0-oss` each have their own accepted public-plan row.
 
 ## Verification scope
+
+The [2026-10-18 post-merge development build](https://github.com/nebius/nebius-physical-ai/actions/runs/39153996361)
+failed 19 of 31 image jobs after the source checks passed. Current build sources
+repair FiftyOne's non-root receipt directory, the MJLab/Lyra client dependency
+closure, unnecessary OpenPI/GR00T startup imports, the SONIC snapshot mismatch,
+and the reported header, PyJWT and optional Nsight vulnerability findings.
+Cosmos and Genesis install imageio-ffmpeg from source, omit its wheel-bundled
+executable before committing the dependency layer, and verify system FFmpeg
+with a tiny encode/decode probe during the build.
+These are source repairs; replacement images still require their own complete
+publication checks and functional validation.
+
+These source repairs preserve the newer EnvGen and Isaac Lab parent pins
+already merged into main. Parent build evidence does not establish GPU
+qualification for a new derivative. Supported release tags and their recorded
+digests are unchanged by these repairs.
+
+The same run also stopped cuRobo, SeedVR2, Cosmos3 Ray Serve and Alpamayo at
+payload verification. The failed run retained no Actions artifacts for those
+reports; unavailable reports and credential-pattern matches cannot be treated
+as clean evidence or cleared by a scanner exclusion. These historical refusals
+do not describe the state of newer images. Current accepted releases and their
+independently recorded validations elsewhere in this catalog remain authoritative.
 
 `npa-lyra2:2.0-rtfetch2` promotes the exact scanned development digest that
 completed native reconstruction on one preemptible RTX PRO 6000, with independent

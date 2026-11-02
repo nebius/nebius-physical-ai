@@ -4,6 +4,7 @@ import json
 import subprocess
 import threading
 import time
+import warnings
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Callable
@@ -887,19 +888,21 @@ def test_nebius_requires_binary(mocker) -> None:
         nebius._require_nebius()
 
 
-def test_nebius_warns_once_on_tested_cli_version_mismatch(mocker) -> None:
+def test_nebius_accepts_required_cli_without_warning_and_checks_once(mocker) -> None:
     mocker.patch("shutil.which", return_value="/usr/bin/nebius")
-    mocker.patch("npa.clients.nebius.supported_tool_version", return_value="0.12.254")
+    mocker.patch("npa.clients.nebius.supported_tool_version", return_value="0.12.298")
     mocker.patch("npa.clients.nebius._NEBIUS_VERSION_CHECKED", False)
     run = mocker.patch(
         "subprocess.run",
         return_value=subprocess.CompletedProcess(
-            args=["nebius", "version"], returncode=0, stdout="0.12.227\n", stderr=""
+            args=["nebius", "version"], returncode=0, stdout="0.12.298\n", stderr=""
         ),
     )
 
-    with pytest.warns(RuntimeWarning, match="0.12.227 is tested-compatible"):
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
         assert nebius._require_nebius() == "/usr/bin/nebius"
+    assert not caught
 
     assert nebius._require_nebius() == "/usr/bin/nebius"
     run.assert_called_once_with(
@@ -911,20 +914,24 @@ def test_nebius_warns_once_on_tested_cli_version_mismatch(mocker) -> None:
     )
 
 
-def test_nebius_blocks_untested_cli_version_with_exact_remedy(mocker) -> None:
+@pytest.mark.parametrize("version", ["0.12.227", "0.12.254", "0.13.0"])
+def test_nebius_blocks_unsupported_cli_version_with_exact_remedy(
+    mocker, version
+) -> None:
     mocker.patch("shutil.which", return_value="/usr/bin/nebius")
     mocker.patch("npa.clients.nebius._NEBIUS_VERSION_CHECKED", False)
     mocker.patch(
         "subprocess.run",
         return_value=subprocess.CompletedProcess(
-            args=["nebius", "version"], returncode=0, stdout="0.13.0\n", stderr=""
+            args=["nebius", "version"], returncode=0, stdout=f"{version}\n", stderr=""
         ),
     )
 
-    with pytest.raises(NebiusError, match=r"Unsupported Nebius CLI 0\.13\.0") as caught:
+    with pytest.raises(NebiusError, match="Unsupported Nebius CLI") as caught:
         nebius._require_nebius()
 
-    assert "NEBIUS_CLI_VERSION=0.12.254 bash" in str(caught.value)
+    assert f"Unsupported Nebius CLI {version};" in str(caught.value)
+    assert "NEBIUS_CLI_VERSION=0.12.298 bash" in str(caught.value)
     assert nebius._NEBIUS_VERSION_CHECKED is False
 
 
@@ -940,7 +947,7 @@ def test_nebius_blocks_unverifiable_cli_version_with_remedy(mocker, result) -> N
     mocker.patch("npa.clients.nebius._NEBIUS_VERSION_CHECKED", False)
     mocker.patch("subprocess.run", return_value=result)
 
-    with pytest.raises(NebiusError, match="NEBIUS_CLI_VERSION=0.12.254"):
+    with pytest.raises(NebiusError, match="NEBIUS_CLI_VERSION=0.12.298"):
         nebius._require_nebius()
 
 

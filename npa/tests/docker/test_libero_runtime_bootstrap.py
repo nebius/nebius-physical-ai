@@ -391,7 +391,7 @@ def test_runtime_manifest_rejects_unknown_or_stale_contract_metadata(
             "npa.libero.customer-runtime-authorization.v0"
         )
     elif mutation == "runtime_python_drift":
-        manifest["runtime_python"]["abi"] = "cp311"
+        manifest["runtime_python"]["abi"] = "cp310"
     else:
         manifest["boundaries"]["outputs"] = "anywhere"
     module.EXPECTED_RUNTIME_MANIFEST_SHA256 = _write_json(manifest_path, manifest)

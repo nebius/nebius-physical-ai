@@ -15,7 +15,7 @@ optional and requires a separate deployment.
 | Goal | Prompt |
 | --- | --- |
 | Prepare a project for any supported task | [Set up Workbench](#set-up-workbench) |
-| Generate an image with the supported Cosmos 3 workflow | [Run Cosmos 3 generation](#run-cosmos-3-generation) |
+| Assess the stock Cosmos 3 workflow's quarantine | [Inspect Cosmos 3 generation](#run-cosmos-3-generation) |
 | Augment and curate a source video | [Run PAIDF with Cosmos 3](#run-paidf-with-cosmos-3) |
 
 ## Choose tools for your task
@@ -27,9 +27,10 @@ Existing examples are starting points; available tools and their contracts
 determine what you can run or combine. If the task needs an unsupported
 capability, have the agent explain the gap.
 
-The setup prompt below applies to the task you choose. The two Cosmos prompts
-are complete runs: standalone generation is the shorter first workflow, while
-PAIDF is a longer source-video augmentation and curation pipeline.
+The setup prompt below applies to the task you choose. The PAIDF prompt is a
+complete source-video augmentation and curation run. The standalone Cosmos
+prompt checks its deliberately quarantined stock default and must not submit it
+without an operator-authorized, independently qualified image.
 
 <a id="set-up-workbench"></a>
 
@@ -104,18 +105,18 @@ cleanup instructions.
 
 <a id="run-cosmos-3-generation"></a>
 
-## First workflow: Cosmos 3 generation
+## Inspect Cosmos 3 generation
 
-This prompt runs the checked-in
+This prompt inspects the checked-in
 [`workflows/testing/cosmos3-generate.yaml`](../../workflows/testing/cosmos3-generate.yaml)
-workflow on a compatible Nebius GPU. Its default is Cosmos3-Nano text-to-image
-on one H100, producing `vision.jpg` and `generate.json` in S3. The default
-guardrails require gated Hugging Face access even though the main checkpoint is
-public. Paste this prompt after making project values and `HF_TOKEN` available
-to the agent through its private environment:
+workflow. Its default Cosmos3-Nano image is intentionally quarantined, so the
+agent must report the refusal before a GPU job is created. The default guardrails
+would require gated Hugging Face access even though the main checkpoint is
+public. Paste this prompt after making project values available to the agent
+through its private environment:
 
 ```text
-Run workflows/testing/cosmos3-generate.yaml to a verified result. Follow
+Inspect workflows/testing/cosmos3-generate.yaml and its quarantine status. Follow
 AGENTS.md, skills/index.yaml, the relevant first-run, Cosmos 3, and workflow
 operation skills, and docs/workbench/cosmos3-generate.md.
 
@@ -131,16 +132,11 @@ access needs human approval, show the official pages, wait for me, and rerun the
 gate; never accept terms for me or bypass a failure.
 
 Validate and plan the checked-in spec with my actual bucket. State the expected
-vision.jpg and generate.json artifacts and requested resources. Preview
-provision-if-absent, create only missing resources through npa, bootstrap and
-verify SkyPilot, discover the cluster's accelerator name, reconcile it if
-needed, then revalidate and preflight the exact images.
-
-Submit with --runtime and forward secrets only by name with --secret-env. Stay
-until the run is terminal. On failure, use bounded status, logs, and artifact
-inspection and resume when supported. On success, verify non-empty media,
-inspect generate.json, and show the result in an available viewer. Report the
-outcome, artifacts, and still-running resources, then offer the documented
+quarantine refusal and requested resources. Do not provision, preflight, or
+submit this stock spec. Explain that a separate operator-authorized immutable
+image and qualification are required before a run can proceed; offer a
+release-ready workload guide instead. Report the expected refusal and that no
+artifacts or resources were created, then offer the documented
 cancel-before-destroy cleanup path without destroying shared infrastructure.
 ```
 

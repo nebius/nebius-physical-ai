@@ -45,6 +45,34 @@ def test_automatic_pr_workflows_cancel_superseded_commits() -> None:
         }, name
 
 
+def test_workflow_checkouts_do_not_persist_github_tokens() -> None:
+    """Prevent workflow code from recovering checkout credentials after setup."""
+
+    for workflow_path in WORKFLOW_DIR.glob("*.y*ml"):
+        workflow = _load_workflow(workflow_path.name)
+        for job_name, job in workflow["jobs"].items():
+            for step in job.get("steps", []):
+                if "actions/checkout@" in step.get("uses", ""):
+                    assert step.get("with", {}).get("persist-credentials") == "false", (
+                        f"{workflow_path.name}:{job_name} persists checkout credentials"
+                    )
+
+
+def test_release_uses_the_runner_cli_with_an_explicit_token() -> None:
+    """Avoid granting repository-write credentials to an unnecessary action."""
+
+    steps = _load_workflow("release.yml")["jobs"]["build"]["steps"]
+    release = next(
+        step for step in steps if step["name"] == "Create GitHub Release with artifacts"
+    )
+    assert release["env"] == {"GH_TOKEN": "${{ github.token }}"}
+    assert (
+        release["run"]
+        == 'gh release create "$GITHUB_REF_NAME" npa/dist/* --generate-notes'
+    )
+    assert "uses" not in release
+
+
 def test_one_pr_workflow_owns_every_merge_gate() -> None:
     """Keep PR updates atomic instead of spawning six independent workflows."""
 
@@ -121,7 +149,7 @@ def test_merge_queue_suite_is_sharded_and_scheduled_audit_keeps_compatibility() 
     python_matrix = job["strategy"]["matrix"]["python-version"]
     assert '["pull_request", "merge_group"]' in python_matrix
     assert '["3.12"]' in python_matrix
-    assert '["3.10", "3.12", "3.14"]' in python_matrix
+    assert '["3.11", "3.12", "3.14"]' in python_matrix
     shard_matrix = job["strategy"]["matrix"]["shard"]
     assert '["pull_request", "merge_group"]' in shard_matrix
     assert "[1, 2, 3, 4]" in shard_matrix
@@ -147,7 +175,7 @@ def test_merge_queue_suite_is_sharded_and_scheduled_audit_keeps_compatibility() 
     assert workflow["jobs"]["browser-mocked"]["if"] == ("${{ !inputs.prose_only }}")
     browser_steps = workflow["jobs"]["browser-mocked"]["steps"]
     browser_step_names = {step["name"] for step in browser_steps}
-    for version in ("3.10", "3.14"):
+    for version in ("3.11", "3.14"):
         assert f"Set up Python {version} compatibility" in browser_step_names
         install_step = f"Install Python {version} compatibility environment"
         assert install_step in browser_step_names
@@ -156,7 +184,7 @@ def test_merge_queue_suite_is_sharded_and_scheduled_audit_keeps_compatibility() 
         assert "npa/tests/test_anyio_security_regressions.py" in regression["run"]
 
 
-@pytest.mark.parametrize("version", ["3.10", "3.14"])
+@pytest.mark.parametrize("version", ["3.11", "3.14"])
 def test_recent_stdlib_failures_run_in_focused_compatibility(version):
     """Keep recent failures covered without expanding the queue shard matrix.
 
@@ -288,7 +316,7 @@ def test_ci_installers_pin_versions_cache_packages_and_keep_cpu_runtime() -> Non
         setup = next(
             step for step in jobs[name]["steps"] if "setup-uv@" in step.get("uses", "")
         )
-        assert setup["with"]["version"] == "0.12.5"
+        assert setup["with"]["version"] == "0.13.4"
         assert setup["with"]["enable-cache"] == "true"
         assert "npa/ci/requirements.txt" in setup["with"]["cache-dependency-glob"]
         installs = [
@@ -395,7 +423,7 @@ def test_cli_install_check_runs_once_outside_the_coverage_shards() -> None:
     steps = jobs["browser-mocked"]["steps"]
     install = _step("test.yml", "browser-mocked", "Run CLI install test")
     renderer = _step("test.yml", "browser-mocked", "Set up Python for")
-    compatibility = _step("test.yml", "browser-mocked", "Set up Python 3.10")
+    compatibility = _step("test.yml", "browser-mocked", "Set up Python 3.11")
     assert steps.index(renderer) < steps.index(install) < steps.index(compatibility)
     assert renderer["with"]["python-version"] == "3.12"
     assert "if" not in install and "continue-on-error" not in install
@@ -563,7 +591,7 @@ def test_compatibility_checks_cannot_be_deferred_until_the_queue() -> None:
     jobs = _load_workflow("test.yml")["jobs"]
     assert "affected-tests" not in jobs
     steps = jobs["browser-mocked"]["steps"]
-    for version in ("3.10", "3.14"):
+    for version in ("3.11", "3.14"):
         compatibility = [
             step for step in steps if f"Python {version} compatibility" in step["name"]
         ]
@@ -650,7 +678,7 @@ def test_docs_drift_uses_the_same_dependency_pins_as_tests() -> None:
     """Keep docs setup cached and prevent unrelated floating dependency failures."""
     steps = _load_workflow("lint.yml")["jobs"]["docs-drift"]["steps"]
     setup = next(step for step in steps if "setup-uv@" in step.get("uses", ""))
-    assert setup["with"]["version"] == "0.12.5"
+    assert setup["with"]["version"] == "0.13.4"
     assert setup["with"]["enable-cache"] == "true"
     assert "npa/ci/requirements.txt" in setup["with"]["cache-dependency-glob"]
     install = _step("lint.yml", "docs-drift", "constrained docs environment")["run"]
@@ -942,7 +970,6 @@ def _write_fingerprint_probe(tmp_path: Path) -> None:
     interpreter.write_text(
         "#!/bin/bash\nset -eu\n"
         '[[ "$*" == "npa/scripts/ci_requirements.py --check" ]]\n'
-        'if [[ "$PYTHON_VERSION" == 3.10 ]]; then test -e tomli-installed; fi\n'
         'echo fingerprint >> "$BOOTSTRAP_LOG"\nexit "$FINGERPRINT_EXIT"\n'
     )
     interpreter.chmod(0o700)
@@ -964,13 +991,8 @@ def _run_fresh_install_step(tmp_path: Path, version: str, fingerprint_exit: int)
 python() { [[ "$*" == "-m venv npa/.venv" ]]; }
 uv() {
   [[ "$*" == "pip install --python npa/.venv/bin/python -c npa/ci/requirements.txt "* ]]
-  if [[ "${@: -1}" == tomli ]]; then
-    touch tomli-installed
-    echo bootstrap >> "$BOOTSTRAP_LOG"
-  else
-    [[ "${@: -2}" == "-e npa[dev,adapter,encord]" ]]
-    echo full-install >> "$BOOTSTRAP_LOG"
-  fi
+  [[ "${@: -2}" == "-e npa[dev,adapter,encord]" ]]
+  echo full-install >> "$BOOTSTRAP_LOG"
 }
 """
     result = subprocess.run(
@@ -983,12 +1005,12 @@ uv() {
     return result, (tmp_path / "commands").read_text().splitlines()
 
 
-@pytest.mark.parametrize("version", ["3.10", "3.12", "3.14"])
+@pytest.mark.parametrize("version", ["3.11", "3.12", "3.14"])
 @pytest.mark.parametrize("fingerprint_exit", [0, 42])
 def test_fresh_ci_environment_checks_fingerprint_before_full_install(
     tmp_path: Path, version: str, fingerprint_exit: int
 ) -> None:
-    """Bootstrap only the missing TOML parser and reject stale dependency pins.
+    """Reject stale dependency pins before installing the complete environment.
 
     Args:
         tmp_path: Isolated shell environment without installed dependencies.
@@ -997,10 +1019,10 @@ def test_fresh_ci_environment_checks_fingerprint_before_full_install(
     Returns:
         None.
     Raises:
-        AssertionError: Setup omits the parser or installs with stale pins.
+        AssertionError: Setup installs with stale pins.
     """
     result, commands = _run_fresh_install_step(tmp_path, version, fingerprint_exit)
-    expected = ["bootstrap", "fingerprint"] if version == "3.10" else ["fingerprint"]
+    expected = ["fingerprint"]
     if fingerprint_exit == 0:
         expected.append("full-install")
     assert result.returncode == fingerprint_exit, result.stderr

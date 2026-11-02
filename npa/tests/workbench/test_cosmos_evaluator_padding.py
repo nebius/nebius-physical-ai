@@ -309,22 +309,41 @@ def test_preparation_measures_display_rotation(tmp_path):
         ],
         check=True,
     )
-    subprocess.run(
-        [
-            "ffmpeg",
-            "-y",
-            "-v",
-            "error",
-            "-display_rotation:v:0",
-            "90",
-            "-i",
-            str(raw),
-            "-c",
-            "copy",
-            str(source),
-        ],
-        check=True,
-    )
+    display_rotation = ["-display_rotation:v:0", "90"]
+    command = [
+        "ffmpeg",
+        "-y",
+        "-v",
+        "error",
+        *display_rotation,
+        "-i",
+        str(raw),
+        "-c",
+        "copy",
+        str(source),
+    ]
+    result = subprocess.run(command, capture_output=True, text=True)
+    if result.returncode:
+        # FFmpeg 4.4 lacks the input display_rotation option. Its supported
+        # stream metadata form writes the same display matrix, so retain the
+        # rotation assertion on both documented CI and local tool versions.
+        assert "Unrecognized option 'display_rotation" in result.stderr
+        subprocess.run(
+            [
+                "ffmpeg",
+                "-y",
+                "-v",
+                "error",
+                "-i",
+                str(raw),
+                "-c",
+                "copy",
+                "-metadata:s:v:0",
+                "rotate=90",
+                str(source),
+            ],
+            check=True,
+        )
     timeline = prepare_reference(source, output)
     assert timeline["source_content_region"]["bounds"] == [236, 0, 596, 480]
     validate_content_region(timeline["source_content_region"], output, output)

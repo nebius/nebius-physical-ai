@@ -28,7 +28,10 @@ from npa.orchestration.skypilot.image_bootstrap_contract import (
     ImageContractEvidence,
     store_cached_evidence,
 )
-from npa.orchestration.skypilot.k8s_gpu_catalog import KubernetesGpuCatalog
+from npa.orchestration.skypilot.k8s_gpu_catalog import (
+    KubernetesGpuCatalog,
+    KubernetesGpuInventory,
+)
 from npa.orchestration.skypilot.registry_preflight import ImagePullCheck
 from npa.orchestration.skypilot.workflow import SkyPilotSubmitError
 from npa.provisioning_journal import OperationJournalError
@@ -319,7 +322,7 @@ def _two_gpu_inventory():
         2,
         2,
         ("RTXPRO6000",),
-        {},
+        {"unit-node": {"skypilot.co/accelerator": "rtxpro6000"}},
         nodes=(
             KubernetesGpuNode(
                 "unit-node",
@@ -336,6 +339,7 @@ def _two_gpu_inventory():
                 allocatable_cpu_millis=8000,
                 allocatable_memory_bytes=32 * 10**9,
                 allocatable_pods=1,
+                labels=(("skypilot.co/accelerator", "rtxpro6000"),),
             ),
         ),
     )
@@ -357,6 +361,181 @@ def test_gang_preflight_uses_single_mapping_request(
     row = workflow_cli._preflight_submit_gang_capacity(spec, context="unit-context")[0]
 
     assert row["accelerator"] == "RTXPRO6000:2"
+
+
+def _gfd_gpu_inventory():
+    from npa.orchestration.skypilot.k8s_gpu_catalog import (
+        KubernetesGpuInventory,
+        KubernetesGpuNode,
+    )
+
+    labels = {"nvidia.com/gpu.product": "NVIDIA-B200"}
+    return KubernetesGpuInventory(
+        "unit-context",
+        1,
+        1,
+        1,
+        1,
+        ("NVIDIA-B200",),
+        {"gfd-node": labels},
+        nodes=(
+            KubernetesGpuNode(
+                "gfd-node",
+                True,
+                True,
+                ("NVIDIA-B200",),
+                1,
+                1,
+                0,
+                1,
+                free_cpu_millis=8000,
+                free_memory_bytes=32 * 10**9,
+                free_pod_slots=1,
+                allocatable_cpu_millis=8000,
+                allocatable_memory_bytes=32 * 10**9,
+                allocatable_pods=1,
+                labels=tuple(labels.items()),
+            ),
+        ),
+    )
+
+
+def _compact_nebius_rtx_inventory():
+    from npa.orchestration.skypilot.k8s_gpu_catalog import (
+        KubernetesGpuInventory,
+        KubernetesGpuNode,
+    )
+
+    labels = {"nebius.com/gpu-name": "RTX6000"}
+    return KubernetesGpuInventory(
+        "unit-context",
+        1,
+        1,
+        1,
+        1,
+        ("RTX6000",),
+        {"native-rtx": labels},
+        nodes=(
+            KubernetesGpuNode(
+                "native-rtx",
+                True,
+                True,
+                ("RTX6000",),
+                1,
+                1,
+                0,
+                1,
+                free_cpu_millis=8000,
+                free_memory_bytes=32 * 10**9,
+                free_pod_slots=1,
+                allocatable_cpu_millis=8000,
+                allocatable_memory_bytes=32 * 10**9,
+                allocatable_pods=1,
+                labels=tuple(labels.items()),
+            ),
+        ),
+    )
+
+
+def test_npa_spec_gang_preflight_accepts_gfd_formatter_without_sky_label(
+    monkeypatch: pytest.MonkeyPatch, mocker
+) -> None:
+    """The normal NPA-spec capacity boundary uses SkyPilot's GFD formatter."""
+    from npa.orchestration.skypilot import k8s_gpu_catalog
+
+    inventory = _gfd_gpu_inventory()
+    assert "skypilot.co/accelerator" not in inventory.node_labels["gfd-node"]
+    monkeypatch.setattr(
+        k8s_gpu_catalog,
+        "discover_kubernetes_gpu_inventory",
+        lambda **_kwargs: inventory,
+    )
+    skypilot_preflight = mocker.spy(k8s_gpu_catalog, "preflight_skypilot_gpu_gang")
+    spec = SimpleNamespace(
+        states={"train": SimpleNamespace(name="train", resources="gpu")},
+        resources={"gpu": {"accelerators": "B200:1"}},
+        config={},
+    )
+
+    row = workflow_cli._preflight_submit_gang_capacity(spec, context="unit-context")[0]
+
+    skypilot_preflight.assert_called_once()
+    assert row["compatible_free_nodes"] == 1
+    assert row["selected_nodes"] == ["gfd-node"]
+
+
+def test_npa_spec_submit_rejects_effective_label_mismatch_before_side_effects(
+    monkeypatch: pytest.MonkeyPatch, mocker, tmp_path: Path
+) -> None:
+    """NPA-spec submission refuses before its S3 probes, staging, or controller."""
+    from npa import execution_preflight
+    from npa.orchestration.skypilot import k8s_gpu_catalog
+
+    monkeypatch.delenv("NPA_SRC_S3_URI", raising=False)
+    monkeypatch.setattr(workflow_cli, "_adopt_npa_kubeconfig", lambda _context: True)
+    monkeypatch.setattr(
+        "npa.orchestration.npa_workflow.model_cache_preflight.adopt_model_cache_claim",
+        lambda **_kwargs: None,
+    )
+    monkeypatch.setattr(workflow_cli, "_local_source_fingerprint", lambda: "f" * 64)
+    monkeypatch.setattr(
+        execution_preflight,
+        "resolve_execution_target",
+        lambda **_kwargs: SimpleNamespace(),
+    )
+    monkeypatch.setattr(
+        execution_preflight,
+        "verify_execution_scope",
+        lambda *_args, **_kwargs: {"scope": "pass"},
+    )
+    monkeypatch.setattr(
+        k8s_gpu_catalog,
+        "discover_kubernetes_gpu_inventory",
+        lambda **_kwargs: _compact_nebius_rtx_inventory(),
+    )
+    storage_probe = mocker.patch(
+        "npa.clients.storage_validation.probe_storage_write",
+        side_effect=AssertionError("S3 probe reached after label refusal"),
+    )
+    stage_source = mocker.patch(
+        "npa.cli.workbench.workflow._stage_npa_src_for_submit",
+        side_effect=AssertionError("S3 source staging reached after label refusal"),
+    )
+    controller = mocker.patch(
+        "npa.orchestration.skypilot.workflow.submit_workflow",
+        side_effect=AssertionError("controller creation reached after label refusal"),
+    )
+    provision = mocker.patch(
+        "npa.orchestration.npa_workflow.deploy.ensure_infra_present",
+        side_effect=AssertionError("provisioning reached after label refusal"),
+    )
+    spec_path = tmp_path / "label-mismatch.yaml"
+    spec_path.write_text(yaml.safe_dump(SPEC, sort_keys=False), encoding="utf-8")
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(spec_path),
+            "--run-id",
+            "label-mismatch-refusal",
+            "--infra",
+            "k8s/unit-context",
+            "--no-deploy-if-absent",
+            "--skip-preflight",
+            "--var",
+            "bucket=unit-bucket",
+        ],
+    )
+
+    assert result.exit_code == 1, result.output
+    assert "effective accelerator selector" in result.output
+    storage_probe.assert_not_called()
+    stage_source.assert_not_called()
+    controller.assert_not_called()
+    provision.assert_not_called()
 
 
 def test_submit_accelerator_readiness_uses_resolved_config_overrides(
@@ -921,6 +1100,7 @@ def test_workflow_gpus_json_reports_the_exact_alias_resolution(
 
     assert result.exit_code == 0, result.output
     payload = json.loads(result.output)
+    assert payload["spec_error"] == ""
     assert payload["spec_resolutions"] == [
         {
             "requested": "RTXPRO6000:1",
@@ -928,6 +1108,147 @@ def test_workflow_gpus_json_reports_the_exact_alias_resolution(
             "remapped": True,
         }
     ]
+
+
+def test_workflow_gpus_json_reports_missing_required_images_without_traceback(
+    monkeypatch: pytest.MonkeyPatch, sky_bin: str, owned_gpu_discovery
+) -> None:
+    monkeypatch.setenv("NPA_SKYPILOT_BIN", sky_bin)
+    _stub_catalog(monkeypatch, CATALOG_OUTPUT)
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "gpus",
+            "--context",
+            "npa-cluster",
+            "--spec",
+            str(REPO_ROOT / "workflows/testing/digital-twin-campus-render.yaml"),
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 2, result.output
+    payload = json.loads(result.stdout)
+    assert payload["spec_resolutions"] == []
+    assert "Each of config.runtime_image requires an explicit" in payload["spec_error"]
+
+
+def test_gpu_spec_resolutions_reports_a_malformed_spec_without_traceback(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "malformed-workflow.yaml"
+    path.write_text(
+        "apiVersion: npa.workflow/v0.0.1\nkind: Workflow\nmetadata: {}\n",
+        encoding="utf-8",
+    )
+
+    resolutions, error = workflow_cli._gpu_spec_resolutions(
+        path,
+        KubernetesGpuCatalog({}, context="npa-cluster"),
+    )
+
+    assert resolutions == []
+    assert "non-empty 'states' mapping" in error
+
+
+def test_workflow_gpus_json_reports_a_malformed_spec_as_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    sky_bin: str,
+    owned_gpu_discovery,
+) -> None:
+    monkeypatch.setenv("NPA_SKYPILOT_BIN", sky_bin)
+    _stub_catalog(monkeypatch, CATALOG_OUTPUT)
+    path = tmp_path / "malformed-workflow.yaml"
+    path.write_text(
+        "apiVersion: npa.workflow/v0.0.1\nkind: Workflow\nmetadata: {}\n",
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "gpus",
+            "--context",
+            "npa-cluster",
+            "--spec",
+            str(path),
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 2, result.output
+    payload = json.loads(result.stdout)
+    assert payload["spec_resolutions"] == []
+    assert "non-empty 'states' mapping" in payload["spec_error"]
+    assert "Traceback" not in result.output
+
+
+def test_workflow_gpus_text_reports_missing_required_images_with_empty_catalog(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    inventory = KubernetesGpuInventory("npa-cluster", 0, 0, 0, 0, (), {})
+    catalog = KubernetesGpuCatalog({}, context="npa-cluster")
+    monkeypatch.setattr(
+        workflow_cli,
+        "_inspect_workflow_gpus",
+        lambda *_args: (inventory, catalog, ""),
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "gpus",
+            "--spec",
+            str(REPO_ROOT / "workflows/testing/digital-twin-campus-render.yaml"),
+        ],
+    )
+
+    assert result.exit_code == 2, result.output
+    assert "accelerators: none advertised" in result.output
+    assert (
+        "spec_error: Each of config.runtime_image requires an explicit" in result.output
+    )
+
+
+def test_workflow_gpus_text_reports_unsatisfied_accelerator(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    sky_bin: str,
+    owned_gpu_discovery,
+) -> None:
+    monkeypatch.setenv("NPA_SKYPILOT_BIN", sky_bin)
+    _stub_catalog(monkeypatch, CATALOG_OUTPUT)
+    spec = yaml.safe_load(yaml.safe_dump(SPEC))
+    spec["resources"]["gpu"]["accelerators"] = "H100:1"
+    path = tmp_path / "unavailable-accelerator.yaml"
+    path.write_text(yaml.safe_dump(spec, sort_keys=False), encoding="utf-8")
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "gpus",
+            "--context",
+            "npa-cluster",
+            "--spec",
+            str(path),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert (
+        "H100:1: Accelerator 'H100' is not advertised by this cluster" in result.output
+    )
+    assert "Traceback" not in result.output
 
 
 def test_workflow_gpus_resolves_templated_accelerator_config(
@@ -958,7 +1279,9 @@ def test_workflow_gpus_resolves_templated_accelerator_config(
     )
 
     assert result.exit_code == 0, result.output
-    assert json.loads(result.output)["spec_resolutions"] == [
+    payload = json.loads(result.output)
+    assert payload["spec_error"] == ""
+    assert payload["spec_resolutions"] == [
         {
             "requested": "RTXPRO6000:1",
             "resolved": "RTXPRO-6000-BLACKWELL-SERVER-EDITION:1",

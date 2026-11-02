@@ -188,19 +188,18 @@ def test_render_tfvars_emits_multi_preset_and_io_m3_cache() -> None:
     assert 'disk_type       = "NETWORK_SSD_IO_M3"' in tf
     assert "enabled = true" in tf
     # Preemptible GPU pool.
-    assert "preemptible = {}" in tf
+    assert 'preemptible = { on_preemption = "STOP", priority = 1 }' in tf
     # AppArmor default off (unconfined) and accounting/telemetry off.
     assert "use_default_apparmor_profile = false" in tf
     assert "accounting_enabled = false" in tf
     assert 'active_checks_scope    = "essential"' in tf
     assert "slurm_rest_enabled = false" in tf
-    # The pinned upstream contract requires an explicit node-group bundle and
-    # resolves omitted control-plane presets from its worker-count sizing tier.
-    assert 'k8s_version        = "1.34"' in tf
-    assert 'node_group_version = "72"' in tf
-    assert 'slurm_operator_version = "4.1.6"' in tf
+    assert 'k8s_version        = "1.35"' in tf
+    assert "node_group_version" not in tf
+    assert 'slurm_operator_version = "4.1.13"' in tf
     assert "max_size = 24" in tf
-    assert tf.count("preset   = null") >= 2
+    assert "preset   = null" not in tf
+    assert tf.count('preset   = "16vcpu-64gb"') >= 2
     assert "system_resources =" not in tf
 
 
@@ -262,19 +261,22 @@ def test_explicit_rest_contract_rejects_operator_unsupported_no_accounting() -> 
     assert 'active_checks_scope    = "essential"' in tf
 
 
-def test_k8s_and_node_group_versions_parse_and_must_be_non_empty() -> None:
+def test_k8s_version_and_removed_node_bundle_input() -> None:
     data = _base_spec_mapping()
     data["k8s_version"] = "1.35"
-    data["node_group_version"] = "80"
     spec = spec_from_mapping(data)
     spec.validate()
     assert spec.k8s_version == "1.35"
-    assert spec.node_group_version == "80"
+    assert spec.node_group_version == ""
     assert 'k8s_version        = "1.35"' in render_tfvars(spec)
-    assert 'node_group_version = "80"' in render_tfvars(spec)
+    assert "node_group_version" not in render_tfvars(spec)
 
+    spec.node_group_version = "80"
+    with pytest.raises(SoperatorSpecError, match="node_group_version was removed"):
+        spec.validate()
     spec.node_group_version = ""
-    with pytest.raises(SoperatorSpecError, match="must both be non-empty"):
+    spec.k8s_version = ""
+    with pytest.raises(SoperatorSpecError, match="k8s_version must be non-empty"):
         spec.validate()
 
 
@@ -545,23 +547,22 @@ def test_operator_override_validation_and_verified_userns_contract() -> None:
     with pytest.raises(SoperatorSpecError, match="semantic version"):
         spec.validate()
 
-    spec.slurm_operator_version = "4.1.7"
-    with pytest.raises(
-        SoperatorSpecError, match="user-namespace override is verified only"
-    ):
+    for use_profile in (False, True):
+        spec.use_default_apparmor_profile = use_profile
+        spec.slurm_operator_version = "4.1.13"
         spec.validate()
-
-    spec.use_default_apparmor_profile = True
-    spec.validate()  # explicit newer chart is possible when the pinned sysctl override is unused
+        spec.slurm_operator_version = "4.1.7"
+        with pytest.raises(SoperatorSpecError, match="outside the pinned runtime"):
+            spec.validate()
 
     spec.slurm_operator_version = "4.2.0"
-    with pytest.raises(SoperatorSpecError, match="use 4.1.6"):
+    with pytest.raises(SoperatorSpecError, match="use 4.1.13"):
         spec.validate()
 
     spec.slurm_operator_version = "4.1.0"
     with pytest.raises(
         SoperatorSpecError,
-        match="4.1.0 is no longer verified; replace it with 4.1.6",
+        match="4.1.0 is no longer verified; replace it with 4.1.13",
     ):
         spec.validate()
 
@@ -942,6 +943,35 @@ def test_deploy_path_reconciles_legacy_source_before_provider_mutation(
     assert result["status"] == "source-preflight-passed"
     assert result["provider_mutation"] is False
     assert result["control_plane"]["system_max_size"] == 24
+
+
+def test_legacy_release_ref_is_rejected_before_source_or_provider_mutation(
+    tmp_path, monkeypatch
+) -> None:
+    """The old release is destroy-only; a deploy must not even resolve it."""
+
+    from npa.soperator import lifecycle
+    from npa.soperator.spec import LEGACY_SOLUTIONS_LIBRARY_REF
+
+    spec = SoperatorSpec(
+        name="cluster",
+        root_login_ssh_public_key="ssh-ed25519 AAAA operator",
+        workers=[WorkerPoolSpec(name="cpu")],
+    )
+    monkeypatch.setattr(
+        lifecycle,
+        "_resolve_solutions_library",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("source resolution must not start")
+        ),
+    )
+
+    with pytest.raises(lifecycle.UpstreamContractError, match="destroy only"):
+        lifecycle.deploy_cluster(
+            spec,
+            work_root=tmp_path,
+            solutions_library_ref=LEGACY_SOLUTIONS_LIBRARY_REF,
+        )
 
 
 @pytest.mark.parametrize(
@@ -2324,6 +2354,97 @@ def test_destroy_retains_state_when_exact_auxiliary_cleanup_is_uncertain(
     assert (install / ".npa-soperator-env.json").is_file()
 
 
+def test_destroy_fallback_clears_state_after_exact_auxiliary_absence(
+    tmp_path, monkeypatch
+) -> None:
+    """A lost Terraform Kubernetes connection is recoverable only with exact proof."""
+
+    from npa.soperator import lifecycle
+
+    recipe = tmp_path / "soperator"
+    (recipe / "installations" / "example").mkdir(parents=True)
+    install = recipe / "installations" / "npafallback"
+    install.mkdir(parents=True)
+    state_path = install / "terraform.tfstate"
+    state_path.write_text("durable-state")
+    lifecycle._write_env_sidecar(
+        install,
+        region="us-central1",
+        tenant_id="tenant-abc",
+        project_id="project-xyz",
+        subnet_id="vpcsubnet-123",
+        o11y_profile="default",
+        cluster_id="mk8scluster-exact",
+        owned_filesystem_ids=["fs-exact"],
+        owned_allocation_ids=["allocation-exact"],
+        owned_auxiliary_resources=[
+            {
+                "kind": "filesystem",
+                "provider_type": "nebius_compute_v1_filesystem",
+                "id": "fs-exact",
+                "name": "soperator-npafallback-jail",
+            },
+            {
+                "kind": "allocation",
+                "provider_type": "nebius_vpc_v1_allocation",
+                "id": "allocation-exact",
+                "name": "soperator-npafallback-public-static-ip",
+            },
+        ],
+    )
+    monkeypatch.setattr(lifecycle, "_require_bin", lambda name: name)
+    monkeypatch.setattr(
+        lifecycle, "_assert_solutions_library_contract", lambda *args, **kwargs: None
+    )
+    monkeypatch.setattr(lifecycle, "_terraform_env", lambda *args, **kwargs: {})
+    monkeypatch.setattr(lifecycle, "_run_stream", lambda *args, **kwargs: None)
+    monkeypatch.setenv("NPA_KUBECTL_BIN", "missing-kubectl-for-test")
+
+    class Done:
+        def __init__(self, stdout: str = "", returncode: int = 0) -> None:
+            self.stdout = stdout
+            self.stderr = ""
+            self.returncode = returncode
+
+    def capture(command, **kwargs):
+        if "state" in command and "pull" in command:
+            return Done(json.dumps({"resources": []}))
+        if "get-credentials" in command:
+            return Done()
+        if "destroy" in command:
+            return Done("lost Kubernetes provider connection", 1)
+        raise AssertionError(command)
+
+    cleanup_calls: list[tuple[str, tuple[str, ...]]] = []
+
+    def cleanup(**kwargs):
+        cleanup_calls.append(
+            (kwargs["description"], tuple(sorted(kwargs["owned_ids"])))
+        )
+        return []
+
+    monkeypatch.setattr(lifecycle, "_run_capture", capture)
+    monkeypatch.setattr(
+        lifecycle,
+        "_resolve_exact_cluster_presence",
+        lambda **kwargs: (False, ""),
+    )
+    monkeypatch.setattr(lifecycle, "_cleanup_owned_provider_ids", cleanup)
+    monkeypatch.setattr(
+        lifecycle, "_reconcile_recreated_auxiliary_resources", lambda **kwargs: []
+    )
+
+    result = lifecycle.destroy_cluster("npafallback", terraform_dir=recipe)
+
+    assert result and result["status"] == "destroyed"
+    assert cleanup_calls == [
+        ("filesystem", ("fs-exact",)),
+        ("VPC allocation", ("allocation-exact",)),
+    ]
+    assert not state_path.exists()
+    assert (install / ".npa-soperator-env.json").is_file()
+
+
 def test_nebius_cli_env_strips_stale_iam_token(monkeypatch) -> None:
     from npa.soperator import lifecycle
 
@@ -2917,6 +3038,29 @@ def test_cli_degraded_validation_exits_nonzero_with_metadata(
         assert "Deployed soperator cluster" not in invoked.output
 
 
+def test_cli_destroy_incomplete_exits_nonzero_without_success_claim(
+    monkeypatch,
+) -> None:
+    from npa.soperator import lifecycle
+
+    monkeypatch.setattr(
+        lifecycle,
+        "destroy_cluster",
+        lambda *args, **kwargs: {
+            "name": "c",
+            "status": "destroy-incomplete",
+            "install_dir": "/safe/installations/c",
+            "errors": ["exact auxiliary-resource state retained"],
+        },
+    )
+
+    invoked = runner.invoke(app, ["soperator", "destroy", "--name", "c", "--force"])
+
+    assert invoked.exit_code == 1
+    assert "teardown is incomplete" in invoked.output
+    assert "Destroyed soperator cluster" not in invoked.output
+
+
 def test_json_mode_terraform_runner_captures_child_output(
     monkeypatch, tmp_path, capsys
 ) -> None:
@@ -3493,6 +3637,51 @@ def test_patch_local_reconciliation_triggers_fails_closed_before_any_write(
 
     assert kubectl_context.read_bytes() == kubectl_original
     assert login.read_bytes() == login_original
+
+
+def test_patch_preemptible_spot_pricing_is_idempotent_and_contract_checked() -> None:
+    from npa.soperator import lifecycle
+
+    source = (
+        "    preemptible = var.node_group_workers_v2[count.index].preemptible\n\n"
+        "    reservation_policy = var.node_group_workers_v2[count.index].reservation_policy\n"
+    )
+
+    patched, changed = lifecycle._patch_preemptible_spot_pricing_text(source)
+
+    assert changed is True
+    assert "# npa: pair preemptible workers with spot pricing" in patched
+    assert (
+        "follows_spot_price = var.node_group_workers_v2[count.index].preemptible "
+        "!= null ? {} : null" in patched
+    )
+    assert lifecycle._patch_preemptible_spot_pricing_text(patched) == (patched, False)
+
+    with pytest.raises(lifecycle.UpstreamContractError, match="preemptible block"):
+        lifecycle._patch_preemptible_spot_pricing_text(
+            source.replace("reservation_policy", "capacity_policy")
+        )
+
+
+def test_worker_contract_allows_only_the_audited_preemptible_patch() -> None:
+    from npa.soperator import lifecycle
+
+    source = (
+        "    preemptible = var.node_group_workers_v2[count.index].preemptible\n\n"
+        "    reservation_policy = var.node_group_workers_v2[count.index].reservation_policy\n"
+    )
+    patched, _ = lifecycle._patch_preemptible_spot_pricing_text(source)
+    worker_module = "soperator/modules/k8s/k8s_ng_workers_v2.tf"
+
+    assert lifecycle._allowed_pinned_contract_forms(
+        worker_module, source, ref="a" * 40
+    ) == (source, patched)
+    assert lifecycle._allowed_pinned_contract_forms(
+        worker_module, source, ref=lifecycle.LEGACY_SOLUTIONS_LIBRARY_REF
+    ) == (source,)
+    assert lifecycle._allowed_pinned_contract_forms(
+        "soperator/installations/example/main.tf", source, ref="a" * 40
+    ) == (source,)
 
 
 def test_patch_nodeconfigurator_allows_enroot_userns_and_is_idempotent(

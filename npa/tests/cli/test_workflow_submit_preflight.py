@@ -67,6 +67,21 @@ SONIC_SPEC = (
 ROBOTWIN_SPEC = (
     Path(__file__).resolve().parents[3] / "workflows" / "testing" / "byof-robotwin.yaml"
 )
+_SIM2REAL_TEST_IMAGE = "ghcr.io/example/sim2real-test@sha256:" + "a" * 64
+
+
+def _sim2real_role_image_args() -> list[str]:
+    return [
+        argument
+        for key in (
+            "controller_image",
+            "cosmos3_image",
+            "envgen_image",
+            "isaac_image",
+            "viewer_image",
+        )
+        for argument in ("--var", f"{key}={_SIM2REAL_TEST_IMAGE}")
+    ]
 
 
 def test_nvidia_vda_conditioning_policy_is_versioned_by_the_committed_spec() -> None:
@@ -1084,12 +1099,12 @@ def test_sim2real_submit_collects_pipeline_prerequisites_before_image_or_launch(
             "--no-deploy-if-absent",
             "--var",
             "bucket=real-bucket",
+            *_sim2real_role_image_args(),
         ],
     )
 
     assert result.exit_code == 1
     assert "missing prerequisites" in result.output
-    assert "controller_image" in result.output
     assert "AWS_ACCESS_KEY_ID" in result.output
     assert "no Ready" not in result.output  # node listing itself failed
     assert "Kubernetes nodes cannot be listed" in result.output
@@ -1464,7 +1479,7 @@ def test_sim2real_submit_rejects_oversized_sealed_split_before_images_or_launch(
             key: "ghcr.io/example/test@sha256:" + "a" * 64
             for key in (
                 "controller_image",
-                "transfer_image",
+                "cosmos3_image",
                 "envgen_image",
                 "isaac_image",
                 "viewer_image",
@@ -1538,6 +1553,7 @@ def test_sim2real_submit_propagates_explicit_kubernetes_target(
             "bucket=real-bucket",
             "--var",
             "isaac_cache_pvc=npa-isaac-cache",
+            *_sim2real_role_image_args(),
         ],
     )
 
@@ -1616,7 +1632,7 @@ def test_paidf_plan_only_uses_repaired_public_defaults(spec_path: Path) -> None:
 
 
 def test_plan_only_reports_quarantined_default_as_cli_error() -> None:
-    spec_path = SPEC.parents[2] / "workflows/testing/cosmos3-generate.yaml"
+    spec_path = SPEC.parents[2] / "workflows/testing/cosmos3-checkpoint-eval.yaml"
     result = runner.invoke(
         app,
         [
@@ -2104,7 +2120,7 @@ def test_config_pinned_resource_images_satisfy_the_npa_source_requirement() -> N
         name: digest_image
         for name in (
             "controller_image",
-            "transfer_image",
+            "cosmos3_image",
             "envgen_image",
             "isaac_image",
             "viewer_image",
@@ -2239,7 +2255,7 @@ def test_preflight_images_accepts_the_same_config_vars_as_submit(mocker) -> None
     args.extend(["--var", "source_sha=" + "a" * 40])
     for name in (
         "controller_image",
-        "transfer_image",
+        "cosmos3_image",
         "envgen_image",
         "isaac_image",
         "viewer_image",
@@ -2756,7 +2772,7 @@ def test_preflight_images_scopes_explicit_pull_secret_to_bootstrap(
     args.extend(["--var", "source_sha=" + "a" * 40])
     for name in (
         "controller_image",
-        "transfer_image",
+        "cosmos3_image",
         "envgen_image",
         "reason_image",
         "isaac_image",
@@ -2921,7 +2937,10 @@ def test_preflight_images_covers_every_decision_branch(mocker) -> None:
 
 
 def test_preflight_images_reports_valid_empty_plan(mocker) -> None:
-    mocker.patch(
+    reachability = mocker.patch(
+        "npa.cli.workbench.workflow._image_preflight_steps", return_value=[]
+    )
+    requirements = mocker.patch(
         "npa.cli.workbench.workflow._plan_preflight_image_requirements",
         return_value=([], {}),
     )
@@ -2944,13 +2963,15 @@ def test_preflight_images_reports_valid_empty_plan(mocker) -> None:
 
     assert result.exit_code == 0, result.output
     assert result.output == "images: none pinned by this spec\n"
+    reachability.assert_called_once()
+    assert requirements.call_args.kwargs["steps"] == []
     pulls.assert_not_called()
     contracts.assert_not_called()
 
 
 @pytest.mark.parametrize(
     "configured_roles",
-    [(), ("controller_image", "transfer_image", "envgen_image", "isaac_image")],
+    [(), ("controller_image", "cosmos3_image", "envgen_image", "isaac_image")],
 )
 def test_sim2real_image_preflight_rejects_incomplete_bundle_before_probes(
     mocker, configured_roles
@@ -3022,6 +3043,24 @@ def test_sim2real_cache_preflight_uses_selected_context_namespace(
     assert options == {}
 
 
+def test_sim2real_delayed_cache_binding_requires_the_exact_stage_zero_writer():
+    from npa.orchestration.npa_workflow.spec import load_spec
+
+    spec = load_spec(SIM2REAL_SPEC)
+    assert workflow_cli._has_canonical_isaac_cache_warm_initial_state(spec)
+
+    assert spec.states["stage-00-isaac-cache-warm"].run is not None
+    spec.states["stage-00-isaac-cache-warm"].run.argv[-1] = "unexpected-run-id"
+
+    assert not workflow_cli._has_canonical_isaac_cache_warm_initial_state(spec)
+
+    spec = load_spec(SIM2REAL_SPEC)
+    cache_resource = spec.resources["isaac-cache-warm"]
+    cache_resource["kubernetes"]["pod_config"]["spec"]["volumes"] = []
+
+    assert not workflow_cli._has_canonical_isaac_cache_warm_initial_state(spec)
+
+
 def test_sim2real_cache_preflight_refuses_unreadable_context(
     monkeypatch, tmp_path
 ) -> None:
@@ -3083,6 +3122,127 @@ def test_preflight_images_reports_planning_failure_before_pull_checks(
     assert "images: none" not in result.output
     pulls.assert_not_called()
     contracts.assert_not_called()
+
+
+@pytest.mark.parametrize("error_type", [ValueError, NpaWorkflowError])
+def test_preflight_images_keeps_candidate_disclosure_failure_observational(
+    mocker,
+    error_type,
+    caplog,
+) -> None:
+    mocker.patch(
+        "npa.cli.workbench.workflow._plan_preflight_image_requirements",
+        return_value=([], {}),
+    )
+    mocker.patch(
+        "npa.cli.workbench.workflow._workflow_validation_candidate_payload",
+        side_effect=error_type("synthetic candidate disclosure failure"),
+    )
+    pulls = mocker.patch(
+        "npa.orchestration.skypilot.registry_preflight.check_image_pulls_with_credentials"
+    )
+    contracts = mocker.patch(
+        "npa.cli.workbench.workflow._preflight_image_bootstrap_contracts"
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "preflight-images",
+            str(COSMOS3_SPEC),
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "images: none pinned by this spec" in result.output
+    assert "candidate disclosure is unavailable" in result.stderr
+    assert (
+        "workflow validation candidate disclosure failed: synthetic candidate "
+        in caplog.text
+    )
+    pulls.assert_not_called()
+    contracts.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("candidate_payload", "expected_status", "candidate_selected"),
+    [
+        (
+            [
+                {
+                    "tool_ref": "workbench.cosmos3.generate_variants",
+                    "image": f"cr.example.invalid/npa@sha256:{'a' * 64}",
+                    "release_status": "workflow_validation_candidate",
+                    "selection_scope": "reachable_branches",
+                }
+            ],
+            "available",
+            True,
+        ),
+        ([], "available", False),
+        (ValueError("synthetic candidate disclosure failure"), "unavailable", False),
+    ],
+)
+def test_preflight_images_json_reports_candidate_disclosure_status_per_check(
+    mocker,
+    candidate_payload,
+    expected_status: str,
+    candidate_selected: bool,
+) -> None:
+    """Keep per-image JSON truthful when candidate disclosure is unavailable."""
+    from npa.orchestration.skypilot.registry_preflight import ImagePullCheck
+
+    image = f"cr.example.invalid/npa@sha256:{'a' * 64}"
+    mocker.patch("npa.cli.workbench.workflow._image_preflight_steps", return_value=[])
+    mocker.patch(
+        "npa.cli.workbench.workflow._plan_preflight_image_requirements",
+        return_value=([image], {image: ImagePullRequirements()}),
+    )
+    mocker.patch(
+        "npa.orchestration.skypilot.registry_preflight.check_image_pulls_with_credentials",
+        return_value=[ImagePullCheck(image=image, status="ok", http_status=200)],
+    )
+    mocker.patch(
+        "npa.cli.workbench.workflow._preflight_image_bootstrap_contracts",
+        return_value=[],
+    )
+    candidate_payload_patch = mocker.patch(
+        "npa.cli.workbench.workflow._workflow_validation_candidate_payload"
+    )
+    if isinstance(candidate_payload, Exception):
+        candidate_payload_patch.side_effect = candidate_payload
+    else:
+        candidate_payload_patch.return_value = candidate_payload
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "preflight-images",
+            str(COSMOS3_SPEC),
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert isinstance(payload, list)
+    assert len(payload) == 1
+    check = payload[0]
+    assert check["image"] == image
+    assert check["status"] == "ok"
+    assert check["http_status"] == 200
+    assert check["workflow_validation_candidates_status"] == expected_status
+    if candidate_selected:
+        assert check["release_status"] == "workflow_validation_candidate"
+        assert check["selection_scope"] == "reachable_branches"
+    else:
+        assert "release_status" not in check
+        assert "selection_scope" not in check
 
 
 def test_preflight_images_uses_selected_cluster_context_for_pull_authority(
@@ -3465,9 +3625,43 @@ def test_submit_rejects_image_selector_before_mutations(
     )
 
     assert result.exit_code == 1
+    # An invalid image selector is rejected while the submission remains in
+    # input validation.  It must not reach the dedicated live-gate boundary.
     assert message in result.output
-    for boundary in image_selector_boundaries:
+    dedicated_boundary, *other_boundaries = image_selector_boundaries
+    dedicated_boundary.assert_not_called()
+    for boundary in other_boundaries:
         boundary.assert_not_called()
+
+
+def test_dedicated_live_gate_refusal_precedes_immutable_image_validation(
+    mocker,
+) -> None:
+    """A live-only spec must return its owned refusal before generic input checks."""
+
+    validate = mocker.patch(
+        "npa.orchestration.npa_workflow.image_inputs.validate_immutable_image_inputs",
+        side_effect=AssertionError("immutable image validation must not run"),
+    )
+    mocker.patch(
+        "npa.cli.workbench.workflow._is_dedicated_live_gate_spec", return_value=True
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(HARDENING_SPEC),
+            "--run-id",
+            "dedicated-live-gate-ordering",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "executable only through its dedicated live gate" in result.output
+    validate.assert_not_called()
 
 
 def test_deploy_if_absent_quota_blocker_precedes_all_submit_mutation(
@@ -3774,6 +3968,7 @@ def test_sim2real_submit_reports_invalid_placement_config_before_cloud_work(
             "--no-deploy-if-absent",
             "--var",
             "bucket=real-bucket",
+            *_sim2real_role_image_args(),
         ],
     )
     assert result.exit_code == 1, result.output

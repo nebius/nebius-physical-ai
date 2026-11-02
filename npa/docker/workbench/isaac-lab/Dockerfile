@@ -100,9 +100,9 @@ RUN chmod +x /opt/npa/docker/workbench/common/*.sh \
     && test "$(printf %s "${NPA_SOURCE_SHA}" | wc -c)" -eq 40 \
     && NPA_RUNTIME_USER="${NPA_RUNTIME_USER}" \
        NPA_ISAAC_VENV=/opt/npa/sim/venv \
-       NPA_UBUNTU_SNAPSHOT=20260825T000000Z \
+       NPA_UBUNTU_SNAPSHOT=20261018T000000Z \
        NPA_UBUNTU_SUITE=noble \
-       NPA_LINUX_LIBC_DEV_VERSION=6.8.0-138.138 \
+       NPA_LINUX_LIBC_DEV_VERSION=6.8.0-147.147 \
        NPA_ISAAC_PYTHON_MINOR=3.12 \
        TORCH_VERSION=2.11.0 \
        TORCHVISION_VERSION=0.26.0 \
@@ -142,7 +142,7 @@ RUN find /opt/npa/src /opt/npa/workflows -type d -exec chmod a+rx {} + \
     && /opt/npa/sim/venv/bin/python -c \
       "import site; from pathlib import Path; Path(site.getsitepackages()[0], 'npa-exact-source.pth').write_text('/opt/npa/src\\n', encoding='utf-8')" \
     && env -u PYTHONPATH /opt/npa/sim/venv/bin/python -c \
-      'import boto3, kubernetes, mcap, npa.workflows.sim2real.runtime_attestation, npa.workflows.sim2real.workflow_stage'
+      'import boto3, kubernetes, mcap, npa.workflows.sim2real.cache_warm, npa.workflows.sim2real.robot_contract, npa.workflows.sim2real.runtime_attestation, npa.workflows.sim2real.workflow_stage'
 
 RUN /opt/npa/sim/venv/bin/python -m \
       npa.workflows.sim2real.install_isaac_runtime /opt/npa/isaac-runtime \

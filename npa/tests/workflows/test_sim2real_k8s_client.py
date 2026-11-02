@@ -7,6 +7,7 @@ from typing import Any
 
 import pytest
 
+from npa.workflows.sim2real import k8s_client as k8s_client_module
 from npa.workflows.sim2real.k8s_client import (
     RUN_ID_LABEL,
     SOURCE_SHA_LABEL,
@@ -325,6 +326,54 @@ users:
             {
                 "config_file": str(kubeconfig),
                 "context": "cert-context",
+                "persist_config": False,
+                "client_configuration": fake_configuration,
+            },
+        )
+    ]
+
+
+def test_from_environment_prefers_requested_kubeconfig_over_incidental_service_account(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    service_account_token = tmp_path / "service-account-token"
+    service_account_token.write_text("token", encoding="utf-8")
+    calls: list[tuple[str, object]] = []
+    fake_configuration = NS()
+    fake_client = NS(
+        Configuration=lambda: fake_configuration,
+        ApiClient=lambda configuration: configuration,
+        BatchV1Api=lambda _client: "batch",
+        CoreV1Api=lambda _client: "core",
+        CustomObjectsApi=lambda _client: "custom",
+    )
+    fake_config = NS(
+        load_incluster_config=lambda **_kwargs: pytest.fail(
+            "explicit context must not use an incidental service account"
+        ),
+        load_kube_config=lambda **kwargs: calls.append(("file", kwargs)),
+    )
+    monkeypatch.setitem(
+        __import__("sys").modules,
+        "kubernetes",
+        NS(client=fake_client, config=fake_config, watch=NS(Watch=lambda: None)),
+    )
+    monkeypatch.setattr(k8s_client_module, "Path", lambda _value: service_account_token)
+    monkeypatch.setenv("KUBERNETES_SERVICE_HOST", "10.0.0.1")
+
+    client = KubernetesJobClient.from_environment(
+        kubeconfig="/private/operator.kubeconfig",
+        context="customer-context",
+        prefer_kubeconfig=True,
+    )
+
+    assert client.core == "core"
+    assert calls == [
+        (
+            "file",
+            {
+                "config_file": "/private/operator.kubeconfig",
+                "context": "customer-context",
                 "persist_config": False,
                 "client_configuration": fake_configuration,
             },

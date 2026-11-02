@@ -282,6 +282,7 @@ _IN_IMAGE_SMOKE_KINDS = {"container-smoke", "server-smoke"}
 _IN_IMAGE_SMOKE_PREFIXES = (
     "python -m npa.",
     "python3 -m npa.",
+    "/opt/lerobot/venv/bin/python -m npa.",
     "python /",
     "/isaac-sim/python.sh /",
     "sh /",
@@ -401,7 +402,13 @@ def test_dockerfile_provides_golden_eval_entrypoint(name: str) -> None:
     if name != "leisaac":
         command = _guarded_in_image_smoke_tail(command)
 
-    if command.startswith(("python -m npa.", "python3 -m npa.")):
+    if command.startswith(
+        (
+            "python -m npa.",
+            "python3 -m npa.",
+            "/opt/lerobot/venv/bin/python -m npa.",
+        )
+    ):
         module = command.split(" -m ", 1)[1].split()[0]
         module_file = "src/" + module.replace(".", "/") + ".py"
         provides = any(
@@ -593,15 +600,8 @@ def test_referenced_smoke_modules_import() -> None:
                 assert find_spec(module) is not None, f"{name}: {module} not importable"
 
 
-def test_versions_helper_works_without_toml_library(tmp_path: Path) -> None:
-    """genesis runs Python 3.10 without tomllib/tomli; the helper must still work.
-
-    Regression for the genesis golden-eval failure where npa.smoke._versions
-    raised ModuleNotFoundError importing tomllib/tomli.
-    """
-
-    import importlib
-
+def test_versions_helper_reads_supported_runtime_metadata(tmp_path: Path) -> None:
+    """The Python 3.11+ runtime parses the image version tables with tomllib."""
     from npa.smoke import _versions
 
     pyproject = tmp_path / "pyproject.toml"
@@ -613,15 +613,8 @@ def test_versions_helper_works_without_toml_library(tmp_path: Path) -> None:
     start.parent.mkdir()
     start.write_text("", encoding="utf-8")
 
-    # Force the stdlib-only path (as on a py3.10 image without tomli).
-    saved = _versions._tomllib
-    try:
-        _versions._tomllib = None
-        assert _versions.supported_tool_version("genesis", str(start)) == "0.4.6"
-        assert _versions.supported_tool_version("lerobot", str(start)) == "0.5.1"
-    finally:
-        _versions._tomllib = saved
-        importlib.reload(_versions)
+    assert _versions.supported_tool_version("genesis", str(start)) == "0.4.6"
+    assert _versions.supported_tool_version("lerobot", str(start)) == "0.5.1"
 
 
 def test_cli_validate_succeeds() -> None:

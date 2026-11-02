@@ -11,12 +11,12 @@ controller pod, source tarball, or hidden sibling-Job orchestrator in this path.
 ```mermaid
 flowchart LR
   T[1 trigger] --> A[2 task/assets]
-  A --> CT[3 Cosmos Transfer]
+  A --> CT[3 guarded Cosmos3-Nano structural transfer]
   CT --> EG[4 parallel EnvGen]
   EG --> S[5 sealed split]
   S --> M[6 scenario manifest]
   M --> R[7 Isaac rollouts]
-  R --> CR[8 hosted Cosmos3-Super evaluation]
+  R --> CR[8 hosted vision-language evaluation]
   CR --> PPO[9 BYO Isaac PPO + validation]
   PPO --> G[10 untouched gold eval]
   G --> D[11 strict decision record]
@@ -27,15 +27,18 @@ flowchart LR
 
 Stages 7–9 are the inner workflow loop. Stages 7–11 are nested in the outer
 workflow loop. Each state receives its iteration through named `{{loop.*}}`
-tokens and uses iteration-scoped S3 paths. Parallel EnvGen shards and Cosmos
-Reason lanes are ordinary runtime waves with a barrier before their consumer.
+tokens and uses iteration-scoped S3 paths. Parallel EnvGen shards are ordinary
+runtime waves. Stage 8 evaluates rollouts concurrently through the selected hosted
+model (currently Token Factory `MiniMaxAI/MiniMax-M3`) and verifies its endpoint/model
+receipts before Stage 9 can consume them.
 
 Every solution boundary has its own immutable task image and resource profile.
 Isaac rollout, training, and evaluation execute inside the admitted workflow
 task; they do not create another Job. Stage adapters accept explicit S3/config
 inputs and publish explicit S3 outputs plus content-addressed ComponentRecords.
-The adapters live in `npa.workflows.sim2real.workflow_stage`; direct Transfer
-ownership is in `workflow_transfer`, and S3/evidence primitives are in
+The adapters live in `npa.workflows.sim2real.workflow_stage`; the canonical Stage 3
+guarded structural-transfer boundary is in `cosmos3_augment`, while archived
+Transfer 2.5 components remain compatibility-only. S3/evidence primitives are in
 `workflow_io`.
 
 The standard runtime ledger at `<run-prefix>/npa-workflow/runtime.json` is the

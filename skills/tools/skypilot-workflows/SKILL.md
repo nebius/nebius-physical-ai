@@ -45,6 +45,11 @@ SkyPilot lives in an isolated virtualenv outside NPA's main Python environment. 
 
 Use `npa skypilot bootstrap` to create or reuse the pinned SkyPilot `0.12.2`
 venv, then set `NPA_SKYPILOT_BIN="$(npa skypilot status --bin-path)"`.
+Bootstrap also constrains FastAPI below `0.145` and probes the application
+constructor required by SkyPilot. After updating NPA, rerun bootstrap to repair
+an older environment that imports SkyPilot but cannot start its API. Finish
+active runs using that environment first; bootstrap checks a replacement before
+activating it and preserves the previous runtime if preparation fails.
 
 The cluster GPU smoke uses an owned validation API session across its credential
 check, discovery, launch, and cleanup. Selecting a CLI executable alone does not
@@ -71,7 +76,7 @@ and exact API identity so the final `stop_isolated_api` step can recover without
 repeating cloud deletion. It stops local processes only and retains run state.
 See `docs/teardown.md#owned-local-workflow-api`; never use unscoped `sky api stop`.
 
-Nebius CLI `0.12.254` selects profiles with `--config`, `--profile`, and
+Nebius CLI `0.12.298` selects profiles with `--config`, `--profile`, and
 `NEBIUS_PROFILE`; it ignores `NEBIUS_CONFIG_DIR` and keeps its renewable cache
 under `HOME/.nebius/credentials.yaml` even with `--config`. Do not infer a private
 CLI cache from that environment variable. The owned API binds supported RSA

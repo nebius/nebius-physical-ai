@@ -768,6 +768,7 @@ def _resume_manifest(
     physics=None,
     experiment_name=byo.DEFAULT_EXPERIMENT_NAME,
     resume_sha256="a" * 64,
+    resume_phase="convergence",
 ):
     return byo.build_isaac_job_manifest(
         job_name="j",
@@ -783,6 +784,7 @@ def _resume_manifest(
         gpu_product="NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
         seed=42,
         resume_uri=resume_uri,
+        resume_phase=resume_phase,
         resume_sha256=resume_sha256 if resume_uri else "",
         physics=physics,
         experiment_name=experiment_name,
@@ -809,6 +811,29 @@ def test_manifest_resume_downloads_prior_checkpoint_and_passes_flags():
         ][0]["env"]
     }
     assert env["NPA_SIM2REAL_ENABLE_GOAL_CURRICULUM"] == "0"
+
+
+def test_resumed_exploration_repeats_training_goal_curriculum():
+    manifest = _resume_manifest(
+        resume_uri="s3://b/prior.pt", resume_phase="exploration"
+    )
+    env = {
+        item["name"]: item["value"]
+        for item in manifest["spec"]["template"]["spec"]["containers"][0]["env"]
+    }
+    assert env["NPA_SIM2REAL_ENABLE_GOAL_CURRICULUM"] == "1"
+    assert env["NPA_SIM2REAL_GOAL_CURRICULUM_FULL_STEP"] == "432"
+    assert "agent.resume=true" in _manifest_script(manifest)
+
+
+def test_resumed_transport_uses_exact_goals_without_restarting_goal_curriculum():
+    manifest = _resume_manifest(resume_uri="s3://b/prior.pt", resume_phase="transport")
+    env = {
+        item["name"]: item["value"]
+        for item in manifest["spec"]["template"]["spec"]["containers"][0]["env"]
+    }
+    assert env["NPA_SIM2REAL_ENABLE_GOAL_CURRICULUM"] == "0"
+    assert "agent.resume=true" in _manifest_script(manifest)
 
 
 def test_manifest_resume_download_is_fail_closed_before_trainer_capture() -> None:
@@ -928,13 +953,16 @@ def test_s3_object_sha256_streams_exact_checkpoint_bytes(monkeypatch) -> None:
     import boto3
 
     monkeypatch.setattr(boto3, "client", lambda *a, **k: S3())
-    assert (
-        byo.s3_object_sha256("s3://bucket/run/model.pt")
-        == hashlib.sha256(b"exact-checkpoint").hexdigest()
-    )
+    expected = hashlib.sha256(b"exact-checkpoint").hexdigest()
+    assert byo.s3_object_identity("s3://bucket/run/model.pt") == {
+        "sha256": expected,
+        "size_bytes": len(b"exact-checkpoint"),
+    }
+    assert byo.s3_object_sha256("s3://bucket/run/model.pt") == expected
 
 
-def test_run_isaac_training_job_tags_s3_path_per_iteration(monkeypatch):
+@pytest.mark.parametrize("resume_phase", ["convergence", "exploration", "transport"])
+def test_run_isaac_training_job_tags_s3_path_per_iteration(monkeypatch, resume_phase):
     # NPA_SIM2REAL_TRAINER_TAG must make each iteration's checkpoint a DISTINCT S3
     # path (so the prior model survives for the next outer iteration to resume from
     # and outer iterations don't overwrite each other).
@@ -944,6 +972,7 @@ def test_run_isaac_training_job_tags_s3_path_per_iteration(monkeypatch):
         captured["s3_output_uri"] = kwargs["s3_output_uri"]
         captured["resume_uri"] = kwargs.get("resume_uri", "")
         captured["resume_sha256"] = kwargs.get("resume_sha256", "")
+        captured["resume_phase"] = kwargs["resume_phase"]
         captured["scenarios_uri"] = kwargs.get("scenarios_uri", "")
         captured["scenarios_jsonl"] = kwargs.get("scenarios_jsonl", "")
         captured["scenarios_sha256"] = kwargs.get("scenarios_sha256", "")
@@ -1017,8 +1046,17 @@ def test_run_isaac_training_job_tags_s3_path_per_iteration(monkeypatch):
             {
                 "training_iteration": 500,
                 "checkpoint_uri": "s3://bkt/run/checkpoints/model_500.pt",
+                "checkpoint_sha256": "d" * 64,
+                "checkpoint_size_bytes": 123,
+                "generator_policy_sha256": "d" * 64,
             }
         ],
+    )
+    monkeypatch.setattr(byo, "s3_object_sha256", lambda *_a, **_k: "d" * 64)
+    monkeypatch.setattr(
+        byo,
+        "s3_object_identity",
+        lambda *_a, **_k: {"sha256": "d" * 64, "size_bytes": 123},
     )
     monkeypatch.setenv("NPA_SIM2REAL_ISAAC_IMAGE", "reg/npa-isaac-lab:2.3.2.post1")
     monkeypatch.setenv("NPA_SIM2REAL_BUCKET", "bkt")
@@ -1031,29 +1069,65 @@ def test_run_isaac_training_job_tags_s3_path_per_iteration(monkeypatch):
         "NPA_SIM2REAL_RESUME_CHECKPOINT_URI", "s3://bkt/prior/model_latest.pt"
     )
     monkeypatch.setenv("NPA_SIM2REAL_RESUME_CHECKPOINT_SHA256", "b" * 64)
+    monkeypatch.setenv("NPA_BYO_ISAAC_RESUME_PHASE", resume_phase)
+    curriculum = {
+        "checkpoint_uri": "s3://bkt/prior/model_latest.pt",
+        "checkpoint_sha256": "b" * 64,
+        "phase": resume_phase,
+        "decision_source": "simulator_validation_only",
+    }
+    monkeypatch.setenv("NPA_SIM2REAL_RESUME_CURRICULUM_JSON", json.dumps(curriculum))
     monkeypatch.delenv("NPA_BYO_ISAAC_PHYSICS", raising=False)
 
     result = byo.run_isaac_training_job("myrun", signal_json="ignored")
+    assert result["final_checkpoint_uri"] == "s3://bkt/run/checkpoints/model_500.pt"
+    assert result["checkpoint_sha256"] == result["final_checkpoint_sha256"] == "d" * 64
+    assert (
+        result["checkpoint_size_bytes"] == result["final_checkpoint_size_bytes"] == 123
+    )
+    assert result["final_checkpoint_alias_verified"] is True
     # distinct, tagged path
     assert captured["s3_output_uri"].endswith("/outer-02-iter-01/")
     assert "byo-trainer" in captured["s3_output_uri"]
     # resume uri threaded through to the manifest builder
     assert captured["resume_uri"] == "s3://bkt/prior/model_latest.pt"
     assert captured["resume_sha256"] == "b" * 64
-    assert captured["entropy_coef"] == byo.DEFAULT_RESUME_ENTROPY_COEF
-    assert captured["entropy_final_coef"] == byo.DEFAULT_RESUME_ENTROPY_FINAL_COEF
+    convergence = resume_phase == "convergence"
+    transport = resume_phase == "transport"
+    assert captured["resume_phase"] == resume_phase
+    if transport or convergence:
+        expected = (
+            byo.DEFAULT_BOOTSTRAP_ENTROPY_COEF,
+            byo.DEFAULT_RESUME_ENTROPY_FINAL_COEF,
+            byo.DEFAULT_RESUME_ENTROPY_ANNEAL_FRACTION,
+            byo.DEFAULT_BOOTSTRAP_PPO_LEARNING_RATE,
+        )
+    else:
+        expected = (
+            byo.DEFAULT_ENTROPY_COEF,
+            byo.DEFAULT_ENTROPY_FINAL_COEF,
+            byo.DEFAULT_ENTROPY_ANNEAL_FRACTION,
+            byo.DEFAULT_PPO_OPTIMIZER_LEARNING_RATE,
+        )
     assert (
-        captured["entropy_anneal_fraction"]
-        == byo.DEFAULT_RESUME_ENTROPY_ANNEAL_FRACTION
+        tuple(
+            captured[name]
+            for name in (
+                "entropy_coef",
+                "entropy_final_coef",
+                "entropy_anneal_fraction",
+                "ppo_optimizer_learning_rate",
+            )
+        )
+        == expected
     )
-    assert (
-        captured["ppo_optimizer_learning_rate"]
-        == byo.DEFAULT_RESUME_PPO_OPTIMIZER_LEARNING_RATE
+    assert captured["convergence_action_noise_std"] == (
+        byo.DEFAULT_BOOTSTRAP_ACTION_NOISE_STD if transport or convergence else ""
     )
-    assert (
-        captured["convergence_action_noise_std"]
-        == byo.DEFAULT_RESUME_CONVERGENCE_ACTION_NOISE_STD
+    assert result["ppo_hyperparameters"]["convergence_action_noise_frozen"] == (
+        transport or convergence
     )
+    assert result["ppo_hyperparameters"]["training_phase"] == "resume_" + resume_phase
     assert captured["success_termination_enabled"] is False
     assert captured["scenarios_uri"] == "s3://bkt/myrun/envs/train/envs.jsonl"
     assert captured["scenarios_jsonl"] == ""
@@ -1063,6 +1137,7 @@ def test_run_isaac_training_job_tags_s3_path_per_iteration(monkeypatch):
     )
     assert result["resume_checkpoint_uri"] == "s3://bkt/prior/model_latest.pt"
     assert result["resume_checkpoint_sha256"] == "b" * 64
+    assert result["resume_curriculum"] == curriculum
     assert (
         result["scenario_distribution"]["source_sha256"]
         == hashlib.sha256(b"{}\n").hexdigest()
@@ -1073,7 +1148,7 @@ def test_run_isaac_training_job_tags_s3_path_per_iteration(monkeypatch):
     assert result["checkpoint_path"].endswith("/outer-02-iter-01/model_latest.pt")
 
 
-def test_enumerate_periodic_checkpoints_uses_interval_and_keeps_final(
+def test_enumerate_periodic_checkpoints_keeps_all_candidates_validation_eligible(
     monkeypatch,
 ) -> None:
     import boto3
@@ -1095,10 +1170,37 @@ def test_enumerate_periodic_checkpoints_uses_interval_and_keeps_final(
             assert name == "list_objects_v2"
             return Paginator()
 
+        def get_object(self, *, Bucket, Key):
+            assert Bucket == "bucket"
+            return {"Body": Body(f"native-{Key}".encode("utf-8"))}
+
+    class Body:
+        def __init__(self, payload):
+            self.payload = payload
+
+        def read(self, _size):
+            payload, self.payload = self.payload, b""
+            return payload
+
+        def close(self):
+            return None
+
     monkeypatch.setattr(boto3, "client", lambda *args, **kwargs: Client())
     checkpoints = byo.enumerate_periodic_checkpoints(
         s3_output="s3://bucket/run/",
         endpoint="https://storage.example",
         validation_interval=100,
     )
-    assert [item["training_iteration"] for item in checkpoints] == [100, 200, 250]
+    assert [item["training_iteration"] for item in checkpoints] == [0, 100, 200, 250]
+    assert checkpoints[0]["checkpoint_completed_updates"] == 1
+    assert all(item["validation_selection_eligible"] is True for item in checkpoints)
+    assert (
+        checkpoints[0]["checkpoint_iteration_semantics"] == "last_completed_zero_based"
+    )
+    for checkpoint in checkpoints:
+        payload = f"native-run/checkpoints/model_{checkpoint['training_iteration']}.pt".encode(
+            "utf-8"
+        )
+        assert checkpoint["checkpoint_sha256"] == hashlib.sha256(payload).hexdigest()
+        assert checkpoint["checkpoint_size_bytes"] == len(payload)
+        assert checkpoint["generator_policy_sha256"] == checkpoint["checkpoint_sha256"]

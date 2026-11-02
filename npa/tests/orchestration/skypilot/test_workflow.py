@@ -2527,6 +2527,57 @@ def test_submit_workflow_secrets_can_come_from_extra_env(monkeypatch, tmp_path) 
     assert rendered["nebius"]["capabilities"] == ["storage"]
 
 
+def test_submit_workflow_keeps_preflight_storage_credentials_out_of_task_yaml(
+    monkeypatch, tmp_path
+) -> None:
+    yaml_path = tmp_path / "workflow.yaml"
+    yaml_path.write_text("name: demo\nresources:\n  cloud: kubernetes\n")
+    sky_bin = _fake_sky(tmp_path)
+    private_values = {
+        "AWS_ACCESS_KEY_ID": "test-storage-access",
+        "AWS_SECRET_ACCESS_KEY": "test-storage-secret",
+        "AWS_SESSION_TOKEN": "test-storage-session",
+    }
+    calls = []
+
+    def fake_preflight(documents, **_kwargs):
+        for document in documents:
+            document.setdefault("envs", {}).update(private_values)
+        return (
+            SimpleNamespace(project="selected-project"),
+            {"checks": {}},
+            private_values,
+        )
+
+    def fake_run(cmd, **kwargs):
+        if _is_status_cmd(cmd):
+            return _healthy_status(cmd)
+        calls.append(cmd)
+        return subprocess.CompletedProcess(
+            cmd, 0, stdout="Job submitted, ID: 10\n", stderr=""
+        )
+
+    monkeypatch.setattr(workflow_module, "_execution_preflight", fake_preflight)
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    result = submit_workflow(
+        yaml_path,
+        "run-storage-secret-redaction",
+        isolated_config_dir=tmp_path / "sky-state",
+        sky_bin=sky_bin,
+    )
+
+    rendered = Path(result.submitted_yaml_path).read_text(encoding="utf-8")
+    launch = next(command for command in calls if "launch" in command)
+    forwarded = {
+        launch[index + 1]
+        for index, value in enumerate(launch[:-1])
+        if value == "--secret"
+    }
+    assert not any(value in rendered for value in private_values.values())
+    assert set(private_values) <= forwarded
+
+
 def test_submit_workflow_replaces_stale_kubernetes_context_allowlist(
     monkeypatch, tmp_path
 ) -> None:

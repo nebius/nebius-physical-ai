@@ -93,6 +93,25 @@ By default this installs `skypilot[nebius,kubernetes]==0.12.2` into
 `~/.npa/skypilot-venv`. Use `--path` or `NPA_SKYPILOT_VENV_PATH` when an
 operator-managed location is required.
 
+Bootstrap also constrains FastAPI below `0.145`, whose removal of unused
+constructor arguments prevents SkyPilot 0.12.2's API from starting. See the
+[FastAPI release notes](https://fastapi.tiangolo.com/release-notes/#01450).
+It tests the server's application constructor before reusing an existing
+environment and before activating a new one. If an earlier bootstrap installed
+an incompatible FastAPI, rerun `npa skypilot bootstrap` after updating NPA;
+it prepares and checks a replacement while preserving the previous runtime on
+failure. Finish active runs using that environment before upgrading it.
+
+Worker source setup requires Python 3.11 or later. It prefers the image's
+declared NPA interpreter, then compatible `python3`, `python3.12`, or
+`python3.11` executables. If the worker supplies only an older Python, setup
+uses its available `uv` to create a separate Python 3.12 environment under
+`/tmp/npa-setup-venv.*`, with pip for subsequent tool setup. uv downloads Python
+when needed, so this fallback requires access to its Python distribution and
+package sources. Setup records the selected interpreter for the stage command.
+If uv or its downloads are unavailable, supply a worker image with a compatible
+NPA interpreter; setup stops before attempting the NPA source install.
+
 ## Point NPA At It
 
 Set `NPA_SKYPILOT_BIN` to the venv's `sky` executable:
@@ -180,6 +199,20 @@ Every SkyPilot check, GPU discovery, launch, status poll, and cleanup remains
 scoped to the selected context, and the command succeeds only after the GPU task
 completes and its ephemeral SkyPilot cluster is removed.
 
+Replacement GPU nodes may be Ready and report allocatable GPUs while lacking
+the SkyPilot label installed during setup. For reviewed RTX PRO 6000 Blackwell
+and B200 products, GPU submission preflight checks the lowercase
+`skypilot.co/accelerator` value against the effective task request when that
+formatter is selected, in addition to native hardware and free capacity.
+An exact supported native GFD/Nebius accelerator name remains usable when no
+SkyPilot label formatter is selected. It checks each GPU wave again, so a
+replacement after CPU stages cannot pass a canonical bridge request solely
+on its native product label.
+Correctly labelled fitting nodes in a mixed pool remain eligible. This gate
+does not label nodes; rerun the exact-context GPU setup above, or explicitly
+invoke `wait_for_kubernetes_accelerators(..., label_known_gpus=True)` through
+the SDK, before resuming the same workflow.
+
 Cluster validation uses one owned local API session for the credential check,
 GPU discovery, launch, and cleanup. It selects the requested SkyPilot interpreter
 and a durable working directory even when another SkyPilot API is already
@@ -197,14 +230,30 @@ when one is selected. Keep `current-session.json` and its referenced
 the next invocation creates a new session so it can use newly selected
 credentials or an updated interpreter without changing an active session.
 
-The owned API follows Nebius CLI `0.12.254` authentication selection: `--config`
+The owned API follows Nebius CLI `0.12.298` authentication selection: `--config`
 selects the profile file, `--profile` overrides `NEBIUS_PROFILE` and the saved
 default, and the renewable token cache remains `HOME/.nebius/credentials.yaml`.
 `NEBIUS_CONFIG_DIR` does not redirect either CLI file. Isolated SkyPilot homes
 retain the incoming CLI home configuration. For a verified RSA service-account
 profile, normal cache refresh, creation, and pruning preserve API identity;
 the effective profile file, account, key, and explicit credential sources remain
-bound. Unsupported or mixed authentication formats remain byte-strict.
+bound. Both split RSA-key profiles and the CLI's
+`service-account-credentials-file-path` profile are supported. The latter binds
+the absolute JSON file path and its complete bytes, verifies the native
+`subject-credentials` RSA/RS256 format, and binds the account and public-key
+identity. An optional profile `name` remains part of the bound configuration.
+No token is fetched to calculate this identity. Unknown cache entries, OAuth,
+mixed authentication settings, relative credential paths, and explicit bearer
+aliases retain full-byte verification.
+To verify this route with the actual CLI, run
+`npa/tests/e2e/test_nebius_json_sa_identity.py` with `NPA_INTEGRATION_E2E=1`,
+`NPA_E2E_NEBIUS_JSON_SA_CONFIG` set to the absolute owner-only CLI configuration,
+and `NPA_E2E_NEBIUS_JSON_SA_PROFILE` set to its selected JSON service-account
+profile. `NPA_E2E_NEBIUS_CLI` optionally selects an absolute CLI executable;
+otherwise the test uses `nebius` from `PATH`. The contract targets CLI
+`0.12.298`. It reads the selected config and credentials without changing them,
+mints into a fresh private test home, verifies the full durable binding before
+and after native cache creation, and starts no API, controller, or cloud job.
 The native attached-VM profile is also supported when it contains exactly
 `endpoint`, `parent-id`, `tenant-id`, and the provider's standard metadata
 `token-endpoint`. Its unchanged profile selects the attached identity while
@@ -290,8 +339,8 @@ update all of them together and re-run the SkyPilot guardrail tests:
 1. `npa/src/npa/orchestration/skypilot/_bin.py` — `REQUIRED_SKYPILOT_VERSION`
    (canonical pin; `npa skypilot bootstrap` and `_bin` fail closed on mismatch).
    `npa/src/npa/cli/skypilot/__init__.py` aliases it as `SKYPILOT_VERSION`.
-2. `npa/src/npa/cli/skypilot/constraints-0.12.2.txt` — rename to the new
-   version and re-resolve the pinned dependency set.
+2. `npa/src/npa/cli/skypilot/skypilot-constraints.txt` — re-resolve the
+   SkyPilot-compatible dependency set, including its exact local API server pin.
 3. `npa/src/npa/orchestration/skypilot/local_api.py` — health-check version
    assertion against the isolated API daemon (`health.get("version")`).
 4. `npa/src/npa/orchestration/skypilot/native_preflight.py` —

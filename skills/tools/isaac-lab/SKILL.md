@@ -177,7 +177,8 @@ held-out rollout eval. The held-out eval is backend-pluggable:
 Select with `--sim-backend`, env `NPA_SIM2REAL_SIM_BACKEND`, or the runbook
 YAML. Both backends emit the identical `npa.sim2real.heldout_eval.v1` per-env
 schema (`env_id`/`score`/`success`/`details`), so `report.json` and the
-outer-loop gate are backend-agnostic. The VLM eval (Cosmos-Reason) is unchanged.
+outer-loop gate are backend-agnostic. Hosted scoring is a separate stage; follow
+the canonical Sim2Real runbook for its current model and request contract.
 
 When Stage 10 has a genuine Isaac trainer checkpoint, object storage, and a
 registry-qualified Isaac image, it selects `byo_isaac_eval`. That vectorized
@@ -190,6 +191,34 @@ Stage 10; `passed=false` means the eval completed below its quality bar and is
 handled by the Stage 11 threshold gate. Stage 14 remains responsible for the
 run-level RRD/MCAP visualization artifacts.
 
+The stock-Franka scenario variant shares `stock-franka-high-pd-200hz-v1`
+between training, validation and Gold. It uses upstream task-space arm gains
+and robot gravity compensation, with 200 Hz physics and a 50 Hz policy clock.
+The native `robot_control` audit verifies the actual drives and timestep.
+Keep the sealed object physics and strict 5 cm / 0.03 m/s / three-step
+placement predicate. Teacher demonstrations are training-only; evaluation
+executes the learned actor alone.
+
+The stock scenario actor uses `stock-franka-cartesian-gru-v2` with native
+absolute TCP-pose actions, normalized measured state and TCP geometry, a GRU,
+and the real reset clock bounded at five seconds. Training, held-out evaluation,
+and camera rollouts share that configuration and reset recurrent state on real
+episode boundaries. `franka-cartesian-gru-distillation-v2` retains at least three
+32-epoch demonstration fits and requires at least half the complete training
+split to achieve strict placement under the actor alone before PPO. Corrective
+fitting repeats when the complete actor-only check fails; retain its entire
+assessment and fitting history. A weak mixed warmup collection requires another
+teacher-only round that passes the same half-split placement guard, followed by
+refitting and a fresh mixed collection. Preserve every failed mixture and teacher
+recovery fit in `warmup_recovery`. Native checkpoints bind action/model semantics;
+freeze trained observation statistics after the successful actor-only handoff
+and preserve their literal count/update bound in every checkpoint and exact load.
+Stock demonstration and resumed transport/convergence passes default to a fixed
+PPO learning rate `0.00001`, zero entropy, and initial/convergence action noise
+`0.005`; preserve explicit operator overrides and custom task defaults.
+Matching tensor dimensions alone is insufficient. This training handoff does
+not establish held-out acceptance.
+
 Asset handling mirrors the Genesis no-fallback provenance discipline:
 
 - Stock: the built-in Isaac lift-cube manipuland, recorded as
@@ -199,11 +228,11 @@ Asset handling mirrors the Genesis no-fallback provenance discipline:
   recorded as `asset_source=byo_mesh` with a sha256. A mesh that fails to
   import or load raises; there is no silent fallback to the stock asset.
 
-The Isaac Lab image bakes no `npa` code, and Isaac Sim is only importable via
-its bundled interpreter `/isaac-sim/python.sh`. The eval component injects
-branch `npa` code into that interpreter at start from an S3 source tarball
-(`NPA_SIM2REAL_SOURCE_TARBALL_URI`) or, when the repo is reachable, a git clone
-(`NPA_SOURCE_REPO`/`NPA_SOURCE_REF`), and ensures `boto3` for the S3 client.
+The payload-clean Isaac Lab image bakes source-attested NPA entrypoints under
+`/opt/npa/isaac-runtime`. Native execution reaches Isaac through the runtime-fetch
+shim `/isaac-sim/python.sh` and its verified SDK cache. Select the coherent
+digest-pinned image bundle before submitting the canonical workflow; source
+identity belongs to those immutable image bytes.
 
 Architecture + licensing rationale: `docs/architecture/sim-backend-selection.md`.
 
@@ -298,4 +327,13 @@ limits, pinned API references and opt-in live acceptance.
 - Parameter sweep: `workflows/testing/isaac-lab-rl-sweep.yaml`.
 - Runner: `npa/scripts/run_isaac_lab_rl.py`.
 
-E2E is pending the training command fix tracked by `W9-isaac-lab-e2e-fix`.
+For composed Sim2Real training, use `workflows/main/sim2real.yaml` through the
+standard SkyPilot runtime. Its Stage 9 executes native RSL-RL PPO and publishes
+actual checkpoints; validation selects the resume checkpoint and curriculum,
+and the held-out quality gate determines whether the learned policy succeeds.
+See [the operating guide](../../../docs/workbench/guides/sim2real-workflow.md).
+
+The `W9-isaac-lab-e2e-fix` note belongs to the earlier standalone serverless
+experiment in [historical backend checks](../../../docs/archive/workbench-backend-checks.md).
+That recorded no-artifact result does not describe the canonical Sim2Real path
+or qualify a newer standalone serverless command.

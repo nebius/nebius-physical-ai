@@ -22,6 +22,38 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 SPEC = REPO_ROOT / "workflows" / "testing" / "openpi-pi05-full-droid-finetune.yaml"
 
 
+@pytest.mark.parametrize("command", [[], ["rrd-worker"]])
+def test_worker_help_runs_without_control_plane_dependencies(command) -> None:
+    """Exercise both isolated OpenPI interpreters without any site packages."""
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-I",
+            "-S",
+            "-c",
+            "import runpy, sys; sys.path.insert(0, sys.argv.pop(1)); "
+            "runpy.run_module('npa.workflows.byof.openpi_full_droid', run_name='__main__')",
+            str(REPO_ROOT / "npa/src"),
+            *command,
+            "--help",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "usage:" in result.stdout
+
+
+def test_byof_public_helpers_preserve_the_live_module_api() -> None:
+    import npa.workflows.byof as byof
+    from npa.workflows.byof import live
+
+    for name in byof.__all__:
+        assert getattr(byof, name) is getattr(live, name)
+    with pytest.raises(AttributeError):
+        getattr(byof, "unknown_byof_helper")
+
+
 def test_full_droid_recipe_matches_pinned_upstream_contract() -> None:
     assert full_droid.SOURCE_REF == "15a9616a00943ada6c20a0f158e3adb39df2ccac"
     assert full_droid.CONFIG_NAME == "pi05_full_droid_finetune"

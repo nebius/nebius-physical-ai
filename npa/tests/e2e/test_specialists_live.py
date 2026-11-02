@@ -26,6 +26,23 @@ _WORKFLOWS = {
     "glm": ("paidf-cosmos3.yaml", "generate-configs"),
     "deepseek": ("sim2real.yaml", "stage-04-wave"),
 }
+_SIM2REAL_PLAN_IMAGE = "registry.example.invalid/npa/sim2real@sha256:" + "a" * 64
+
+
+def _sim2real_plan_image_args() -> list[str]:
+    """Use inert digest pins: a plan renders, but this operation never pulls images."""
+
+    return [
+        argument
+        for key in (
+            "controller_image",
+            "cosmos3_image",
+            "envgen_image",
+            "isaac_image",
+            "viewer_image",
+        )
+        for argument in ("--var", f"{key}={_SIM2REAL_PLAN_IMAGE}")
+    ]
 
 
 def _operations(filename):
@@ -42,7 +59,11 @@ def _operations(filename):
             "--json",
         ]
         if filename == "sim2real.yaml" and verb == "plan":
-            argv += ["--assume-decision", "promote_checkpoint"]
+            argv += [
+                "--assume-decision",
+                "promote_checkpoint",
+                *_sim2real_plan_image_args(),
+            ]
         operations[verb] = Operation(
             argv=argv,
             description=f"{verb} the real workflow using Workbench; nonzero exit means failure.",

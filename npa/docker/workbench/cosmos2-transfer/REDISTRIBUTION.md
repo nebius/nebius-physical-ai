@@ -10,6 +10,11 @@ is mandatory before the packaging contract may classify the image `public`.
 - Image tag: `npa-cosmos2-transfer:2.5.1-sam2-multigpu-20260817-r2`
 - Upstream source: `https://github.com/nvidia-cosmos/cosmos-transfer2.5`
 - Upstream revision: `67d56b7d550a3911024a32dc23ae0bae5258e633`
+- Source delivery: GitHub's public commit-addressed codeload archive, verified
+  before extraction with SHA-256
+  `978bfb03a49213669551701659641ae7b8414649480eb45c4c9c1f8d5e5a92a8`.
+  This is the same immutable commit, not a branch, tag, mirror, or credentialed
+  source path.
 - Meta SAM2 source: `https://github.com/facebookresearch/sam2`
 - Meta SAM2 revision: `2b90b9f5ceec907a1c18123530e92e794ad901a4`
 - CUDA build base: `nvidia/cuda:12.8.1-cudnn-devel-ubuntu24.04`

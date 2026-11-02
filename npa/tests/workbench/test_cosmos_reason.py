@@ -24,6 +24,7 @@ from npa.workbench.cosmos.reason import (
     apply_cosmos_reason_kubernetes_env,
     cosmos_reason_k8s_shell_preamble,
     cosmos_reason_runtime_env,
+    hosted_rollout_model_family,
     default_reason_cache_dir,
     cosmos_reason_family,
     merge_reason_evaluations,
@@ -169,6 +170,11 @@ def test_model_family_distinguishes_real_cosmos3_edge_from_reason2() -> None:
     assert cosmos_reason_family("nvidia/Cosmos-Reason2-2B") == "reason2"
 
 
+def test_hosted_rollout_rejects_a_retired_cosmos3_serverless_alias() -> None:
+    with pytest.raises(CosmosReasonError, match="MiniMaxAI/MiniMax-M3"):
+        hosted_rollout_model_family("nvidia/Cosmos3-Super-Reasoner")
+
+
 def test_hosted_frame_selection_is_bounded_and_rollout_wide() -> None:
     frames = [Path(f"camera-{index:03d}.png") for index in range(32)]
     selected = select_hosted_event_frames(frames)
@@ -180,7 +186,7 @@ def test_hosted_frame_selection_is_bounded_and_rollout_wide() -> None:
 
 @pytest.mark.parametrize(
     ("model", "family"),
-    [(DEFAULT_COSMOS3_MODEL, "cosmos3"), ("MiniMaxAI/MiniMax-M3", "minimax_m3")],
+    [("MiniMaxAI/MiniMax-M3", "minimax_m3")],
 )
 def test_token_factory_rollout_evaluator_returns_event_local_contract(
     tmp_path, model, family
@@ -192,6 +198,7 @@ def test_token_factory_rollout_evaluator_returns_event_local_contract(
         frames.append(frame)
 
     class Client:
+        config = SimpleNamespace(base_url="https://token-factory.example/v1/")
         last_request_metrics = {"latency_seconds": 1.25, "retries": 1}
 
         def chat_completion(self, **kwargs):
@@ -283,6 +290,7 @@ def test_token_factory_rollout_evaluator_returns_event_local_contract(
     assert result["component_source"] == "token_factory_rollout_vlm"
     assert result["request"] == {
         "request_id": "request-public-1",
+        "endpoint_url": "https://token-factory.example/v1/",
         "input_tokens": 100,
         "output_tokens": 50,
         "total_tokens": 150,
@@ -987,10 +995,10 @@ def test_complete_hosted_output_retains_original_score_and_ground_truth():
     )
 
 
-@pytest.mark.parametrize("model", [DEFAULT_COSMOS3_MODEL, "MiniMaxAI/MiniMax-M3"])
 def test_hosted_prompt_and_strict_output_cover_actions_beyond_legacy_preview(
-    tmp_path, model
+    tmp_path,
 ):
+    model = "MiniMaxAI/MiniMax-M3"
     frame = tmp_path / "frame.png"
     frame.write_bytes(b"synthetic-frame")
     actions = [
@@ -1004,6 +1012,8 @@ def test_hosted_prompt_and_strict_output_cover_actions_beyond_legacy_preview(
     ]
 
     class Client:
+        config = SimpleNamespace(base_url="https://token-factory.example/v1/")
+
         def chat_completion(self, **kwargs):
             prompt = kwargs["messages"][0]["content"][0]["text"]
             lines = prompt.splitlines()
@@ -1126,21 +1136,21 @@ class _ReasonModel:
         return [[10, 20]]
 
 
-def _install_reason_model_double(monkeypatch, model_payload):
+def _install_reason_model_double(monkeypatch, model_payload, expected_model, revision):
     """Replace external model execution while retaining the public inference path."""
     import torch
 
     processor = _ReasonProcessor(model_payload)
 
     def load_processor(model_id, **kwargs):
-        assert model_id == DEFAULT_REASON2_MODEL
-        assert kwargs["revision"] == "a9fae2cf89dc64db96b12860417f0eb403013bb9"
+        assert model_id == expected_model
+        assert kwargs["revision"] == revision
         assert kwargs["trust_remote_code"] is False
         return processor
 
     def load_model(model_id, **kwargs):
-        assert model_id == DEFAULT_REASON2_MODEL
-        assert kwargs["revision"] == "a9fae2cf89dc64db96b12860417f0eb403013bb9"
+        assert model_id == expected_model
+        assert kwargs["revision"] == revision
         assert kwargs["trust_remote_code"] is False
         return _ReasonModel()
 
@@ -1158,8 +1168,14 @@ def _install_reason_model_double(monkeypatch, model_payload):
     monkeypatch.setattr(torch.cuda, "is_bf16_supported", lambda: False)
 
 
-@pytest.fixture
-def self_hosted_reason(monkeypatch, tmp_path):
+@pytest.fixture(
+    params=[
+        (DEFAULT_REASON2_MODEL, "a9fae2cf89dc64db96b12860417f0eb403013bb9"),
+        ("nvidia/Cosmos-Reason2-2B", "9ce19a195e423419c349abfc86fd07178b230561"),
+    ],
+    ids=["reason2-8b", "reason2-2b"],
+)
+def self_hosted_reason(monkeypatch, tmp_path, request):
     """A decoded local frame plus external model doubles; no live inference."""
     from PIL import Image
 
@@ -1167,11 +1183,14 @@ def self_hosted_reason(monkeypatch, tmp_path):
     Image.new("RGB", (2, 2)).save(frame)
     monkeypatch.setenv("HF_HOME", str(tmp_path / "hf"))
     monkeypatch.setenv("NPA_COSMOS_REASON2_CACHE", str(tmp_path / "cache"))
+    monkeypatch.setenv("NPA_COSMOS_REASON3_CACHE", str(tmp_path / "cache-2b"))
+    monkeypatch.delenv("NPA_COSMOS_REASON_MODEL_REVISION", raising=False)
+    model_id, revision = request.param
 
     def run(model_payload):
-        _install_reason_model_double(monkeypatch, model_payload)
+        _install_reason_model_double(monkeypatch, model_payload, model_id, revision)
         return reason_module.run_cosmos_reason_vlm(
-            model_id=DEFAULT_REASON2_MODEL,
+            model_id=model_id,
             image_paths=[frame],
             actions=[{"step": 0, "action": [0.0]}],
             task_description="Hold the cube.",

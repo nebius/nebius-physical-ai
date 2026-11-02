@@ -7,11 +7,13 @@ This guide covers the **generation** half as a containerized workbench tool —
 image and video synthesis for Physical AI data — through the CLI, the SDK, and a
 declarative `npa.workflow` spec that all share one implementation.
 
-The historical public release is quarantined. The repaired default introduced
-by #869 is scoped to PAIDF video preparation and variant generation;
-`workbench.cosmos3.generate` still needs an explicit independently qualified
-operator image. Earlier execution evidence below does not accept the withdrawn
-public bytes. See the [default-image impact audit](validation/public-default-quarantine-impact-20261005.md).
+The historical public release is quarantined. A digest-pinned validation
+candidate is selected for PAIDF video preparation and variant generation. It is
+not a supported public release, and every other action routed to `npa-cosmos3`
+— including `workbench.cosmos3.generate` — still needs an explicit independently
+qualified operator image. Earlier execution evidence below does not accept the
+withdrawn public bytes. See the
+[default-image impact audit](validation/public-default-quarantine-impact-20261005.md).
 
 | Piece | Path |
 | --- | --- |
@@ -36,8 +38,8 @@ The source image recipe applies a hash-verified AnyIO 4.14.2 security overlay
 after the upstream model lock, fixing
 [CVE-2026-63374](https://github.com/agronholm/anyio/security/advisories/GHSA-82r6-8w77-94w6).
 CUDA, Torch and model-library versions remain pinned by the upstream lock.
-This source fix does not qualify a release: the default image remains quarantined
-until rebuilt bytes pass security scans and real GPU acceptance. Validate an
+This source fix does not qualify a release: the published release bytes remain
+quarantined until rebuilt bytes pass security scans and real GPU acceptance. Validate an
 immutable development digest before promoting it; existing release bytes do not
 inherit the dependency fix.
 
@@ -105,12 +107,13 @@ reinterpret an unsafe result.
 
 ## Build
 
-The supported/default image release is `npa-cosmos3:1.2.2-cu130-r7`. It is an
-additive successor to the historical rollback tag `npa-cosmos3:1.2.2-cu130`,
-which is retained for provenance and must never be
-overwritten or deleted. Pre-merge validation builds use a branch-specific
-candidate tag in a private registry; the official `1.2.2-cu130-r7` tag was promoted
-only from the exact source commit whose bytes passed the secure publishing gates.
+The configured release tag is `npa-cosmos3:1.2.2-cu130-r7`. It is an additive
+successor to the historical rollback tag `npa-cosmos3:1.2.2-cu130`, which is
+retained for provenance and must never be overwritten or deleted. The r7 tag is
+quarantined and is not selected by default workflow planning. Pre-merge
+validation builds use a branch-specific candidate tag in a private registry; the
+official `1.2.2-cu130-r7` tag was promoted only from the exact source commit
+whose bytes passed the secure publishing gates.
 
 ```bash
 # Defaults to the pinned framework commit and the supported-tools tag.
@@ -180,24 +183,44 @@ print(result["output_kind"], result["artifact_uri"])
 
 ### Workflow
 
-`workflows/testing/cosmos3-generate.yaml` runs the same stage
-through the `workbench.cosmos3.generate` toolRef, which resolves to the
-supported public `npa-cosmos3` image automatically. Complete
-[Workbench Getting Started](getting-started.md), including access checks,
-planning, exact-cluster verification, and image preflight. Submit with the same
-project, cluster, bucket, and config overrides:
+`workflows/testing/cosmos3-generate.yaml` runs the same stage through the
+`workbench.cosmos3.generate` toolRef. That action deliberately remains
+quarantined by default: the existing Cosmos3 validation candidate covers PAIDF
+video preparation and variant generation, not stock text-to-image generation.
+The [stock-generation validation record](validation/cosmos3-stock-generation-default-20261006.md)
+defines the narrow H100 qualification required before a separately reviewed
+scope change can enable it. Do not treat the stock test spec as a normal
+getting-started workload until that record is complete.
 
-```bash
-npa workbench workflow submit workflows/testing/cosmos3-generate.yaml \
-  --project '<project-alias>' --infra 'k8s/<context>' \
-  --var 'bucket=<bucket>' --runtime \
-  --secret-env HF_TOKEN --secret-env AWS_ACCESS_KEY_ID --secret-env AWS_SECRET_ACCESS_KEY
-```
+Successful JSON output from every `npa.workflow` `submit` includes
+`workflow_validation_candidates`; each selection carries
+`release_status: workflow_validation_candidate` and either
+`selection_scope: planned_steps` or `selection_scope: reachable_branches`. A
+plan-only or non-runtime submit lists its planned steps. A runtime submit lists
+candidate defaults across every reachable branch before decisions execute, so it
+can include a candidate from a branch that the completed run does not take. A
+`plan-spec --check-render --json` result also reports planned candidate
+selections; rendering proves resolution, not pullability or runtime capability.
+The matching `preflight-images --json` check adds `release_status` and
+`selection_scope: reachable_branches` when candidate disclosure succeeds and a
+checked image is a validation candidate. If stderr reports that candidate
+disclosure is unavailable, an omitted `release_status` is not evidence that an
+image is not a candidate; read the provenance from `submit` or
+`plan-spec --check-render` instead.
+Every successful `npa.workflow` submit JSON result reports
+`workflow_validation_candidates_status`: `available` means the list was
+computed for manifest-governed toolRefs whose effective images resolve, while
+`unavailable` means the list cannot establish provenance and normal rendering
+remains authoritative. Agent control planes must treat this as validation
+provenance, not release approval.
+Raw SkyPilot YAML submits report `not_applicable`, because they do not have
+`npa.workflow` candidate selection to compute.
 
+After an operator has authorized a separately qualified immutable image,
 `--runtime` supervises the workflow to its terminal state. Secret values resolve
 from the private environment or selected project's NPA credential store; only
 their names belong in the command. `HF_TOKEN` needs guardrail-model access for
-the default run.
+that guarded run.
 
 Official NPA images pull anonymously; no Docker registry credentials are needed.
 Use `--registry` only to select intentional custom images. A private registry
@@ -254,8 +277,12 @@ successfully evaluated 1/1 generated-media inputs; RetinaFace postprocessing
 ran. The native receipt reported effective guardrail execution. The nonblank
 960×960 JPEG was 183,829 bytes with SHA-256
 `d80f7d11c49d66b12d3c896a9aa55a6d79b02de5a8ca24041a0e15b8efb4f2fd`.
-The accepted image digest is recorded in
-[`public_release_manifest.json`](../../npa/src/npa/deploy/public_release_manifest.json).
+The GPU-accepted r7 capability digest is recorded in the
+[`GPU_ACCEPTED_PUBLIC_IMAGE_SOURCES`](../../npa/src/npa/deploy/images.py)
+inventory. The Cosmos3 entry in
+[`public_release_manifest.json`](../../npa/src/npa/deploy/public_release_manifest.json)
+is instead a current workflow-validation candidate and is not an accepted
+release.
 This is text-to-image guardrail evidence; other generation modes require their
 own workload validation.
 

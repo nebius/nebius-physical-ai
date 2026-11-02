@@ -23,7 +23,8 @@ def test_scheduler_plan_includes_resources() -> None:
 def test_scheduler_uses_interpreter_resolved_image_profile() -> None:
     spec = load_spec(SPECS.parent / "main" / "sim2real.yaml")
     digest = "registry.example/npa/isaac@sha256:" + "a" * 64
-    spec.config["isaac_image"] = digest
+    for key in spec.config["required_immutable_images"]:
+        spec.config[key] = digest
     spec.config["outer_iterations"] = "1"
     spec.config["inner_iterations"] = "1"
     plan = build_plan(spec, run_id="resolved-resource")

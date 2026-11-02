@@ -58,7 +58,7 @@ BUILD_COMMAND_SHA256 = (
 DEPENDENCY_LOCK_SHA256 = (
     "65efcf0065ad4662b348e54e3f2d86996d934a518fcad0e89ecf012399ce1504"
 )
-RUNTIME_LOCK_SHA256 = "3dd2e336a1fbb57a115866b9a9eae36bcd3ee00a2a0f994497dcf6ae7d098a02"
+RUNTIME_LOCK_SHA256 = "b5cc76d0c184e24f16515b3bd982de3e3d36e3005b38b58cf85a1c70d4a18c7d"
 
 
 def _customer_binding(project: str) -> str:
@@ -2465,7 +2465,7 @@ def test_robomimic_smoke_is_immutable_and_fails_closed() -> None:
     assert hashlib.sha256(lock_bytes).hexdigest() == DEPENDENCY_LOCK_SHA256
     runtime_lock_bytes = RUNTIME_LOCK.read_bytes()
     runtime_lock = json.loads(runtime_lock_bytes)
-    assert len(runtime_lock["packages"]) == 62
+    assert len(runtime_lock["packages"]) == 67
     assert hashlib.sha256(runtime_lock_bytes).hexdigest() == RUNTIME_LOCK_SHA256
     smoke = _smoke_python()
 
@@ -2495,7 +2495,7 @@ def test_robomimic_smoke_is_immutable_and_fails_closed() -> None:
         'config.train.hdf5_validation_filter_key = "valid"',
         'source_identity["revision"] != SOURCE_REVISION',
         f'RUNTIME_LOCK_SHA256 = "{RUNTIME_LOCK_SHA256}"',
-        "RUNTIME_DISTRIBUTION_COUNT = 62",
+        "RUNTIME_DISTRIBUTION_COUNT = 67",
         "models/model_epoch_1.pth",
         "policy_from_checkpoint(",
         "optimizer_steps != TRAIN_STEPS",
@@ -2610,6 +2610,7 @@ def test_robomimic_dataset_retry_cleans_owned_stale_partial_before_network(
     monkeypatch.setattr(module, "verify_customer_runtime_entitlement", lambda **_kw: {})
     input_dir = tmp_path / "inputs"
     input_dir.mkdir()
+    input_dir.chmod(0o700)
     partial = input_dir / "lift_ph_lowdim_v15.download"
     partial.write_bytes(b"interrupted")
     opened: list[bool] = []
@@ -2636,6 +2637,7 @@ def test_robomimic_dataset_retry_rejects_stale_partial_symlink(
     monkeypatch.setattr(module, "verify_customer_runtime_entitlement", lambda **_kw: {})
     input_dir = tmp_path / "inputs"
     input_dir.mkdir()
+    input_dir.chmod(0o700)
     outside = tmp_path / "outside"
     outside.write_bytes(b"preserve")
     partial = input_dir / "lift_ph_lowdim_v15.download"
@@ -2817,6 +2819,7 @@ def test_robomimic_expiry_preserves_preexisting_partial_until_authorized(
     binding = _inert_smoke_entitlement(tmp_path, monkeypatch, module, expire_at_check=2)
     inputs = tmp_path / "inputs"
     inputs.mkdir()
+    inputs.chmod(0o700)
     partial = inputs / "lift_ph_lowdim_v15.download"
     partial.write_bytes(b"inert-owned-partial")
     monkeypatch.setattr(

@@ -63,7 +63,7 @@ RUN git clone --filter=blob:none --no-checkout "${ALPAMAYO2_SOURCE_URL}" /opt/al
 # H100, B200, and RTX PRO 6000 architecture paths selected above.
 COPY docker/workbench/alpamayo2-super/security-upgrades-requirements.txt /tmp/alpamayo2-security-upgrades.txt
 RUN python3.12 -m venv /opt/uv \
-    && /opt/uv/bin/pip install --no-cache-dir 'uv==0.11.15' \
+    && /opt/uv/bin/pip install --no-cache-dir 'uv==0.13.4' \
     && cd /opt/alpamayo2 \
     && /opt/uv/bin/uv sync --locked --no-dev \
     && /opt/uv/bin/uv pip install --python .venv/bin/python --no-deps --require-hashes \

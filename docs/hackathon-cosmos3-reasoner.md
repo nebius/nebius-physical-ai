@@ -1,16 +1,15 @@
-# Hackathon Quickstart — Cosmos3 Reasoner on Nebius Token Factory (serverless)
+# Hackathon Quickstart — Token Factory vision reasoning (MiniMax-M3)
 
 [Docs](README.md)
 
-> Historical Cosmos3 recipe: its public hosted model was retired under the
-> [August 2026 notice](https://docs.tokenfactory.nebius.com/august-2026-deprecation-notice).
-> Use the current [Token Factory guide](workbench/token-factory.md) and
-> [migration verification](workbench/token-factory-deprecation-verification.md)
-> for current defaults. Explicit legacy model IDs require a serving endpoint;
-> this page does not establish their current availability.
+> `nvidia/Cosmos3-Super-Reasoner` was retired from the public serverless
+> service under the [August 2026 notice](https://docs.tokenfactory.nebius.com/august-2026-deprecation-notice).
+> This updated quickstart uses the currently supported `MiniMaxAI/MiniMax-M3`
+> endpoint. A dedicated or self-hosted Cosmos3 Reasoner needs separate access
+> and contract validation; this page does not establish either.
 
-This is the **foolproof, copy‑paste** path to call NVIDIA
-**`nvidia/Cosmos3-Super-Reasoner`** as a *serverless* backend for your hackathon
+This is the **foolproof, copy‑paste** path to call
+**`MiniMaxAI/MiniMax-M3`** as a *serverless* vision-reasoning backend for your hackathon
 project. Inference is hosted by **Nebius Token Factory** (an OpenAI‑compatible
 API), so there is **no GPU to rent, no VM to start, no container to build, and
 no Kubernetes**. You need exactly two things: an API key and an internet
@@ -77,20 +76,20 @@ echo "key length: ${#NEBIUS_TOKEN_FACTORY_KEY}"
 ```bash
 curl -s https://api.tokenfactory.nebius.com/v1/models \
   -H "Authorization: Bearer ${NEBIUS_TOKEN_FACTORY_KEY}" \
-  | grep -o '"id":"[^"]*"' | grep -i cosmos
+  | grep -o '"id":"[^"]*"' | grep -F 'MiniMaxAI/MiniMax-M3'
 ```
 
 ✅ **Checkpoint** — you should see:
 
 ```
-"id":"nvidia/Cosmos3-Super-Reasoner"
+"id":"MiniMaxAI/MiniMax-M3"
 ```
 
 ❌ If you get `{"detail":"You don't have access ..."}` or HTTP `401/403`: the key
 is wrong, revoked, or you pasted an IAM token instead of a Token Factory key.
-Re‑mint it (step 1). If you see `nvidia/...` models but *not* `Cosmos3`, ask the
-Token Factory console to enable it for your project, or use another reasoner
-from the list (e.g. `nvidia/Nemotron-3-Ultra-550b-a55b`).
+Re‑mint it (step 1). If the authenticated model list lacks `MiniMaxAI/MiniMax-M3`,
+do not rename a retired Cosmos request; select a supported image-capable model
+only after validating its response contract.
 
 ---
 
@@ -101,7 +100,7 @@ curl -s https://api.tokenfactory.nebius.com/v1/chat/completions \
   -H "Authorization: Bearer ${NEBIUS_TOKEN_FACTORY_KEY}" \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "nvidia/Cosmos3-Super-Reasoner",
+    "model": "MiniMaxAI/MiniMax-M3",
     "max_tokens": 300,
     "temperature": 0.2,
     "messages": [
@@ -139,7 +138,7 @@ client = OpenAI(
 )
 
 resp = client.chat.completions.create(
-    model="nvidia/Cosmos3-Super-Reasoner",
+    model="MiniMaxAI/MiniMax-M3",
     temperature=0.2,
     max_tokens=300,
     messages=[
@@ -164,7 +163,7 @@ python3 reason.py
 
 ### Reason over an image (vision)
 
-`Cosmos3-Super-Reasoner` is multimodal — pass images as base64 data URLs:
+`MiniMaxAI/MiniMax-M3` is multimodal — pass images as base64 data URLs:
 
 ```python
 # reason_image.py
@@ -180,7 +179,7 @@ with open("scene.png", "rb") as f:  # your scene photo
     data_url = "data:image/png;base64," + base64.b64encode(f.read()).decode()
 
 resp = client.chat.completions.create(
-    model="nvidia/Cosmos3-Super-Reasoner",
+    model="MiniMaxAI/MiniMax-M3",
     max_tokens=400,
     temperature=0.2,
     messages=[
@@ -267,7 +266,7 @@ npa workbench token-factory reason \
   --input-path ./scene \
   --output-path ./out \
   --task "What is in this scene and how should the robot put the red cube in the drawer?" \
-  --model nvidia/Cosmos3-Super-Reasoner \
+  --model MiniMaxAI/MiniMax-M3 \
   --max-images 4 \
   --max-tokens 400 \
   --output json
@@ -288,7 +287,7 @@ printf '%s\n' \
 npa workbench token-factory generate \
   --input-path ./prompts.jsonl \
   --output-path ./gen \
-  --model nvidia/Cosmos3-Super-Reasoner \
+  --model MiniMaxAI/MiniMax-M3 \
   --max-tokens 200 --output json
 # -> writes ./gen/generations.jsonl  ({"id","prompt","completion"} per line)
 ```
@@ -299,7 +298,7 @@ npa workbench token-factory generate \
 
 | Flag / field | What it does | Sane default |
 |--------------|--------------|--------------|
-| `model` | which hosted model | `nvidia/Cosmos3-Super-Reasoner` |
+| `model` | which hosted model | `MiniMaxAI/MiniMax-M3` |
 | `temperature` | randomness (0 = deterministic) | `0.2` for reasoning |
 | `max_tokens` | answer length cap | `300`–`1024` |
 | `--max-images` (CLI) | scene frames sent per request | `4`–`8` |
