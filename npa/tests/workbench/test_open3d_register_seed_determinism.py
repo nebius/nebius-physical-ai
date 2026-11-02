@@ -668,4 +668,6 @@ if __name__ == "__main__":
 
     if "--one-thread-child" in sys.argv:
         raise SystemExit(_one_thread_child())
-    raise SystemExit("this module is a pytest file; --one-thread-child is its only mode")
+    raise SystemExit(
+        "this module is a pytest file; --one-thread-child is its only mode"
+    )
