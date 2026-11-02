@@ -34,14 +34,14 @@
             "distinct_results": 1,
             "bit_identical_every_repeat": true,
             "every_repeat_was_handed_identical_input": true,
-            "the_input_digest": "837ec46929d10a5469f5639aa662ffcc88f2b20edb6caf29f7881f2d0c89b099"
+            "the_input_digest": "6b9dd2938b052d9d9c24e59c42c267dd9f1777ca5bf57ee13302892ad0388fea"
           },
           "point_to_plane": {
             "repeats": 16,
             "distinct_results": 1,
             "bit_identical_every_repeat": true,
             "every_repeat_was_handed_identical_input": true,
-            "the_input_digest": "837ec46929d10a5469f5639aa662ffcc88f2b20edb6caf29f7881f2d0c89b099"
+            "the_input_digest": "6b9dd2938b052d9d9c24e59c42c267dd9f1777ca5bf57ee13302892ad0388fea"
           }
         },
         "the_shipped_icp_estimation": "point_to_plane"
@@ -50,8 +50,8 @@
         "repeats": 16,
         "distinct_results": 16,
         "bit_identical_every_repeat": false,
-        "worst_translation_disagreement_metres": 4.3997477313731353e-13,
-        "worst_translation_disagreement_in_voxels": 8.799495462746271e-12,
+        "worst_translation_disagreement_metres": 1.2731232931942088e-13,
+        "worst_translation_disagreement_in_voxels": 2.5462465863884175e-12,
         "worst_rotation_disagreement_degrees": 2.9575586669421963e-06,
         "distinct_icp_fitness_values": 1,
         "distinct_icp_inlier_rmse_values": 16
@@ -86,14 +86,14 @@
             "distinct_results": 1,
             "bit_identical_every_repeat": true,
             "every_repeat_was_handed_identical_input": true,
-            "the_input_digest": "a6b2dc4d5a27b9023c1abfcb8c5e83e3986ea7de522714a19f250eab9fe5ebc5"
+            "the_input_digest": "bc1e25374a47e908b07946501d7f07fc268b4277dc764e4d7baf32198103d2d7"
           },
           "point_to_plane": {
             "repeats": 16,
             "distinct_results": 16,
             "bit_identical_every_repeat": false,
             "every_repeat_was_handed_identical_input": true,
-            "the_input_digest": "a6b2dc4d5a27b9023c1abfcb8c5e83e3986ea7de522714a19f250eab9fe5ebc5"
+            "the_input_digest": "bc1e25374a47e908b07946501d7f07fc268b4277dc764e4d7baf32198103d2d7"
           }
         },
         "the_shipped_icp_estimation": "point_to_plane"
@@ -102,17 +102,71 @@
         "repeats": 16,
         "distinct_results": 16,
         "bit_identical_every_repeat": false,
-        "worst_translation_disagreement_metres": 2.9649082042094188e-05,
-        "worst_translation_disagreement_in_voxels": 0.0005929816408418837,
+        "worst_translation_disagreement_metres": 2.964908204176053e-05,
+        "worst_translation_disagreement_in_voxels": 0.0005929816408352105,
         "worst_rotation_disagreement_degrees": 0.001916951333274199,
         "distinct_icp_fitness_values": 1,
         "distinct_icp_inlier_rmse_values": 8
+      }
+    },
+    "upstream_demo_scan": {
+      "construction": "o3d.data.DemoICPPointClouds fragments 0 and 1 -- Redwood's augmented ICL-NUIM living-room1, the capture every accepted record in this directory is built from. Not constructed by me, and not ambiguous: this case exists because a reviewer found the effect here after I had claimed it needed a near-degenerate surface",
+      "each_stage_alone": {
+        "normal_estimation_downsampled_cloud": {
+          "repeats": 16,
+          "distinct_results": 1,
+          "bit_identical_every_repeat": true
+        },
+        "normal_estimation_full_cloud": {
+          "repeats": 16,
+          "distinct_results": 1,
+          "bit_identical_every_repeat": true
+        },
+        "fpfh_features": {
+          "repeats": 16,
+          "distinct_results": 1,
+          "bit_identical_every_repeat": true
+        },
+        "ransac_global_registration": {
+          "repeats": 16,
+          "distinct_results": 4,
+          "bit_identical_every_repeat": false
+        },
+        "icp_from_one_held_pose": {
+          "point_to_point": {
+            "repeats": 16,
+            "distinct_results": 1,
+            "bit_identical_every_repeat": true,
+            "every_repeat_was_handed_identical_input": true,
+            "the_input_digest": "ae828ccbc83ca1d09a49acc9ac01668546f614683026c2e091f3375e2aff12be"
+          },
+          "point_to_plane": {
+            "repeats": 16,
+            "distinct_results": 16,
+            "bit_identical_every_repeat": false,
+            "every_repeat_was_handed_identical_input": true,
+            "the_input_digest": "ae828ccbc83ca1d09a49acc9ac01668546f614683026c2e091f3375e2aff12be"
+          }
+        },
+        "the_shipped_icp_estimation": "point_to_plane"
+      },
+      "the_composed_pipeline": {
+        "repeats": 16,
+        "distinct_results": 16,
+        "bit_identical_every_repeat": false,
+        "worst_translation_disagreement_metres": 1.712117708560191e-06,
+        "worst_translation_disagreement_in_voxels": 3.4242354171203814e-05,
+        "worst_rotation_disagreement_degrees": 5.238024826710155e-05,
+        "distinct_icp_fitness_values": 1,
+        "distinct_icp_inlier_rmse_values": 15
       }
     }
   },
   "stages_that_are_not_bit_reproducible_alone": [
     "periodic_ripple:icp_point_to_plane",
-    "periodic_ripple:ransac_global_registration"
+    "periodic_ripple:ransac_global_registration",
+    "upstream_demo_scan:icp_point_to_plane",
+    "upstream_demo_scan:ransac_global_registration"
   ],
   "how_the_thread_count_participates": {
     "the_default_thread_count_here": 16,
@@ -154,7 +208,7 @@
       }
     }
   },
-  "what_the_cases_establish": "the composed pipeline returns a different transformation on every repeat of every case, so the aligned cloud and the aligned_sha256 the report publishes differ on every run. Taken alone, normal estimation, FPFH, RANSAC and point-to-point ICP each return identical bytes every time. The shipped point_to_plane ICP does not: on the ambiguous pair it returns a distinct answer on all sixteen calls while being handed provably identical points, normals, pose and distance, and on the well-conditioned pair the same call is exactly reproducible. Held to one thread through Open3D's API, that call becomes bit-reproducible on the ambiguous pair too, so the variation is parallel accumulation rather than anything the seed reaches",
+  "what_the_cases_establish": "the composed pipeline returns a different transformation on every repeat of every case, so the aligned cloud and the aligned_sha256 the report publishes differ on every run. Taken alone, normal estimation, FPFH and point-to-point ICP each return identical bytes every time. The shipped point_to_plane ICP does not: on the upstream demo scan and on the ambiguous construction it returns a distinct answer on all sixteen calls while being handed provably identical points, normals, pose and distance. It needs no contrived surface -- the demo capture is the one every accepted record in this directory is built from. Only on the well-conditioned bowl is that call reproducible, which is what makes this conditioning rather than a broken solver. Held to one thread through Open3D's API it becomes bit-reproducible, so the variation is parallel accumulation rather than anything the seed reaches",
   "what_was_ruled_out": {
     "normal_estimation": "identical across every repeat on both the downsampled cloud and the full cloud point-to-plane actually reads",
     "the_inputs_varying": "every repeat's points, normals, pose and correspondence distance are digested together before the call and the digest is identical"

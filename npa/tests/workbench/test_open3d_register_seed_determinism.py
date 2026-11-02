@@ -98,26 +98,68 @@ def test_every_stage_that_varies_was_handed_identical_input() -> None:
                 assert cell["the_input_digest"], cell
 
 
+def test_the_input_digest_cannot_be_fooled_by_regrouping() -> None:
+    """A reviewer broke the first version of that control. Pin the fix.
+
+    It concatenated every array into one flat buffer, so points of shape (2, 3)
+    beside normals of (2, 3) hashed the same as (1, 3) beside (3, 3). Unreachable
+    through the harness, because Open3D returns one normal per point -- but the
+    thing that made it unreachable was a third-party library's behaviour rather
+    than anything the control asserted.
+    """
+
+    # The harness imports Open3D at module scope, so loading it needs Open3D even
+    # though the function under test only hashes arrays.
+    pytest.importorskip("open3d")
+    import importlib.util
+
+    import numpy as np
+
+    path = EVIDENCE / "harness" / "register_seed_determinism.py"
+    spec = importlib.util.spec_from_file_location("register_seed_determinism", path)
+    assert spec and spec.loader
+    harness = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(harness)
+
+    same = np.arange(6.0).reshape(2, 3)
+    assert harness._digest_all(same, same) != harness._digest_all(
+        same[:1], np.arange(9.0).reshape(3, 3)
+    ), "the control still collides when the same bytes are regrouped"
+    assert harness._digest_all(same, same) == harness._digest_all(same, same)
+    assert harness._digest_all(same) != harness._digest_all(same.T), (
+        "a transpose carries the same bytes in a different shape and must differ"
+    )
+
+
 def test_the_shipped_estimation_is_the_one_that_varies() -> None:
     """Named specifically, because it decides what a reader should do about it.
 
     Point-to-point is reproducible; point-to-plane, which is the default, is not.
     An assertion over "some stage varies" would pass if that reversed, and the
     reversal would change the advice.
+
+    Both affected pairs, named individually. The upstream demo scan is the one that
+    matters to a reader -- a reviewer found the effect there after I had claimed it
+    needed a near-degenerate surface -- and a loop over whichever cases happen to
+    vary would let that case drop out silently.
     """
 
     record = _record()
-    ambiguous = record["cases"]["periodic_ripple"]["each_stage_alone"]
-    assert ambiguous["the_shipped_icp_estimation"] == "point_to_plane"
-    icp = ambiguous["icp_from_one_held_pose"]
-    assert icp["point_to_point"]["bit_identical_every_repeat"], icp["point_to_point"]
-    assert not icp["point_to_plane"]["bit_identical_every_repeat"], icp[
-        "point_to_plane"
-    ]
-    assert (
-        "periodic_ripple:icp_point_to_plane"
-        in (record["stages_that_are_not_bit_reproducible_alone"])
-    )
+    for label in ("periodic_ripple", "upstream_demo_scan"):
+        stages = record["cases"][label]["each_stage_alone"]
+        assert stages["the_shipped_icp_estimation"] == "point_to_plane"
+        icp = stages["icp_from_one_held_pose"]
+        assert icp["point_to_point"]["bit_identical_every_repeat"], (
+            f"{label}: point-to-point varies too, which would make this a property "
+            "of ICP rather than of the estimation the product ships"
+        )
+        assert not icp["point_to_plane"]["bit_identical_every_repeat"], icp[
+            "point_to_plane"
+        ]
+        assert (
+            f"{label}:icp_point_to_plane"
+            in (record["stages_that_are_not_bit_reproducible_alone"])
+        )
 
     # And on the well-conditioned pair the same call is exactly reproducible, which
     # is what makes this a conditioning effect rather than a broken solver.

@@ -80,10 +80,11 @@ be able to open the thing being asserted.
   last one. The answer is stable — the repeats disagree by about a trillionth of a
   voxel on a well-conditioned pair — so a hash mismatch between two runs is
   expected and is not evidence that anything changed.
-- The variation is parallel accumulation in point-to-plane ICP, not the seed.
-  `o3d.utility.set_max_threads(1)` makes the whole pipeline bit-reproducible;
-  `OMP_NUM_THREADS` does not reach it. Measured in
-  `docs/evidence/open3d/register-seed-determinism.json`.
+- The variation is parallel accumulation in point-to-plane ICP, not the seed, and it
+  happens on the upstream `DemoICPPointClouds` capture — not only on contrived or
+  low-overlap geometry. `o3d.utility.set_max_threads(1)` makes the whole pipeline
+  bit-reproducible; `OMP_NUM_THREADS` does not reach it. Measured per stage and per
+  pair in `docs/evidence/open3d/register-seed-determinism.json`.
 - A Poisson surface from partial indoor scans is normally **not** watertight and
   **not** edge-manifold. Those facts are reported, not asserted to be true. Do not
   treat an open surface as a failure, and do not treat a watertight one as proof of

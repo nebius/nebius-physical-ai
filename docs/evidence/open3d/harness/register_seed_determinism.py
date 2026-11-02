@@ -18,8 +18,10 @@ So this measures four things rather than asserting them:
     every stage to be clean, and the shipped `point_to_plane` ICP turns out to
     return a different answer on every call;
   * that ICP's inputs were bit-identical when it did so, by digesting the points,
-    the normals and the pose actually handed to it. Without that control the
-    finding would be indistinguishable from the harness feeding it varying data;
+    the normals and the pose actually handed to it, each array's shape included.
+    Without that control the finding would be indistinguishable from the harness
+    feeding it varying data, and without the shapes the control itself was safe
+    only because of how Open3D happens to size its normals;
   * the composed pipeline, and the magnitude, on a well-conditioned pair and on an
     ambiguous one, since whether this matters is a question about size;
   * the thread count, which turns out to be the mechanism: held to one thread
@@ -27,11 +29,14 @@ So this measures four things rather than asserting them:
     not reach it. Two other explanations -- normal estimation and the inputs
     varying -- are measured and ruled out, so the next person does not repeat them.
 
-Two constructions, because one surface cannot distinguish a property of the
-algorithm from a property of the geometry: a non-periodic bowl, where the alignment
-is well determined, and a ripple whose period the fragments' offset can alias --
-the ambiguity #1025 measures separately, included here only to bound the magnitude
-under the worst conditioning this directory has constructed.
+Three pairs, because one surface cannot distinguish a property of the algorithm
+from a property of the geometry: a non-periodic bowl where the alignment is well
+determined, a ripple whose period the fragments' offset can alias (the ambiguity
+#1025 measures separately, here only to bound the magnitude under the worst
+conditioning this directory constructs), and the upstream demo scan. The third was
+added after a reviewer found the effect there, having read my claim that it took a
+near-degenerate surface; it does not, and that is the case a reader should look at
+first, because it is the capture every accepted record here is built from.
 
 Run from the repository root, with Open3D installed and `npa/src` on PYTHONPATH:
     python3 docs/evidence/open3d/harness/register_seed_determinism.py
@@ -88,13 +93,28 @@ def _patch(rng, x0: float, *, periodic: bool) -> np.ndarray:
     return np.column_stack([x, y, height + rng.normal(0, 0.002, POINTS)])
 
 
-def _pair(periodic: bool):
+def _pair(construction: str):
+    """Two overlapping fragments, constructed or upstream.
+
+    The demo pair is here because a reviewer found the effect on it and I had
+    claimed it needed an ambiguous surface. It is the capture every accepted record
+    in this directory is built from, so a reader who believes the narrower claim
+    would not go looking for this in their own data.
+    """
+
+    if construction == "upstream_demo_scan":
+        paths = o3d.data.DemoICPPointClouds().paths
+        return (o3d.io.read_point_cloud(paths[0]), o3d.io.read_point_cloud(paths[1]))
+
     rng = np.random.default_rng(7)
-    first = _patch(rng, 0.0, periodic=periodic)
-    second = _patch(rng, OFFSET, periodic=periodic)
+    periodic = construction == "periodic_ripple"
     return (
-        o3d.geometry.PointCloud(o3d.utility.Vector3dVector(first)),
-        o3d.geometry.PointCloud(o3d.utility.Vector3dVector(second)),
+        o3d.geometry.PointCloud(
+            o3d.utility.Vector3dVector(_patch(rng, 0.0, periodic=periodic))
+        ),
+        o3d.geometry.PointCloud(
+            o3d.utility.Vector3dVector(_patch(rng, OFFSET, periodic=periodic))
+        ),
     )
 
 
@@ -121,6 +141,26 @@ def _digest(array) -> str:
     return hashlib.sha256(np.ascontiguousarray(array).tobytes()).hexdigest()
 
 
+def _digest_all(*arrays) -> str:
+    """Digest several arrays so no regrouping of their contents can collide.
+
+    The first version concatenated everything into one flat array, which loses
+    every boundary: points of shape (2, 3) beside normals of (2, 3) hash the same
+    as (1, 3) beside (3, 3). Unreachable here, because Open3D returns one normal
+    per point -- but the thing making it unreachable is a third-party library's
+    behaviour, not anything this file asserts, and a control that is safe by
+    circumstance is one library release away from being safe by nothing. The shape
+    goes in with the bytes.
+    """
+
+    running = hashlib.sha256()
+    for array in arrays:
+        contiguous = np.ascontiguousarray(array)
+        running.update(repr(contiguous.shape).encode())
+        running.update(contiguous.tobytes())
+    return running.hexdigest()
+
+
 def _distinct(digests: list[str]) -> dict[str, Any]:
     return {
         "repeats": len(digests),
@@ -129,7 +169,7 @@ def _distinct(digests: list[str]) -> dict[str, Any]:
     }
 
 
-def _stages_alone(periodic: bool) -> dict[str, Any]:
+def _stages_alone(construction: str) -> dict[str, Any]:
     """Each stage re-seeded and re-run on its own, with its inputs held fixed.
 
     The point of fixing the inputs is to stop one stage's variation from being
@@ -138,7 +178,7 @@ def _stages_alone(periodic: bool) -> dict[str, Any]:
     """
 
     manifest = _manifest()
-    source, target = _pair(periodic)
+    source, target = _pair(construction)
     registration = o3d.pipelines.registration
 
     # Both clouds, because `_prepared` sets normals on the downsampled cloud it
@@ -201,17 +241,13 @@ def _stages_alone(periodic: bool) -> dict[str, Any]:
             # Everything this call can read, digested before it runs. A varying
             # output means nothing unless the input provably held still.
             inputs.append(
-                _digest(
-                    np.concatenate(
-                        [
-                            np.asarray(moving.points).ravel(),
-                            np.asarray(moving.normals).ravel(),
-                            np.asarray(fixed.points).ravel(),
-                            np.asarray(fixed.normals).ravel(),
-                            held.ravel(),
-                            [VOXEL * manifest.icp_distance_factor],
-                        ]
-                    )
+                _digest_all(
+                    np.asarray(moving.points),
+                    np.asarray(moving.normals),
+                    np.asarray(fixed.points),
+                    np.asarray(fixed.normals),
+                    held,
+                    np.array([VOXEL * manifest.icp_distance_factor]),
                 )
             )
             refined = registration.registration_icp(
@@ -238,11 +274,11 @@ def _stages_alone(periodic: bool) -> dict[str, Any]:
     }
 
 
-def _composed(periodic: bool) -> dict[str, Any]:
+def _composed(construction: str) -> dict[str, Any]:
     """The pipeline as `run_register` calls it, re-seeded before every repeat."""
 
     manifest = _manifest()
-    source, target = _pair(periodic)
+    source, target = _pair(construction)
     poses, fitness, rmse = [], [], []
     for _ in range(REPEATS):
         _seeded(o3d, manifest)
@@ -299,7 +335,7 @@ def _how_the_thread_count_participates() -> dict[str, Any]:
     """
 
     manifest = _manifest()
-    source, target = _pair(periodic=True)
+    source, target = _pair("periodic_ripple")
     registration = o3d.pipelines.registration
     held = np.eye(4)
     held[:3, 3] = [OFFSET, 0.0, 0.0]
@@ -347,19 +383,28 @@ def _how_the_thread_count_participates() -> dict[str, Any]:
 
 
 def main() -> int:
+    described = {
+        "non_periodic_bowl": (
+            "a bowl with no repeating structure, where the alignment is well determined"
+        ),
+        "periodic_ripple": (
+            "a ripple whose period the fragment offset can alias, so a whole family "
+            "of alignments fits: the worst conditioning this directory constructs"
+        ),
+        "upstream_demo_scan": (
+            "o3d.data.DemoICPPointClouds fragments 0 and 1 -- Redwood's augmented "
+            "ICL-NUIM living-room1, the capture every accepted record in this "
+            "directory is built from. Not constructed by me, and not ambiguous: "
+            "this case exists because a reviewer found the effect here after I had "
+            "claimed it needed a near-degenerate surface"
+        ),
+    }
     cases = {}
-    for label, periodic in (("non_periodic_bowl", False), ("periodic_ripple", True)):
+    for label, description in described.items():
         cases[label] = {
-            "construction": (
-                "a ripple whose period the fragment offset can alias, so a whole "
-                "family of alignments fits: the worst conditioning this directory "
-                "constructs"
-                if periodic
-                else "a bowl with no repeating structure, where the alignment is "
-                "well determined"
-            ),
-            "each_stage_alone": _stages_alone(periodic),
-            "the_composed_pipeline": _composed(periodic),
+            "construction": description,
+            "each_stage_alone": _stages_alone(label),
+            "the_composed_pipeline": _composed(label),
         }
 
     unreproducible = sorted(
@@ -403,14 +448,16 @@ def main() -> int:
             "the composed pipeline returns a different transformation on every "
             "repeat of every case, so the aligned cloud and the aligned_sha256 the "
             "report publishes differ on every run. Taken alone, normal estimation, "
-            "FPFH, RANSAC and point-to-point ICP each return identical bytes every "
-            "time. The shipped point_to_plane ICP does not: on the ambiguous pair it "
-            "returns a distinct answer on all sixteen calls while being handed "
-            "provably identical points, normals, pose and distance, and on the "
-            "well-conditioned pair the same call is exactly reproducible. Held to "
-            "one thread through Open3D's API, that call becomes bit-reproducible on "
-            "the ambiguous pair too, so the variation is parallel accumulation "
-            "rather than anything the seed reaches"
+            "FPFH and point-to-point ICP each return identical bytes every time. The "
+            "shipped point_to_plane ICP does not: on the upstream demo scan and on "
+            "the ambiguous construction it returns a distinct answer on all sixteen "
+            "calls while being handed provably identical points, normals, pose and "
+            "distance. It needs no contrived surface -- the demo capture is the one "
+            "every accepted record in this directory is built from. Only on the "
+            "well-conditioned bowl is that call reproducible, which is what makes "
+            "this conditioning rather than a broken solver. Held to one thread "
+            "through Open3D's API it becomes bit-reproducible, so the variation is "
+            "parallel accumulation rather than anything the seed reaches"
         ),
         "what_was_ruled_out": {
             "normal_estimation": (

@@ -291,12 +291,17 @@ trillionth of a voxel on a well-conditioned pair and under a thousandth on a del
 ambiguous one. `icp.fitness` is identical across every repeat in both cases, so a consumer
 watching the reported agreement measures sees a perfectly steady pipeline.
 
-The seed is not what is loose. Taken alone, normal estimation, FPFH, RANSAC and point-to-point
-ICP each return identical bytes every time; the shipped **point-to-plane** ICP does not, on the
-ambiguous pair, while being handed provably identical points, normals, pose and distance. Held
-to one thread through Open3D's own API, that call and the whole pipeline become bit-reproducible
-— and `OMP_NUM_THREADS` does not reach it, which is the lever a reader of the thread-count
-finding in `capability-record-support-crop.json` would try first.
+The seed is not what is loose. Taken alone, normal estimation, FPFH and point-to-point ICP each
+return identical bytes every time; the shipped **point-to-plane** ICP does not, while being
+handed provably identical points, normals, pose and distance. **This needs no contrived
+surface:** it happens on `DemoICPPointClouds`, the capture every accepted record in this
+directory is built from, which is where a reviewer found it after reading an earlier version of
+this paragraph claim it took a near-degenerate pair. Only on a well-conditioned constructed bowl
+is that call reproducible, which is what makes this conditioning rather than a broken solver.
+
+Held to one thread through Open3D's own API, that call and the whole pipeline become
+bit-reproducible — and `OMP_NUM_THREADS` does not reach it, which is the lever a reader of the
+thread-count finding in `capability-record-support-crop.json` would try first.
 
 `ATTRIBUTION.md` covers the data all of this is computed from. The published capture renders
 Open3D's `DemoICPPointClouds`, which is Redwood's augmented ICL-NUIM `living-room1` -- a
