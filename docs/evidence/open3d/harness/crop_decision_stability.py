@@ -296,10 +296,15 @@ def _how_the_meshes_differ(runs: list[dict]) -> dict:
 def _how_far_the_movers_move(o3d, runs: list[dict], limit: float) -> dict:
     """How big is the displacement, against the threshold it would have to cross?
 
-    This is what turns a reassuring result into a usable one. The decision surviving a
-    reconstruction that differs is only as safe as the distance those vertices travel:
-    a sub-micron wobble against a 5 cm cut is safe by a factor nobody needs to think
-    about, and a wobble of the same order as the cut would be luck.
+    This is what gives a reassuring result a scale. "The verdicts agreed" says more
+    when the movement behind it is sub-micron against a 5 cm cut than when it is the
+    same order as the cut -- but only as a comparison of two lengths. It does not say
+    the decision had that much room: a vertex already sitting a micron inside the cut
+    flips under a movement far smaller than the cut, so the cut is not the clearance.
+    An earlier version of this docstring treated a sub-micron wobble as self-evidently
+    safe because of its ratio to the cut, which is the inference this function's own
+    output now refutes in `what_the_cut_to_separation_ratio_is_not`. What supports the verdict is
+    the no-flip count, which is reported separately and belongs to these repeats.
 
     Measured as the nearest-neighbour distance between two repeats' vertex sets, in
     both directions. That is a *lower bound* on how far any individual vertex moved,
@@ -469,10 +474,13 @@ def _whether_that_is_benign(moved: float, straddling: float, displacement: dict)
     ratio = displacement["cut_over_the_worst_separation_known_anywhere"]
     if moved == 0:
         return (
-            f"Yes, and by a measured margin rather than by luck. Around {straddling:.0f} "
-            "vertices per repeat sit within 10% of the cut, which is where a sharp "
-            "threshold on a continuous quantity is vulnerable, and none of them "
-            f"crossed. Over {pairs} pairs the largest nearest-neighbour distance "
+            f"Yes, on every comparison made here: across {pairs} pairs no cell "
+            f"changed its verdict. Around {straddling:.0f} vertices per repeat sit "
+            "within 10% of the cut, which is where a sharp threshold on a continuous "
+            "quantity is vulnerable, and none of them crossed. That is the result -- a "
+            "count of what happened on these repeats, not a measurement of how much "
+            "room the decision had. Over the same pairs the largest nearest-neighbour "
+            "distance "
             f"between two repeats' vertex sets was {worst:.3g} m against a {limit} m "
             "cut -- a lower bound on how far any vertex moved, since the two sets are "
             "not in correspondence -- and no cell changed its verdict in any of them. "
@@ -482,8 +490,11 @@ def _whether_that_is_benign(moved: float, straddling: float, displacement: dict)
             "displacement. Read that as scale and not as clearance. The decision "
             "boundary is at |distance - cut|, which nothing here measures, so a vertex "
             "already near the cut can flip under a movement far smaller than it. What "
-            "transfers to another scan is the method and the no-flip count, not a "
-            "factor."
+            "transfers to another scan is the method: re-read one fused cloud, compare "
+            "the per-cell verdicts pairwise, and report the separation next to the cut. "
+            f"The {pairs}-pair no-flip count does not transfer. It was measured on this "
+            "capture, at these repeats, with this cut, and a different scan has to "
+            "produce its own."
         )
     return (
         f"Partly. Around {straddling:.0f} vertices per repeat sit within 10% of the "
@@ -578,10 +589,14 @@ _SCALING_READINGS = MappingProxyType(
 #: has to say which of those two things it measured.
 PHANTOM_FIGURE_ON_EARLIER_RUNS = MappingProxyType(
     {
-        # Three runs at the scene voxel read 733, 734, 733; two at the fine voxel read
-        # 920 then 919. Within each run every repeat agreed.
+        # Retained across separate runs: the scene voxel has read 733 and 734, the
+        # fine voxel 920, 919 and 900. Within each run every repeat agreed. The 900 was
+        # measured at 2026-11-02T20:59Z and is the widest, which is why the fine case's
+        # retained span is 20 cells against the scene case's 1 -- a figure that is one
+        # number inside a run is not one number across runs, and nothing here claims
+        # the retained span is the whole of it.
         0.05: (733, 734),
-        0.02: (920, 919),
+        0.02: (920, 919, 900),
     }
 )
 
@@ -608,13 +623,49 @@ RATIOS_OBSERVED_ON_EARLIER_RUNS = MappingProxyType(
         # make that true. The margins are unaffected -- the tail observed elsewhere,
         # 2.187e-03 m, still dominates both cuts -- so what it costs is the scaling
         # scaling conclusion, not the observed verdicts.
-        "displacement_denser_over_sparser": (0.548387, 0.888889, 2.121212),
-        "vertices_denser_over_sparser": (4.293651, None, 4.262256),
-        "band_each_time": ("shrinks", "shrinks", "partial"),
+        #
+        # 0.717391, 1.220588 and 2.142857 are the three runs this record published
+        # before this one: each was the current run's value at the time, and each would
+        # have been dropped by the next regeneration, since this harness overwrites the
+        # current value and never appends. They are added here by hand for that reason.
+        # Without that step a correction that only touches prose silently shortens the
+        # history the record publishes, which is the curation this constant exists to
+        # prevent. An author who regenerates this record should append the value it
+        # published before doing so.
+        #
+        # 2.142857 also matters on its own: it is a second reading in the band 2.121212
+        # sits in, so the denser case moving further is no longer a single run.
+        "displacement_denser_over_sparser": (
+            0.548387,
+            0.717391,
+            0.888889,
+            1.220588,
+            2.121212,
+            2.142857,
+        ),
+        "vertices_denser_over_sparser": (
+            4.293651,
+            4.267058,
+            None,
+            4.284116,
+            4.262256,
+            4.262260,
+        ),
+        "band_each_time": (
+            "shrinks",
+            "shrinks",
+            "shrinks",
+            "partial",
+            "partial",
+            "partial",
+        ),
         "measured_at": (
             "commit 9c492ad33a of this harness, same host, same inputs",
+            "2026-11-02T20:17Z, harness df8b7cb4fa, the record this one supersedes",
             "attested in README.md, not re-measured here",
+            "2026-11-02T20:59Z, harness ffaed600ec, same host and inputs",
             "2026-11-02T19:50Z on this host, same inputs, REPEATS=24",
+            "2026-11-02T21:05Z, harness 34cda72243, same host and inputs",
         ),
     }
 )
@@ -1052,9 +1103,7 @@ def _one_case(o3d, voxel: float) -> dict:
                 "the_same_figure_on_retained_earlier_runs": [
                     float(one) for one in PHANTOM_FIGURE_ON_EARLIER_RUNS.get(voxel, ())
                 ],
-                "what_the_two_arms_together_show": _two_arms(
-                    fixed_arm, rebuilt, voxel
-                ),
+                "what_the_two_arms_together_show": _two_arms(fixed_arm, rebuilt, voxel),
             },
             "what_a_user_may_rely_on": _what_a_user_may_rely_on(moved, agreement),
             "whether_that_is_benign": _whether_that_is_benign(

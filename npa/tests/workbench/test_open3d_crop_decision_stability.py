@@ -530,7 +530,11 @@ def test_the_prose_matches_the_measurement_it_describes(key: str) -> None:
 
     if flips == 0:
         assert "not only the aggregate" in rely, rely
-        assert "by a measured margin rather than by luck" in benign, benign
+        # This asserted "by a measured margin rather than by luck", which is the claim
+        # the record withdrew: nothing here measures distance to the decision boundary.
+        # What the no-flip branch owes a reader is the observation it rests on.
+        assert "no cell changed its verdict" in benign, benign
+        assert "measured margin" not in benign, benign
     else:
         assert "only to a Jaccard of" in rely, rely
 
@@ -946,3 +950,56 @@ def test_the_readme_paragraph_matches_the_record_it_summarises() -> None:
     assert "withdraws the conclusion" in readme
     assert "not a safety margin" in readme
     assert "the margin is set by the cut, which a caller chooses" not in readme
+
+
+@pytest.mark.parametrize("key", _case_keys())
+def test_the_benign_verdict_claims_the_observation_and_not_a_margin(key: str) -> None:
+    """The sentence a reader of this record reaches first.
+
+    It opened with "Yes, and by a measured margin rather than by luck", which this
+    record does not measure: the margin would be |distance - cut| per vertex and
+    nothing here computes it. Adding the correct explanation further down the same
+    string did not make the opening true, and the opening is the part that gets
+    quoted. It also closed by offering the no-flip count as something that transfers
+    to another scan, which it cannot -- it was counted on this capture, at these
+    repeats, with this cut.
+    """
+
+    benign = " ".join(_case(key)["whether_that_is_benign"].split())
+    pairs = len(_case(key)["the_per_cell_decision_a_user_reads"])
+
+    assert benign.startswith(
+        f"Yes, on every comparison made here: across {pairs} pairs no cell changed "
+        "its verdict."
+    ), f"{key}: the verdict no longer opens with the observation that supports it"
+    assert "measured margin" not in benign, (
+        f"{key}: the verdict claims a measured margin again"
+    )
+    assert "not a measurement of how much room the decision had" in benign
+
+    assert f"The {pairs}-pair no-flip count does not transfer" in benign, (
+        f"{key}: the no-flip count is offered as transferable again"
+    )
+    assert "What transfers to another scan is the method" in benign
+    assert "a different scan has to produce its own" in benign
+
+
+def test_the_displacement_docstring_does_not_teach_the_inference_it_refutes() -> None:
+    """The docstring taught "safe by a factor nobody needs to think about".
+
+    Comments are out of scope as a rule, and this one is the explanation a future
+    author reads before changing the function whose output says the opposite. The
+    historical claim is described rather than restated so this check is unambiguous.
+    """
+
+    harness = (EVIDENCE / _record()["provenance"]["harness"]).read_text()
+    docstring = harness.split("def _how_far_the_movers_move")[1].split('"""')[1]
+    flat = " ".join(docstring.split())
+
+    assert "safe by a factor" not in flat
+    assert "nobody needs to think" not in flat
+    assert "the cut is not the clearance" in flat
+    assert "comparison of two lengths" in flat
+    assert "lower bound" in flat, (
+        "the docstring no longer says what the measurement actually is"
+    )

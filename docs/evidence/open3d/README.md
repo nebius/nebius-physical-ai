@@ -30,26 +30,30 @@ one stage downstream differ by 1-2% of their points between repeats.
 
 So the stage was repeated with the fused cloud built once and re-read, and the control
 comes first: the input is byte-identical across 24 repeats and Poisson returns 24
-distinct meshes, with 1900–2900 of 18,408 vertices in one repeat and not another. Not a
-reordering — genuinely different positions.
+distinct meshes, with 1,824–2,322 of 18,413 vertices in one repeat and not another. Not
+a reordering — genuinely different positions.
 
 The decision does not move with them. All 23 pair comparisons at each of two cut
 settings agree on every cell — Jaccard 1.0, zero verdicts flipped — and the per-cell
-downstream figure comes back at one value within a run, 734 at the scene voxel. That
-figure is this harness's own, on its own fused cloud, and it is not the published 733
-re-measured; across runs it has read both 733 and 734, so the constancy is a within-run
-property.
+downstream figure comes back at one value within a run, 733 at the scene voxel and 900
+at the fine one. That figure is this harness's own, on its own fused cloud, and it is
+not the published 733 re-measured; across the runs this record retains it has read 733
+and 734 at the scene voxel and 920, 919 and 900 at the fine one, so the constancy is a
+within-run property and the fine case's cross-run span is 20 cells.
 
-What underwrites that is the observation itself, not a ratio. The largest
-nearest-neighbour distance between two repeats' vertex sets is about 1e-05 m against a
-5 cm cut, and the record reports how large the cut is relative to that — but **that
-ratio is not a safety margin.** The crop keeps a vertex when its distance to the cloud
-is at most the cut, so what decides a verdict is `|distance - cut|`. A vertex sitting at
-0.049999 m against a 0.05 m cut is a micron from flipping and a 2.187e-03 m movement
-flips it, while the cut is 22.9x that movement. The record states that arithmetic beside
-the ratio. Nothing here measures per-vertex clearance, so the finite no-flip counts are
-the result, and they are counts of what happened on these repeats rather than a
-guarantee about another run.
+What underwrites that is the observation itself, not a ratio: across those 23 pairs no
+cell changed its verdict, which is a count of what happened on these repeats. The
+largest nearest-neighbour distance between two repeats' vertex sets is 6.08e-06 m at
+the scene cut and 9.89e-06 m at the fine one, and the record reports how large the cut
+is relative to that — but **that ratio is not a safety margin.** The crop keeps a vertex
+when its distance to the cloud is at most the cut, so what decides a verdict is
+`|distance - cut|`. A vertex sitting at 0.049999 m against a 0.05 m cut is a micron from
+flipping and a 2.187e-03 m movement flips it, while the cut is 22.9x that movement. The
+record states that arithmetic beside the ratio. Nothing here measures per-vertex
+clearance, so what the record claims is the finite no-flip count and not a margin — and
+that count does not transfer to another capture. It was measured on this capture, at
+these repeats, with these cuts. What transfers is the method: re-read one fused cloud,
+compare the per-cell verdicts pairwise, and report the separation next to the cut.
 
 The ratio is taken against the worst displacement known anywhere rather than the worst
 seen here, because the quantity has a tail: an independent lane hit one pair three orders
@@ -59,21 +63,23 @@ rather than disproving it. Against that displacement the cut is 22.9x at the 5 c
 setting and 9.1x at the 2 cm one — per case, because a ratio computed against one cut
 does not describe another.
 
-Rebuild the fused cloud instead of re-reading it and the figure moves across a 4-cell
-span at the scene voxel and 1 cell at the fine one, because registration is separately
-not reproducible. So the figure is exactly reproducible under the crop and not end to
-end: quote it with that spread, unless you are comparing two crop settings on one fused
-cloud.
+Rebuild the fused cloud instead of re-reading it and the figure moves across a 3-cell
+span at the scene voxel and a 20-cell span at the fine one, because registration is
+separately not reproducible. So the figure is exactly reproducible under the crop and
+not end to end: quote it with that spread, unless you are comparing two crop settings
+on one fused cloud.
 
 The second case exists to ask whether any of this survives a denser capture, and it
 cannot answer that on its own: both cases are the *same* capture downsampled at two
 voxels, and that one knob moves the fused density, the normal radius, the cut and the
 comparison grid together. So it bounds the movement at two operating points of the
-product's configuration rather than isolating density. Four runs have now measured the
-displacement ratio between them at 0.5484, 0.7174, 0.8889 and 2.1212 — the last of
-those has the denser mesh moving *further*, which lands in a different band from the
-other three. The record therefore withdraws the conclusion it used to state here, that
-displacement does not grow with the capture. The no-flip counts and the per-case
+product's configuration rather than isolating density. The ratios this record retains
+from separate runs of these same two settings are 0.5484, 0.7174, 0.8889, 1.2206,
+1.6275, 2.1212 and 2.1429 — the last two have the denser mesh moving *further*, which
+lands in a different band from the lower readings. That list is the history someone
+wrote down rather than every run there has been, and the record says so. The record
+therefore withdraws the conclusion it used to state here, that displacement does not
+grow with the capture. The no-flip counts and the per-case
 cut-to-displacement ratios are unaffected: at 2.187e-03 m the tail observation still
 dominates both cuts.
 
