@@ -534,9 +534,10 @@ domains therefore preserve absolute content anchors and path-constrained
 Unicode/archive matches without letting either representation replace the
 other. Historical file/directory prefix
 transitions are placed in different exact-path roots instead of becoming an
-unrepresentable collision. Each exact-path root is scanned both as
-an isolated filesystem source and as a generated forced-text Git commit. The
-generated repository force-adds every path, overrides candidate
+unrepresentable collision. Each bounded exact-path view population is compacted
+into one generated forced-text Git history and scanned once, without a second
+no-Git filesystem pass. The generated repository force-adds every path, overrides
+candidate
 `.gitignore`/`.gitattributes`/filter behavior through private Git metadata, and
 rejects a generated commit identity named by the trusted policy. The Git view
 keeps each complete raw file in one forced-text diff hunk, so wide trusted rules do not
@@ -625,13 +626,16 @@ archives, undeclared records, and metadata gaps fail closed.
 Container signatures embedded in otherwise nonarchive files or commit bodies
 also fail closed. Because short gzip, bzip2, and RFC 1950 zlib markers occur
 incidentally in ordinary media, those markers are confirmed with a bounded
-decoder. After an exact zlib wrapper header, a raw-DEFLATE probe limits output
-to one byte, so decoded output remains observable and fails closed even if later
-wrapper input truncates or fails its Adler-32 check. Outside the exact-byte
-media admissions below, decoded output, a complete empty stream, more than 4,096
-candidates, or a candidate that remains ambiguous at the probe limit fails
-closed; a candidate rejected before producing any output is not treated as a
-container.
+decoder. After an exact zlib wrapper header, bounded raw-DEFLATE decoding
+retains every deterministic byte that fits one complete scanner fragment,
+including output emitted before truncation, wrapper-checksum failure, or an
+unavailable FDICT dictionary. A caller with a derived-output sink materializes
+each nonempty result in generic and source-start exact-path views, recursively
+classifies it, and runs the real policy over it. A caller without that sink
+rejects output-bearing, complete-empty, or bounded-but-ambiguous candidates.
+Exhausting the 4,096-candidate work limit also fails closed unless one of the
+exact full-file media admissions below authenticates the same mapped bytes. A
+candidate rejected before producing output is not treated as a container.
 
 Strict PNGs have one format-aware boundary. The helper validates the signature,
 critical-chunk grammar and order, every CRC, IHDR and palette constraints, at
@@ -642,21 +646,25 @@ remain scanned, with enough lookahead to detect a container that starts outside
 IDAT. A prefix, trailing bytes, malformed structure, invalid CRC, impossible
 layout or filter, or decoder error removes the PNG exception and returns the
 complete file to ordinary discovery. Three repository-owned public artifacts
-need exact-byte admission. The Workbench architecture PNG has one incidental
-output-bearing RFC 1950 candidate in CRC-valid ancillary data outside IDAT. The
-LeRobot MP4/Rerun pair contains more than 4,096 incidental compression headers
-and hundreds of malformed raw-DEFLATE prefixes that emit bytes before failing.
-Only their exact full-file SHA-256 identities admit those known bytes, and the
-helper still probes every candidate against the same open memory map. Changed
-bytes do not inherit that exception, so a changed file that retains an
-output-bearing or over-limit candidate fails closed at the ordinary boundary.
-One small public Rerun recording inside the LeRobot proof ZIP similarly has
-two incidental rejecting RFC 1950 candidates. Archive-member admission hashes
-the same complete bounded stream that is budgeted, written to scanner views,
-and probed. Only that exact full-member identity may waive the incidental
-compressed-candidate result. Archive-looking member names or prefixes, encoded
-containers, malformed archives, changed member bytes, and standalone compressed
-streams retain their ordinary fail-closed behavior.
+have exact-byte admission for callers without a derived-output sink. The
+Workbench architecture PNG has one incidental output-bearing RFC 1950 candidate
+in CRC-valid ancillary data outside IDAT. The LeRobot MP4/Rerun pair contains
+more than 4,096 incidental compression headers and hundreds of malformed
+raw-DEFLATE prefixes that emit bytes before failing. Their exact full-file
+SHA-256 identities authenticate those known bytes for that no-sink predicate,
+and the helper still probes every candidate against the same open memory map.
+Changed bytes do not inherit that admission. Production probe preparation has
+a derived-output sink instead: within its bounds, changed or non-allowlisted
+files may proceed only after every deterministic RFC 1950 output is retained,
+recursively classified, and scanned through the real policy; an unretained,
+ambiguous, or exhausted population fails closed.
+Archive members have no incidental-candidate hash waiver. A complete bounded
+ZIP member or decompressed stream receives a derived-output sink that retains
+every deterministic RFC 1950 byte under the exact member path for recursive
+policy scanning; a caller that cannot retain that view rejects the candidate.
+Archive-looking member names or prefixes, encoded containers, malformed
+archives, changed member bytes, and standalone compressed streams retain their
+ordinary fail-closed behavior.
 Longer unsupported container signatures and embedded xz signatures remain
 fail-closed.
 Malformed strongly identified Unicode or content that reaches the first

@@ -9,6 +9,7 @@ import bz2
 import gzip
 import hashlib
 import importlib.util
+import io
 import json
 import lzma
 import mmap
@@ -191,42 +192,6 @@ _TAR_NUL_TERMINATED_CHECKSUM_FIELD = re.compile(
 )
 _TAR_BASE256_CHECKSUM_MARKER = re.compile(rb"[\x80\xff]")
 _ZLIB_COMPRESSION_METHOD_MARKER = re.compile(rb"[\x08\x18\x28\x38\x48\x58\x68\x78]")
-_PINNED_ZLIB_HEADERS = frozenset(
-    {
-        0x081D,
-        0x085B,
-        0x0899,
-        0x08D7,
-        0x1819,
-        0x1857,
-        0x1895,
-        0x18D3,
-        0x2815,
-        0x2853,
-        0x2891,
-        0x28CF,
-        0x3811,
-        0x384F,
-        0x388D,
-        0x38CB,
-        0x480D,
-        0x484B,
-        0x4889,
-        0x48C7,
-        0x5809,
-        0x5847,
-        0x5885,
-        0x58C3,
-        0x6805,
-        0x6843,
-        0x6881,
-        0x68DE,
-        0x7801,
-        0x785E,
-        0x789C,
-        0x78DA,
-    }
-)
 _TAR_STRUCTURAL_TYPES = frozenset(tarfile.SUPPORTED_TYPES) | {
     tarfile.SOLARIS_XHDTYPE,
     tarfile.XGLTYPE,
@@ -235,7 +200,15 @@ _TAR_STRUCTURAL_TYPES = frozenset(tarfile.SUPPORTED_TYPES) | {
 _MAX_ENCODED_CANDIDATE_MATCHES = 1_000_000
 _MAX_ENCODED_CANDIDATE_FILES = 100_000
 _MAX_ENCODED_CANDIDATE_BYTES = 512 * 1024 * 1024
-_MAX_EXACT_PATH_SHARDS = 1024
+_MAX_ENCODED_DERIVED_OUTPUT_BYTES = (
+    _PROBE_STREAM_MAX_BYTES - len(materializer.SCAN_PREFIX) - 2
+)
+_MAX_ENCODED_DERIVED_ANALYSIS_BYTES = _MAX_ENCODED_CANDIDATE_BYTES
+_MAX_DIRECT_COMPRESSED_CANDIDATES = _MAX_ENCODED_CANDIDATE_MATCHES
+_MAX_EXACT_PATH_HISTORY_BYTES = _MAX_NATIVE_HISTORY_INPUT_BYTES
+# Exact-path variants are compacted into independent roots in one forced-text
+# history, so their count is bounded by generated files rather than processes.
+_MAX_EXACT_PATH_SHARDS = _MAX_ENCODED_CANDIDATE_FILES
 _INERT_ENCODED_ARCHIVE_SHA256 = {
     # Public empty-metadata gzip fixture in test_curobo_image_verifier.py.
     "4f4fb700ef54461cfa02571ae0db9a0dc1e0cdb5577484a6d75e68dc38e8acc1",
@@ -261,10 +234,6 @@ _INERT_EMBEDDED_MEDIA_SHA256 = _INERT_STRICT_PNG_MEDIA_SHA256 | {
     # emit bytes, but their complete immutable public payloads are known inert.
     "803cc4e2bbf2260838354f7475ced9ab9417ab54a99ff62d3e4532e51b894a2b",
     "c6ea539976f254eec55da12d7ac2674272c74b06fa676ffd1fdcac8c392e3218",
-}
-_INERT_ARCHIVE_MEMBER_MEDIA_SHA256 = {
-    # Public Rerun recording inside the repository's LeRobot proof bundle.
-    "a9a3c049743d1bb6297b7a22377512f1979c7720a4d10278d97092f84f91c760",
 }
 _BINARY_CONTROL_FILES = (
     "binary-wrapper-control.txt",
@@ -310,6 +279,336 @@ class _NativeHistoryInput(NamedTuple):
     def bytes_per_scan(self) -> int:
         """Return the patch and possible archive-blob bytes per scan."""
         return self.patch_bytes + self.changed_blob_bytes_upper_bound
+
+
+class _DirectCompressedAnalysis(NamedTuple):
+    """Account one ordinary carrier's bounded embedded-stream analysis."""
+
+    outputs: tuple[bytes, ...]
+    compressed_candidates: int
+    rfc1950_candidates: int
+    complete_empty_streams: int
+    invalid_streams: int
+    output_occurrences: int
+    emitted_bytes: int
+    fdict_candidates: int
+    fdict_complete_streams: int
+    fdict_malformed_streams: int
+    fdict_unresolved_streams: int
+    nested_compressed_candidates: int
+    nested_rfc1950_candidates: int
+    nested_complete_empty_streams: int
+    nested_invalid_streams: int
+    nested_output_occurrences: int
+    nested_emitted_bytes: int
+    nested_max_depth: int
+    nested_fdict_candidates: int
+    nested_fdict_complete_streams: int
+    nested_fdict_malformed_streams: int
+    nested_fdict_unresolved_streams: int
+
+
+class _RFC1950DecodeResult(NamedTuple):
+    """Classify bounded output and FDICT coverage from one RFC 1950 start."""
+
+    output: bytes | None
+    strict_rejection: bool
+    fdict_status: str | None
+
+
+class _RecursiveOutputNode(NamedTuple):
+    """Retain one output and the immutable identities traversed to reach it."""
+
+    content: bytes
+    depth: int
+    ancestors: frozenset[tuple[int, bytes]]
+    canonical_source: bool
+
+
+class _CanonicalOutput(NamedTuple):
+    """Retain output bytes and whether every source boundary was canonical."""
+
+    content: bytes
+    canonical_source: bool
+
+
+class _RecursiveCompressedAccumulator:
+    """Charge nested decompression before deduplicating retained outputs."""
+
+    def __init__(self, max_candidates: int, max_emitted_bytes: int) -> None:
+        self.max_candidates = max_candidates
+        self.max_emitted_bytes = max_emitted_bytes
+        self.compressed_candidates = 0
+        self.rfc1950_candidates = 0
+        self.complete_empty_streams = 0
+        self.invalid_streams = 0
+        self.output_occurrences = 0
+        self.emitted_bytes = 0
+        self.fdict_candidates = 0
+        self.fdict_complete_streams = 0
+        self.fdict_malformed_streams = 0
+        self.fdict_unresolved_streams = 0
+        self.max_depth = 0
+        self.pending: list[_RecursiveOutputNode] = []
+        self.outputs: list[bytes] = []
+        self.seen_outputs: set[tuple[int, bytes]] = set()
+
+    def add_root(
+        self,
+        output: bytes,
+        source_identity: tuple[int, bytes],
+        *,
+        canonical_source: bool = True,
+    ) -> None:
+        """Queue one first-level output without counting it as nested work."""
+        identity = _derived_output_identity(output)
+        if identity == source_identity:
+            raise _ScanError("Recursive RFC 1950 output cycle cannot be proven safe")
+        self.pending.append(
+            _RecursiveOutputNode(
+                output,
+                0,
+                frozenset((source_identity, identity)),
+                canonical_source,
+            )
+        )
+
+    def charge_candidate(self, kind: str, depth: int, *, fdict: bool) -> bool:
+        """Charge one nested compressed start and identify RFC 1950 work."""
+        self.compressed_candidates += 1
+        if self.compressed_candidates > self.max_candidates:
+            raise _ScanError(
+                "Direct compressed-stream analysis exceeded the bounded candidate count"
+            )
+        if kind != "zlib":
+            return False
+        self.rfc1950_candidates += 1
+        if fdict:
+            self.fdict_candidates += 1
+        if depth >= _MAX_DECODE_DEPTH:
+            raise _ScanError("Recursive RFC 1950 output exceeds the decode-depth bound")
+        return True
+
+    def charge_output(
+        self,
+        result: _RFC1950DecodeResult,
+        parent: _RecursiveOutputNode,
+        *,
+        canonical: bool,
+    ) -> None:
+        """Account for one nested decoder result and queue every occurrence."""
+        if result.fdict_status is not None:
+            if result.fdict_status == "complete":
+                self.fdict_complete_streams += 1
+            elif result.fdict_status == "malformed":
+                self.fdict_malformed_streams += 1
+            else:
+                self.fdict_unresolved_streams += 1
+                if canonical:
+                    raise _ScanError(
+                        "Canonical recursive RFC 1950 output requires "
+                        "an external dictionary"
+                    )
+        output = result.output
+        if output is None:
+            self.invalid_streams += 1
+            return
+        if not output:
+            self.complete_empty_streams += 1
+            return
+        depth = parent.depth + 1
+        identity = _derived_output_identity(output)
+        self.output_occurrences += 1
+        self.emitted_bytes += len(output)
+        if self.emitted_bytes > self.max_emitted_bytes:
+            raise _ScanError(
+                "Recursive RFC 1950 derived analysis exceeds the aggregate "
+                "bounded byte limit"
+            )
+        if identity in parent.ancestors:
+            raise _ScanError("Recursive RFC 1950 output cycle cannot be proven safe")
+        self.max_depth = max(self.max_depth, depth)
+        if identity not in self.seen_outputs:
+            self.outputs.append(output)
+            self.seen_outputs.add(identity)
+        self.pending.append(
+            _RecursiveOutputNode(
+                output,
+                depth,
+                parent.ancestors | {identity},
+                canonical,
+            )
+        )
+
+
+class _EncodedCandidateAnalysis(NamedTuple):
+    """Return materialized encoded outputs with their recursive accounting."""
+
+    outputs: tuple[bytes, ...]
+    emitted_bytes: int
+    recursive: _RecursiveCompressedAccumulator
+    fdict_candidates: int
+    fdict_complete_streams: int
+    fdict_malformed_streams: int
+    fdict_unresolved_streams: int
+
+
+class _DirectCompressedAccumulator:
+    """Collect first-level RFC 1950 work before recursive closure."""
+
+    def __init__(self, max_candidates: int, max_emitted_bytes: int) -> None:
+        self.max_candidates = max_candidates
+        self.max_emitted_bytes = max_emitted_bytes
+        self.compressed_candidates = 0
+        self.rfc1950_candidates = 0
+        self.complete_empty_streams = 0
+        self.invalid_streams = 0
+        self.output_occurrences = 0
+        self.emitted_bytes = 0
+        self.fdict_candidates = 0
+        self.fdict_complete_streams = 0
+        self.fdict_malformed_streams = 0
+        self.fdict_unresolved_streams = 0
+        self.outputs: list[bytes] = []
+        self.output_work: list[bytes] = []
+        self.output_work_canonical_sources: list[bool] = []
+        self.seen_outputs: set[tuple[int, bytes]] = set()
+
+    def inspect(
+        self,
+        content: bytes | mmap.mmap,
+        kind: str,
+        absolute_offset: int,
+    ) -> None:
+        """Classify one direct compressed-stream candidate."""
+        self.compressed_candidates += 1
+        if self.compressed_candidates > self.max_candidates:
+            raise _ScanError(
+                "Direct compressed-stream analysis exceeded the bounded candidate count"
+            )
+        if kind != "zlib":
+            if _embedded_stream_requires_rejection(content, kind, absolute_offset):
+                raise _ScanError(
+                    "Embedded archive bytes cannot prove complete coverage"
+                )
+            return
+        self.rfc1950_candidates += 1
+        if _zlib_header_uses_dictionary(content, absolute_offset):
+            self.fdict_candidates += 1
+        result = _bounded_rfc1950_result(content, absolute_offset)
+        if result.fdict_status == "complete":
+            self.fdict_complete_streams += 1
+        elif result.fdict_status == "malformed":
+            self.fdict_malformed_streams += 1
+        elif result.fdict_status == "unresolved":
+            self.fdict_unresolved_streams += 1
+            if absolute_offset == 0:
+                raise _ScanError(
+                    "Canonical RFC 1950 stream requires an external dictionary"
+                )
+        self._retain(
+            result.output,
+            canonical_source=absolute_offset == 0,
+        )
+
+    def _retain(
+        self,
+        output: bytes | None,
+        *,
+        canonical_source: bool,
+    ) -> None:
+        """Charge one first-level decoder result before output deduplication."""
+        if output is None:
+            self.invalid_streams += 1
+            return
+        if not output:
+            self.complete_empty_streams += 1
+            return
+        self.output_occurrences += 1
+        self.emitted_bytes += len(output)
+        if self.emitted_bytes > self.max_emitted_bytes:
+            raise _ScanError(
+                "Direct RFC 1950 derived analysis exceeds the aggregate "
+                "bounded byte limit"
+            )
+        self.output_work.append(output)
+        self.output_work_canonical_sources.append(canonical_source)
+        identity = _derived_output_identity(output)
+        if identity not in self.seen_outputs:
+            self.outputs.append(output)
+            self.seen_outputs.add(identity)
+
+    def result(self, content: bytes | mmap.mmap) -> _DirectCompressedAnalysis:
+        """Close recursive work and return first-level and nested accounting."""
+        recursive = _RecursiveCompressedAccumulator(
+            self.max_candidates - self.compressed_candidates,
+            self.max_emitted_bytes - self.emitted_bytes,
+        )
+        if self.output_work:
+            recursive = _recursive_direct_outputs(
+                tuple(self.output_work),
+                _derived_output_identity(content),
+                self.max_candidates - self.compressed_candidates,
+                self.max_emitted_bytes - self.emitted_bytes,
+                canonical_sources=tuple(self.output_work_canonical_sources),
+            )
+        for output in recursive.outputs:
+            identity = _derived_output_identity(output)
+            if identity not in self.seen_outputs:
+                self.outputs.append(output)
+                self.seen_outputs.add(identity)
+        return _DirectCompressedAnalysis(
+            tuple(self.outputs),
+            self.compressed_candidates,
+            self.rfc1950_candidates,
+            self.complete_empty_streams,
+            self.invalid_streams,
+            self.output_occurrences,
+            self.emitted_bytes,
+            self.fdict_candidates,
+            self.fdict_complete_streams,
+            self.fdict_malformed_streams,
+            self.fdict_unresolved_streams,
+            recursive.compressed_candidates,
+            recursive.rfc1950_candidates,
+            recursive.complete_empty_streams,
+            recursive.invalid_streams,
+            recursive.output_occurrences,
+            recursive.emitted_bytes,
+            recursive.max_depth,
+            recursive.fdict_candidates,
+            recursive.fdict_complete_streams,
+            recursive.fdict_malformed_streams,
+            recursive.fdict_unresolved_streams,
+        )
+
+
+def _empty_direct_compressed_analysis() -> _DirectCompressedAnalysis:
+    """Return the zero-work receipt for an empty ordinary source file."""
+    return _DirectCompressedAnalysis(
+        outputs=(),
+        compressed_candidates=0,
+        rfc1950_candidates=0,
+        complete_empty_streams=0,
+        invalid_streams=0,
+        output_occurrences=0,
+        emitted_bytes=0,
+        fdict_candidates=0,
+        fdict_complete_streams=0,
+        fdict_malformed_streams=0,
+        fdict_unresolved_streams=0,
+        nested_compressed_candidates=0,
+        nested_rfc1950_candidates=0,
+        nested_complete_empty_streams=0,
+        nested_invalid_streams=0,
+        nested_output_occurrences=0,
+        nested_emitted_bytes=0,
+        nested_max_depth=0,
+        nested_fdict_candidates=0,
+        nested_fdict_complete_streams=0,
+        nested_fdict_malformed_streams=0,
+        nested_fdict_unresolved_streams=0,
+    )
 
 
 class _ReportBudget:
@@ -457,6 +756,45 @@ class _ProbeSourceCounts:
             "candidate_examined_matches": candidates.examined_matches,
             "candidate_matches": candidates.candidates,
             "candidate_streams": candidates.streams,
+            "derived_bytes": candidates.derived_bytes,
+            "derived_analysis_bytes": candidates.derived_analysis_bytes,
+            "derived_duplicates": candidates.duplicate_derived_outputs,
+            "derived_exact_path_bytes": candidates.derived_exact_path_bytes,
+            "derived_exact_path_files": candidates.derived_exact_paths.files,
+            "derived_exact_path_identity_reuses": (
+                candidates.derived_exact_path_identity_reuses
+            ),
+            "derived_exact_path_shards": candidates.derived_exact_paths.shards,
+            "derived_outputs": candidates.derived_outputs,
+            "derived_streams": candidates.derived_streams,
+            "derived_transcoded_bytes": candidates.derived_transcoded_bytes,
+            "derived_transcoded_files": candidates.derived_transcoded_files,
+            "encoded_fdict_candidates": candidates.encoded_fdict_candidates,
+            "encoded_fdict_complete_streams": (
+                candidates.encoded_fdict_complete_streams
+            ),
+            "encoded_fdict_malformed_streams": (
+                candidates.encoded_fdict_malformed_streams
+            ),
+            "encoded_fdict_unresolved_streams": (
+                candidates.encoded_fdict_unresolved_streams
+            ),
+            "direct_compressed_candidates": candidates.direct_compressed_candidates,
+            "direct_complete_empty_streams": (candidates.direct_complete_empty_streams),
+            "direct_duplicate_carriers": candidates.direct_duplicate_carriers,
+            "direct_emitted_bytes": candidates.direct_emitted_bytes,
+            "direct_fdict_candidates": candidates.direct_fdict_candidates,
+            "direct_fdict_complete_streams": (candidates.direct_fdict_complete_streams),
+            "direct_fdict_malformed_streams": (
+                candidates.direct_fdict_malformed_streams
+            ),
+            "direct_fdict_unresolved_streams": (
+                candidates.direct_fdict_unresolved_streams
+            ),
+            "direct_invalid_streams": candidates.direct_invalid_streams,
+            "direct_output_occurrences": candidates.direct_output_occurrences,
+            "direct_rfc1950_candidates": candidates.direct_rfc1950_candidates,
+            "direct_source_carriers": candidates.direct_source_carriers,
             "files": self.files,
             "fragment_window_bytes": self.fragment_window_bytes,
             "fragment_window_files": self.fragment_window_files,
@@ -464,6 +802,22 @@ class _ProbeSourceCounts:
             "fragment_exact_path_files": self.fragment_exact_path_files,
             "fragment_exact_path_shards": self.fragment_exact_path_shards,
             "max_candidate_bytes": candidates.max_candidate_bytes,
+            "max_derived_bytes": candidates.max_derived_bytes,
+            "nested_complete_empty_streams": (candidates.nested_complete_empty_streams),
+            "nested_compressed_candidates": candidates.nested_compressed_candidates,
+            "nested_emitted_bytes": candidates.nested_emitted_bytes,
+            "nested_fdict_candidates": candidates.nested_fdict_candidates,
+            "nested_fdict_complete_streams": (candidates.nested_fdict_complete_streams),
+            "nested_fdict_malformed_streams": (
+                candidates.nested_fdict_malformed_streams
+            ),
+            "nested_fdict_unresolved_streams": (
+                candidates.nested_fdict_unresolved_streams
+            ),
+            "nested_invalid_streams": candidates.nested_invalid_streams,
+            "nested_max_depth": candidates.nested_max_depth,
+            "nested_output_occurrences": candidates.nested_output_occurrences,
+            "nested_rfc1950_candidates": candidates.nested_rfc1950_candidates,
             "wrapper_files": self.wrapper_files,
         }
 
@@ -492,6 +846,7 @@ class _ExactPathAllocator:
         self.root = root
         self.full_paths: list[set[tuple[str, ...]]] = []
         self.strict_prefixes: list[set[tuple[str, ...]]] = []
+        self.next_shards: dict[tuple[str, ...], int] = {}
         self.files = 0
 
     def allocate(self, member: str) -> Path:
@@ -503,7 +858,7 @@ class _ExactPathAllocator:
         """Return one exact-path target for already validated source parts."""
         if not parts or any(part in {"", ".", ".."} for part in parts):
             raise _ScanError("Exact scanner path is not canonical")
-        shard = 0
+        shard = self.next_shards.get(parts, 0)
         while shard < len(self.full_paths):
             full = self.full_paths[shard]
             prefixes = self.strict_prefixes[shard]
@@ -521,6 +876,7 @@ class _ExactPathAllocator:
         self.strict_prefixes[shard].update(
             parts[:index] for index in range(1, len(parts))
         )
+        self.next_shards[parts] = shard + 1
         self.files += 1
         return self.root.joinpath(str(shard), *parts)
 
@@ -545,6 +901,8 @@ class _ArchiveMemberProbeWriter:
         transformed_exact_path_target: Path | None = None,
         fragment_exact_paths: _ExactPathAllocator | None = None,
         logical_scan_path: str | None = None,
+        *,
+        retain_direct_rfc1950_outputs: bool = False,
     ) -> None:
         member_bytes = member.encode("utf-8", errors="surrogatepass")
         if len(member_bytes) > _MAX_ARCHIVE_MEMBER_NAME_BYTES:
@@ -561,6 +919,7 @@ class _ArchiveMemberProbeWriter:
         self.counts = counts
         self.candidates = candidates
         self.test_context = test_context
+        self.retain_direct_rfc1950_outputs = retain_direct_rfc1950_outputs
         if (raw_exact_path_target is None) != (transformed_exact_path_target is None):
             raise _ScanError("Archive exact-path representations are incomplete")
         logical_parts = _canonical_archive_member_parts(
@@ -636,6 +995,11 @@ class _ArchiveMemberProbeWriter:
                     mmap.mmap(stream.fileno(), 0, access=mmap.ACCESS_READ) as content,
                 ):
                     self.candidates.append(content, self.logical_parts)
+                if self.retain_direct_rfc1950_outputs:
+                    self.candidates.append_direct_rfc1950_outputs(
+                        self.raw_path,
+                        self.logical_parts,
+                    )
             self.wrapper_stream.write(materializer._SCAN_BOUNDARY)
             transcoded = materializer._append_unicode(
                 self.raw_path,
@@ -874,6 +1238,20 @@ def _write_private(path: Path, content: bytes) -> None:
         stream.write(content)
 
 
+def _replacement_unicode_projection(
+    path: Path,
+    content: bytes,
+    error: Exception,
+) -> bytes:
+    """Expose valid text around malformed Unicode while a raw view keeps every byte."""
+    if not isinstance(error.__cause__, (UnicodeDecodeError, UnicodeEncodeError)):
+        raise error
+    encoding = materializer._whole_unicode_encoding(path)
+    if encoding is None:
+        raise error
+    return content.decode(encoding, errors="replace").encode("utf-8")
+
+
 class _CandidateProbeWriter:
     """Isolate every encoded match and retain required logical-path associations."""
 
@@ -887,20 +1265,81 @@ class _CandidateProbeWriter:
         self.exact_paths = _ExactPathAllocator(
             destination / "npa-gitleaks-candidate-exact-paths"
         )
+        self.derived_exact_paths = _ExactPathAllocator(
+            destination / "npa-gitleaks-derived-exact-paths"
+        )
         self.streams = 0
         self.candidates = 0
         self.candidate_bytes = 0
         self.duplicate_candidates = 0
+        self.derived_streams = 0
+        self.derived_outputs = 0
+        self.derived_bytes = 0
+        self.derived_analysis_bytes = 0
+        self.duplicate_derived_outputs = 0
+        self.derived_exact_path_bytes = 0
+        self.derived_exact_path_identity_reuses = 0
+        self.derived_transcoded_bytes = 0
+        self.derived_transcoded_files = 0
+        self.encoded_fdict_candidates = 0
+        self.encoded_fdict_complete_streams = 0
+        self.encoded_fdict_malformed_streams = 0
+        self.encoded_fdict_unresolved_streams = 0
+        self.direct_source_carriers = 0
+        self.direct_duplicate_carriers = 0
+        self.direct_compressed_candidates = 0
+        self.direct_rfc1950_candidates = 0
+        self.direct_complete_empty_streams = 0
+        self.direct_invalid_streams = 0
+        self.direct_output_occurrences = 0
+        self.direct_emitted_bytes = 0
+        self.direct_fdict_candidates = 0
+        self.direct_fdict_complete_streams = 0
+        self.direct_fdict_malformed_streams = 0
+        self.direct_fdict_unresolved_streams = 0
+        self.nested_compressed_candidates = 0
+        self.nested_rfc1950_candidates = 0
+        self.nested_complete_empty_streams = 0
+        self.nested_invalid_streams = 0
+        self.nested_output_occurrences = 0
+        self.nested_emitted_bytes = 0
+        self.nested_max_depth = 0
+        self.nested_fdict_candidates = 0
+        self.nested_fdict_complete_streams = 0
+        self.nested_fdict_malformed_streams = 0
+        self.nested_fdict_unresolved_streams = 0
         self.examined_matches = 0
         self.max_candidate_bytes = 0
+        self.max_derived_bytes = 0
         self.seen: dict[tuple[int, bytes], Path] = {}
         self.seen_associations: set[tuple[tuple[int, bytes], tuple[str, ...]]] = set()
-        self.seen_match_identities: set[tuple[str, int, bytes]] = set()
-        self.source_matches: dict[tuple[int, int], tuple[bytes, ...]] = {}
+        self.seen_derived: dict[tuple[int, bytes], Path] = {}
+        self.seen_derived_associations: set[
+            tuple[tuple[int, bytes], tuple[str, ...]]
+        ] = set()
+        self.analyzed_matches: dict[
+            tuple[str, int, bytes, bool],
+            tuple[bytes | None, tuple[bytes, ...]],
+        ] = {}
+        self.interned_derived_outputs: dict[tuple[int, bytes], bytes] = {}
+        self.source_matches: dict[
+            tuple[int, int],
+            tuple[tuple[bytes | None, tuple[bytes, ...]], ...],
+        ] = {}
+        self.direct_source_analyses: dict[
+            tuple[int, int],
+            _DirectCompressedAnalysis,
+        ] = {}
 
     def _reserve_output(self, payload_bytes: int) -> None:
         """Bound isolated scanner files and their aggregate scanned bytes."""
-        if self.streams + self.exact_paths.files >= _MAX_ENCODED_CANDIDATE_FILES:
+        generated_files = (
+            self.streams
+            + self.exact_paths.files
+            + self.derived_streams
+            + self.derived_exact_paths.files
+        )
+        if generated_files >= _MAX_ENCODED_CANDIDATE_FILES:
             raise _ScanError("Encoded candidate files exceed the bounded file count")
         if self.candidate_bytes + payload_bytes > _MAX_ENCODED_CANDIDATE_BYTES:
             raise _ScanError(
@@ -940,27 +1379,227 @@ class _CandidateProbeWriter:
         os.link(target, exact_target)
         self.seen_associations.add(association)
 
-    def _reserve_match(
+    def _append_derived_output(
+        self,
+        output: bytes,
+        logical_parts: tuple[str, ...] | None,
+    ) -> None:
+        """Write fully accounted decompressor output into generic and exact views."""
+        if not output:
+            return
+        identity = (len(output), hashlib.sha256(output).digest())
+        target = self.seen_derived.get(identity)
+        association = (
+            None
+            if logical_parts is None or not self.preserve_exact_paths
+            else (identity, logical_parts)
+        )
+        needs_association = (
+            association is not None
+            and association not in self.seen_derived_associations
+        )
+        payload: bytes | None = None
+        transformed: bytes | None = None
+        transcoded = False
+        if target is None or needs_association:
+            payload, transformed, transcoded = self._render_derived_views(
+                output,
+                identity,
+            )
+        if target is not None:
+            self.duplicate_derived_outputs += 1
+        else:
+            assert payload is not None
+            self._reserve_output(len(payload))
+            target = (
+                self.destination / f"decode-derived-output-{self.derived_streams}.txt"
+            )
+            _write_private(target, payload)
+            self.seen_derived[identity] = target
+            self.derived_streams += 1
+            self.derived_outputs += 1
+            self.derived_bytes += len(output)
+            self.max_derived_bytes = max(self.max_derived_bytes, len(output))
+            if transcoded:
+                self.derived_transcoded_files += 1
+                self.derived_transcoded_bytes += len(payload) - (
+                    len(materializer.SCAN_PREFIX)
+                    + (2 * len(materializer._SCAN_BOUNDARY))
+                    + len(output)
+                )
+        if not needs_association:
+            return
+        assert association is not None and logical_parts is not None
+        assert transformed is not None
+        self._reserve_output(len(output))
+        raw_target = self.derived_exact_paths.allocate_parts(logical_parts)
+        raw_target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        _write_private(raw_target, output)
+        self.derived_exact_path_bytes += len(output)
+        if transformed == output:
+            self.derived_exact_path_identity_reuses += 1
+        else:
+            self._reserve_output(len(transformed))
+            transformed_target = self.derived_exact_paths.allocate_parts(logical_parts)
+            transformed_target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+            _write_private(transformed_target, transformed)
+            self.derived_exact_path_bytes += len(transformed)
+        self.seen_derived_associations.add(association)
+
+    def _render_derived_views(
+        self,
+        output: bytes,
+        identity: tuple[int, bytes],
+    ) -> tuple[bytes, bytes, bool]:
+        """Render bounded generic and source-start Unicode projections."""
+        work = self.destination / ".npa-gitleaks-derived-work"
+        work.mkdir(mode=0o700, exist_ok=True)
+        suffix = identity[1].hex()
+        raw_path = work / f"{suffix}.raw"
+        transformed_path = work / f"{suffix}.transformed"
+        try:
+            _write_private(raw_path, output)
+            generic = io.BytesIO()
+            generic.write(materializer.SCAN_PREFIX)
+            generic.write(materializer._SCAN_BOUNDARY)
+            generic.write(output)
+            generic.write(materializer._SCAN_BOUNDARY)
+            replacement_projection: bytes | None = None
+            try:
+                transcoded_bytes = materializer._append_unicode(raw_path, generic)
+            except materializer.SnapshotError as error:
+                replacement_projection = _replacement_unicode_projection(
+                    raw_path,
+                    output,
+                    error,
+                )
+                generic.write(replacement_projection)
+                transcoded_bytes = len(replacement_projection)
+            payload = generic.getvalue()
+            if len(payload) > _PROBE_STREAM_MAX_BYTES:
+                raise _ScanError(
+                    "Encoded RFC 1950 derived scan view exceeds one complete "
+                    "Gitleaks scan fragment"
+                )
+            if replacement_projection is None:
+                _transformed_bytes, transformed_materialized = (
+                    materializer.materialize_transformed_exact_path(
+                        raw_path,
+                        transformed_path,
+                    )
+                )
+                transformed = transformed_path.read_bytes()
+            else:
+                transformed = replacement_projection
+                transformed_materialized = True
+            projections: dict[tuple[int, bytes], bytes] = {}
+            if transcoded_bytes:
+                appended = payload[-transcoded_bytes:]
+                projections[(len(appended), hashlib.sha256(appended).digest())] = (
+                    appended
+                )
+            if transformed_materialized:
+                projections[
+                    (len(transformed), hashlib.sha256(transformed).digest())
+                ] = transformed
+            for projection in projections.values():
+                _reject_derived_projection_archives(projection)
+            return (
+                payload,
+                transformed,
+                bool(transcoded_bytes or transformed_materialized),
+            )
+        finally:
+            raw_path.unlink(missing_ok=True)
+            transformed_path.unlink(missing_ok=True)
+            work.rmdir()
+
+    def _intern_derived_outputs(
+        self,
+        outputs: tuple[bytes, ...],
+    ) -> tuple[bytes, ...]:
+        """Share exact output objects across duplicate encoded carriers."""
+        interned: list[bytes] = []
+        for output in outputs:
+            identity = (len(output), hashlib.sha256(output).digest())
+            canonical = self.interned_derived_outputs.setdefault(identity, output)
+            interned.append(canonical)
+        return tuple(interned)
+
+    def _analyze_match(
         self,
         kind: str,
-        content: bytes | mmap.mmap,
-        start: int,
-        end: int,
-    ) -> None:
-        """Bound distinct codec work while tolerating repeated scan-view bytes."""
+        encoded_candidate: bytes,
+        *,
+        canonical_source: bool,
+    ) -> tuple[
+        tuple[str, int, bytes, bool],
+        tuple[bytes | None, tuple[bytes, ...]],
+    ]:
+        """Analyze each distinct codec match once and cache its bounded result."""
         identity = (
             kind,
-            end - start,
-            hashlib.sha256(content[start:end]).digest(),
+            len(encoded_candidate),
+            hashlib.sha256(encoded_candidate).digest(),
+            canonical_source,
         )
-        if identity in self.seen_match_identities:
-            return
-        self.seen_match_identities.add(identity)
+        cached = self.analyzed_matches.get(identity)
+        if cached is not None:
+            return identity, cached
         self.examined_matches += 1
         if self.examined_matches > _MAX_ENCODED_CANDIDATE_MATCHES:
             raise _ScanError(
                 "Encoded candidate analysis exceeds the bounded match count"
             )
+        remaining_analysis_bytes = (
+            _MAX_ENCODED_DERIVED_ANALYSIS_BYTES - self.derived_analysis_bytes
+        )
+        encoded_analysis = _encoded_candidate_analysis(
+            encoded_candidate,
+            max_emitted_bytes=remaining_analysis_bytes,
+            canonical_source=canonical_source,
+        )
+        discovered_outputs = encoded_analysis.outputs
+        emitted_bytes = encoded_analysis.emitted_bytes
+        self.derived_analysis_bytes += emitted_bytes
+        self.encoded_fdict_candidates += encoded_analysis.fdict_candidates
+        self.encoded_fdict_complete_streams += encoded_analysis.fdict_complete_streams
+        self.encoded_fdict_malformed_streams += encoded_analysis.fdict_malformed_streams
+        self.encoded_fdict_unresolved_streams += (
+            encoded_analysis.fdict_unresolved_streams
+        )
+        recursive = encoded_analysis.recursive
+        self.nested_compressed_candidates += recursive.compressed_candidates
+        self.nested_rfc1950_candidates += recursive.rfc1950_candidates
+        self.nested_complete_empty_streams += recursive.complete_empty_streams
+        self.nested_invalid_streams += recursive.invalid_streams
+        self.nested_output_occurrences += recursive.output_occurrences
+        self.nested_emitted_bytes += recursive.emitted_bytes
+        self.nested_max_depth = max(self.nested_max_depth, recursive.max_depth)
+        self.nested_fdict_candidates += recursive.fdict_candidates
+        self.nested_fdict_complete_streams += recursive.fdict_complete_streams
+        self.nested_fdict_malformed_streams += recursive.fdict_malformed_streams
+        self.nested_fdict_unresolved_streams += recursive.fdict_unresolved_streams
+        derived_outputs = self._intern_derived_outputs(discovered_outputs)
+        complete_candidate_fits = (
+            len(encoded_candidate) + 2 + len(materializer.SCAN_PREFIX)
+            <= _PROBE_STREAM_MAX_BYTES
+        )
+        scan_candidate: bytes | None = None
+        if _probe_span_decodes(
+            kind,
+            encoded_candidate,
+            0,
+            len(encoded_candidate),
+        ):
+            if not complete_candidate_fits:
+                raise _ScanError(
+                    "Encoded segment exceeds one complete Gitleaks scan fragment"
+                )
+            scan_candidate = encoded_candidate
+        result = (scan_candidate, derived_outputs)
+        self.analyzed_matches[identity] = result
+        return identity, result
 
     def append(
         self,
@@ -971,37 +1610,143 @@ class _CandidateProbeWriter:
     ) -> None:
         """Append exact scanner-supported matches without fragment splitting."""
         if source_key is not None and source_key in self.source_matches:
-            for candidate in self.source_matches[source_key]:
-                self._append_candidate(candidate, logical_parts)
+            for candidate, derived_outputs in self.source_matches[source_key]:
+                if candidate is not None:
+                    self._append_candidate(candidate, logical_parts)
+                for output in derived_outputs:
+                    self._append_derived_output(output, logical_parts)
             return
-        accepted: list[bytes] = []
+        accepted: list[tuple[bytes | None, tuple[bytes, ...]]] = []
+        source_identities: set[tuple[str, int, bytes, bool]] = set()
         for kind, pattern in _ENCODING_CANDIDATES:
             for match in pattern.finditer(content):  # type: ignore[arg-type]
                 start, end = match.span()
                 candidate_size = end - start
-                payload_bytes = candidate_size + 2
                 if candidate_size > _ENCODED_ARCHIVE_MAX_BYTES:
                     raise _ScanError(
                         "Encoded segment exceeds the bounded archive-analysis "
                         "byte limit"
                     )
-                self._reserve_match(kind, content, start, end)
-                _reject_encoded_archives(bytes(content[start:end]))
-                complete_candidate_fits = (
-                    payload_bytes + len(materializer.SCAN_PREFIX)
-                    <= _PROBE_STREAM_MAX_BYTES
+                encoded_candidate = bytes(content[start:end])
+                identity, analyzed = self._analyze_match(
+                    kind,
+                    encoded_candidate,
+                    canonical_source=start == 0,
                 )
-                if not _probe_span_decodes(kind, content, start, end):
+                if identity in source_identities:
                     continue
-                if not complete_candidate_fits:
-                    raise _ScanError(
-                        "Encoded segment exceeds one complete Gitleaks scan fragment"
-                    )
-                candidate = bytes(content[start:end])
-                accepted.append(candidate)
-                self._append_candidate(candidate, logical_parts)
+                source_identities.add(identity)
+                scan_candidate, derived_outputs = analyzed
+                for output in derived_outputs:
+                    self._append_derived_output(output, logical_parts)
+                accepted.append(analyzed)
+                if scan_candidate is not None:
+                    self._append_candidate(scan_candidate, logical_parts)
         if source_key is not None:
             self.source_matches[source_key] = tuple(accepted)
+
+    def _analyze_direct_path(
+        self,
+        path: Path,
+        size: int,
+    ) -> _DirectCompressedAnalysis:
+        """Analyze one new inode under the remaining shared work budget."""
+        if not size:
+            return _empty_direct_compressed_analysis()
+        remaining_candidates = (
+            _MAX_DIRECT_COMPRESSED_CANDIDATES
+            - self.direct_compressed_candidates
+            - self.nested_compressed_candidates
+        )
+        remaining_bytes = (
+            _MAX_ENCODED_DERIVED_ANALYSIS_BYTES - self.derived_analysis_bytes
+        )
+        with (
+            path.open("rb") as stream,
+            mmap.mmap(stream.fileno(), 0, access=mmap.ACCESS_READ) as content,
+        ):
+            analysis = _direct_compressed_outputs(
+                content,
+                max_candidates=remaining_candidates,
+                max_emitted_bytes=remaining_bytes,
+            )
+        return analysis._replace(outputs=self._intern_derived_outputs(analysis.outputs))
+
+    def _record_direct_analysis(self, analysis: _DirectCompressedAnalysis) -> None:
+        """Add one uncached inode analysis to the aggregate receipt."""
+        self.direct_source_carriers += 1
+        self.direct_compressed_candidates += analysis.compressed_candidates
+        self.direct_rfc1950_candidates += analysis.rfc1950_candidates
+        self.direct_complete_empty_streams += analysis.complete_empty_streams
+        self.direct_invalid_streams += analysis.invalid_streams
+        self.direct_output_occurrences += analysis.output_occurrences
+        self.direct_emitted_bytes += analysis.emitted_bytes
+        self.direct_fdict_candidates += analysis.fdict_candidates
+        self.direct_fdict_complete_streams += analysis.fdict_complete_streams
+        self.direct_fdict_malformed_streams += analysis.fdict_malformed_streams
+        self.direct_fdict_unresolved_streams += analysis.fdict_unresolved_streams
+        self.nested_compressed_candidates += analysis.nested_compressed_candidates
+        self.nested_rfc1950_candidates += analysis.nested_rfc1950_candidates
+        self.nested_complete_empty_streams += analysis.nested_complete_empty_streams
+        self.nested_invalid_streams += analysis.nested_invalid_streams
+        self.nested_output_occurrences += analysis.nested_output_occurrences
+        self.nested_emitted_bytes += analysis.nested_emitted_bytes
+        self.nested_max_depth = max(self.nested_max_depth, analysis.nested_max_depth)
+        self.nested_fdict_candidates += analysis.nested_fdict_candidates
+        self.nested_fdict_complete_streams += analysis.nested_fdict_complete_streams
+        self.nested_fdict_malformed_streams += analysis.nested_fdict_malformed_streams
+        self.nested_fdict_unresolved_streams += analysis.nested_fdict_unresolved_streams
+        self.derived_analysis_bytes += (
+            analysis.emitted_bytes + analysis.nested_emitted_bytes
+        )
+
+    def append_direct_rfc1950_outputs(
+        self,
+        path: Path,
+        logical_parts: tuple[str, ...] | None,
+    ) -> None:
+        """Retain bounded RFC 1950 output from one ordinary source carrier."""
+        metadata = path.stat()
+        source_key = (metadata.st_dev, metadata.st_ino)
+        analysis = self.direct_source_analyses.get(source_key)
+        if analysis is not None:
+            self.direct_duplicate_carriers += 1
+        else:
+            analysis = self._analyze_direct_path(path, metadata.st_size)
+            self.direct_source_analyses[source_key] = analysis
+            self._record_direct_analysis(analysis)
+        for output in analysis.outputs:
+            self._append_derived_output(output, logical_parts)
+
+    def append_direct_rfc1950_content(
+        self,
+        content: bytes,
+        logical_parts: tuple[str, ...] | None,
+        *,
+        maximum_start: int | None = None,
+    ) -> None:
+        """Retain bounded RFC 1950 output from one in-memory source region."""
+        if not content:
+            analysis = _empty_direct_compressed_analysis()
+        else:
+            analysis = _direct_compressed_outputs(
+                content,
+                max_candidates=(
+                    _MAX_DIRECT_COMPRESSED_CANDIDATES
+                    - self.direct_compressed_candidates
+                    - self.nested_compressed_candidates
+                ),
+                max_emitted_bytes=(
+                    _MAX_ENCODED_DERIVED_ANALYSIS_BYTES - self.derived_analysis_bytes
+                ),
+                maximum_start=maximum_start,
+            )
+            analysis = analysis._replace(
+                outputs=self._intern_derived_outputs(analysis.outputs)
+            )
+        self._record_direct_analysis(analysis)
+        for output in analysis.outputs:
+            self._append_derived_output(output, logical_parts)
 
     def close(self) -> None:
         """Retain a context-manager boundary for caller symmetry."""
@@ -1093,7 +1838,7 @@ def _archive_kind(prefix: bytes) -> str | None:
         return "zstd"
     if prefix.startswith((b"\x04\x22\x4d\x18", b"\x02\x21\x4c\x18")):
         return "lz4"
-    if _zlib_candidate_requires_rejection(prefix, 0):
+    if _zlib_candidate_requires_rejection(prefix, 0, canonical=True):
         return "zlib"
     if _tar_header_checksum_valid(prefix):
         return "tar"
@@ -1101,47 +1846,68 @@ def _archive_kind(prefix: bytes) -> str | None:
 
 
 def _zlib_header_plausible(content: bytes | mmap.mmap, offset: int) -> bool:
-    """Recognize the exact RFC 1950 headers used by the pinned archive stack."""
+    """Recognize every RFC 1950 CM=8 header with a bounded window."""
     if offset < 0 or offset + 2 > len(content):
         return False
-    header = (content[offset] << 8) | content[offset + 1]
-    return header in _PINNED_ZLIB_HEADERS
+    cmf = content[offset]
+    flg = content[offset + 1]
+    return cmf & 0x0F == 8 and cmf >> 4 <= 7 and ((cmf << 8) | flg) % 31 == 0
+
+
+def _zlib_header_uses_dictionary(
+    content: bytes | mmap.mmap,
+    offset: int,
+) -> bool:
+    """Return the RFC 1950 FDICT bit after validating the complete header."""
+    return _zlib_header_plausible(content, offset) and bool(content[offset + 1] & 0x20)
 
 
 def _zlib_candidate_requires_rejection(
     content: bytes | mmap.mmap,
     offset: int,
+    *,
+    canonical: bool = False,
+    reject_partial_fdict_output: bool = False,
 ) -> bool:
     """Reject a decodable or bounded-but-ambiguous RFC 1950 stream candidate."""
     if not _zlib_header_plausible(content, offset):
         return False
-    candidate = bytes(content[offset : offset + _PROBE_DECODE_CHUNK_BYTES])
-    decoder = zlib.decompressobj(-zlib.MAX_WBITS)
     try:
-        decoded = decoder.decompress(candidate[2:], max_length=1)
-    except zlib.error:
-        return False
-    return (
-        bool(decoded)
-        or decoder.eof
-        or bool(decoder.unconsumed_tail)
-        or len(candidate) == _PROBE_DECODE_CHUNK_BYTES
-    )
+        result = _bounded_rfc1950_result(content, offset)
+    except _ScanError:
+        return True
+    if result.fdict_status is not None:
+        return (
+            result.fdict_status == "complete"
+            or canonical
+            or (reject_partial_fdict_output and bool(result.output))
+        )
+    return result.strict_rejection
 
 
 def _contains_archive_signature(
     content: bytes,
     budget: _ArchiveBudget | None = None,
+    *,
+    retain_rfc1950_outputs: bool = False,
 ) -> bool:
     """Detect a supported or rejected archive hidden after decoded prefix bytes."""
+    kind = _archive_kind(content[:_ARCHIVE_PREFIX_BYTES])
     return (
-        _archive_kind(content[:_ARCHIVE_PREFIX_BYTES]) is not None
-        or _contains_non_tar_archive_signature(content)
+        (kind is not None and (kind != "zlib" or not retain_rfc1950_outputs))
+        or _contains_non_tar_archive_signature(
+            content,
+            retain_rfc1950_outputs=retain_rfc1950_outputs,
+        )
         or _contains_tar_header(content, budget)
     )
 
 
-def _contains_non_tar_archive_signature(content: bytes) -> bool:
+def _contains_non_tar_archive_signature(
+    content: bytes,
+    *,
+    retain_rfc1950_outputs: bool = False,
+) -> bool:
     """Detect nested container signatures that are not TAR's own header marker."""
     contains_archive = (
         any(
@@ -1150,6 +1916,8 @@ def _contains_non_tar_archive_signature(content: bytes) -> bool:
         or b"\x1f\x8b\x08" in content
         or re.search(rb"BZh[1-9]", content) is not None
     )
+    if retain_rfc1950_outputs:
+        return contains_archive
     candidates = 0
     for match in _ZLIB_COMPRESSION_METHOD_MARKER.finditer(content):
         if not _zlib_header_plausible(content, match.start()):
@@ -1160,6 +1928,7 @@ def _contains_non_tar_archive_signature(content: bytes) -> bool:
         candidate_rejects = _zlib_candidate_requires_rejection(
             content,
             match.start(),
+            reject_partial_fdict_output=True,
         )
         contains_archive = contains_archive or candidate_rejects
     return contains_archive
@@ -1606,7 +2375,12 @@ def _embedded_stream_requires_rejection(
     """Reject output, complete streams, and bounded-but-ambiguous candidates."""
     candidate = bytes(content[offset : offset + _PROBE_DECODE_CHUNK_BYTES])
     if kind == "zlib":
-        return _zlib_candidate_requires_rejection(candidate, 0)
+        return _zlib_candidate_requires_rejection(
+            content,
+            offset,
+            canonical=offset == 0,
+            reject_partial_fdict_output=True,
+        )
     if kind == "gzip":
         decoder = zlib.decompressobj(16 + zlib.MAX_WBITS)
     elif kind == "bzip2":
@@ -1694,6 +2468,114 @@ def _contains_embedded_archive(path: Path) -> bool:
         ) or _regions_contain_compressed_archive(content, regions)
 
 
+def _derived_output_identity(content: bytes | mmap.mmap) -> tuple[int, bytes]:
+    """Return the immutable identity used for cycles and output deduplication."""
+    return (len(content), hashlib.sha256(content).digest())
+
+
+def _reject_recursive_output_boundaries(content: bytes) -> None:
+    """Keep non-RFC and encoded containers fail closed in every derived node."""
+    if _contains_non_zlib_archive(content):
+        raise _ScanError(
+            "Nested archive output cannot prove complete Gitleaks policy coverage"
+        )
+    encoded_outputs, _emitted_bytes = _encoded_candidate_outputs(content)
+    if encoded_outputs:
+        raise _ScanError(
+            "Nested encoded archive output cannot prove complete "
+            "Gitleaks policy coverage"
+        )
+
+
+def _inspect_recursive_output(
+    node: _RecursiveOutputNode,
+    accumulator: _RecursiveCompressedAccumulator,
+) -> None:
+    """Classify and retain every RFC 1950 child from one derived node."""
+    _reject_recursive_output_boundaries(node.content)
+    for kind, offset in _embedded_compressed_streams(node.content):
+        is_rfc1950 = accumulator.charge_candidate(
+            kind,
+            node.depth,
+            fdict=(
+                kind == "zlib" and _zlib_header_uses_dictionary(node.content, offset)
+            ),
+        )
+        if not is_rfc1950:
+            if _embedded_stream_requires_rejection(node.content, kind, offset):
+                raise _ScanError(
+                    "Nested archive output cannot prove complete "
+                    "Gitleaks policy coverage"
+                )
+            continue
+        result = _bounded_rfc1950_result(node.content, offset)
+        accumulator.charge_output(
+            result,
+            node,
+            canonical=node.canonical_source and offset == 0,
+        )
+
+
+def _recursive_direct_outputs(
+    initial_outputs: tuple[bytes, ...],
+    source_identity: tuple[int, bytes],
+    max_candidates: int,
+    max_emitted_bytes: int,
+    *,
+    canonical_sources: tuple[bool, ...] | None = None,
+) -> _RecursiveCompressedAccumulator:
+    """Traverse bounded nested RFC 1950 output while retaining every child."""
+    if canonical_sources is None:
+        canonical_sources = (True,) * len(initial_outputs)
+    if len(canonical_sources) != len(initial_outputs):
+        raise _ScanError("Recursive RFC 1950 source canonicality is incomplete")
+    accumulator = _RecursiveCompressedAccumulator(
+        max_candidates,
+        max_emitted_bytes,
+    )
+    for output, canonical_source in zip(
+        initial_outputs,
+        canonical_sources,
+        strict=True,
+    ):
+        accumulator.add_root(
+            output,
+            source_identity,
+            canonical_source=canonical_source,
+        )
+    cursor = 0
+    while cursor < len(accumulator.pending):
+        node = accumulator.pending[cursor]
+        cursor += 1
+        _inspect_recursive_output(node, accumulator)
+    return accumulator
+
+
+def _direct_compressed_outputs(
+    content: bytes | mmap.mmap,
+    *,
+    max_candidates: int,
+    max_emitted_bytes: int,
+    maximum_start: int | None = None,
+) -> _DirectCompressedAnalysis:
+    """Retain direct and recursive RFC 1950 output under shared bounds."""
+    if maximum_start is not None and not 0 <= maximum_start <= len(content):
+        raise _ScanError("Direct RFC 1950 start limit is outside the source")
+    regions = tuple(_embedded_scan_regions(content))  # type: ignore[arg-type]
+    if _regions_contain_immediate_archive(regions):
+        raise _ScanError("Embedded archive bytes cannot prove complete coverage")
+    accumulator = _DirectCompressedAccumulator(max_candidates, max_emitted_bytes)
+    for region, source_offset, start_limit in regions:
+        for kind, offset in _embedded_compressed_streams(region):
+            absolute_offset = source_offset + offset
+            if offset >= start_limit or (
+                maximum_start is not None and absolute_offset >= maximum_start
+            ):
+                continue
+            accumulator.inspect(content, kind, absolute_offset)
+    return accumulator.result(content)
+
+
 def _has_archive_suffix(name: str) -> bool:
     """Return whether a path advertises any supported or rejected archive type."""
     lowered = name.lower()
@@ -1727,8 +2609,15 @@ def _inspect_archive_stream(
     stream: BinaryIO,
     budget: _ArchiveBudget,
     member_writer: _ArchiveMemberProbeWriter | None = None,
+    *,
+    retain_rfc1950_outputs: bool = False,
 ) -> tuple[bytes, bool, str]:
     """Verify a bounded stream and detect encoded or nested containers."""
+    if retain_rfc1950_outputs and (
+        not isinstance(member_writer, _ArchiveMemberProbeWriter)
+        or not member_writer.retain_direct_rfc1950_outputs
+    ):
+        raise _ScanError("Archive RFC 1950 output retention requires a scan sink")
     prefix = bytearray()
     digest = hashlib.sha256()
     overlap = b""
@@ -1744,10 +2633,14 @@ def _inspect_archive_stream(
                 missing = _ARCHIVE_PREFIX_BYTES - len(prefix)
                 prefix.extend(chunk[:missing])
             window = overlap + chunk
-            _reject_encoded_archives(window)
+            _reject_encoded_archives(
+                window,
+                retain_rfc1950_outputs=retain_rfc1950_outputs,
+            )
             window_contains_archive = _contains_archive_signature(
                 window,
                 budget,
+                retain_rfc1950_outputs=retain_rfc1950_outputs,
             )
             contains_archive = contains_archive or window_contains_archive
             overlap = window[-_ARCHIVE_SIGNATURE_OVERLAP_BYTES:]
@@ -1765,18 +2658,15 @@ def _reject_nested_archive(
     prefix: bytes,
     *,
     contains_archive: bool,
-    content_sha256: str,
-    allow_inert_media: bool,
+    retain_rfc1950_outputs: bool = False,
 ) -> None:
     """Reject nested containers whose complete policy traversal is ambiguous."""
-    approved_media = (
-        allow_inert_media and content_sha256 in _INERT_ARCHIVE_MEMBER_MEDIA_SHA256
-    )
+    kind = _archive_kind(prefix)
     if (
         _has_archive_suffix(member)
         or _has_nonterminal_archive_token(member)
-        or _archive_kind(prefix) is not None
-        or (contains_archive and not approved_media)
+        or (kind is not None and (kind != "zlib" or not retain_rfc1950_outputs))
+        or contains_archive
     ):
         raise _ScanError(
             "Nested archive member cannot prove complete Gitleaks policy coverage"
@@ -1829,7 +2719,291 @@ def _decode_candidate(kind: str, candidate: bytes) -> list[bytes]:
     return decoded
 
 
-def _reject_encoded_archives(candidate: bytes) -> None:
+def _contains_non_zlib_archive(content: bytes) -> bool:
+    """Recognize archive bytes that cannot be replaced by a derived zlib view."""
+    return (
+        any(
+            signature in content for signature in _IMMEDIATE_EMBEDDED_ARCHIVE_SIGNATURES
+        )
+        or b"\x1f\x8b\x08" in content
+        or re.search(rb"BZh[1-9]", content) is not None
+        or _contains_tar_header(content)
+    )
+
+
+def _bounded_rfc1950_result(
+    content: bytes | mmap.mmap,
+    offset: int,
+) -> _RFC1950DecodeResult:
+    """Retain deterministic bytes and classify one bounded RFC 1950 start."""
+    if not _zlib_header_plausible(content, offset):
+        return _RFC1950DecodeResult(None, False, None)
+    fdict = _zlib_header_uses_dictionary(content, offset)
+    compressed_start = offset + (6 if fdict else 2)
+    if compressed_start > len(content):
+        return _RFC1950DecodeResult(
+            None,
+            fdict,
+            "malformed" if fdict else None,
+        )
+    compressed_end = min(
+        len(content),
+        compressed_start + _PROBE_DECODE_CHUNK_BYTES,
+    )
+    window_bits = 8 + (content[offset] >> 4)
+    decoder = zlib.decompressobj(-window_bits)
+    output = bytearray()
+
+    def retain(decoded: bytes) -> None:
+        """Append one decoder result without crossing the scan-fragment bound."""
+        output.extend(decoded)
+        if len(output) > _MAX_ENCODED_DERIVED_OUTPUT_BYTES:
+            raise _ScanError(
+                "Encoded RFC 1950 derived output exceeds one complete "
+                "Gitleaks scan fragment"
+            )
+
+    def failure(error: zlib.error) -> _RFC1950DecodeResult:
+        """Preserve prior output and distinguish unavailable dictionary history."""
+        rendered = str(error).lower()
+        status = (
+            "unresolved"
+            if fdict and "invalid distance too far back" in rendered
+            else "malformed"
+        )
+        retained = bytes(output) if output else None
+        return _RFC1950DecodeResult(
+            retained,
+            bool(retained) or status == "unresolved",
+            status if fdict else None,
+        )
+
+    def complete(trailer_start: int) -> _RFC1950DecodeResult:
+        """Authenticate dictionary-independent FDICT output when possible."""
+        retained = bytes(output)
+        if not fdict:
+            return _RFC1950DecodeResult(retained, True, None)
+        trailer = bytes(content[trailer_start : trailer_start + 4])
+        status = (
+            "complete"
+            if len(trailer) == 4
+            and int.from_bytes(trailer, "big") == zlib.adler32(retained)
+            else "malformed"
+        )
+        return _RFC1950DecodeResult(retained, True, status)
+
+    for position in range(compressed_start, compressed_end):
+        pending = content[position : position + 1]
+        while pending:
+            try:
+                decoded = decoder.decompress(pending, max_length=1)
+            except zlib.error as error:
+                return failure(error)
+            retain(decoded)
+            if decoder.eof:
+                return complete(position + 1)
+            remaining = decoder.unconsumed_tail
+            if remaining and len(remaining) >= len(pending) and not decoded:
+                raise _ScanError("Encoded RFC 1950 output accounting made no progress")
+            pending = remaining
+        while True:
+            try:
+                decoded = decoder.decompress(b"", max_length=1)
+            except zlib.error as error:
+                return failure(error)
+            if not decoded:
+                break
+            retain(decoded)
+            if decoder.eof:
+                return complete(position + 1)
+    if compressed_end < len(content):
+        raise _ScanError("Encoded RFC 1950 input exceeds the bounded probe limit")
+    retained = bytes(output) if output else None
+    return _RFC1950DecodeResult(
+        retained,
+        bool(retained),
+        "malformed" if fdict else None,
+    )
+
+
+def _bounded_rfc1950_output(
+    content: bytes | mmap.mmap,
+    offset: int,
+) -> bytes | None:
+    """Return deterministic bounded output for compatibility with focused callers."""
+    return _bounded_rfc1950_result(content, offset).output
+
+
+def _decoded_candidate_outputs(
+    decoded: bytes,
+    compressed_candidates: int,
+    emitted_bytes: int,
+    max_emitted_bytes: int,
+    fdict_counts: dict[str, int],
+    *,
+    canonical_source: bool,
+) -> tuple[tuple[_CanonicalOutput, ...], int, int]:
+    """Return bounded RFC 1950 outputs or reject any other decoded container."""
+    if hashlib.sha256(decoded).hexdigest() in _INERT_ENCODED_ARCHIVE_SHA256:
+        return (), compressed_candidates, emitted_bytes
+    if _contains_non_zlib_archive(decoded):
+        raise _ScanError(
+            "Encoded archive bytes cannot prove complete Gitleaks policy coverage"
+        )
+    outputs: list[_CanonicalOutput] = []
+    for match in _ZLIB_COMPRESSION_METHOD_MARKER.finditer(decoded):
+        offset = match.start()
+        if not _zlib_header_plausible(decoded, offset):
+            continue
+        compressed_candidates += 1
+        if compressed_candidates > _ENCODED_ARCHIVE_MAX_CANDIDATES:
+            raise _ScanError(
+                "Encoded archive analysis exceeded its bounded candidate count"
+            )
+        result = _bounded_rfc1950_result(decoded, offset)
+        if result.fdict_status is not None:
+            fdict_counts["candidates"] += 1
+            fdict_counts[result.fdict_status] += 1
+        if result.fdict_status == "unresolved" and canonical_source and offset == 0:
+            raise _ScanError(
+                "Canonical encoded RFC 1950 output requires an external dictionary"
+            )
+        output = result.output
+        if output is None or not output:
+            continue
+        emitted_bytes += len(output)
+        if emitted_bytes > max_emitted_bytes:
+            raise _ScanError(
+                "Encoded RFC 1950 derived analysis exceeds the aggregate "
+                "bounded byte limit"
+            )
+        outputs.append(
+            _CanonicalOutput(
+                output,
+                canonical_source and offset == 0,
+            )
+        )
+    return tuple(outputs), compressed_candidates, emitted_bytes
+
+
+def _encoded_candidate_analysis(
+    candidate: bytes,
+    *,
+    max_emitted_bytes: int = _MAX_ENCODED_DERIVED_ANALYSIS_BYTES,
+    canonical_source: bool = True,
+) -> _EncodedCandidateAnalysis:
+    """Recover every bounded zlib output hidden behind supported text encodings."""
+    queue: list[tuple[bytes, int, bool]] = [(candidate, 0, canonical_source)]
+    seen: set[tuple[int, bytes, bool]] = set()
+    outputs: list[bytes] = []
+    output_work: list[bytes] = []
+    output_work_canonical_sources: list[bool] = []
+    seen_outputs: set[tuple[int, bytes]] = set()
+    decoded_candidates = 0
+    compressed_candidates = 0
+    emitted_bytes = 0
+    fdict_counts = {
+        "candidates": 0,
+        "complete": 0,
+        "malformed": 0,
+        "unresolved": 0,
+    }
+    while queue:
+        content, depth, content_is_canonical = queue.pop()
+        identity = (depth, hashlib.sha256(content).digest(), content_is_canonical)
+        if identity in seen or depth >= _MAX_DECODE_DEPTH:
+            continue
+        seen.add(identity)
+        for kind, pattern in _ENCODING_CANDIDATES:
+            for match in pattern.finditer(content):
+                for decoded in _decode_candidate(kind, match.group()):
+                    decoded_is_canonical = content_is_canonical and match.start() == 0
+                    decoded_candidates += 1
+                    if decoded_candidates > _ENCODED_ARCHIVE_MAX_CANDIDATES:
+                        raise _ScanError(
+                            "Encoded archive analysis exceeded its bounded "
+                            "candidate count"
+                        )
+                    (
+                        derived,
+                        compressed_candidates,
+                        emitted_bytes,
+                    ) = _decoded_candidate_outputs(
+                        decoded,
+                        compressed_candidates,
+                        emitted_bytes,
+                        max_emitted_bytes,
+                        fdict_counts,
+                        canonical_source=decoded_is_canonical,
+                    )
+                    queue.append((decoded, depth + 1, decoded_is_canonical))
+                    for discovered in derived:
+                        output = discovered.content
+                        output_work.append(output)
+                        output_work_canonical_sources.append(
+                            discovered.canonical_source
+                        )
+                        output_identity = (
+                            len(output),
+                            hashlib.sha256(output).digest(),
+                        )
+                        if output_identity not in seen_outputs:
+                            outputs.append(output)
+                            seen_outputs.add(output_identity)
+    recursive = _RecursiveCompressedAccumulator(
+        _ENCODED_ARCHIVE_MAX_CANDIDATES - compressed_candidates,
+        max_emitted_bytes - emitted_bytes,
+    )
+    if output_work:
+        recursive = _recursive_direct_outputs(
+            tuple(output_work),
+            _derived_output_identity(candidate),
+            _ENCODED_ARCHIVE_MAX_CANDIDATES - compressed_candidates,
+            max_emitted_bytes - emitted_bytes,
+            canonical_sources=tuple(output_work_canonical_sources),
+        )
+    emitted_bytes += recursive.emitted_bytes
+    for output in recursive.outputs:
+        identity = _derived_output_identity(output)
+        if identity not in seen_outputs:
+            outputs.append(output)
+            seen_outputs.add(identity)
+    return _EncodedCandidateAnalysis(
+        tuple(outputs),
+        emitted_bytes,
+        recursive,
+        fdict_counts["candidates"],
+        fdict_counts["complete"],
+        fdict_counts["malformed"],
+        fdict_counts["unresolved"],
+    )
+
+
+def _encoded_candidate_outputs(
+    candidate: bytes,
+    *,
+    max_emitted_bytes: int = _MAX_ENCODED_DERIVED_ANALYSIS_BYTES,
+) -> tuple[tuple[bytes, ...], int]:
+    """Return the compatibility output view for strict boundary callers."""
+    analysis = _encoded_candidate_analysis(
+        candidate,
+        max_emitted_bytes=max_emitted_bytes,
+    )
+    return analysis.outputs, analysis.emitted_bytes
+
+
+def _reject_derived_projection_archives(projection: bytes) -> None:
+    """Reject containers exposed only after a derived Unicode projection."""
+    encoded_outputs, _emitted_bytes = _encoded_candidate_outputs(projection)
+    if _contains_archive_signature(projection) or encoded_outputs:
+        raise _ScanError("Derived Unicode projection contains nested archive bytes")
+
+
+def _reject_encoded_archives(
+    candidate: bytes,
+    *,
+    retain_rfc1950_outputs: bool = False,
+) -> None:
     """Reject archive bytes hidden behind one or more supported encodings."""
     queue: list[tuple[bytes, int]] = [(candidate, 0)]
     seen: set[tuple[int, bytes]] = set()
@@ -1851,7 +3025,10 @@ def _reject_encoded_archives(candidate: bytes) -> None:
                             "Encoded archive analysis exceeded its bounded "
                             "candidate count"
                         )
-                    contains_archive = _contains_archive_signature(decoded)
+                    contains_archive = _contains_archive_signature(
+                        decoded,
+                        retain_rfc1950_outputs=retain_rfc1950_outputs,
+                    )
                     if contains_archive and (
                         hashlib.sha256(decoded).hexdigest()
                         not in _INERT_ENCODED_ARCHIVE_SHA256
@@ -2055,11 +3232,15 @@ def _validate_zip_archive(
                 )
                 try:
                     with archive.open(member) as stream:
-                        prefix, contains_archive, content_sha256 = (
+                        prefix, contains_archive, _content_sha256 = (
                             _inspect_archive_stream(
                                 stream,
                                 budget,
                                 member_writer,
+                                retain_rfc1950_outputs=(
+                                    member_writer is not None
+                                    and member_writer.retain_direct_rfc1950_outputs
+                                ),
                             )
                         )
                 except Exception:
@@ -2070,8 +3251,10 @@ def _validate_zip_archive(
                     member.filename,
                     prefix,
                     contains_archive=contains_archive,
-                    content_sha256=content_sha256,
-                    allow_inert_media=True,
+                    retain_rfc1950_outputs=(
+                        member_writer is not None
+                        and member_writer.retain_direct_rfc1950_outputs
+                    ),
                 )
     except (materializer.SnapshotError, _ScanError):
         raise
@@ -2224,19 +3407,25 @@ def _validate_tar_archive(
                             member_writer.abort()
                         raise _ScanError("Archive member could not be read")
                     with stream:
-                        prefix, contains_archive, content_sha256 = (
+                        prefix, contains_archive, _content_sha256 = (
                             _inspect_archive_stream(
                                 stream,
                                 budget,
                                 member_writer,
+                                retain_rfc1950_outputs=(
+                                    member_writer is not None
+                                    and member_writer.retain_direct_rfc1950_outputs
+                                ),
                             )
                         )
                     _reject_nested_archive(
                         member.name,
                         prefix,
                         contains_archive=contains_archive,
-                        content_sha256=content_sha256,
-                        allow_inert_media=True,
+                        retain_rfc1950_outputs=(
+                            member_writer is not None
+                            and member_writer.retain_direct_rfc1950_outputs
+                        ),
                     )
             while bounded_stream.read(_ARCHIVE_READ_BYTES):
                 pass
@@ -2270,10 +3459,14 @@ def _validate_compressed_stream(
     )
     try:
         with openers[kind](path, "rb") as stream:
-            prefix, contains_archive, content_sha256 = _inspect_archive_stream(
+            prefix, contains_archive, _content_sha256 = _inspect_archive_stream(
                 stream,
                 budget,
                 member_writer,
+                retain_rfc1950_outputs=(
+                    member_writer is not None
+                    and member_writer.retain_direct_rfc1950_outputs
+                ),
             )
     except (EOFError, OSError, lzma.LZMAError) as exc:
         if member_writer is not None:
@@ -2283,8 +3476,9 @@ def _validate_compressed_stream(
         "<compressed-stream>",
         prefix,
         contains_archive=contains_archive,
-        content_sha256=content_sha256,
-        allow_inert_media=False,
+        retain_rfc1950_outputs=(
+            member_writer is not None and member_writer.retain_direct_rfc1950_outputs
+        ),
     )
 
 
@@ -2296,6 +3490,7 @@ def _validate_archive_file(
     compressed_stream_factory: (
         Callable[[str], _ArchiveMemberProbeWriter] | None
     ) = None,
+    embedded_output_writer: Callable[[Path], None] | None = None,
 ) -> None:
     """Fail closed on archive names or bytes Gitleaks cannot traverse completely."""
     archive_budget = _ArchiveBudget() if budget is None else budget
@@ -2349,9 +3544,14 @@ def _validate_archive_file(
             ),
         )
         return
+    if kind == "zlib" and embedded_output_writer is not None:
+        embedded_output_writer(path)
+        return
     if kind is not None:
         raise _ScanError(f"Disguised {kind} archive bytes cannot be scanned")
-    if _contains_embedded_archive(path):
+    if embedded_output_writer is not None:
+        embedded_output_writer(path)
+    elif _contains_embedded_archive(path):
         raise _ScanError("Embedded archive bytes cannot prove complete coverage")
 
 
@@ -2558,6 +3758,26 @@ def _append_fragment_windows(
             counts.fragment_window_bytes += 2 * len(content)
 
 
+def _process_commit_metadata_compressed_boundaries(
+    path: Path,
+    candidates: _CandidateProbeWriter,
+    logical_parts: tuple[str, ...],
+) -> None:
+    """Scan header output and keep the attacker-controlled message strict."""
+    content = path.read_bytes()
+    separator = content.find(b"\n\n")
+    if separator < 0:
+        raise _ScanError("Commit metadata does not contain a message boundary")
+    message = content[separator + 2 :]
+    if _contains_archive_signature(message):
+        raise _ScanError("Embedded archive bytes cannot prove complete coverage")
+    candidates.append_direct_rfc1950_content(
+        content,
+        logical_parts,
+        maximum_start=separator,
+    )
+
+
 def _link_probe_archives(
     path: Path,
     relative: str,
@@ -2568,6 +3788,7 @@ def _link_probe_archives(
     candidates: _CandidateProbeWriter,
     exact_paths: _ExactPathAllocator,
     fragment_exact_paths: _ExactPathAllocator,
+    retain_direct_rfc1950_outputs: bool,
 ) -> None:
     """Link one raw file under every pinned archive-compatible name."""
     source_identity = os.fsencode(relative)
@@ -2576,6 +3797,8 @@ def _link_probe_archives(
         member: str,
         logical_scan_path: str,
         identity_domain: bytes,
+        *,
+        retain_direct_rfc1950_outputs: bool,
     ) -> _ArchiveMemberProbeWriter:
         member_identity = member.encode("utf-8", errors="surrogatepass")
         identity = hashlib.sha256(
@@ -2594,6 +3817,7 @@ def _link_probe_archives(
             transformed_exact_path_target,
             fragment_exact_paths,
             logical_scan_path,
+            retain_direct_rfc1950_outputs=retain_direct_rfc1950_outputs,
         )
 
     def member_factory(member: str) -> _ArchiveMemberProbeWriter:
@@ -2601,8 +3825,16 @@ def _link_probe_archives(
             member,
             f"{logical_relative}!{member}",
             b"member",
+            retain_direct_rfc1950_outputs=True,
         )
 
+    if not retain_direct_rfc1950_outputs:
+        _process_commit_metadata_compressed_boundaries(
+            path,
+            candidates,
+            _canonical_archive_member_parts(logical_relative),
+        )
+        return
     _validate_archive_file(
         path,
         archive_budget,
@@ -2611,11 +3843,19 @@ def _link_probe_archives(
             f"<container>{member}",
             logical_relative,
             b"structure",
+            retain_direct_rfc1950_outputs=False,
         ),
         compressed_stream_factory=lambda member: probe_writer(
             member,
             logical_relative,
             b"compressed-stream",
+            retain_direct_rfc1950_outputs=True,
+        ),
+        embedded_output_writer=(
+            lambda source: candidates.append_direct_rfc1950_outputs(
+                source,
+                _canonical_archive_member_parts(logical_relative),
+            )
         ),
     )
     archive_names = _archive_probe_names(path)
@@ -2635,6 +3875,8 @@ def _prepare_decode_probe_source(
     source: Path,
     destination: Path,
     preserve_exact_paths: bool = False,
+    *,
+    retain_direct_rfc1950_outputs: bool = True,
 ) -> dict[str, int]:
     """Build a compact view of encoded spans, paths, Unicode, and archives."""
     destination.mkdir(mode=0o700)
@@ -2694,6 +3936,7 @@ def _prepare_decode_probe_source(
                 candidates,
                 exact_paths,
                 fragment_exact_paths,
+                retain_direct_rfc1950_outputs,
             )
     counts.archive_exact_path_shards = exact_paths.shards
     counts.fragment_exact_path_shards = fragment_exact_paths.shards
@@ -4036,6 +5279,33 @@ def _empty_probe_receipt() -> dict[str, int]:
         "candidate_examined_matches": 0,
         "candidate_matches": 0,
         "candidate_streams": 0,
+        "derived_analysis_bytes": 0,
+        "derived_bytes": 0,
+        "derived_duplicates": 0,
+        "derived_exact_path_bytes": 0,
+        "derived_exact_path_files": 0,
+        "derived_exact_path_identity_reuses": 0,
+        "derived_exact_path_shards": 0,
+        "derived_outputs": 0,
+        "derived_streams": 0,
+        "derived_transcoded_bytes": 0,
+        "derived_transcoded_files": 0,
+        "encoded_fdict_candidates": 0,
+        "encoded_fdict_complete_streams": 0,
+        "encoded_fdict_malformed_streams": 0,
+        "encoded_fdict_unresolved_streams": 0,
+        "direct_complete_empty_streams": 0,
+        "direct_compressed_candidates": 0,
+        "direct_duplicate_carriers": 0,
+        "direct_emitted_bytes": 0,
+        "direct_fdict_candidates": 0,
+        "direct_fdict_complete_streams": 0,
+        "direct_fdict_malformed_streams": 0,
+        "direct_fdict_unresolved_streams": 0,
+        "direct_invalid_streams": 0,
+        "direct_output_occurrences": 0,
+        "direct_rfc1950_candidates": 0,
+        "direct_source_carriers": 0,
         "files": 0,
         "fragment_window_bytes": 0,
         "fragment_window_files": 0,
@@ -4043,6 +5313,18 @@ def _empty_probe_receipt() -> dict[str, int]:
         "fragment_exact_path_files": 0,
         "fragment_exact_path_shards": 0,
         "max_candidate_bytes": 0,
+        "max_derived_bytes": 0,
+        "nested_complete_empty_streams": 0,
+        "nested_compressed_candidates": 0,
+        "nested_emitted_bytes": 0,
+        "nested_fdict_candidates": 0,
+        "nested_fdict_complete_streams": 0,
+        "nested_fdict_malformed_streams": 0,
+        "nested_fdict_unresolved_streams": 0,
+        "nested_invalid_streams": 0,
+        "nested_max_depth": 0,
+        "nested_output_occurrences": 0,
+        "nested_rfc1950_candidates": 0,
         "wrapper_files": 0,
     }
 
@@ -4053,10 +5335,9 @@ def _prepare_probe_sources(
     sources: _MaterializedSources,
 ) -> _ProbeSources:
     """Build compact candidate and historical decode-probe views."""
-    preserve_exact_paths = _policy_has_custom_rule_paths(
-        plan.config_content,
-        content_rules_only=True,
-    )
+    # Generic probe files add scanner framing before each output. Always retain
+    # bounded source-start views so pathless absolute anchors see byte zero too.
+    preserve_exact_paths = True
     candidate_view = root / "candidate-decode-probe"
     candidate_receipt = _prepare_decode_probe_source(
         sources.snapshot,
@@ -4077,6 +5358,7 @@ def _prepare_probe_sources(
         sources.commit_metadata_view,
         commit_metadata_view,
         preserve_exact_paths,
+        retain_direct_rfc1950_outputs=False,
     )
     archive_exact_path_views = []
     for probe_view in (
@@ -4089,6 +5371,7 @@ def _prepare_probe_sources(
         for exact_root_name in (
             "npa-gitleaks-archive-exact-paths",
             "npa-gitleaks-candidate-exact-paths",
+            "npa-gitleaks-derived-exact-paths",
             "npa-gitleaks-fragment-exact-paths",
         ):
             exact_root = probe_view / exact_root_name
@@ -4135,17 +5418,19 @@ def _decode_boundary_view(
     source: Path,
     expected_streams: int,
 ) -> Path:
-    """Hardlink each isolated encoded stream into a minimal recursion view."""
+    """Hardlink every isolated encoded or derived stream into a recursion view."""
     destination = root / f"{label}-decode-candidates"
     destination.mkdir(mode=0o700)
-    candidates = sorted(source.glob("decode-input-candidates-*.txt"))
-    if len(candidates) != expected_streams:
+    streams = sorted(source.glob("decode-input-candidates-*.txt")) + sorted(
+        source.glob("decode-derived-output-*.txt")
+    )
+    if len(streams) != expected_streams:
         raise _ScanError("Decode-boundary candidate inventory is incomplete")
-    for candidate in candidates:
-        metadata = candidate.lstat()
-        if candidate.is_symlink() or not stat.S_ISREG(metadata.st_mode):
-            raise _ScanError("Decode-boundary candidate must be a regular file")
-        os.link(candidate, destination / candidate.name)
+    for stream in streams:
+        metadata = stream.lstat()
+        if stream.is_symlink() or not stat.S_ISREG(metadata.st_mode):
+            raise _ScanError("Decode-boundary stream must be a regular file")
+        os.link(stream, destination / stream.name)
     return destination
 
 
@@ -4164,7 +5449,8 @@ def _verify_probe_sources(
         root,
         "candidate",
         probes.candidate_view,
-        probes.candidate_receipt["candidate_streams"],
+        probes.candidate_receipt["candidate_streams"]
+        + probes.candidate_receipt["derived_streams"],
     )
     _require_no_decode_exhaustion(
         "committed-history",
@@ -4182,7 +5468,8 @@ def _verify_probe_sources(
             root,
             "historical",
             probes.historical_view,
-            probes.historical_receipt["candidate_streams"],
+            probes.historical_receipt["candidate_streams"]
+            + probes.historical_receipt["derived_streams"],
         )
         _require_no_decode_exhaustion(
             "historical-trees",
@@ -4206,7 +5493,8 @@ def _verify_probe_sources(
         root,
         "commit-metadata",
         probes.commit_metadata_view,
-        probes.commit_metadata_receipt["candidate_streams"],
+        probes.commit_metadata_receipt["candidate_streams"]
+        + probes.commit_metadata_receipt["derived_streams"],
     )
     _require_no_decode_exhaustion(
         "commit-metadata",
@@ -4273,7 +5561,7 @@ def _prepare_forced_text_repository(
     attributes.parent.mkdir(mode=0o700)
     _write_private(
         attributes,
-        b"* -filter -text -working-tree-encoding diff\n",
+        b"* -filter -ident -text -working-tree-encoding diff\n",
     )
     run("add", "--force", "--all", "--", ".")
     run(
@@ -4321,6 +5609,183 @@ def _run_gitleaks_exact_view(
     )
 
 
+def _quote_fast_import_path(path: bytes) -> bytes:
+    """Return one byte-exact C-quoted path for Git fast-import."""
+    if not path or b"\0" in path or path.startswith(b"/"):
+        raise _ScanError("Exact-path history contains a noncanonical path")
+    return b'"' + b"".join(f"\\{value:03o}".encode() for value in path) + b'"'
+
+
+def _prepare_forced_text_history(
+    repository: Path,
+    views: list[Path],
+    config_content: bytes,
+) -> tuple[str, ...]:
+    """Commit every exact-path variant as an independent forced-text root."""
+    if not views:
+        raise _ScanError("Exact-path forced-text history is empty")
+    if len(views) > _MAX_EXACT_PATH_SHARDS:
+        raise _ScanError("Archive exact-path views exceed the shard limit")
+    repository.mkdir(mode=0o700)
+    environment = materializer._git_environment()
+
+    def run(*arguments: str) -> bytes:
+        return subprocess.run(
+            materializer._git_command(repository, *arguments),
+            check=True,
+            capture_output=True,
+            env=environment,
+        ).stdout
+
+    run("init", "--quiet", "--template=", "--initial-branch=npa-scan")
+    attributes = repository / ".git" / "info" / "attributes"
+    attributes.parent.mkdir(mode=0o700)
+    _write_private(
+        attributes,
+        b"* -filter -ident -text -working-tree-encoding diff\n",
+    )
+    identity = b"NPA exact-path scanner <npa-scan@example.invalid> 946684800 +0000"
+    message = b"NPA exact-path scanner view"
+    total_files = 0
+    total_bytes = 0
+    with (
+        tempfile.TemporaryFile() as stdout_sink,
+        tempfile.TemporaryFile() as stderr_sink,
+    ):
+        process = subprocess.Popen(
+            materializer._git_command(
+                repository,
+                "fast-import",
+                "--quiet",
+                "--done",
+            ),
+            stdin=subprocess.PIPE,
+            stdout=stdout_sink,
+            stderr=stderr_sink,
+            env=environment,
+        )
+        assert process.stdin is not None
+        try:
+            for index, view in enumerate(views):
+                if (view / ".git").exists() or (view / ".git").is_symlink():
+                    raise _ScanError(
+                        "Exact-path scan view already contains Git metadata"
+                    )
+                process.stdin.write(f"commit refs/npa-exact-path/{index}\n".encode())
+                process.stdin.write(b"author " + identity + b"\n")
+                process.stdin.write(b"committer " + identity + b"\n")
+                process.stdin.write(f"data {len(message)}\n".encode())
+                process.stdin.write(message + b"\n")
+                process.stdin.write(b"deleteall\n")
+                view_files = 0
+                paths = sorted(
+                    view.rglob("*"),
+                    key=lambda path: os.fsencode(path.relative_to(view).as_posix()),
+                )
+                for path in paths:
+                    if path.is_symlink():
+                        raise _ScanError("Exact-path history contains a symbolic link")
+                    metadata = path.stat()
+                    if stat.S_ISDIR(metadata.st_mode):
+                        continue
+                    if not stat.S_ISREG(metadata.st_mode):
+                        raise _ScanError(
+                            "Exact-path history contains a non-regular file"
+                        )
+                    total_files += 1
+                    total_bytes += metadata.st_size
+                    if total_files > _MAX_ENCODED_CANDIDATE_FILES:
+                        raise _ScanError(
+                            "Exact-path history exceeds the bounded file count"
+                        )
+                    if total_bytes > _MAX_EXACT_PATH_HISTORY_BYTES:
+                        raise _ScanError(
+                            "Exact-path history exceeds the bounded byte count"
+                        )
+                    relative = os.fsencode(path.relative_to(view).as_posix())
+                    process.stdin.write(
+                        b"M 100644 inline " + _quote_fast_import_path(relative) + b"\n"
+                    )
+                    process.stdin.write(f"data {metadata.st_size}\n".encode())
+                    with path.open("rb") as stream:
+                        while chunk := stream.read(_PROBE_DECODE_CHUNK_BYTES):
+                            process.stdin.write(chunk)
+                    process.stdin.write(b"\n")
+                    view_files += 1
+                if not view_files:
+                    raise _ScanError("Exact-path scan view is empty")
+            process.stdin.write(b"done\n")
+            process.stdin.close()
+            returncode = process.wait()
+        except BrokenPipeError as error:
+            try:
+                process.stdin.close()
+            except BrokenPipeError:
+                pass
+            process.wait()
+            diagnostic = _read_scanner_diagnostic(stderr_sink, "Git fast-import")
+            raise _ScanError(
+                "Could not build exact-path forced-text history: "
+                + diagnostic.decode("utf-8", errors="replace")
+            ) from error
+        except BaseException:
+            try:
+                process.stdin.close()
+            except BrokenPipeError:
+                pass
+            if process.poll() is None:
+                process.terminate()
+            process.wait()
+            raise
+        if returncode:
+            diagnostic = _read_scanner_diagnostic(stderr_sink, "Git fast-import")
+            raise _ScanError(
+                "Could not build exact-path forced-text history: "
+                + diagnostic.decode("utf-8", errors="replace")
+            )
+    commits = tuple(
+        line.strip().lower()
+        for line in run(
+            "for-each-ref",
+            "--format=%(objectname)",
+            "refs/npa-exact-path/",
+        )
+        .decode("ascii")
+        .splitlines()
+        if line.strip()
+    )
+    if len(commits) != len(views):
+        raise _ScanError("Exact-path forced-text history omitted a root")
+    if _policy_commit_allowlists(config_content).intersection(commits):
+        raise _ScanError(
+            "Policy commit allowlist suppresses a generated exact-path scan view"
+        )
+    return commits
+
+
+def _run_gitleaks_exact_views(
+    executable: str,
+    repository: Path,
+    views: list[Path],
+    config: Path,
+    ignore: Path,
+    report: Path,
+    config_content: bytes,
+    report_budget: _ReportBudget,
+) -> tuple[subprocess.CompletedProcess[bytes], list[dict[str, object]]]:
+    """Scan all exact-path roots once without candidate-controlled Git behavior."""
+    _prepare_forced_text_history(repository, views, config_content)
+    return _run_gitleaks(
+        executable,
+        repository,
+        config,
+        ignore,
+        report,
+        history_range="--all",
+        report_budget=report_budget,
+    )
+
+
 def _scan_exact_path_views(
     executable: str,
     root: Path,
@@ -4331,44 +5796,21 @@ def _scan_exact_path_views(
     config_content: bytes,
     report_budget: _ReportBudget,
 ) -> list[tuple[subprocess.CompletedProcess[bytes], list[dict[str, object]]]]:
-    """Scan exact paths in filesystem and forced-text Git modes."""
-    results = []
-    for index, view in enumerate(views):
-        root_ignore = view / ".gitleaksignore"
-        detached_ignore = root / f".{label}-{index}-root-ignore"
-        has_root_ignore = root_ignore.exists() or root_ignore.is_symlink()
-        if has_root_ignore:
-            metadata = root_ignore.lstat()
-            if root_ignore.is_symlink() or not stat.S_ISREG(metadata.st_mode):
-                raise _ScanError("Exact-path root ignore must be a regular file")
-            root_ignore.rename(detached_ignore)
-        try:
-            results.append(
-                _run_gitleaks(
-                    executable,
-                    view,
-                    config,
-                    ignore,
-                    root / f"{label}-{index}-filesystem.json",
-                    max_archive_depth=0,
-                    report_budget=report_budget,
-                )
-            )
-        finally:
-            if has_root_ignore:
-                detached_ignore.rename(root_ignore)
-        results.append(
-            _run_gitleaks_exact_view(
-                executable,
-                view,
-                config,
-                ignore,
-                root / f"{label}-{index}-git.json",
-                config_content,
-                report_budget=report_budget,
-            )
+    """Scan bounded exact-path variants as one forced-text root history."""
+    if not views:
+        return []
+    return [
+        _run_gitleaks_exact_views(
+            executable,
+            root / f"{label}-history",
+            views,
+            config,
+            ignore,
+            root / f"{label}-git.json",
+            config_content,
+            report_budget=report_budget,
         )
-    return results
+    ]
 
 
 def _require_clean_content_scans(

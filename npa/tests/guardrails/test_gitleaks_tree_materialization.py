@@ -1527,7 +1527,6 @@ def _assert_carrier_failure(carrier: str, token: str, out: str, err: str) -> Non
         assert "archive" in err.lower()
     elif carrier in {
         "encoded_zip",
-        "encoded_zlib",
         "double_encoded_zip",
         "gzip_encoded_zip",
         "hex_zip",
@@ -1540,8 +1539,6 @@ def _assert_carrier_failure(carrier: str, token: str, out: str, err: str) -> Non
         "zip_encoded_zip",
         "zip_prefixed_gzip",
         "zip_substring_alias",
-        "zip_zlib",
-        "zlib_disguised",
     }:
         assert "archive" in err.lower()
     elif carrier in {"six_encoded", "tar_gz_six_encoded", "zip_six_encoded"}:
@@ -2044,6 +2041,126 @@ def test_forced_text_exact_view_ignores_candidate_git_controls(
     )
 
 
+@pytest.mark.skipif(
+    shutil.which("gitleaks") is None, reason="gitleaks is not installed"
+)
+def test_forced_text_exact_history_scans_same_path_root_variants(
+    tmp_path: Path,
+) -> None:
+    """Find every binary source-start value sharing one governed exact path."""
+    views = [tmp_path / "first", tmp_path / "second"]
+    tokens = [
+        "NPA_ROOT_HISTORY_" + ("A1" * 12),
+        "NPA_ROOT_HISTORY_" + ("B2" * 12),
+    ]
+    for view, token in zip(views, tokens, strict=True):
+        view.mkdir()
+        carrier = view / "nested dir" / "café.zip"
+        carrier.parent.mkdir()
+        (view / ".gitignore").write_text("*\n", encoding="utf-8")
+        (view / ".gitattributes").write_text(
+            "* filter=attacker ident -diff\n",
+            encoding="utf-8",
+        )
+        carrier.write_bytes(b"$Id: " + token.encode() + b" $\0binary suffix")
+    config_content = (
+        "[[rules]]\n"
+        'id = "root-history-control"\n'
+        'description = "Root history control"\n'
+        "regex = '''^\\$Id: NPA_ROOT_HISTORY_[A-Z0-9]{24} \\$'''\n"
+        "path = '''^nested dir/café\\.zip$'''\n"
+    ).encode()
+    config = tmp_path / "policy.toml"
+    config.write_bytes(config_content)
+    ignore = tmp_path / "policy.ignore"
+    ignore.write_text("", encoding="utf-8")
+    scanner = shutil.which("gitleaks")
+    assert scanner is not None
+
+    result, findings = tree_scan._run_gitleaks_exact_views(
+        scanner,
+        tmp_path / "history",
+        views,
+        config,
+        ignore,
+        tmp_path / "report.json",
+        config_content,
+        tree_scan._ReportBudget(),
+    )
+
+    assert result.returncode == 1
+    assert len(findings) == 2
+    assert {finding.get("RuleID") for finding in findings} == {"root-history-control"}
+    assert {finding.get("File") for finding in findings} == {"nested dir/café.zip"}
+    assert len({finding.get("Commit") for finding in findings}) == 2
+    assert {finding.get("StartLine") for finding in findings} == {1}
+
+
+def test_exact_path_orchestration_runs_one_generated_history(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Use one history scan and forbid per-view filesystem scanner processes."""
+    views = [tmp_path / name for name in ("first", "second", "third")]
+    config = tmp_path / "policy.toml"
+    ignore = tmp_path / "policy.ignore"
+    config_content = b"[extend]\nuseDefault = true\n"
+    budget = tree_scan._ReportBudget()
+    result = subprocess.CompletedProcess(
+        args=["gitleaks"],
+        returncode=0,
+        stdout=b"",
+        stderr=b"",
+    )
+    generated_history_calls: list[Path] = []
+
+    def run_generated_history(
+        executable: str,
+        repository: Path,
+        received_views: list[Path],
+        received_config: Path,
+        received_ignore: Path,
+        report: Path,
+        received_content: bytes,
+        *,
+        report_budget: tree_scan._ReportBudget,
+    ) -> tuple[subprocess.CompletedProcess[bytes], list[dict[str, object]]]:
+        assert executable == "/trusted/gitleaks"
+        assert received_views == views
+        assert received_config == config
+        assert received_ignore == ignore
+        assert report == tmp_path / "work" / "candidate-exact-path-git.json"
+        assert received_content == config_content
+        assert report_budget is budget
+        generated_history_calls.append(repository)
+        return result, []
+
+    def reject_extra_scan(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("exact-path orchestration launched a per-view scan")
+
+    monkeypatch.setattr(tree_scan, "_run_gitleaks_exact_views", run_generated_history)
+    monkeypatch.setattr(tree_scan, "_run_gitleaks_exact_view", reject_extra_scan)
+    monkeypatch.setattr(tree_scan, "_run_gitleaks", reject_extra_scan)
+
+    scans = tree_scan._scan_exact_path_views(
+        "/trusted/gitleaks",
+        tmp_path / "work",
+        views,
+        "candidate-exact-path",
+        config,
+        ignore,
+        config_content,
+        budget,
+    )
+
+    assert generated_history_calls == [
+        tmp_path / "work" / "candidate-exact-path-history"
+    ]
+    assert len(scans) == 1
+    assert scans[0][0] is result
+    assert scans[0][1] == []
+
+
 def test_generated_exact_view_rejects_its_commit_allowlist(tmp_path: Path) -> None:
     """Keep synthetic Git identities from restoring a trusted suppression."""
     first = tmp_path / "first"
@@ -2067,6 +2184,95 @@ def test_generated_exact_view_rejects_its_commit_allowlist(tmp_path: Path) -> No
         match="allowlist suppresses a generated exact-path",
     ):
         tree_scan._prepare_forced_text_repository(second, policy)
+
+
+def test_generated_exact_history_rejects_any_root_commit_allowlist(
+    tmp_path: Path,
+) -> None:
+    """Reject a policy exception for either independent exact-path root."""
+    views = [tmp_path / "first", tmp_path / "second"]
+    for index, view in enumerate(views):
+        view.mkdir()
+        (view / "carrier.txt").write_text(
+            f"exact history value {index}\n",
+            encoding="utf-8",
+        )
+    commits = tree_scan._prepare_forced_text_history(
+        tmp_path / "first-history",
+        views,
+        b"[extend]\nuseDefault = true\n",
+    )
+    assert len(commits) == 2
+    policy = (
+        b"[extend]\n"
+        b"useDefault = true\n\n"
+        b"[[allowlists]]\n" + f"commits = ['''{commits[1]}''']\n".encode()
+    )
+
+    with pytest.raises(
+        tree_scan._ScanError,
+        match="allowlist suppresses a generated exact-path",
+    ):
+        tree_scan._prepare_forced_text_history(
+            tmp_path / "second-history",
+            views,
+            policy,
+        )
+
+
+@pytest.mark.parametrize("bound", ["views", "files", "bytes"])
+def test_generated_exact_history_applies_input_bounds(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    bound: str,
+) -> None:
+    """Bound root count, file population, and streamed bytes before scanning."""
+    views = [tmp_path / "first", tmp_path / "second"]
+    for view in views:
+        view.mkdir()
+        (view / "carrier.txt").write_text("bounded content\n", encoding="utf-8")
+    if bound == "views":
+        monkeypatch.setattr(tree_scan, "_MAX_EXACT_PATH_SHARDS", 1)
+        error = "shard limit"
+    elif bound == "files":
+        (views[0] / "second.txt").write_text("another file\n", encoding="utf-8")
+        monkeypatch.setattr(tree_scan, "_MAX_ENCODED_CANDIDATE_FILES", 1)
+        error = "bounded file count"
+    else:
+        monkeypatch.setattr(tree_scan, "_MAX_EXACT_PATH_HISTORY_BYTES", 1)
+        error = "bounded byte count"
+
+    with pytest.raises(tree_scan._ScanError, match=error):
+        tree_scan._prepare_forced_text_history(
+            tmp_path / "bounded-history",
+            views,
+            b"[extend]\nuseDefault = true\n",
+        )
+
+
+def test_exact_path_allocator_advances_repeated_path_monotonically(
+    tmp_path: Path,
+) -> None:
+    """Do not restart a same-path shard search at zero for every projection."""
+    allocator = tree_scan._ExactPathAllocator(tmp_path / "exact")
+    parts = ("nested", "carrier.bin")
+
+    targets = [allocator.allocate_parts(parts) for _index in range(128)]
+
+    assert [target.parts[-3] for target in targets] == [
+        str(index) for index in range(128)
+    ]
+    assert allocator.next_shards[parts] == 128
+    assert allocator.shards == allocator.files == 128
+
+    class PreviouslyExaminedShard(set[tuple[str, ...]]):
+        def __contains__(self, value: object) -> bool:
+            raise AssertionError(f"revisited occupied shard for {value!r}")
+
+    allocator.full_paths[0] = PreviouslyExaminedShard(allocator.full_paths[0])
+    next_target = allocator.allocate_parts(parts)
+    assert next_target.parts[-3] == "128"
+    assert allocator.next_shards[parts] == 129
 
 
 @pytest.mark.skipif(
@@ -2102,6 +2308,60 @@ def test_encoded_probe_preserves_exact_policy_path(
     assert token not in output.out
     assert token not in output.err
     assert "encoded-path-control" in output.err
+
+
+@pytest.mark.skipif(
+    shutil.which("gitleaks") is None, reason="gitleaks is not installed"
+)
+def test_runner_preserves_pathless_absolute_anchor_for_derived_output(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Give every derived output a byte-zero view even without a path rule."""
+    repo = _repo(tmp_path)
+    config = (
+        "[extend]\n"
+        "useDefault = true\n\n"
+        "[[rules]]\n"
+        'id = "pathless-derived-anchor-control"\n'
+        'description = "Pathless derived absolute-anchor control"\n'
+        "regex = '''^NPA_DERIVED_ANCHOR_[A-Z0-9]{24}$'''\n"
+    )
+    (repo / ".gitleaks.toml").write_text(config, encoding="utf-8")
+    assert not tree_scan._policy_has_custom_rule_paths(
+        config.encode(),
+        content_rules_only=True,
+    )
+    (repo / "safe.txt").write_text("safe base\n", encoding="utf-8")
+    base = _commit(repo, "clean base")
+    token = "NPA_DERIVED_ANCHOR_" + ("A1" * 12)
+    carrier = zlib.compress(token.encode())
+    assert token.encode() not in carrier
+    (repo / "carrier.txt").write_bytes(carrier)
+    candidate = _commit(repo, "pathless derived absolute-anchor secret")
+    scanner = shutil.which("gitleaks")
+    assert scanner is not None
+    original_prepare = tree_scan._prepare_probe_sources
+    observed: dict[str, int] = {}
+
+    def capture_probe_sources(
+        root: Path,
+        plan: tree_scan._ScanPlan,
+        sources: tree_scan._MaterializedSources,
+    ) -> tree_scan._ProbeSources:
+        result = original_prepare(root, plan, sources)
+        observed.update(result.candidate_receipt)
+        return result
+
+    monkeypatch.setattr(tree_scan, "_prepare_probe_sources", capture_probe_sources)
+    assert tree_scan.main(_runner_arguments(repo, candidate, base, scanner)) == 1
+    output = capsys.readouterr()
+    assert token not in output.out
+    assert token not in output.err
+    assert "pathless-derived-anchor-control" in output.err
+    assert observed["derived_exact_path_files"] >= 1
+    assert observed["derived_exact_path_shards"] >= 1
 
 
 @pytest.mark.skipif(
@@ -2982,6 +3242,17 @@ def _mutate_png_chunk_payload(content: bytes, kind: bytes, offset: int) -> bytes
 
 def _output_bearing_malformed_zlib(payload: bytes, mutation: str) -> bytes:
     """Build a zlib stream that emits payload before its terminal failure."""
+    if mutation == "deflate-error":
+        assert len(payload) <= 0xFFFF
+        length = len(payload)
+        stored = (
+            b"\x00"
+            + length.to_bytes(2, "little")
+            + ((~length) & 0xFFFF).to_bytes(2, "little")
+            + payload
+            + b"\x07"
+        )
+        return b"\x78\x01" + stored + (b"\0" * 4)
     compressed = bytearray(zlib.compress(payload))
     if mutation == "truncated":
         return bytes(compressed[:-1])
@@ -2991,6 +3262,41 @@ def _output_bearing_malformed_zlib(payload: bytes, mutation: str) -> bytes:
         compressed[-1] ^= 1
         return bytes(compressed)
     raise AssertionError(f"unknown zlib mutation: {mutation}")
+
+
+def _fdict_zlib(payload: bytes, dictionary: bytes) -> bytes:
+    """Build one RFC 1950 FDICT stream with an authenticated DICTID."""
+    compressor = zlib.compressobj(
+        level=9,
+        wbits=zlib.MAX_WBITS,
+        zdict=dictionary,
+    )
+    return compressor.compress(payload) + compressor.flush()
+
+
+def _dictionary_independent_fdict_zlib(payload: bytes) -> bytes:
+    """Set FDICT while keeping fixture output independent of dictionary history."""
+    dictionary = b"public-known-dictionary-v1:" + (b"common-prefix-" * 128)
+    return _fdict_zlib(payload, dictionary)
+
+
+def _malformed_dictionary_independent_fdict_zlib(payload: bytes) -> bytes:
+    """Corrupt the trailer after deterministic dictionary-independent output."""
+    stream = bytearray(_dictionary_independent_fdict_zlib(payload))
+    stream[-1] ^= 1
+    return bytes(stream)
+
+
+def _partial_dictionary_required_fdict_zlib(payload: bytes) -> bytes:
+    """Emit the payload before requiring unavailable dictionary history."""
+    return _fdict_zlib(payload + (b"A" * 100), b"A" * 32_768)
+
+
+def _nested_zlib(payload: bytes, levels: int) -> bytes:
+    """Wrap payload in an exact number of RFC 1950 streams."""
+    for _index in range(levels):
+        payload = zlib.compress(payload)
+    return payload
 
 
 @pytest.mark.parametrize("split_idat", [False, True])
@@ -3352,7 +3658,7 @@ def test_png_idat_exception_handles_malformed_zlib_as_unvalidated(
 
 @pytest.mark.parametrize(
     "mutation",
-    ["truncated", "deflate-truncated", "checksum"],
+    ["truncated", "deflate-truncated", "checksum", "deflate-error"],
 )
 def test_png_idat_exception_rejects_output_bearing_malformed_zlib(
     tmp_path: Path,
@@ -3405,21 +3711,98 @@ def test_png_idat_exception_bounds_chunk_allocation(
     assert tree_scan._contains_embedded_archive(carrier)
 
 
-def _classify_raw_zlib_candidate(candidate: bytes) -> tuple[str, bool]:
-    """Classify RFC 1950 bytes without calling the production predicate."""
-    decoder = zlib.decompressobj(-zlib.MAX_WBITS)
-    try:
-        decoded = decoder.decompress(candidate[2:], max_length=1)
-    except zlib.error:
-        return "zlib_error", False
-    if decoded:
-        return "zlib_output", True
-    if decoder.eof:
-        return "zlib_complete_empty", True
-    if decoder.unconsumed_tail:
-        return "zlib_unconsumed", True
-    bounded = len(candidate) == tree_scan._PROBE_DECODE_CHUNK_BYTES
-    return ("zlib_bounded" if bounded else "zlib_inert"), bounded
+def _classify_raw_zlib_candidate(
+    content: bytes,
+    offset: int,
+) -> tuple[str, bool]:
+    """Classify one RFC 1950 start independently of the production predicate."""
+    fdict = bool(content[offset + 1] & 0x20)
+    compressed_start = offset + (6 if fdict else 2)
+    canonical = offset == 0
+    if compressed_start > len(content):
+        return (
+            ("zlib_fdict_malformed", canonical)
+            if fdict
+            else (
+                "zlib_inert",
+                False,
+            )
+        )
+    compressed_end = min(
+        len(content),
+        compressed_start + tree_scan._PROBE_DECODE_CHUNK_BYTES,
+    )
+    window_bits = 8 + (content[offset] >> 4)
+    decoder = zlib.decompressobj(-window_bits)
+    output = bytearray()
+
+    def classified_failure(error: zlib.error) -> tuple[str, bool]:
+        if not fdict:
+            return ("zlib_output_error", True) if output else ("zlib_error", False)
+        status = (
+            "unresolved"
+            if "invalid distance too far back" in str(error).lower()
+            else "malformed"
+        )
+        emitted = "output" if output else "empty"
+        return f"zlib_fdict_{status}_{emitted}", canonical or bool(output)
+
+    for position in range(compressed_start, compressed_end):
+        pending = content[position : position + 1]
+        while pending:
+            try:
+                decoded = decoder.decompress(pending, max_length=1)
+            except zlib.error as error:
+                return classified_failure(error)
+            output.extend(decoded)
+            if len(output) > tree_scan._MAX_ENCODED_DERIVED_OUTPUT_BYTES:
+                return "zlib_output_bound", True
+            if decoder.eof:
+                if not fdict:
+                    return (
+                        ("zlib_output", True)
+                        if output
+                        else ("zlib_complete_empty", True)
+                    )
+                trailer = content[position + 1 : position + 5]
+                complete = len(trailer) == 4 and int.from_bytes(
+                    trailer, "big"
+                ) == zlib.adler32(output)
+                emitted = "output" if output else "empty"
+                status = "complete" if complete else "malformed"
+                return (
+                    f"zlib_fdict_{status}_{emitted}",
+                    complete or canonical or bool(output),
+                )
+            remaining = decoder.unconsumed_tail
+            if remaining and len(remaining) >= len(pending) and not decoded:
+                return "zlib_no_progress", True
+            pending = remaining
+        while True:
+            try:
+                decoded = decoder.decompress(b"", max_length=1)
+            except zlib.error as error:
+                return classified_failure(error)
+            if not decoded:
+                break
+            output.extend(decoded)
+            if len(output) > tree_scan._MAX_ENCODED_DERIVED_OUTPUT_BYTES:
+                return "zlib_output_bound", True
+            if decoder.eof:
+                if not fdict:
+                    return "zlib_output", True
+                trailer = content[position + 1 : position + 5]
+                complete = len(trailer) == 4 and int.from_bytes(
+                    trailer, "big"
+                ) == zlib.adler32(output)
+                status = "complete" if complete else "malformed"
+                return f"zlib_fdict_{status}_output", True
+    if compressed_end < len(content):
+        return "zlib_input_bound", True
+    emitted = "output" if output else "empty"
+    if fdict:
+        return f"zlib_fdict_malformed_{emitted}", canonical or bool(output)
+    return (f"zlib_incomplete_{emitted}", bool(output))
 
 
 def _classify_framed_candidate(candidate: bytes, kind: str) -> tuple[str, bool]:
@@ -3455,9 +3838,9 @@ def _independent_probe_classification(
     offset: int,
 ) -> tuple[str, bool]:
     """Dispatch one independent candidate classification."""
-    candidate = content[offset : offset + tree_scan._PROBE_DECODE_CHUNK_BYTES]
     if kind == "zlib":
-        return _classify_raw_zlib_candidate(candidate)
+        return _classify_raw_zlib_candidate(content, offset)
+    candidate = content[offset : offset + tree_scan._PROBE_DECODE_CHUNK_BYTES]
     return _classify_framed_candidate(candidate, kind)
 
 
@@ -3468,25 +3851,35 @@ def _exact_embedded_media_expectations() -> tuple[
     return (
         (
             ROOT / "docs/workbench/evidence/lerobot-video-subtasks/lerobot-labeled.mp4",
-            4_187,
-            786,
+            8_633,
+            1_693,
             {
                 "gzip_error": 1,
                 "zlib_complete_empty": 2,
-                "zlib_error": 3_400,
-                "zlib_output": 784,
+                "zlib_error": 3_377,
+                "zlib_fdict_malformed_empty": 3_320,
+                "zlib_fdict_malformed_output": 135,
+                "zlib_fdict_unresolved_empty": 242,
+                "zlib_fdict_unresolved_output": 749,
+                "zlib_output": 17,
+                "zlib_output_error": 790,
             },
         ),
         (
             ROOT
             / "docs/workbench/evidence/lerobot-video-subtasks/lerobot-video-subtasks.rrd",
-            4_274,
-            792,
+            8_813,
+            1_710,
             {
                 "gzip_error": 1,
                 "zlib_complete_empty": 3,
-                "zlib_error": 3_481,
-                "zlib_output": 789,
+                "zlib_error": 3_457,
+                "zlib_fdict_malformed_empty": 3_403,
+                "zlib_fdict_malformed_output": 136,
+                "zlib_fdict_unresolved_empty": 242,
+                "zlib_fdict_unresolved_output": 758,
+                "zlib_output": 18,
+                "zlib_output_error": 795,
             },
         ),
     )
@@ -3593,11 +3986,24 @@ def test_architecture_png_admission_is_exact_and_probes_ancillary_candidates(
     assert hashlib.sha256(raw).hexdigest() in tree_scan._INERT_EMBEDDED_MEDIA_SHA256
     assert tree_scan._validated_png_idat_ranges(raw) is not None
     candidates = _outside_png_compressed_candidates(raw)
-    assert candidates == (("zlib", 9561), ("zlib", 9666))
+    assert candidates == (
+        ("zlib", 2633),
+        ("zlib", 2652),
+        ("zlib", 4785),
+        ("zlib", 8813),
+        ("zlib", 9561),
+        ("zlib", 9666),
+        ("zlib", 10004),
+    )
     original_probe = tree_scan._embedded_stream_requires_rejection
     assert [original_probe(raw, kind, offset) for kind, offset in candidates] == [
         False,
+        False,
+        False,
+        False,
+        False,
         True,
+        False,
     ]
     decoder = zlib.decompressobj(-zlib.MAX_WBITS)
     assert decoder.decompress(raw[9668:], max_length=1) == b"\xa8"
@@ -3696,7 +4102,7 @@ def _proof_bundle_rrd() -> tuple[Path, bytes]:
 def _assert_proof_bundle_rrd_candidates(content: bytes) -> None:
     """Bind every proof-member predicate decision to an independent result."""
     candidates = list(tree_scan._embedded_compressed_streams(content))
-    assert len(candidates) == 30
+    assert len(candidates) == 61
     classifications: Counter[str] = Counter()
     for kind, offset in candidates:
         classification, independently_rejecting = _independent_probe_classification(
@@ -3708,8 +4114,11 @@ def _assert_proof_bundle_rrd_candidates(content: bytes) -> None:
             is independently_rejecting
         )
     assert classifications == {
-        "zlib_error": 28,
         "zlib_complete_empty": 1,
+        "zlib_error": 28,
+        "zlib_fdict_malformed_empty": 28,
+        "zlib_fdict_malformed_output": 1,
+        "zlib_fdict_unresolved_output": 2,
         "zlib_output": 1,
     }
 
@@ -3721,10 +4130,14 @@ def _record_zlib_probe_digests(
     original_probe = tree_scan._zlib_candidate_requires_rejection
     observed: list[str] = []
 
-    def _recording_probe(candidate: bytes, offset: int) -> bool:
+    def _recording_probe(
+        candidate: bytes,
+        offset: int,
+        **options: bool,
+    ) -> bool:
         end = offset + tree_scan._PROBE_DECODE_CHUNK_BYTES
         observed.append(hashlib.sha256(candidate[offset:end]).hexdigest())
-        return original_probe(candidate, offset)
+        return original_probe(candidate, offset, **options)
 
     monkeypatch.setattr(
         tree_scan,
@@ -3760,10 +4173,9 @@ def _alias_path_identity(
 def test_exact_proof_bundle_member_uses_same_stream_hash_and_scan_bytes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Admit one exact member only after consuming and writing every byte."""
+    """Bind exact bytes while requiring a real derived-output sink for admission."""
     bundle, content = _proof_bundle_rrd()
     identity = hashlib.sha256(content).hexdigest()
-    assert tree_scan._INERT_ARCHIVE_MEMBER_MEDIA_SHA256 == {identity}
     _assert_proof_bundle_rrd_candidates(content)
     writer = _RecordingMemberWriter()
     budget = tree_scan._ArchiveBudget()
@@ -3785,16 +4197,16 @@ def test_exact_proof_bundle_member_uses_same_stream_hash_and_scan_bytes(
         ).hexdigest()
         for _kind, offset in tree_scan._embedded_compressed_streams(content)
     }
-    assert len(expected_digests) == 30
+    assert len(expected_digests) == 61
     assert expected_digests <= set(observed_digests)
-    tree_scan._reject_nested_archive(
-        "lerobot-subtasks.rrd",
-        prefix,
-        contains_archive=True,
-        content_sha256=observed_identity,
-        allow_inert_media=True,
-    )
-    tree_scan._validate_archive_file(bundle)
+    with pytest.raises(tree_scan._ScanError, match="Nested archive member"):
+        tree_scan._reject_nested_archive(
+            "lerobot-subtasks.rrd",
+            prefix,
+            contains_archive=True,
+        )
+    with pytest.raises(tree_scan._ScanError, match="Nested archive member"):
+        tree_scan._validate_archive_file(bundle)
 
 
 def test_archive_stream_probes_each_final_byte() -> None:
@@ -3916,51 +4328,29 @@ def test_changed_proof_bundle_member_retaining_candidates_rejects(
 
 
 @pytest.mark.parametrize(
-    ("member", "prefix", "digest", "allow_inert"),
+    ("member", "prefix", "contains_archive", "retain_rfc1950_outputs"),
     [
-        ("nested.zip", b"safe", "exact", True),
-        ("nested.zip.txt", b"safe", "exact", True),
-        ("safe.bin", b"PK\x03\x04", "exact", True),
-        ("safe.bin", b"safe", "near", True),
-        ("<compressed-stream>", b"safe", "exact", False),
+        ("nested.zip", b"safe", False, True),
+        ("nested.zip.txt", b"safe", False, True),
+        ("safe.bin", b"PK\x03\x04", False, True),
+        ("safe.bin", b"safe", True, True),
+        ("<compressed-stream>", b"safe", True, False),
     ],
 )
-def test_archive_member_media_admission_cannot_waive_structural_rejection(
+def test_archive_member_output_capability_cannot_waive_structural_rejection(
     member: str,
     prefix: bytes,
-    digest: str,
-    allow_inert: bool,
+    contains_archive: bool,
+    retain_rfc1950_outputs: bool,
 ) -> None:
-    """Keep names, prefixes, near hashes, and standalone streams fail closed."""
-    _bundle, content = _proof_bundle_rrd()
-    identity = hashlib.sha256(content).hexdigest()
-    selected_digest = identity if digest == "exact" else identity[:1] + ("0" * 63)
+    """Keep names, prefixes, non-zlib bytes, and no-sink streams fail closed."""
     with pytest.raises(tree_scan._ScanError, match="Nested archive member"):
         tree_scan._reject_nested_archive(
             member,
             prefix,
-            contains_archive=True,
-            content_sha256=selected_digest,
-            allow_inert_media=allow_inert,
+            contains_archive=contains_archive,
+            retain_rfc1950_outputs=retain_rfc1950_outputs,
         )
-
-
-def test_archive_member_media_admission_requires_all_digest_nibbles() -> None:
-    """Reject a near digest for every possible proper-prefix comparison."""
-    _bundle, content = _proof_bundle_rrd()
-    identity = hashlib.sha256(content).hexdigest()
-    prefix = content[: tree_scan._ARCHIVE_PREFIX_BYTES]
-    for prefix_length in range(1, len(identity)):
-        replacement = "0" if identity[prefix_length] != "0" else "1"
-        near = identity[:prefix_length] + replacement + identity[prefix_length + 1 :]
-        with pytest.raises(tree_scan._ScanError, match="Nested archive member"):
-            tree_scan._reject_nested_archive(
-                "lerobot-subtasks.rrd",
-                prefix,
-                contains_archive=True,
-                content_sha256=near,
-                allow_inert_media=True,
-            )
 
 
 def _record_path_swap_during_hash(
@@ -4038,20 +4428,524 @@ def test_candidate_limit_hash_and_probe_share_open_mmap(
     assert tree_scan._contains_embedded_archive(carrier)
 
 
-def test_zlib_header_recognizer_covers_pinned_archives_headers() -> None:
-    """Match the pinned mholt/archives RFC 1950 header population exactly."""
+def test_zlib_header_recognizer_covers_every_rfc1950_header() -> None:
+    """Match all CM=8, bounded-window, FCHECK-valid headers including FDICT."""
     valid_headers = {
-        bytes.fromhex(value)
-        for value in (
-            "081d 085b 0899 08d7 1819 1857 1895 18d3 "
-            "2815 2853 2891 28cf 3811 384f 388d 38cb "
-            "480d 484b 4889 48c7 5809 5847 5885 58c3 "
-            "6805 6843 6881 68de 7801 785e 789c 78da"
-        ).split()
+        bytes((cmf, flg))
+        for cmf in range(256)
+        for flg in range(256)
+        if cmf & 0x0F == 8 and cmf >> 4 <= 7 and ((cmf << 8) | flg) % 31 == 0
     }
-    assert all(tree_scan._zlib_header_plausible(header, 0) for header in valid_headers)
-    assert not tree_scan._zlib_header_plausible(bytes.fromhex("7820"), 0)
+    assert len(valid_headers) == 66
+    assert sum(bool(header[1] & 0x20) for header in valid_headers) == 34
+    recognized_headers = {
+        bytes((cmf, flg))
+        for cmf in range(256)
+        for flg in range(256)
+        if tree_scan._zlib_header_plausible(bytes((cmf, flg)), 0)
+    }
+    assert recognized_headers == valid_headers
+    assert tree_scan._zlib_header_plausible(bytes.fromhex("7820"), 0)
     assert not tree_scan._zlib_header_plausible(bytes.fromhex("789d"), 0)
+
+
+def test_rfc1950_decoder_enforces_advertised_window() -> None:
+    """Do not decode a large-distance stream under a smaller CINFO window."""
+    prefix = b"".join(
+        hashlib.sha256(index.to_bytes(4, "big")).digest() for index in range(16)
+    )
+    payload = prefix + prefix
+    original = zlib.compress(payload, level=9)
+    assert tree_scan._bounded_rfc1950_output(original, 0) == payload
+
+    small_window = bytearray(original)
+    cmf = 0x08
+    flg = (-(cmf << 8)) % 31
+    small_window[:2] = bytes((cmf, flg))
+    assert tree_scan._zlib_header_plausible(small_window, 0)
+    constrained = tree_scan._bounded_rfc1950_result(bytes(small_window), 0)
+    assert constrained.strict_rejection
+    assert constrained.output != payload
+
+
+def test_fdict_retains_repository_determined_output_and_authenticates_trailer() -> None:
+    """Skip DICTID and retain output that does not actually require dictionary bytes."""
+    payload = b"NPA_FDICT_" + (b"Z9" * 12)
+    dictionary = b"public-known-dictionary-v1:" + (b"common-prefix-" * 128)
+    stream = _fdict_zlib(payload, dictionary)
+    assert payload not in stream
+    assert payload not in dictionary
+    assert stream[1] & 0x20
+
+    result = tree_scan._bounded_rfc1950_result(stream, 0)
+    assert result == tree_scan._RFC1950DecodeResult(payload, True, "complete")
+
+    corrupted = bytearray(stream)
+    corrupted[-1] ^= 1
+    malformed = tree_scan._bounded_rfc1950_result(bytes(corrupted), 0)
+    assert malformed == tree_scan._RFC1950DecodeResult(
+        payload,
+        True,
+        "malformed",
+    )
+    complete_analysis = tree_scan._direct_compressed_outputs(
+        b"ordinary-prefix" + stream,
+        max_candidates=10,
+        max_emitted_bytes=1024,
+    )
+    assert complete_analysis.fdict_candidates == 1
+    assert complete_analysis.fdict_complete_streams == 1
+    assert complete_analysis.fdict_malformed_streams == 0
+    malformed_analysis = tree_scan._direct_compressed_outputs(
+        b"ordinary-prefix" + bytes(corrupted),
+        max_candidates=10,
+        max_emitted_bytes=1024,
+    )
+    assert malformed_analysis.fdict_candidates == 1
+    assert malformed_analysis.fdict_complete_streams == 0
+    assert malformed_analysis.fdict_malformed_streams == 1
+
+
+def test_fdict_dictionary_required_boundary_is_explicit() -> None:
+    """Reject canonical external state while accounting an arbitrary embedded start."""
+    dictionary = b"common-prefix-" * 2000
+    payload = b"common-prefix-" * 20
+    stream = _fdict_zlib(payload, dictionary)
+    decoder = zlib.decompressobj(wbits=zlib.MAX_WBITS, zdict=dictionary)
+    assert decoder.decompress(stream) + decoder.flush() == payload
+
+    result = tree_scan._bounded_rfc1950_result(stream, 0)
+    assert result == tree_scan._RFC1950DecodeResult(None, True, "unresolved")
+    assert tree_scan._zlib_candidate_requires_rejection(
+        stream,
+        0,
+        canonical=True,
+    )
+
+    with pytest.raises(tree_scan._ScanError, match="external dictionary"):
+        tree_scan._direct_compressed_outputs(
+            stream,
+            max_candidates=10,
+            max_emitted_bytes=1024,
+        )
+
+    embedded = tree_scan._direct_compressed_outputs(
+        b"ordinary-prefix" + stream,
+        max_candidates=10,
+        max_emitted_bytes=1024,
+    )
+    assert embedded.fdict_candidates == 1
+    assert embedded.fdict_unresolved_streams == 1
+    assert embedded.invalid_streams == 1
+    assert not embedded.outputs
+
+
+def test_arbitrary_commit_hash_fdict_header_requires_commit_sink(
+    tmp_path: Path,
+) -> None:
+    """Reject without a sink, but retain deterministic structural-header output."""
+    hash_suffix = (
+        b"80ab7d33046b342\n"
+        b"parent 2294dab5f5c8433f1a19f22c20927a92378be4bb\n"
+        b"author NPA synthetic control <npa-test@example.invalid>\n"
+    )
+    result = tree_scan._bounded_rfc1950_result(hash_suffix, 0)
+    assert result.fdict_status == "unresolved"
+    assert result.output
+    assert not tree_scan._zlib_candidate_requires_rejection(hash_suffix, 0)
+    assert tree_scan._zlib_candidate_requires_rejection(
+        hash_suffix,
+        0,
+        canonical=True,
+    )
+
+    metadata = tmp_path / "commit-metadata.txt"
+    metadata.write_bytes(
+        b"tree 51fed86c184a52cb244c3b45f" + hash_suffix + b"\nclean message\n"
+    )
+    assert tree_scan._contains_embedded_archive(metadata)
+    with pytest.raises(tree_scan._ScanError, match="Embedded archive"):
+        tree_scan._validate_archive_file(metadata)
+    probe = tmp_path / "probe"
+    probe.mkdir()
+    with tree_scan._CandidateProbeWriter(probe) as candidates:
+        tree_scan._process_commit_metadata_compressed_boundaries(
+            metadata,
+            candidates,
+            ("commit-metadata.txt",),
+        )
+        assert candidates.direct_fdict_unresolved_streams == 1
+        assert candidates.derived_outputs >= 1
+
+
+def test_commit_metadata_retains_rfc1950_stream_across_message_boundary(
+    tmp_path: Path,
+) -> None:
+    """Decode a structural RFC 1950 start even when its bytes contain ``\n\n``."""
+    payload = b"NPA_COMMIT_BOUNDARY_" + (b"Z9" * 12)
+    stream = bytes.fromhex(
+        "78da63600a0af00b708c77f6f7f5f50c8977f20ff573710c8a8c8fb2c40e0148100db2"
+    )
+    assert zlib.decompress(stream) == (152144).to_bytes(4, "big") + payload
+    assert stream.index(b"\n\n") == 4
+    assert payload not in stream
+    metadata = tmp_path / "commit-metadata.txt"
+    metadata.write_bytes(b"tree 51fed86c184a52cb244c3b45f\nx-npa " + stream + b"\n")
+    probe = tmp_path / "probe"
+    probe.mkdir()
+
+    with tree_scan._CandidateProbeWriter(probe) as candidates:
+        tree_scan._process_commit_metadata_compressed_boundaries(
+            metadata,
+            candidates,
+            ("commit-metadata.txt",),
+        )
+        assert candidates.direct_rfc1950_candidates == 1
+        assert candidates.direct_output_occurrences == 1
+        assert candidates.direct_invalid_streams == 0
+    derived = list(probe.glob("decode-derived-output-*.txt"))
+    assert len(derived) == 1
+    assert (152144).to_bytes(4, "big") + payload in derived[0].read_bytes()
+
+
+def test_commit_metadata_direct_probe_excludes_message_only_starts(
+    tmp_path: Path,
+) -> None:
+    """Keep direct header probing bounded to starts before the first separator."""
+    metadata = tmp_path / "commit-metadata.txt"
+    metadata.write_bytes(
+        b"tree 51fed86c184a52cb244c3b45f\n\n"
+        b"ordinary message with an invalid candidate \x78\x9c\xff\n"
+    )
+    probe = tmp_path / "probe"
+    probe.mkdir()
+
+    with tree_scan._CandidateProbeWriter(probe) as candidates:
+        tree_scan._process_commit_metadata_compressed_boundaries(
+            metadata,
+            candidates,
+            ("commit-metadata.txt",),
+        )
+        assert candidates.direct_rfc1950_candidates == 0
+        assert candidates.direct_output_occurrences == 0
+        assert candidates.direct_invalid_streams == 0
+    assert list(probe.iterdir()) == []
+
+
+@pytest.mark.parametrize(
+    ("status", "compress"),
+    [
+        ("malformed", _malformed_dictionary_independent_fdict_zlib),
+        ("unresolved", _partial_dictionary_required_fdict_zlib),
+    ],
+)
+def test_commit_metadata_header_retains_partial_fdict_output(
+    tmp_path: Path,
+    status: str,
+    compress: Callable[[bytes], bytes],
+) -> None:
+    """Scan deterministic header output while keeping message handling strict."""
+    payload = b"NPA_FDICT_HEADER_" + (b"Z9" * 12)
+    metadata = tmp_path / "commit-metadata.txt"
+    metadata.write_bytes(
+        b"tree 51fed86c184a52cb244c3b45f\nx-npa "
+        + compress(payload)
+        + b"\n\nclean message\n"
+    )
+    probe = tmp_path / "probe"
+    probe.mkdir()
+    with tree_scan._CandidateProbeWriter(probe) as candidates:
+        tree_scan._process_commit_metadata_compressed_boundaries(
+            metadata,
+            candidates,
+            ("commit-metadata.txt",),
+        )
+        assert getattr(candidates, f"direct_fdict_{status}_streams") == 1
+    derived = list(probe.glob("decode-derived-output-*.txt"))
+    assert derived
+    assert any(payload in path.read_bytes() for path in derived)
+
+
+@pytest.mark.skipif(
+    shutil.which("gitleaks") is None, reason="gitleaks is not installed"
+)
+def test_runner_scans_commit_stream_spanning_message_boundary(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Find a secret decoded from a structural stream spanning ``\n\n``."""
+    repo = _repo(tmp_path)
+    token = "NPA_COMMIT_BOUNDARY_" + ("Z9" * 12)
+    (repo / ".gitleaks.toml").write_text(
+        "[extend]\n"
+        "useDefault = true\n\n"
+        "[[rules]]\n"
+        'id = "commit-compressed-boundary-control"\n'
+        'description = "Derived commit boundary control"\n'
+        "regex = '''NPA_COMMIT_BOUNDARY_Z9Z9Z9Z9Z9Z9Z9Z9Z9Z9Z9Z9'''\n",
+        encoding="utf-8",
+    )
+    (repo / "safe.txt").write_text("safe base\n", encoding="utf-8")
+    base = _commit(repo, "clean base")
+    _git(repo, "commit", "--allow-empty", "-qm", "placeholder")
+    placeholder = _git(repo, "rev-parse", "HEAD")
+    content = materializer.read_verified_commit(repo, placeholder)
+    header = content[: content.index(b"\n\n")]
+    stream = bytes.fromhex(
+        "78da63600a0af00b708c77f6f7f5f50c8977f20ff573710c8a8c8fb2c40e0148100db2"
+    )
+    assert zlib.decompress(stream) == (152144).to_bytes(4, "big") + token.encode()
+    binary_content = header + b"\nx-npa " + stream + b"\n"
+    candidate = (
+        subprocess.run(
+            [
+                "git",
+                "-C",
+                str(repo),
+                "hash-object",
+                "-t",
+                "commit",
+                "-w",
+                "--stdin",
+            ],
+            input=binary_content,
+            check=True,
+            capture_output=True,
+        )
+        .stdout.decode("ascii")
+        .strip()
+    )
+    _git(repo, "update-ref", "HEAD", candidate, placeholder)
+    scanner = shutil.which("gitleaks")
+    assert scanner is not None
+
+    assert tree_scan.main(_runner_arguments(repo, candidate, base, scanner)) == 1
+    output = capsys.readouterr()
+    assert token not in output.out
+    assert token not in output.err
+    assert "commit-compressed-boundary-control" in output.err
+
+
+def test_encoded_fdict_records_arbitrary_external_state_and_rejects_canonical() -> None:
+    """Preserve offset semantics after text decoding instead of global rejection."""
+    dictionary = b"common-prefix-" * 2000
+    stream = _fdict_zlib(b"common-prefix-" * 20, dictionary)
+
+    analysis = tree_scan._encoded_candidate_analysis(
+        base64.b64encode(b"ordinary-prefix" + stream)
+    )
+    assert analysis.fdict_candidates >= 1
+    assert analysis.fdict_unresolved_streams >= 1
+
+    with pytest.raises(tree_scan._ScanError, match="Canonical encoded"):
+        tree_scan._encoded_candidate_analysis(base64.b64encode(stream))
+
+
+@pytest.mark.parametrize(
+    "encode",
+    [
+        lambda content: content.hex().encode(),
+        lambda content: base64.b64encode(content.hex().encode()),
+    ],
+    ids=["hex", "base64-hex"],
+)
+def test_encoded_fdict_source_offset_is_cached_with_analysis(
+    tmp_path: Path,
+    encode: Callable[[bytes], bytes],
+) -> None:
+    """Retain an offset token without authorizing identical canonical bytes."""
+    payload = b"NPA_FDICT_SOURCE_OFFSET_" + (b"Z9" * 12)
+    candidate = encode(_partial_dictionary_required_fdict_zlib(payload))
+    assert payload not in candidate
+    probe = tmp_path / "probe"
+    probe.mkdir()
+
+    with tree_scan._CandidateProbeWriter(probe) as candidates:
+        candidates.append(b"ordinary-prefix\n" + candidate)
+        assert candidates.encoded_fdict_unresolved_streams >= 1
+        with pytest.raises(tree_scan._ScanError, match="Canonical encoded"):
+            candidates.append(candidate)
+    derived = list(probe.glob("decode-derived-output-*.txt"))
+    assert derived
+    assert any(payload in path.read_bytes() for path in derived)
+
+
+@pytest.mark.parametrize("parent_levels", [1, 2])
+def test_recursive_fdict_preserves_original_direct_source_offset(
+    parent_levels: int,
+) -> None:
+    """Do not promote a recursive child reached from an arbitrary source start."""
+    payload = b"NPA_RECURSIVE_FDICT_" + (b"Z9" * 12)
+    child = _partial_dictionary_required_fdict_zlib(payload)
+    parent = _nested_zlib(child, parent_levels)
+
+    arbitrary = tree_scan._direct_compressed_outputs(
+        b"ordinary-prefix" + parent,
+        max_candidates=100,
+        max_emitted_bytes=1024 * 1024,
+    )
+
+    assert arbitrary.nested_fdict_unresolved_streams >= 1
+    assert arbitrary.nested_max_depth == parent_levels
+    assert child in arbitrary.outputs
+    assert payload in arbitrary.outputs
+    with pytest.raises(tree_scan._ScanError, match="Canonical recursive"):
+        tree_scan._direct_compressed_outputs(
+            parent,
+            max_candidates=100,
+            max_emitted_bytes=1024 * 1024,
+        )
+
+
+def test_recursive_fdict_preserves_nonzero_child_offset_in_canonical_parent() -> None:
+    """Conjoin child offset with canonical parent provenance before rejection."""
+    payload = b"NPA_RECURSIVE_CHILD_OFFSET_" + (b"Z9" * 12)
+    child = _partial_dictionary_required_fdict_zlib(payload)
+    parent_output = b"ordinary-parent-prefix\n" + child
+    parent = zlib.compress(parent_output)
+
+    analysis = tree_scan._direct_compressed_outputs(
+        parent,
+        max_candidates=100,
+        max_emitted_bytes=1024 * 1024,
+    )
+
+    assert analysis.nested_fdict_unresolved_streams == 1
+    assert parent_output in analysis.outputs
+    assert payload in analysis.outputs
+
+
+def test_recursive_fdict_preserves_encoded_source_offset_and_cache(
+    tmp_path: Path,
+) -> None:
+    """Keep recursive source capability in both encoded analysis and its cache."""
+    payload = b"NPA_RECURSIVE_ENCODED_" + (b"Z9" * 12)
+    child = _partial_dictionary_required_fdict_zlib(payload)
+    parent = zlib.compress(child)
+    candidate = base64.b64encode(parent)
+    assert payload not in candidate
+    probe = tmp_path / "probe"
+    probe.mkdir()
+
+    with tree_scan._CandidateProbeWriter(probe) as candidates:
+        candidates.append(b"ordinary-prefix\n" + candidate)
+        assert candidates.nested_fdict_unresolved_streams == 1
+        with pytest.raises(tree_scan._ScanError, match="Canonical recursive"):
+            candidates.append(candidate)
+    derived = list(probe.glob("decode-derived-output-*.txt"))
+    assert any(payload in path.read_bytes() for path in derived)
+
+
+@pytest.mark.skipif(
+    shutil.which("gitleaks") is None, reason="gitleaks is not installed"
+)
+def test_runner_scans_offset_encoded_partial_fdict_output(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Find retained output from a text token at a nonzero source offset."""
+    repo = _repo(tmp_path)
+    (repo / ".gitleaks.toml").write_text(
+        "[extend]\n"
+        "useDefault = true\n\n"
+        "[[rules]]\n"
+        'id = "fdict-source-offset-control"\n'
+        'description = "Encoded FDICT source-offset control"\n'
+        "regex = '''^NPA_FDICT_SOURCE_OFFSET_[A-Z0-9]{24}'''\n"
+        "path = '''^carrier\\.txt$'''\n",
+        encoding="utf-8",
+    )
+    (repo / "clean.txt").write_text("clean base\n", encoding="utf-8")
+    base = _commit(repo, "clean base")
+    token = "NPA_FDICT_SOURCE_OFFSET_" + ("Z9" * 12)
+    encoded = _partial_dictionary_required_fdict_zlib(token.encode()).hex().encode()
+    assert token.encode() not in encoded
+    (repo / "carrier.txt").write_bytes(b"sha256 = " + encoded + b"\n")
+    candidate = _commit(repo, "offset encoded FDICT carrier")
+    scanner = shutil.which("gitleaks")
+    assert scanner is not None
+
+    assert tree_scan.main(_runner_arguments(repo, candidate, base, scanner)) == 1
+    output = capsys.readouterr()
+    assert token not in output.out
+    assert token not in output.err
+    assert "fdict-source-offset-control" in output.err
+
+
+@pytest.mark.skipif(
+    shutil.which("gitleaks") is None, reason="gitleaks is not installed"
+)
+def test_runner_scans_offset_encoded_recursive_fdict_output(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Find recursive FDICT bytes without promoting their encoded source offset."""
+    repo = _repo(tmp_path)
+    (repo / ".gitleaks.toml").write_text(
+        "[extend]\n"
+        "useDefault = true\n\n"
+        "[[rules]]\n"
+        'id = "recursive-fdict-source-offset-control"\n'
+        'description = "Recursive encoded FDICT source-offset control"\n'
+        "regex = '''^NPA_RECURSIVE_FDICT_OFFSET_[A-Z0-9]{24}'''\n"
+        "path = '''^carrier\\.txt$'''\n",
+        encoding="utf-8",
+    )
+    (repo / "clean.txt").write_text("clean base\n", encoding="utf-8")
+    base = _commit(repo, "clean base")
+    token = "NPA_RECURSIVE_FDICT_OFFSET_" + ("Z9" * 12)
+    child = _partial_dictionary_required_fdict_zlib(token.encode())
+    encoded = zlib.compress(child).hex().encode()
+    assert token.encode() not in encoded
+    (repo / "carrier.txt").write_bytes(b"sha256 = " + encoded + b"\n")
+    candidate = _commit(repo, "offset encoded recursive FDICT carrier")
+    scanner = shutil.which("gitleaks")
+    assert scanner is not None
+
+    assert tree_scan.main(_runner_arguments(repo, candidate, base, scanner)) == 1
+    output = capsys.readouterr()
+    assert token not in output.out
+    assert token not in output.err
+    assert "recursive-fdict-source-offset-control" in output.err
+
+
+@pytest.mark.skipif(
+    shutil.which("gitleaks") is None, reason="gitleaks is not installed"
+)
+@pytest.mark.parametrize("prefix", [b"", b"ordinary-prefix\n"])
+def test_runner_scans_dictionary_independent_fdict_output(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    prefix: bytes,
+) -> None:
+    """Find a nonliteral secret in FDICT output at canonical and embedded offsets."""
+    repo = _repo(tmp_path)
+    (repo / ".gitleaks.toml").write_text(
+        "[extend]\n"
+        "useDefault = true\n\n"
+        "[[rules]]\n"
+        'id = "fdict-secret-control"\n'
+        'description = "FDICT repository-determined output control"\n'
+        "regex = '''NPA_FD[I]CT_[A-Z0-9]{24}'''\n",
+        encoding="utf-8",
+    )
+    (repo / "clean.txt").write_text("clean base\n", encoding="utf-8")
+    base = _commit(repo, "clean base")
+    secret = b"NPA_FDICT_" + (b"Z9" * 12)
+    dictionary = b"public-known-dictionary-v1:" + (b"common-prefix-" * 128)
+    carrier = _fdict_zlib(secret, dictionary)
+    assert secret not in carrier
+    assert secret not in dictionary
+    (repo / "carrier.txt").write_bytes(prefix + carrier)
+    candidate = _commit(repo, "FDICT output carrier")
+    scanner = shutil.which("gitleaks")
+    assert scanner is not None
+
+    assert tree_scan.main(_runner_arguments(repo, candidate, base, scanner)) == 1
+    output = capsys.readouterr()
+    assert secret.decode() not in output.out
+    assert secret.decode() not in output.err
+    assert "fdict-secret-control" in output.err
 
 
 def test_zlib_probe_rejects_output_before_archive_read_boundary() -> None:
@@ -4087,7 +4981,11 @@ def test_zlib_probe_aggregates_every_candidate_result(
     content = b"\x78\x9c\x78\x9c"
     observed_offsets: list[int] = []
 
-    def _controlled_probe(_content: bytes, offset: int) -> bool:
+    def _controlled_probe(
+        _content: bytes,
+        offset: int,
+        **_options: bool,
+    ) -> bool:
         observed_offsets.append(offset)
         return offset == rejecting_offset
 
@@ -4123,7 +5021,7 @@ def test_embedded_archive_probe_recognizes_decodable_streams(
 
 @pytest.mark.parametrize(
     "mutation",
-    ["truncated", "deflate-truncated", "checksum"],
+    ["truncated", "deflate-truncated", "checksum", "deflate-error"],
 )
 def test_zlib_probe_rejects_output_bearing_malformed_streams(
     tmp_path: Path,
@@ -4161,6 +5059,192 @@ def test_archive_member_rejects_output_bearing_malformed_zlib(
         tree_scan._validate_archive_file(carrier)
 
 
+@pytest.mark.parametrize("status", ["malformed", "unresolved"])
+def test_archive_member_rejects_partial_fdict_output(
+    tmp_path: Path,
+    status: str,
+) -> None:
+    """Reject deterministic FDICT bytes where no derived-output sink exists."""
+    payload = b"NPA_FDICT_PARTIAL_" + (b"Z9" * 12)
+    if status == "malformed":
+        encoded = _malformed_dictionary_independent_fdict_zlib(payload)
+    else:
+        encoded = _partial_dictionary_required_fdict_zlib(payload)
+    prefix = b"ordinary-prefix"
+    content = prefix + encoded
+    result = tree_scan._bounded_rfc1950_result(content, len(prefix))
+    assert result.fdict_status == status
+    assert result.output == payload
+    assert not tree_scan._zlib_candidate_requires_rejection(content, len(prefix))
+    assert tree_scan._zlib_candidate_requires_rejection(
+        content,
+        len(prefix),
+        reject_partial_fdict_output=True,
+    )
+
+    carrier = tmp_path / "carrier.zip"
+    carrier.write_bytes(_zip_member("nested.bin", content))
+    with pytest.raises(tree_scan._ScanError, match="Nested archive"):
+        tree_scan._validate_archive_file(carrier)
+
+
+@pytest.mark.parametrize("status", ["malformed", "unresolved"])
+def test_embedded_archive_probe_rejects_partial_fdict_without_sink(
+    tmp_path: Path,
+    status: str,
+) -> None:
+    """Fail closed on deterministic FDICT output outside a retained scan sink."""
+    payload = b"NPA_FDICT_STRICT_" + (b"Z9" * 12)
+    if status == "malformed":
+        encoded = _malformed_dictionary_independent_fdict_zlib(payload)
+    else:
+        encoded = _partial_dictionary_required_fdict_zlib(payload)
+    assert payload not in encoded
+    carrier = tmp_path / "carrier.bin"
+    carrier.write_bytes(b"ordinary-prefix" + encoded)
+
+    assert tree_scan._contains_embedded_archive(carrier)
+    with pytest.raises(tree_scan._ScanError, match="Embedded archive"):
+        tree_scan._validate_archive_file(carrier)
+
+
+@pytest.mark.parametrize(
+    ("suffix", "wrap"),
+    [
+        (".zip", lambda content: _zip_member("nested.txt", content)),
+        (".gz", gzip.compress),
+        (".bz2", bz2.compress),
+        (".xz", lzma.compress),
+    ],
+    ids=["zip", "gzip", "bzip2", "xz"],
+)
+@pytest.mark.parametrize("status", ["malformed", "unresolved"])
+def test_archive_member_probe_retains_partial_fdict_output(
+    tmp_path: Path,
+    suffix: str,
+    wrap: Callable[[bytes], bytes],
+    status: str,
+) -> None:
+    """Retain deterministic member output only through a complete scan sink."""
+    payload = b"NPA_FDICT_MEMBER_" + (b"Z9" * 12)
+    if status == "malformed":
+        encoded = _malformed_dictionary_independent_fdict_zlib(payload)
+    else:
+        encoded = _partial_dictionary_required_fdict_zlib(payload)
+    assert payload not in encoded
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / f"carrier{suffix}").write_bytes(wrap(b"ordinary-prefix" + encoded))
+    destination = tmp_path / "probe"
+
+    receipt = tree_scan._prepare_decode_probe_source(
+        source,
+        destination,
+        preserve_exact_paths=True,
+    )
+
+    exact = [
+        path.read_bytes()
+        for path in (destination / "npa-gitleaks-derived-exact-paths").rglob("*")
+        if path.is_file()
+    ]
+    assert receipt["direct_fdict_candidates"] >= 1
+    assert receipt[f"direct_fdict_{status}_streams"] >= 1
+    assert receipt["direct_output_occurrences"] >= 1
+    assert payload in exact
+
+
+@pytest.mark.parametrize("status", ["malformed", "unresolved"])
+def test_tar_probe_rejects_partial_fdict_before_member_attribution(
+    tmp_path: Path,
+    status: str,
+) -> None:
+    """Keep parser-visible TAR structure strict before member attribution."""
+    payload = b"NPA_FDICT_TAR_" + (b"Z9" * 12)
+    if status == "malformed":
+        encoded = _malformed_dictionary_independent_fdict_zlib(payload)
+    else:
+        encoded = _partial_dictionary_required_fdict_zlib(payload)
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "carrier.tar").write_bytes(
+        _tar_member("nested.txt", b"ordinary-prefix" + encoded)
+    )
+
+    with pytest.raises(tree_scan._ScanError, match="Nested archive bytes"):
+        tree_scan._prepare_decode_probe_source(source, tmp_path / "probe")
+
+
+@pytest.mark.skipif(
+    shutil.which("gitleaks") is None, reason="gitleaks is not installed"
+)
+@pytest.mark.parametrize(
+    ("suffix", "logical_path", "wrap"),
+    [
+        (
+            ".zip",
+            "carrier.zip!nested.txt",
+            lambda content: _zip_member("nested.txt", content),
+        ),
+        (".gz", "carrier.gz", gzip.compress),
+    ],
+    ids=["zip-member", "gzip-stream"],
+)
+@pytest.mark.parametrize("status", ["malformed", "unresolved"])
+def test_runner_scans_partial_fdict_archive_output_at_exact_path(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    suffix: str,
+    logical_path: str,
+    wrap: Callable[[bytes], bytes],
+    status: str,
+) -> None:
+    """Find retained member output through its exact archive-derived path."""
+    repo = _repo(tmp_path)
+    escaped_path = logical_path.replace(".", "\\.")
+    (repo / ".gitleaks.toml").write_text(
+        "[extend]\n"
+        "useDefault = true\n\n"
+        "[[rules]]\n"
+        'id = "fdict-archive-path-control"\n'
+        'description = "FDICT archive-derived exact path control"\n'
+        "regex = '''^NPA_FDICT_ARCHIVE_[A-Z0-9]{24}'''\n"
+        f"path = '''^{escaped_path}$'''\n",
+        encoding="utf-8",
+    )
+    (repo / "safe.txt").write_text("safe base\n", encoding="utf-8")
+    base = _commit(repo, "clean base")
+    token = "NPA_FDICT_ARCHIVE_" + ("Z9" * 12)
+    payload = token.encode()
+    if status == "malformed":
+        encoded = _malformed_dictionary_independent_fdict_zlib(payload)
+    else:
+        encoded = _partial_dictionary_required_fdict_zlib(payload)
+    assert payload not in encoded
+    (repo / f"carrier{suffix}").write_bytes(wrap(b"ordinary-prefix" + encoded))
+    candidate = _commit(repo, "FDICT archive-derived path carrier")
+    scanner = shutil.which("gitleaks")
+    assert scanner is not None
+
+    assert tree_scan.main(_runner_arguments(repo, candidate, base, scanner)) == 1
+    output = capsys.readouterr()
+    assert token not in output.out
+    assert token not in output.err
+    assert "fdict-archive-path-control" in output.err
+
+
+def test_archive_stream_retention_capability_requires_real_sink() -> None:
+    """Do not let a nominal byte writer waive strict member rejection."""
+    writer = _RecordingMemberWriter()
+    with pytest.raises(tree_scan._ScanError, match="requires a scan sink"):
+        tree_scan._inspect_archive_stream(
+            io.BytesIO(zlib.compress(b"payload")),
+            tree_scan._ArchiveBudget(),
+            writer,
+            retain_rfc1950_outputs=True,
+        )
+
+
 def test_embedded_archive_probe_rejects_truncated_output_and_unsupported_streams(
     tmp_path: Path,
 ) -> None:
@@ -4189,6 +5273,30 @@ def test_embedded_archive_probe_fails_closed_at_input_limit(tmp_path: Path) -> N
     assert tree_scan._contains_embedded_archive(carrier)
 
 
+def test_embedded_archive_probe_fails_closed_at_fdict_input_limit(
+    tmp_path: Path,
+) -> None:
+    """Reject an offset FDICT stream whose DEFLATE input exceeds the probe."""
+    payload = b"x" * (tree_scan._PROBE_DECODE_CHUNK_BYTES + 1_024)
+    compressor = zlib.compressobj(level=0, wbits=-zlib.MAX_WBITS)
+    raw_deflate = compressor.compress(payload) + compressor.flush()
+    stream = (
+        b"\x78\x20"
+        + (0).to_bytes(4, "big")
+        + raw_deflate
+        + zlib.adler32(payload).to_bytes(4, "big")
+    )
+    prefix = b"ordinary-prefix"
+    content = prefix + stream
+    carrier = tmp_path / "carrier.bin"
+    carrier.write_bytes(content)
+
+    with pytest.raises(tree_scan._ScanError, match="input exceeds"):
+        tree_scan._bounded_rfc1950_result(content, len(prefix))
+    assert tree_scan._zlib_candidate_requires_rejection(content, len(prefix))
+    assert tree_scan._contains_embedded_archive(carrier)
+
+
 def test_embedded_archive_probe_fails_closed_at_candidate_limit(
     tmp_path: Path,
 ) -> None:
@@ -4205,7 +5313,17 @@ def test_embedded_archive_probe_fails_closed_at_candidate_limit(
 @pytest.mark.skipif(
     shutil.which("gitleaks") is None, reason="gitleaks is not installed"
 )
-@pytest.mark.parametrize("compress", [gzip.compress, zlib.compress])
+@pytest.mark.parametrize(
+    "compress",
+    [
+        gzip.compress,
+        zlib.compress,
+        _dictionary_independent_fdict_zlib,
+        _malformed_dictionary_independent_fdict_zlib,
+        _partial_dictionary_required_fdict_zlib,
+    ],
+    ids=["gzip", "zlib", "fdict", "fdict-malformed", "fdict-partial-unresolved"],
+)
 def test_runner_rejects_embedded_archive_in_commit_metadata(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
@@ -5043,6 +6161,20 @@ def test_decode_probe_view_links_only_archives_without_memory_heavy_aggregates(
     )
 
 
+def test_empty_decode_probe_receipt_matches_populated_schema(tmp_path: Path) -> None:
+    """Keep zero-work historical receipts schema-identical to real probe receipts."""
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "ordinary.txt").write_text("safe ordinary text\n", encoding="utf-8")
+
+    populated = tree_scan._prepare_decode_probe_source(source, tmp_path / "probe")
+    empty = tree_scan._empty_probe_receipt()
+
+    assert empty.keys() == populated.keys()
+    assert all(value == 0 for value in empty.values())
+    assert empty["derived_exact_path_identity_reuses"] == 0
+
+
 def test_decode_probe_reuses_hardlink_analysis_and_retains_path_association(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -5109,6 +6241,1099 @@ def test_decode_probe_bounds_distinct_matches_across_independent_files(
     assert exact_files == {"a.txt", "b.txt"}
 
 
+@pytest.mark.parametrize(
+    "mutation",
+    ["truncated", "deflate-truncated", "checksum", "deflate-error"],
+)
+def test_decode_probe_materializes_every_malformed_zlib_output(
+    tmp_path: Path,
+    mutation: str,
+) -> None:
+    """Retain emitted plaintext in generic and source-start exact-path views."""
+    secret = b"NPA_DERIVED_PATH_" + (b"A1" * 12)
+    payload = secret + b"\n" + (b"bounded padding " * 32)
+    malformed = _output_bearing_malformed_zlib(payload, mutation)
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "carrier.txt").write_bytes(base64.b64encode(malformed))
+    destination = tmp_path / "probe"
+
+    receipt = tree_scan._prepare_decode_probe_source(
+        source,
+        destination,
+        preserve_exact_paths=True,
+    )
+
+    derived = sorted(destination.glob("decode-derived-output-*.txt"))
+    exact = sorted(
+        path
+        for path in (destination / "npa-gitleaks-derived-exact-paths").rglob("*")
+        if path.is_file()
+    )
+    assert receipt["derived_streams"] == len(derived) == 1
+    assert receipt["derived_outputs"] == 1
+    assert receipt["derived_bytes"] == len(payload)
+    assert receipt["derived_exact_path_files"] == len(exact) == 1
+    assert receipt["derived_exact_path_identity_reuses"] == 1
+    assert receipt["derived_exact_path_shards"] == 1
+    assert receipt["derived_exact_path_bytes"] == len(payload)
+    assert receipt["max_derived_bytes"] == len(payload)
+    assert payload in derived[0].read_bytes()
+    assert all(path.name == "carrier.txt" for path in exact)
+    assert all(path.read_bytes() == payload for path in exact)
+
+
+def test_decode_probe_rejects_oversized_derived_zlib_output(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Reject decompressor output that cannot fit one complete scanner fragment."""
+    source = tmp_path / "source"
+    source.mkdir()
+    payload = b"derived-output-bound"
+    (source / "carrier.txt").write_bytes(base64.b64encode(zlib.compress(payload)))
+    monkeypatch.setattr(
+        tree_scan,
+        "_MAX_ENCODED_DERIVED_OUTPUT_BYTES",
+        len(payload) - 1,
+    )
+
+    with pytest.raises(tree_scan._ScanError, match="derived output exceeds"):
+        tree_scan._prepare_decode_probe_source(source, tmp_path / "probe")
+
+
+def test_decode_probe_transcodes_derived_unicode_views(tmp_path: Path) -> None:
+    """Expose derived UTF-16 in both generic and source-start exact-path views."""
+    secret = b"NPA_DERIVED_UNICODE_" + (b"B2" * 12)
+    unicode_payload = secret.decode("ascii").encode("utf-16le")
+    source = tmp_path / "source"
+    source.mkdir()
+    encoded = base64.b64encode(zlib.compress(unicode_payload))
+    (source / "carrier.txt").write_bytes(encoded)
+    destination = tmp_path / "probe"
+
+    receipt = tree_scan._prepare_decode_probe_source(
+        source,
+        destination,
+        preserve_exact_paths=True,
+    )
+
+    derived = next(destination.glob("decode-derived-output-*.txt")).read_bytes()
+    exact = [
+        path.read_bytes()
+        for path in (destination / "npa-gitleaks-derived-exact-paths").rglob("*")
+        if path.is_file()
+    ]
+    assert receipt["derived_transcoded_files"] == 1
+    assert receipt["derived_transcoded_bytes"] > len(secret)
+    assert secret in derived
+    assert sorted(exact, key=len) == [secret, unicode_payload]
+
+
+def test_decode_probe_projects_malformed_derived_unicode_without_dropping_raw(
+    tmp_path: Path,
+) -> None:
+    """Scan valid text around a malformed code unit while retaining every raw byte."""
+    secret = b"NPA_MALFORMED_UNICODE_" + (b"E5" * 12)
+    malformed = b"\xff\xfe" + secret.decode("ascii").encode("utf-16le") + b"\x09"
+    replacement = secret + b"\xef\xbf\xbd"
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "carrier.txt").write_bytes(zlib.compress(malformed))
+    destination = tmp_path / "probe"
+
+    receipt = tree_scan._prepare_decode_probe_source(
+        source,
+        destination,
+        preserve_exact_paths=True,
+    )
+
+    derived = next(destination.glob("decode-derived-output-*.txt")).read_bytes()
+    exact = [
+        path.read_bytes()
+        for path in (destination / "npa-gitleaks-derived-exact-paths").rglob("*")
+        if path.is_file()
+    ]
+    assert receipt["derived_transcoded_files"] == 1
+    assert receipt["derived_transcoded_bytes"] == len(replacement)
+    assert malformed in derived
+    assert replacement in derived
+    assert sorted(exact, key=len) == [replacement, malformed]
+
+
+def test_decode_probe_bounds_derived_input_bytes_files_and_no_progress(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Apply every generated-output budget before a derived view is accepted."""
+    payload = b"derived bounded payload"
+    encoded = base64.b64encode(zlib.compress(payload))
+
+    byte_source = tmp_path / "byte-source"
+    byte_source.mkdir()
+    (byte_source / "carrier.txt").write_bytes(encoded)
+    monkeypatch.setattr(tree_scan, "_MAX_ENCODED_CANDIDATE_BYTES", 1)
+    with pytest.raises(tree_scan._ScanError, match="aggregate bounded byte"):
+        tree_scan._prepare_decode_probe_source(byte_source, tmp_path / "byte-probe")
+
+    monkeypatch.setattr(tree_scan, "_MAX_ENCODED_CANDIDATE_BYTES", 1024 * 1024)
+    monkeypatch.setattr(tree_scan, "_MAX_ENCODED_CANDIDATE_FILES", 1)
+    file_source = tmp_path / "file-source"
+    file_source.mkdir()
+    (file_source / "carrier.txt").write_bytes(encoded)
+    with pytest.raises(tree_scan._ScanError, match="bounded file count"):
+        tree_scan._prepare_decode_probe_source(
+            file_source,
+            tmp_path / "file-probe",
+            preserve_exact_paths=True,
+        )
+
+    monkeypatch.setattr(tree_scan, "_MAX_ENCODED_CANDIDATE_FILES", 100)
+    monkeypatch.setattr(tree_scan, "_PROBE_DECODE_CHUNK_BYTES", 2)
+    input_source = tmp_path / "input-source"
+    input_source.mkdir()
+    (input_source / "carrier.txt").write_bytes(encoded)
+    with pytest.raises(tree_scan._ScanError, match="input exceeds"):
+        tree_scan._prepare_decode_probe_source(
+            input_source,
+            tmp_path / "input-probe",
+        )
+
+
+def test_derived_zlib_output_rejects_decoder_no_progress(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Reject a decoder that retains input without emitting or consuming bytes."""
+
+    class _StalledDecoder:
+        eof = False
+        unconsumed_tail = b""
+
+        def decompress(self, pending: bytes, max_length: int) -> bytes:
+            assert max_length == 1
+            self.unconsumed_tail = pending
+            return b""
+
+    monkeypatch.setattr(
+        tree_scan.zlib,
+        "decompressobj",
+        lambda _window: _StalledDecoder(),
+    )
+    with pytest.raises(tree_scan._ScanError, match="made no progress"):
+        tree_scan._bounded_rfc1950_output(b"\x78\x9cX", 0)
+
+
+def test_decode_probe_analyzes_duplicate_matches_once(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Cache by candidate bytes and canonical-source capability, not occurrence."""
+    source = tmp_path / "source"
+    source.mkdir()
+    encoded = base64.b64encode(zlib.compress(b"deduplicated output"))
+    (source / "carrier.txt").write_bytes(b"\n".join([encoded] * 1000))
+    canonical_modes: list[bool] = []
+    original = tree_scan._encoded_candidate_analysis
+    expected_canonical = original(encoded)
+    expected_offset = original(encoded, canonical_source=False)
+
+    def count_analysis(
+        candidate: bytes,
+        *,
+        max_emitted_bytes: int = tree_scan._MAX_ENCODED_DERIVED_ANALYSIS_BYTES,
+        canonical_source: bool = True,
+    ) -> tree_scan._EncodedCandidateAnalysis:
+        if candidate == encoded:
+            canonical_modes.append(canonical_source)
+        return original(
+            candidate,
+            max_emitted_bytes=max_emitted_bytes,
+            canonical_source=canonical_source,
+        )
+
+    monkeypatch.setattr(tree_scan, "_encoded_candidate_analysis", count_analysis)
+    destination = tmp_path / "probe"
+    receipt = tree_scan._prepare_decode_probe_source(source, destination)
+
+    assert canonical_modes == [True, False]
+    assert receipt["candidate_examined_matches"] == 2
+    assert receipt["candidate_streams"] == 0
+    assert receipt["derived_analysis_bytes"] == (
+        expected_canonical.emitted_bytes + expected_offset.emitted_bytes
+    )
+    assert receipt["derived_streams"] == len(expected_canonical.outputs)
+    assert expected_canonical.outputs == expected_offset.outputs
+
+
+def test_decode_probe_bounds_distinct_carriers_with_same_output(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Charge decompression work before identical outputs are interned."""
+    payload = b"same derived output" * 64
+    source = tmp_path / "source"
+    source.mkdir()
+    carriers = [
+        base64.b64encode(zlib.compress(payload) + index.to_bytes(4, "big"))
+        for index in range(3)
+    ]
+    (source / "carrier.txt").write_bytes(b"\n".join(carriers))
+    monkeypatch.setattr(
+        tree_scan,
+        "_MAX_ENCODED_DERIVED_ANALYSIS_BYTES",
+        (2 * len(payload)) + 1,
+    )
+
+    with pytest.raises(tree_scan._ScanError, match="derived analysis exceeds"):
+        tree_scan._prepare_decode_probe_source(source, tmp_path / "probe")
+
+
+def test_decode_probe_bounds_repeated_streams_inside_one_carrier(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Charge every stream emission before intra-candidate output deduplication."""
+    payload = b"repeated stream output" * 64
+    source = tmp_path / "source"
+    source.mkdir()
+    repeated = zlib.compress(payload) * 3
+    (source / "carrier.txt").write_bytes(base64.b64encode(repeated))
+    monkeypatch.setattr(
+        tree_scan,
+        "_MAX_ENCODED_DERIVED_ANALYSIS_BYTES",
+        (2 * len(payload)) + 1,
+    )
+
+    with pytest.raises(tree_scan._ScanError, match="derived analysis exceeds"):
+        tree_scan._prepare_decode_probe_source(source, tmp_path / "probe")
+
+
+def test_decode_probe_preserves_derived_paths_across_hardlinks(
+    tmp_path: Path,
+) -> None:
+    """Reuse inode analysis without dropping any derived logical-path view."""
+    source = tmp_path / "source"
+    source.mkdir()
+    encoded = base64.b64encode(zlib.compress(b"derived hardlink payload"))
+    first = source / "first.txt"
+    first.write_bytes(encoded)
+    os.link(first, source / "second.txt")
+    destination = tmp_path / "probe"
+    expected = tree_scan._encoded_candidate_analysis(encoded).outputs
+
+    receipt = tree_scan._prepare_decode_probe_source(
+        source,
+        destination,
+        preserve_exact_paths=True,
+    )
+
+    exact = [
+        path
+        for path in (destination / "npa-gitleaks-derived-exact-paths").rglob("*")
+        if path.is_file()
+    ]
+    assert receipt["candidate_examined_matches"] == 1
+    assert receipt["derived_exact_path_files"] == len(exact) == 2 * len(expected)
+    assert receipt["derived_exact_path_identity_reuses"] == 2 * len(expected)
+    assert Counter(path.name for path in exact) == {
+        "first.txt": len(expected),
+        "second.txt": len(expected),
+    }
+    assert Counter(path.read_bytes() for path in exact) == Counter(
+        {output: 2 for output in expected}
+    )
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ["truncated", "deflate-truncated", "checksum", "deflate-error"],
+)
+def test_decode_probe_materializes_direct_malformed_zlib_output(
+    tmp_path: Path,
+    mutation: str,
+) -> None:
+    """Retain output from an RFC 1950 stream embedded directly in a raw file."""
+    payload = b"NPA_DIRECT_DERIVED_" + (b"C3" * 12)
+    malformed = _output_bearing_malformed_zlib(payload, mutation)
+    expected = tree_scan._bounded_rfc1950_output(malformed, 0)
+    assert expected
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "carrier.bin").write_bytes(b"ordinary-prefix\n" + malformed)
+    destination = tmp_path / "probe"
+
+    receipt = tree_scan._prepare_decode_probe_source(
+        source,
+        destination,
+        preserve_exact_paths=True,
+    )
+
+    derived = sorted(destination.glob("decode-derived-output-*.txt"))
+    exact = sorted(
+        path
+        for path in (destination / "npa-gitleaks-derived-exact-paths").rglob("*")
+        if path.is_file()
+    )
+    assert receipt["direct_source_carriers"] == 1
+    assert receipt["direct_rfc1950_candidates"] >= 1
+    assert receipt["direct_output_occurrences"] >= 1
+    assert receipt["direct_emitted_bytes"] == len(expected)
+    assert receipt["derived_analysis_bytes"] == len(expected)
+    assert receipt["derived_streams"] == len(derived) == 1
+    assert receipt["derived_exact_path_files"] == len(exact) == 1
+    assert receipt["derived_exact_path_identity_reuses"] == 1
+    assert expected in derived[0].read_bytes()
+    assert all(path.name == "carrier.bin" for path in exact)
+    assert all(path.read_bytes() == expected for path in exact)
+
+
+def test_decode_probe_accounts_direct_empty_and_invalid_zlib_streams(
+    tmp_path: Path,
+) -> None:
+    """Distinguish a complete empty stream from a marker that emits no bytes."""
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "empty.bin").write_bytes(zlib.compress(b""))
+    (source / "invalid.bin").write_bytes(b"\x78\x9c\xff")
+
+    receipt = tree_scan._prepare_decode_probe_source(source, tmp_path / "probe")
+
+    assert receipt["direct_source_carriers"] == 2
+    assert receipt["direct_rfc1950_candidates"] == 2
+    assert receipt["direct_complete_empty_streams"] == 1
+    assert receipt["direct_invalid_streams"] == 1
+    assert receipt["direct_output_occurrences"] == 0
+    assert receipt["direct_emitted_bytes"] == 0
+    assert receipt["derived_outputs"] == 0
+
+
+def test_decode_probe_reuses_direct_hardlink_analysis_and_paths(
+    tmp_path: Path,
+) -> None:
+    """Analyze one direct carrier inode once while retaining both exact paths."""
+    payload = b"direct hardlink output"
+    source = tmp_path / "source"
+    source.mkdir()
+    first = source / "first.bin"
+    content = zlib.compress(payload)
+    first.write_bytes(content)
+    os.link(first, source / "second.bin")
+    destination = tmp_path / "probe"
+    expected = tree_scan._direct_compressed_outputs(
+        content,
+        max_candidates=tree_scan._MAX_DIRECT_COMPRESSED_CANDIDATES,
+        max_emitted_bytes=tree_scan._MAX_ENCODED_DERIVED_ANALYSIS_BYTES,
+    )
+
+    receipt = tree_scan._prepare_decode_probe_source(
+        source,
+        destination,
+        preserve_exact_paths=True,
+    )
+
+    exact = [
+        path
+        for path in (destination / "npa-gitleaks-derived-exact-paths").rglob("*")
+        if path.is_file()
+    ]
+    assert receipt["direct_source_carriers"] == 1
+    assert receipt["direct_duplicate_carriers"] == 1
+    assert receipt["direct_output_occurrences"] == expected.output_occurrences
+    assert receipt["direct_emitted_bytes"] == expected.emitted_bytes
+    assert (
+        receipt["derived_exact_path_files"] == len(exact) == (2 * len(expected.outputs))
+    )
+    assert receipt["derived_exact_path_identity_reuses"] == 2 * len(expected.outputs)
+    assert Counter(path.name for path in exact) == {
+        "first.bin": len(expected.outputs),
+        "second.bin": len(expected.outputs),
+    }
+    assert Counter(path.read_bytes() for path in exact) == Counter(
+        {output: 2 for output in expected.outputs}
+    )
+    assert sum(path.read_bytes() == payload for path in exact) == 2
+
+
+def test_decode_probe_bounds_direct_candidates_and_repeated_output(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Bound direct candidate work and charge output before deduplication."""
+    candidate_source = tmp_path / "candidate-source"
+    candidate_source.mkdir()
+    (candidate_source / "carrier.bin").write_bytes(zlib.compress(b"") * 3)
+    monkeypatch.setattr(tree_scan, "_MAX_DIRECT_COMPRESSED_CANDIDATES", 2)
+    with pytest.raises(tree_scan._ScanError, match="bounded candidate count"):
+        tree_scan._prepare_decode_probe_source(
+            candidate_source,
+            tmp_path / "candidate-probe",
+        )
+
+    monkeypatch.setattr(tree_scan, "_MAX_DIRECT_COMPRESSED_CANDIDATES", 100)
+    payload = b"repeated direct output" * 64
+    output_source = tmp_path / "output-source"
+    output_source.mkdir()
+    (output_source / "carrier.bin").write_bytes(zlib.compress(payload) * 3)
+    monkeypatch.setattr(
+        tree_scan,
+        "_MAX_ENCODED_DERIVED_ANALYSIS_BYTES",
+        (2 * len(payload)) + 1,
+    )
+    with pytest.raises(tree_scan._ScanError, match="Direct RFC 1950 derived"):
+        tree_scan._prepare_decode_probe_source(
+            output_source,
+            tmp_path / "output-probe",
+        )
+
+
+def test_decode_probe_allows_diagnosed_prose_after_scanning_output(
+    tmp_path: Path,
+) -> None:
+    """Replace an incidental prose-header rejection with retained derived bytes."""
+    prose = (
+        b"(SkyPilot CLI, npa source, placeholder bucket) with the fix for each; " * 32
+    )
+    assert tree_scan._zlib_candidate_requires_rejection(prose, 0)
+    source = tmp_path / "source"
+    source.mkdir()
+    carrier = source / "CHANGELOG.md"
+    carrier.write_bytes(prose)
+    with pytest.raises(tree_scan._ScanError, match="archive bytes"):
+        tree_scan._validate_archive_file(carrier)
+
+    receipt = tree_scan._prepare_decode_probe_source(source, tmp_path / "probe")
+
+    assert receipt["direct_output_occurrences"] >= 1
+    assert receipt["direct_emitted_bytes"] > 0
+    assert receipt["derived_outputs"] >= 1
+
+
+@pytest.mark.parametrize(
+    "nested",
+    [
+        _zip_member("payload.txt", b"safe\n"),
+        gzip.compress(b"safe\n"),
+        bz2.compress(b"safe\n"),
+        lzma.compress(b"safe\n"),
+        _tar_member("payload.txt", b"safe\n"),
+    ],
+    ids=["zip", "gzip", "bzip2", "xz", "tar"],
+)
+def test_decode_probe_rejects_nested_archive_in_direct_output(
+    tmp_path: Path,
+    nested: bytes,
+) -> None:
+    """Keep a container emitted by a direct stream fail closed."""
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "carrier.bin").write_bytes(zlib.compress(nested))
+
+    with pytest.raises(tree_scan._ScanError, match="Nested archive"):
+        tree_scan._prepare_decode_probe_source(source, tmp_path / "probe")
+
+
+def test_decode_probe_materializes_recursive_rfc1950_output(
+    tmp_path: Path,
+) -> None:
+    """Retain a terminal child found only through a second RFC 1950 decode."""
+    terminal = b"NPA_RECURSIVE_CHILD_" + (b"R7" * 12)
+    parent = zlib.compress(terminal)
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "carrier.txt").write_bytes(zlib.compress(parent))
+    destination = tmp_path / "probe"
+
+    receipt = tree_scan._prepare_decode_probe_source(
+        source,
+        destination,
+        preserve_exact_paths=True,
+    )
+
+    derived = [path.read_bytes() for path in destination.glob("decode-derived-*")]
+    exact = [
+        path.read_bytes()
+        for path in (destination / "npa-gitleaks-derived-exact-paths").rglob("*")
+        if path.is_file()
+    ]
+    assert receipt["direct_output_occurrences"] == 1
+    assert receipt["direct_emitted_bytes"] == len(parent)
+    assert receipt["nested_compressed_candidates"] == 1
+    assert receipt["nested_rfc1950_candidates"] == 1
+    assert receipt["nested_output_occurrences"] == 1
+    assert receipt["nested_emitted_bytes"] == len(terminal)
+    assert receipt["nested_max_depth"] == 1
+    assert receipt["derived_analysis_bytes"] == len(parent) + len(terminal)
+    assert receipt["derived_outputs"] == 2
+    assert any(parent in content for content in derived)
+    assert any(terminal in content for content in derived)
+    assert receipt["derived_exact_path_identity_reuses"] == 2
+    assert exact.count(parent) == 1
+    assert exact.count(terminal) == 1
+
+
+def test_decode_probe_accounts_repeated_recursive_occurrences_before_dedup(
+    tmp_path: Path,
+) -> None:
+    """Charge all repeated parents and children while storing each identity once."""
+    terminal = b"recursive occurrence accounting"
+    parent = zlib.compress(terminal)
+    carrier = zlib.compress(parent) * 3
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "carrier.txt").write_bytes(carrier)
+
+    receipt = tree_scan._prepare_decode_probe_source(source, tmp_path / "probe")
+
+    assert receipt["direct_output_occurrences"] == 3
+    assert receipt["direct_emitted_bytes"] == 3 * len(parent)
+    assert receipt["nested_rfc1950_candidates"] == 3
+    assert receipt["nested_output_occurrences"] == 3
+    assert receipt["nested_emitted_bytes"] == 3 * len(terminal)
+    assert receipt["derived_outputs"] == 2
+
+
+def test_decode_probe_accounts_all_recursive_candidates_in_one_parent(
+    tmp_path: Path,
+) -> None:
+    """Inspect every child candidate and distinguish empty and invalid streams."""
+    first = b"first recursive child"
+    second = b"second recursive child"
+    parent = (
+        zlib.compress(first)
+        + zlib.compress(second)
+        + zlib.compress(b"")
+        + b"\x78\x9c\xff"
+    )
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "carrier.txt").write_bytes(zlib.compress(parent))
+
+    receipt = tree_scan._prepare_decode_probe_source(source, tmp_path / "probe")
+
+    # One additional plausible RFC 1950 header occurs inside the compressed
+    # fixture bytes and must be charged as an invalid candidate, not skipped.
+    assert receipt["nested_compressed_candidates"] == 5
+    assert receipt["nested_rfc1950_candidates"] == 5
+    assert receipt["nested_output_occurrences"] == 2
+    assert receipt["nested_complete_empty_streams"] == 1
+    assert receipt["nested_invalid_streams"] == 2
+    assert receipt["nested_emitted_bytes"] == len(first) + len(second)
+    assert receipt["derived_outputs"] == 3
+
+
+def test_decode_probe_preserves_malformed_unicode_recursive_child(
+    tmp_path: Path,
+) -> None:
+    """Keep complete raw bytes beside replacement text for a recursive child."""
+    secret = b"NPA_RECURSIVE_MALFORMED_" + (b"M8" * 12)
+    malformed = b"\xff\xfe" + secret.decode().encode("utf-16le") + b"\x09"
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "carrier.txt").write_bytes(_nested_zlib(malformed, 2))
+    destination = tmp_path / "probe"
+
+    receipt = tree_scan._prepare_decode_probe_source(
+        source,
+        destination,
+        preserve_exact_paths=True,
+    )
+
+    exact = [
+        path.read_bytes()
+        for path in (destination / "npa-gitleaks-derived-exact-paths").rglob("*")
+        if path.is_file()
+    ]
+    assert receipt["nested_output_occurrences"] == 1
+    assert receipt["nested_emitted_bytes"] == len(malformed)
+    assert malformed in exact
+    assert secret + b"\xef\xbf\xbd" in exact
+
+
+def test_decode_probe_replays_recursive_outputs_for_hardlink_paths(
+    tmp_path: Path,
+) -> None:
+    """Reuse immutable analysis while preserving every hardlink association."""
+    terminal = b"recursive hardlink terminal"
+    source = tmp_path / "source"
+    source.mkdir()
+    first = source / "first.txt"
+    content = _nested_zlib(terminal, 2)
+    first.write_bytes(content)
+    os.link(first, source / "second.txt")
+    destination = tmp_path / "probe"
+    expected = tree_scan._direct_compressed_outputs(
+        content,
+        max_candidates=tree_scan._MAX_DIRECT_COMPRESSED_CANDIDATES,
+        max_emitted_bytes=tree_scan._MAX_ENCODED_DERIVED_ANALYSIS_BYTES,
+    )
+
+    receipt = tree_scan._prepare_decode_probe_source(
+        source,
+        destination,
+        preserve_exact_paths=True,
+    )
+
+    exact = [
+        path
+        for path in (destination / "npa-gitleaks-derived-exact-paths").rglob("*")
+        if path.is_file()
+    ]
+    assert receipt["direct_source_carriers"] == 1
+    assert receipt["direct_duplicate_carriers"] == 1
+    assert receipt["nested_output_occurrences"] == expected.nested_output_occurrences
+    assert receipt["nested_emitted_bytes"] == expected.nested_emitted_bytes
+    assert (
+        receipt["derived_exact_path_files"] == len(exact) == (2 * len(expected.outputs))
+    )
+    assert receipt["derived_exact_path_identity_reuses"] == 2 * len(expected.outputs)
+    assert Counter(path.name for path in exact) == {
+        "first.txt": len(expected.outputs),
+        "second.txt": len(expected.outputs),
+    }
+    assert Counter(path.read_bytes() for path in exact) == Counter(
+        {output: 2 for output in expected.outputs}
+    )
+    assert sum(path.read_bytes() == terminal for path in exact) == 2
+
+
+@pytest.mark.parametrize(
+    "bound",
+    ["candidate", "emitted", "generated", "aggregate", "shard"],
+)
+def test_decode_probe_applies_shared_bounds_to_recursive_output(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    bound: str,
+) -> None:
+    """Fail closed when recursive work crosses any shared resource ceiling."""
+    terminal = (
+        b"\xff\xfe" + "recursive bounded output".encode("utf-16le")
+        if bound == "shard"
+        else b"recursive bounded output"
+    )
+    parent = zlib.compress(terminal)
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "carrier.txt").write_bytes(zlib.compress(parent))
+    if bound == "candidate":
+        monkeypatch.setattr(tree_scan, "_MAX_DIRECT_COMPRESSED_CANDIDATES", 1)
+        error = "bounded candidate count"
+    elif bound == "emitted":
+        monkeypatch.setattr(
+            tree_scan,
+            "_MAX_ENCODED_DERIVED_ANALYSIS_BYTES",
+            len(parent) + len(terminal) - 1,
+        )
+        error = "Recursive RFC 1950 derived analysis"
+    elif bound == "generated":
+        monkeypatch.setattr(tree_scan, "_MAX_ENCODED_CANDIDATE_FILES", 1)
+        error = "bounded file count"
+    elif bound == "aggregate":
+        first_payload = (
+            len(materializer.SCAN_PREFIX)
+            + (2 * len(materializer._SCAN_BOUNDARY))
+            + len(parent)
+        )
+        monkeypatch.setattr(
+            tree_scan,
+            "_MAX_ENCODED_CANDIDATE_BYTES",
+            first_payload,
+        )
+        error = "aggregate bounded byte limit"
+    else:
+        monkeypatch.setattr(tree_scan, "_MAX_EXACT_PATH_SHARDS", 2)
+        error = "shard limit"
+
+    with pytest.raises(tree_scan._ScanError, match=error):
+        tree_scan._prepare_decode_probe_source(
+            source,
+            tmp_path / "probe",
+            preserve_exact_paths=bound == "shard",
+        )
+
+
+def test_decode_probe_rejects_recursive_depth_exhaustion(tmp_path: Path) -> None:
+    """Reject an RFC 1950 child at the configured recursive depth ceiling."""
+    source = tmp_path / "source"
+    source.mkdir()
+    levels = tree_scan._MAX_DECODE_DEPTH + 2
+    (source / "carrier.txt").write_bytes(_nested_zlib(b"terminal", levels))
+
+    with pytest.raises(tree_scan._ScanError, match="decode-depth bound"):
+        tree_scan._prepare_decode_probe_source(source, tmp_path / "probe")
+
+
+def test_direct_output_rejects_recursive_identity_cycle(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Reject an emitted output that returns to an ancestor identity."""
+    parent = zlib.compress(b"terminal")
+    monkeypatch.setattr(
+        tree_scan,
+        "_bounded_rfc1950_result",
+        lambda _content, _offset: tree_scan._RFC1950DecodeResult(
+            parent,
+            True,
+            None,
+        ),
+    )
+
+    with pytest.raises(tree_scan._ScanError, match="cycle"):
+        tree_scan._recursive_direct_outputs(
+            (parent,),
+            tree_scan._derived_output_identity(b"distinct source"),
+            10,
+            100,
+        )
+
+
+def test_decode_probe_rejects_encoded_archive_in_recursive_output(
+    tmp_path: Path,
+) -> None:
+    """Keep text-encoded containers inside a derived node fail closed."""
+    encoded_child = base64.b64encode(zlib.compress(b"hidden child"))
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "carrier.txt").write_bytes(zlib.compress(encoded_child))
+
+    with pytest.raises(tree_scan._ScanError, match="encoded archive output"):
+        tree_scan._prepare_decode_probe_source(source, tmp_path / "probe")
+
+
+@pytest.mark.parametrize(
+    "nested",
+    [
+        _zip_member("payload.txt", b"safe\n"),
+        gzip.compress(b"safe\n"),
+        bz2.compress(b"safe\n"),
+        _tar_member("payload.txt", b"safe\n"),
+    ],
+    ids=["zip", "gzip", "bzip2", "tar"],
+)
+def test_decode_probe_rejects_nested_archive_output(
+    tmp_path: Path,
+    nested: bytes,
+) -> None:
+    """Do not replace a nested container with an incomplete derived view."""
+    source = tmp_path / "source"
+    source.mkdir()
+    encoded = base64.b64encode(zlib.compress(nested))
+    (source / "carrier.txt").write_bytes(encoded)
+
+    with pytest.raises(tree_scan._ScanError, match="Nested archive output"):
+        tree_scan._prepare_decode_probe_source(source, tmp_path / "probe")
+
+
+def test_decode_probe_recursively_retains_encoded_derived_rfc1950(
+    tmp_path: Path,
+) -> None:
+    """Route an encoded first-level output through shared recursive closure."""
+    source = tmp_path / "source"
+    source.mkdir()
+    terminal = b"second-level terminal"
+    (source / "carrier.txt").write_bytes(
+        base64.b64encode(zlib.compress(zlib.compress(terminal)))
+    )
+
+    receipt = tree_scan._prepare_decode_probe_source(source, tmp_path / "probe")
+
+    assert receipt["derived_outputs"] == 2
+    assert receipt["nested_rfc1950_candidates"] == 1
+    assert receipt["nested_output_occurrences"] == 1
+    assert any(
+        terminal in path.read_bytes()
+        for path in (tmp_path / "probe").glob("decode-derived-output-*.txt")
+    )
+
+
+@pytest.mark.skipif(
+    shutil.which("gitleaks") is None, reason="gitleaks is not installed"
+)
+def test_runner_scans_encoded_derived_recursive_rfc1950_output(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Find a policy secret present only in an encoded second-level child."""
+    repo = _repo(tmp_path)
+    (repo / ".gitleaks.toml").write_text(
+        "[extend]\n"
+        "useDefault = true\n\n"
+        "[[rules]]\n"
+        'id = "encoded-recursive-rfc1950-control"\n'
+        'description = "Encoded recursive RFC 1950 control"\n'
+        "regex = '''NPA_ENCODED_RECURS[I]VE_[A-Z0-9]{20}'''\n",
+        encoding="utf-8",
+    )
+    (repo / "clean.txt").write_text("clean base\n", encoding="utf-8")
+    base = _commit(repo, "clean base")
+    secret = b"NPA_ENCODED_RECURSIVE_" + (b"Z9" * 10)
+    carrier = base64.b64encode(zlib.compress(zlib.compress(secret)))
+    assert secret not in carrier
+    (repo / "carrier.txt").write_bytes(carrier)
+    candidate = _commit(repo, "encoded recursive RFC 1950 carrier")
+    scanner = shutil.which("gitleaks")
+    assert scanner is not None
+
+    assert tree_scan.main(_runner_arguments(repo, candidate, base, scanner)) == 1
+    output = capsys.readouterr()
+    assert secret.decode() not in output.out
+    assert secret.decode() not in output.err
+    assert "encoded-recursive-rfc1950-control" in output.err
+
+
+@pytest.mark.parametrize("encoding", ["utf-16le", "utf-32be"])
+def test_decode_probe_rejects_archive_exposed_by_unicode_projection(
+    tmp_path: Path,
+    encoding: str,
+) -> None:
+    """Reapply archive analysis to every generated Unicode projection."""
+    nested = base64.b64encode(zlib.compress(b"projection-hidden output"))
+    unicode_payload = nested.decode("ascii").encode(encoding)
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "carrier.txt").write_bytes(
+        base64.b64encode(zlib.compress(unicode_payload))
+    )
+
+    with pytest.raises(
+        tree_scan._ScanError,
+        match="Derived Unicode projection contains nested archive",
+    ):
+        tree_scan._prepare_decode_probe_source(source, tmp_path / "probe")
+
+
+def test_decode_probe_rejects_archive_exposed_by_malformed_unicode_projection(
+    tmp_path: Path,
+) -> None:
+    """Keep nesting strict when replacement decoding recovers valid encoded text."""
+    nested = base64.b64encode(zlib.compress(b"projection-hidden output"))
+    malformed = b"\xff\xfe" + nested.decode("ascii").encode("utf-16le") + b"\x09"
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "carrier.txt").write_bytes(zlib.compress(malformed))
+
+    with pytest.raises(
+        tree_scan._ScanError,
+        match="Derived Unicode projection contains nested archive",
+    ):
+        tree_scan._prepare_decode_probe_source(source, tmp_path / "probe")
+
+
+@pytest.mark.skipif(
+    shutil.which("gitleaks") is None, reason="gitleaks is not installed"
+)
+@pytest.mark.parametrize(
+    "mutation",
+    ["truncated", "deflate-truncated", "checksum", "deflate-error"],
+)
+def test_runner_scans_malformed_zlib_output_at_exact_path(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    mutation: str,
+) -> None:
+    """Find emitted malformed-stream bytes only under their governed source path."""
+    repo = _repo(tmp_path)
+    (repo / ".gitleaks.toml").write_text(
+        "[extend]\n"
+        "useDefault = true\n\n"
+        "[[rules]]\n"
+        'id = "derived-path-control"\n'
+        'description = "Derived RFC 1950 exact-path control"\n'
+        "regex = '''NPA_DERIVED_PATH_[A-Z0-9]{24}$'''\n"
+        "path = '''^carrier\\.txt$'''\n",
+        encoding="utf-8",
+    )
+    (repo / "clean.txt").write_text("clean base\n", encoding="utf-8")
+    base = _commit(repo, "clean base")
+    token = "NPA_DERIVED_PATH_" + ("A1" * 12)
+    payload = (b"bounded prefix " * 32) + b"\n" + token.encode()
+    malformed = _output_bearing_malformed_zlib(payload, mutation)
+    (repo / "carrier.txt").write_bytes(base64.b64encode(malformed))
+    candidate = _commit(repo, f"{mutation} derived-output carrier")
+    scanner = shutil.which("gitleaks")
+    assert scanner is not None
+
+    assert tree_scan.main(_runner_arguments(repo, candidate, base, scanner)) == 1
+    output = capsys.readouterr()
+    assert token not in output.out
+    assert token not in output.err
+    assert "derived-path-control" in output.err
+
+
+@pytest.mark.skipif(
+    shutil.which("gitleaks") is None, reason="gitleaks is not installed"
+)
+def test_runner_scans_direct_zlib_output_at_exact_path(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Find direct-stream plaintext only under its governed logical path."""
+    repo = _repo(tmp_path)
+    (repo / ".gitleaks.toml").write_text(
+        "[extend]\n"
+        "useDefault = true\n\n"
+        "[[rules]]\n"
+        'id = "direct-derived-path-control"\n'
+        'description = "Direct RFC 1950 exact-path control"\n'
+        "regex = '''NPA_DIRECT_PATH_[A-Z0-9]{24}$'''\n"
+        # The pinned default policy globally excludes .bin paths.
+        "path = '''^carrier\\.txt$'''\n",
+        encoding="utf-8",
+    )
+    (repo / "clean.txt").write_text("clean base\n", encoding="utf-8")
+    base = _commit(repo, "clean base")
+    token = "NPA_DIRECT_PATH_" + ("D4" * 12)
+    malformed = _output_bearing_malformed_zlib(token.encode(), "checksum")
+    (repo / "carrier.txt").write_bytes(b"ordinary-prefix\n" + malformed)
+    candidate = _commit(repo, "direct derived-output carrier")
+    scanner = shutil.which("gitleaks")
+    assert scanner is not None
+
+    assert tree_scan.main(_runner_arguments(repo, candidate, base, scanner)) == 1
+    output = capsys.readouterr()
+    assert token not in output.out
+    assert token not in output.err
+    assert "direct-derived-path-control" in output.err
+
+
+@pytest.mark.skipif(
+    shutil.which("gitleaks") is None, reason="gitleaks is not installed"
+)
+def test_runner_scans_recursive_zlib_child_at_exact_path(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Find a source-anchored secret visible only in a second-level child."""
+    repo = _repo(tmp_path)
+    (repo / ".gitleaks.toml").write_text(
+        "[extend]\n"
+        "useDefault = true\n\n"
+        "[[rules]]\n"
+        'id = "recursive-derived-path-control"\n'
+        'description = "Recursive RFC 1950 exact-path control"\n'
+        "regex = '''^NPA_RECURSIVE_PATH_[A-Z0-9]{24}$'''\n"
+        "path = '''^carrier\\.txt$'''\n",
+        encoding="utf-8",
+    )
+    (repo / "clean.txt").write_text("clean base\n", encoding="utf-8")
+    base = _commit(repo, "clean base")
+    token = "NPA_RECURSIVE_PATH_" + ("F6" * 12)
+    (repo / "carrier.txt").write_bytes(_nested_zlib(token.encode(), 2))
+    candidate = _commit(repo, "recursive derived-output carrier")
+    scanner = shutil.which("gitleaks")
+    assert scanner is not None
+
+    assert tree_scan.main(_runner_arguments(repo, candidate, base, scanner)) == 1
+    output = capsys.readouterr()
+    assert token not in output.out
+    assert token not in output.err
+    assert "recursive-derived-path-control" in output.err
+
+
+@pytest.mark.skipif(
+    shutil.which("gitleaks") is None, reason="gitleaks is not installed"
+)
+def test_runner_scans_derived_utf16_at_exact_path(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Find a derived Unicode secret only after its exact transformed projection."""
+    repo = _repo(tmp_path)
+    (repo / ".gitleaks.toml").write_text(
+        "[extend]\n"
+        "useDefault = true\n\n"
+        "[[rules]]\n"
+        'id = "derived-unicode-path-control"\n'
+        'description = "Derived Unicode exact-path control"\n'
+        "regex = '''^NPA_DERIVED_UNICODE_[A-Z0-9]{24}'''\n"
+        "path = '''^carrier\\.txt$'''\n",
+        encoding="utf-8",
+    )
+    (repo / "clean.txt").write_text("clean base\n", encoding="utf-8")
+    base = _commit(repo, "clean base")
+    token = "NPA_DERIVED_UNICODE_" + ("B2" * 12)
+    payload = token.encode("utf-16le")
+    (repo / "carrier.txt").write_bytes(base64.b64encode(zlib.compress(payload)))
+    candidate = _commit(repo, "derived Unicode carrier")
+    scanner = shutil.which("gitleaks")
+    assert scanner is not None
+
+    assert tree_scan.main(_runner_arguments(repo, candidate, base, scanner)) == 1
+    output = capsys.readouterr()
+    assert token not in output.out
+    assert token not in output.err
+    assert "derived-unicode-path-control" in output.err
+
+
+@pytest.mark.skipif(
+    shutil.which("gitleaks") is None, reason="gitleaks is not installed"
+)
+def test_runner_scans_malformed_derived_utf16_at_exact_path(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Find valid text projected from malformed derived Unicode at its source path."""
+    repo = _repo(tmp_path)
+    (repo / ".gitleaks.toml").write_text(
+        "[extend]\n"
+        "useDefault = true\n\n"
+        "[[rules]]\n"
+        'id = "malformed-derived-unicode-path-control"\n'
+        'description = "Malformed derived Unicode exact-path control"\n'
+        "regex = '''^NPA_MALFORMED_UNICODE_[A-Z0-9]{24}'''\n"
+        "path = '''^carrier\\.txt$'''\n",
+        encoding="utf-8",
+    )
+    (repo / "clean.txt").write_text("clean base\n", encoding="utf-8")
+    base = _commit(repo, "clean base")
+    token = "NPA_MALFORMED_UNICODE_" + ("E5" * 12)
+    malformed_unicode = b"\xff\xfe" + token.encode("utf-16le") + b"\x09"
+    malformed_zlib = _output_bearing_malformed_zlib(
+        malformed_unicode,
+        "checksum",
+    )
+    (repo / "carrier.txt").write_bytes(b"ordinary-prefix\n" + malformed_zlib)
+    candidate = _commit(repo, "malformed derived Unicode carrier")
+    scanner = shutil.which("gitleaks")
+    assert scanner is not None
+
+    assert tree_scan.main(_runner_arguments(repo, candidate, base, scanner)) == 1
+    output = capsys.readouterr()
+    assert token not in output.out
+    assert token not in output.err
+    assert "malformed-derived-unicode-path-control" in output.err
+
+
+@pytest.mark.skipif(
+    shutil.which("gitleaks") is None, reason="gitleaks is not installed"
+)
+def test_runner_rejects_decode_exhaustion_inside_derived_output(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Reject nested encoded output before downstream scanner decode-depth work."""
+    repo = _repo(tmp_path)
+    (repo / ".gitleaks.toml").write_text(
+        "[extend]\nuseDefault = true\n",
+        encoding="utf-8",
+    )
+    (repo / "clean.txt").write_text("clean base\n", encoding="utf-8")
+    base = _commit(repo, "clean base")
+    token = "".join(("Qw7eR9tY", "2uI4oP6a", "S8dF0gH1", "jK3lZ5xC"))
+    secret = f'api_key = "{token}"\n'.encode()
+    derived = _encode_base64_layers(secret, 6)
+    (repo / "carrier.txt").write_bytes(base64.b64encode(zlib.compress(derived)))
+    candidate = _commit(repo, "derived decode-depth exhaustion")
+    scanner = shutil.which("gitleaks")
+    assert scanner is not None
+
+    assert tree_scan.main(_runner_arguments(repo, candidate, base, scanner)) == 1
+    output = capsys.readouterr()
+    assert token not in output.out
+    assert token not in output.err
+    assert "Nested encoded archive output" in output.err
+
+
 def test_decode_boundary_view_contains_only_isolated_candidates(
     tmp_path: Path,
 ) -> None:
@@ -5117,17 +7342,22 @@ def test_decode_boundary_view_contains_only_isolated_candidates(
     source.mkdir()
     candidate = source / "decode-input-candidates-0.txt"
     candidate.write_bytes(materializer.SCAN_PREFIX + b"encoded\n\n")
+    derived = source / "decode-derived-output-0.txt"
+    derived.write_bytes(materializer.SCAN_PREFIX + b"derived\n\n")
     fragments = source / "npa-gitleaks-fragment-windows"
     fragments.mkdir()
     (fragments / "noise.txt").write_text("encoded", encoding="utf-8")
 
-    boundary = tree_scan._decode_boundary_view(tmp_path, "candidate", source, 1)
+    boundary = tree_scan._decode_boundary_view(tmp_path, "candidate", source, 2)
 
     files = [path for path in boundary.rglob("*") if path.is_file()]
-    assert [path.name for path in files] == [candidate.name]
-    assert files[0].stat().st_ino == candidate.stat().st_ino
+    assert {path.name for path in files} == {candidate.name, derived.name}
+    assert {path.stat().st_ino for path in files} == {
+        candidate.stat().st_ino,
+        derived.stat().st_ino,
+    }
     with pytest.raises(tree_scan._ScanError, match="inventory is incomplete"):
-        tree_scan._decode_boundary_view(tmp_path, "mismatch", source, 2)
+        tree_scan._decode_boundary_view(tmp_path, "mismatch", source, 1)
 
 
 def test_decode_probe_groups_candidates_into_complete_scanner_fragments(
@@ -6012,6 +8242,7 @@ def test_runner_ignores_path_prepended_scanner(
     assert receipt["history_base"] == base
     assert receipt["history_commits"] == [candidate]
     assert receipt["history_range"] == f"{base}..{candidate}"
+    assert receipt["historical_decode_probe"]["derived_exact_path_identity_reuses"] == 0
 
 
 def test_runner_rejects_path_resolved_scanner(
