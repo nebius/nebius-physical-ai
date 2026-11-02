@@ -202,8 +202,22 @@ def on_the_demo_fragments() -> dict:
             round(min(corrections), 10),
             round(max(corrections), 10),
         ],
-        "largest_correction_as_a_share_of_scene_extent": round(
+        "largest_matrix_entry_change_over_scene_extent": round(
             max(corrections) / extent, 12
+        ),
+        "why_that_is_not_a_share_of_the_scene": (
+            "max_pose_correction is the largest absolute change in a 4x4 pose entry, "
+            "and a pose matrix mixes unitless rotation coefficients with a "
+            "translation in scene units, so the largest entry can come from either. "
+            "Dividing it by a length therefore gives a number that depends on the "
+            "units the scene happens to be expressed in: a pure 90-degree rotation "
+            "changes a rotation entry by 1 whether the scene is 10 metres or the "
+            "same 10000 millimetres across, so this ratio would read 0.1 or 0.0001 "
+            "for identical geometry. It was published here as a share of the extent, "
+            "which it is not. The number is kept because it is what was measured, "
+            "under a name that says what it measures. run_multiway now publishes a "
+            "coordinate-consistent point displacement beside the entry delta; these "
+            "cases predate it and are not relabelled as distances."
         ),
         **_edge_counts(
             runs[0]["edges_submitted"], runs[0]["edges_that_survived_pruning"]
@@ -265,10 +279,20 @@ def _run_multiway_over(paths: dict[str, str], output: Path) -> tuple[dict, dict]
 def through_the_product_on_a_loop() -> dict:
     """The loop again, through `run_multiway` at the manifest's own parameters.
 
-    Separate from the standalone loop above because it does not agree with it: the
-    product's voxel size and ICP distance factor prune three of the six edges where
-    the standalone measurement at this file's own constants prunes one. The figure a
-    test may assert on is this one, so both are recorded rather than averaged.
+    Separate from the standalone loop above because it does not agree with it: this
+    one prunes three of the six edges where the standalone measurement at this file's
+    own constants prunes one. The figure a test may assert on is this one, so both are
+    recorded rather than averaged.
+
+    The voxel size is not the difference -- both are 0.05, this file's `VOXEL` and the
+    smoke's `VOXEL_SIZE`. Two things do differ. The correspondence distance: this
+    harness uses `voxel * 1.5 = 0.075`, where the product uses
+    `voxel_size * icp_distance_factor = 0.05 * 0.4 = 0.02`. And the estimation path:
+    the product reaches its pairwise transforms through RANSAC/FPFH initialisation
+    followed by full-resolution point-to-plane ICP with an information matrix computed
+    at 0.02, where this harness runs identity-initialised ICP on the downsampled
+    clouds at 0.075. An earlier version of this docstring named the voxel size, which
+    sent anyone diagnosing the disagreement at the one parameter that is the same.
     """
 
     with tempfile.TemporaryDirectory(prefix="npa-posegraph-loop-") as directory:
@@ -292,6 +316,15 @@ def through_the_product_on_a_loop() -> dict:
         ),
         "max_pose_correction": snapshot["correction"],
         "correction_is_nonzero": snapshot["correction"] > 0.0,
+        # The producer's own displacement figures, carried through so the record
+        # shows the quantity a reader is meant to compare. The matrix-entry
+        # correction above is kept for continuity with the earlier cases.
+        "max_point_displacement": optimization["max_point_displacement"],
+        "scene_extent": optimization["scene_extent"],
+        "max_point_displacement_as_share_of_extent": optimization[
+            "max_point_displacement_as_share_of_extent"
+        ],
+
         "published_block_matches_the_snapshot": (
             optimization["edges_submitted"] == snapshot["edges_submitted"]
             and optimization["edges_pruned"]
@@ -368,6 +401,13 @@ def through_the_product_pipeline() -> dict:
         "fragments": "the three synthetic clouds the functional smoke writes",
         "max_pose_correction": snapshot["correction"],
         "correction_is_exactly_zero": snapshot["correction"] == 0.0,
+        # Same figures as the loop case, so the two product cases are comparable on
+        # the quantity that survives a change of units.
+        "max_point_displacement": published["optimization"]["max_point_displacement"],
+        "scene_extent": published["optimization"]["scene_extent"],
+        "max_point_displacement_as_share_of_extent": published["optimization"][
+            "max_point_displacement_as_share_of_extent"
+        ],
         **_edge_counts(
             snapshot["edges_submitted"], snapshot["edges_that_survived_pruning"]
         ),
@@ -425,8 +465,12 @@ def on_a_loop_with_overlap() -> dict:
         ],
         "so": (
             "an edge the optimizer rejected leaves no trace in a record that "
-            "serializes only the survivors, and the correction is still zero, so "
-            "neither of the two things the optimization does is readable afterwards"
+            "serializes only the survivors, and the correction is "
+            f"{min(corrections):.2g} to {max(corrections):.2g} -- not zero, and far "
+            "too small to read as the optimizer having distributed anything -- so "
+            "neither of the two things the optimization does is readable afterwards. "
+            "This sentence said 'still zero' while the field above it recorded these "
+            "numbers, which is the defect this record exists to make visible."
         ),
     }
 

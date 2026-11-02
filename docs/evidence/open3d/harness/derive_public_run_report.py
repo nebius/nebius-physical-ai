@@ -86,6 +86,20 @@ def _pose_graph(prefix: str = "") -> dict[str, str]:
         f"{prefix}nodes[].points": NUM,
         f"{prefix}nodes[].pose[][]": NUM,
         f"{prefix}reference_node": NUM,
+        # The optimization block `run_multiway` publishes. This table denies by
+        # default -- an unclassified leaf is a SystemExit -- so adding these fields to
+        # the producer without adding them here would have stopped the next public run
+        # report on `optimization.edges_submitted`. Failing closed, and still failing.
+        f"{prefix}optimization.edges_pruned": NUM,
+        f"{prefix}optimization.edges_submitted": NUM,
+        f"{prefix}optimization.edges_that_survived_pruning": NUM,
+        f"{prefix}optimization.loop_closures_submitted": NUM,
+        f"{prefix}optimization.max_pose_correction": NUM,
+        f"{prefix}optimization.max_pose_correction_per_node[]": NUM,
+        f"{prefix}optimization.max_point_displacement": NUM,
+        f"{prefix}optimization.max_point_displacement_per_node[]": NUM,
+        f"{prefix}optimization.max_point_displacement_as_share_of_extent": NUM,
+        f"{prefix}optimization.scene_extent": NUM,
     }
 
 

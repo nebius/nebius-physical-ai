@@ -260,6 +260,31 @@ def run_register(payload: dict[str, Any], output: Path, run_id: str) -> dict[str
     return report
 
 
+def _point_displacement(points, before, after) -> float:
+    """How far a pose change moves the points it applies to, in their own units.
+
+    The alternative, and what this code published first, was the largest absolute
+    change in a pose matrix *entry*. That is not a distance: a 4x4 pose mixes unitless
+    rotation coefficients with a translation in scene units, so dividing it by a scene
+    extent gives a figure that depends on the units the scene is written in. A pure
+    90-degree rotation changes a rotation entry by 1 whether the scene is 10 metres or
+    the same 10000 millimetres across, so the published share read 0.1 or 0.0001 for
+    identical geometry.
+
+    This is a length, so dividing it by the extent -- also a length -- gives the same
+    number for the same geometry at any scale, which is what a reader comparing two
+    runs is relying on.
+    """
+
+    import numpy as np
+
+    if not len(points):
+        return 0.0
+    shift = np.asarray(after, dtype=float) - np.asarray(before, dtype=float)
+    moved_by = np.asarray(points, dtype=float) @ shift[:3, :3].T + shift[:3, 3]
+    return float(np.linalg.norm(moved_by, axis=1).max())
+
+
 def run_multiway(payload: dict[str, Any], output: Path, run_id: str) -> dict[str, Any]:
     """Upstream multiway registration: full pairwise graph, then optimization."""
 
@@ -358,8 +383,31 @@ def run_multiway(payload: dict[str, Any], output: Path, run_id: str) -> dict[str
     ]
     fused = o3d.geometry.PointCloud()
     nodes: list[dict[str, Any]] = []
+    # How far the optimization actually moved each fragment's points, in scene units.
+    #
+    # `corrections` above is the largest absolute change in a pose *matrix entry*,
+    # which is the diagnostic the earlier records in this directory were measured with
+    # and is kept under that name for them. It is not a distance: a 4x4 pose mixes
+    # unitless rotation coefficients with a translation in scene units, so the largest
+    # entry can come from either. Dividing it by the scene extent -- which this code
+    # did, and published as a share -- gives a figure that changes with the units the
+    # scene happens to be expressed in. A pure 90-degree rotation changes a rotation
+    # entry by 1 whether the scene is 10 metres or the same 10000 millimetres across,
+    # so the share came out 0.1 or 0.0001 for identical geometry.
+    #
+    # This measures the displacement the pose change applies to the fragment's own
+    # points. Both the numerator and the extent are then lengths in whatever units the
+    # cloud uses, so the ratio is the same number for the same geometry at any scale.
+    displacements: list[float] = []
     for index, key in enumerate(ordered):
         pose = np.asarray(graph.nodes[index].pose, dtype=float)
+        displacements.append(
+            _point_displacement(
+                np.asarray(clouds[key].points, dtype=float),
+                poses_before[index],
+                pose,
+            )
+        )
         moved = o3d.geometry.PointCloud(clouds[key])
         moved.transform(pose)
         fused += moved
@@ -381,7 +429,15 @@ def run_multiway(payload: dict[str, Any], output: Path, run_id: str) -> dict[str
             np.asarray(fused_down.get_axis_aligned_bounding_box().get_extent())
         )
     )
+    if not extent > 0.0:
+        # Every fragment collapsed into one voxel. The share below divides by this, and
+        # a zero denominator has no honest numerator: publishing 0.0 would read as "the
+        # optimization moved nothing" when the truth is that the scene has no size to
+        # compare a movement against. The validator rejects such a record, so producing
+        # one would only move the failure later.
+        raise Open3dError("fused cloud has no extent to measure a displacement against")
     largest = max(corrections) if corrections else 0.0
+    moved_the_most = max(displacements) if displacements else 0.0
     pose_graph = {
         "nodes": nodes,
         "edges": edges,
@@ -395,14 +451,19 @@ def run_multiway(payload: dict[str, Any], output: Path, run_id: str) -> dict[str
             "loop_closures_submitted": loop_closures_submitted,
             "edges_that_survived_pruning": len(edges),
             "edges_pruned": edges_submitted - len(edges),
+            # Largest absolute change in a pose matrix entry. Not a distance -- see
+            # the note above the displacement loop -- and kept under this name because
+            # the records in docs/evidence/open3d were measured with it.
             "max_pose_correction": largest,
             "max_pose_correction_per_node": corrections,
-            # Relative, because a correction is only small compared with something.
+            # How far the pose changes moved the fragments' own points, which is a
+            # distance in the same units as the extent below it.
+            "max_point_displacement": moved_the_most,
+            "max_point_displacement_per_node": displacements,
+            # Relative, because a displacement is only small compared with something.
             # The scene extent is the fused cloud's bounding-box diagonal.
             "scene_extent": extent,
-            "max_pose_correction_as_share_of_extent": (
-                largest / extent if extent > 0.0 else None
-            ),
+            "max_point_displacement_as_share_of_extent": moved_the_most / extent,
         },
     }
     (output / "pose_graph.json").write_bytes(canonical(pose_graph))

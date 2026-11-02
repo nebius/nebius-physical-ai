@@ -339,6 +339,67 @@ def _validate_optimization_report(report: Any, *, nodes: int, edges: list) -> No
             "the largest pose correction is not the largest of the per-node "
             "corrections it summarizes"
         )
+    _validate_optimization_displacement(report, nodes=nodes)
+
+
+def _validate_optimization_displacement(report: dict, *, nodes: int) -> None:
+    """Hold the displacement figures to each other and to the extent they divide by.
+
+    These are the fields a reader is meant to act on -- a bare correction is only
+    small compared with something -- and they were published outside this validator,
+    so a record could carry a real displacement under a zero share and pass. That is
+    the same failure this block exists to prevent, one field over.
+
+    Optional as a group, for the same reason the block itself is: records written
+    before these fields existed are still valid pose graphs. Present but internally
+    inconsistent is what is rejected.
+    """
+
+    if "max_point_displacement" not in report:
+        return
+    per_node = report.get("max_point_displacement_per_node")
+    if not isinstance(per_node, list) or len(per_node) != nodes:
+        raise Open3dError(
+            "pose graph optimization must report one point displacement per node"
+        )
+    if not all(_finite_number(value) and value >= 0.0 for value in per_node):
+        raise Open3dError(
+            "every point displacement must be a finite, non-negative number"
+        )
+    largest = report["max_point_displacement"]
+    if not _finite_number(largest) or largest < 0.0:
+        raise Open3dError(
+            "the largest point displacement must be finite and non-negative"
+        )
+    if per_node and abs(float(largest) - max(float(v) for v in per_node)) > 1e-12:
+        raise Open3dError(
+            "the largest point displacement is not the largest of the per-node "
+            "displacements it summarizes"
+        )
+    if "scene_extent" not in report:
+        return
+    extent = report["scene_extent"]
+    # A zero or negative extent is a degenerate fused cloud, and the share below is
+    # derived from it. Rejecting it here is cheaper than a division the reader has to
+    # reconstruct to notice.
+    if not _finite_number(extent) or extent <= 0.0:
+        raise Open3dError("the scene extent must be a finite, positive length")
+    share = report.get("max_point_displacement_as_share_of_extent")
+    if share is None:
+        raise Open3dError(
+            "pose graph optimization publishes a scene extent and a displacement but "
+            "no share of the extent, which is the figure a reader acts on"
+        )
+    if not _finite_number(share) or share < 0.0:
+        raise Open3dError(
+            "the displacement share of the scene extent must be finite and non-negative"
+        )
+    expected = float(largest) / float(extent)
+    if abs(float(share) - expected) > max(1e-12, 1e-9 * expected):
+        raise Open3dError(
+            f"the published share {share} is not the displacement {largest} over the "
+            f"scene extent {extent}, which is {expected}"
+        )
 
 
 def validate_mesh(mesh: Any) -> None:

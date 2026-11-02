@@ -25,7 +25,8 @@
       4.7e-06,
       4.7e-06
     ],
-    "largest_correction_as_a_share_of_scene_extent": 9.54533e-07,
+    "largest_matrix_entry_change_over_scene_extent": 9.54533e-07,
+    "why_that_is_not_a_share_of_the_scene": "max_pose_correction is the largest absolute change in a 4x4 pose entry, and a pose matrix mixes unitless rotation coefficients with a translation in scene units, so the largest entry can come from either. Dividing it by a length therefore gives a number that depends on the units the scene happens to be expressed in: a pure 90-degree rotation changes a rotation entry by 1 whether the scene is 10 metres or the same 10000 millimetres across, so this ratio would read 0.1 or 0.0001 for identical geometry. It was published here as a share of the extent, which it is not. The number is kept because it is what was measured, under a name that says what it measures. run_multiway now publishes a coordinate-consistent point displacement beside the entry delta; these cases predate it and are not relabelled as distances.",
     "edges_submitted": 3,
     "edges_that_survived_pruning": 2,
     "edges_pruned": 1,
@@ -36,6 +37,9 @@
     "fragments": "the three synthetic clouds the functional smoke writes",
     "max_pose_correction": 0.0,
     "correction_is_exactly_zero": true,
+    "max_point_displacement": 0.0,
+    "scene_extent": 2.4345161653135796,
+    "max_point_displacement_as_share_of_extent": 0.0,
     "edges_submitted": 3,
     "edges_that_survived_pruning": 3,
     "edges_pruned": 0,
@@ -58,7 +62,7 @@
       1.8e-07,
       6.5e-07
     ],
-    "so": "an edge the optimizer rejected leaves no trace in a record that serializes only the survivors, and the correction is still zero, so neither of the two things the optimization does is readable afterwards"
+    "so": "an edge the optimizer rejected leaves no trace in a record that serializes only the survivors, and the correction is 1.8e-07 to 6.5e-07 -- not zero, and far too small to read as the optimizer having distributed anything -- so neither of the two things the optimization does is readable afterwards. This sentence said 'still zero' while the field above it recorded these numbers, which is the defect this record exists to make visible."
   },
   "through_the_product_on_a_loop": {
     "entry_point": "npa.workbench.open3d.runner.run_multiway",
@@ -66,8 +70,11 @@
     "edges_submitted": 6,
     "edges_that_survived_pruning": 3,
     "edges_pruned": 3,
-    "max_pose_correction": 2.1739465200232289e-07,
+    "max_pose_correction": 2.1739465189130058e-07,
     "correction_is_nonzero": true,
+    "max_point_displacement": 3.711307163296749e-07,
+    "scene_extent": 5.051424799751641,
+    "max_point_displacement_as_share_of_extent": 7.347050209436395e-08,
     "published_block_matches_the_snapshot": true,
     "why_this_case_exists": "on consistent fragments the correction is 0.0 and nothing is prunable, so reading the poses after optimization rather than before, and publishing the surviving edge count as the submitted one, both produce identical output. This is the case where those two mutations are observable"
   },
@@ -89,7 +96,7 @@
   },
   "provenance": {
     "harness": "harness/pose_graph_optimization.py",
-    "harness_sha256": "eebee3a89145e5c615d377f62c92658e48650857e58800983b4082193a788b1e",
+    "harness_sha256": "1f03e1b004363e6e3b25c1acfbd8b044ce9036db0bf7c0dc53ddcc450fbac135",
     "path_is_relative_to": "this evidence directory",
     "open3d_version": "0.20.0"
   },

@@ -39,7 +39,10 @@ error and watches the optimizer undo it, because without it a measured zero cann
 probe that cannot read poses — which is what a zero on every case first looked like. And the loop
 construction is measured twice, standalone and through `run_multiway`, because they disagree: one
 pruned edge at the harness's constants, three at the manifest's. The second is the figure a test may
-assert on, so both are kept rather than averaged.
+assert on, so both are kept rather than averaged. The voxel size is not the difference — both are
+0.05. What differs is the correspondence distance (0.075 against 0.02) and the estimation path,
+since the product initialises with RANSAC/FPFH and refines at full resolution where the harness runs
+identity-initialised ICP on the downsampled clouds.
 
 ## Reproducing
 
