@@ -751,9 +751,17 @@ UP_AXIS_DETECTION_FLOOR_OF_THIRTY = 20
 #: until a regeneration returned 27 detections at five fits against 26 at nine and
 #: inverted it; at thirty runs a count's standard deviation is about one and a half,
 #: so neither that ordering nor its inversion was ever measurable there. Pooling 300
-#: runs per configuration across twelve fresh interpreters gives 72.7, 93.7 and 99.3
-#: percent at five, nine and seventeen fits, every step rising by at least 3.8 sigma
-#: of its own difference. See `does_detection_rise_with_the_fit_count` in the record.
+#: runs per configuration across twelve fresh interpreters puts detection near 78, 94
+#: and 99.7 percent at five, nine and seventeen fits, with every step rising. An
+#: independent lane ran the same harness on its own host and got the same ordering
+#: and rates within about a sigma.
+#:
+#: The two steps are not equally firm, and a figure stated here as a floor was
+#: crossed by that reproduction. The step containing the shipped count is the strong
+#: one -- above five sigma in both runs -- while nine fits to seventeen is the soft
+#: end of the curve, above four sigma here and below three there. The shipped repeat
+#: count rests on the lower step, so no claim in this module depends on the upper
+#: one. See `does_detection_rise_with_the_fit_count` in the record for both runs.
 UP_AXIS_DETECTION_RISES_WITH_FITS = True
 
 #: Extra plane fits used to decide whether the scan determines an up axis at all.
@@ -779,12 +787,20 @@ UP_AXIS_REPEATS = 8
 #: these fits are not reproducible -- which is the finding this whole block is
 #: about. A bound claims less than was measured and stays true across runs, and the
 #: test asserts the direction rather than equality.
+#:
+#: The tilt bound was 14.0 and that was not enough margin. Four regenerations put the
+#: smallest tilt at 14.11, 14.32, 13.74 and 13.41 degrees, so the bound sat inside the
+#: scatter and held twice before a run crossed it. Changing equality to a direction
+#: fixed the wrong half of the problem: a direction with no margin is still pinned to
+#: one draw. It is 12 degrees now, and the test no longer accepts a bound merely on
+#: the right side of the evidence -- it has to clear the nearest measurement by a
+#: tenth of the range the record's own fits cover, which the 14.0 did not.
 UP_AXIS_AGREEMENT_COUNTEREXAMPLE = MappingProxyType(
     {
         "construction": "the Armadillo mesh sampled to 40000 points: no floor, no wall",
         "repeats_that_agreed": 40,
         "of_repeats": 40,
-        "plane_tilt_to_the_snapped_axis_degrees": 14.0,
+        "plane_tilt_to_the_snapped_axis_degrees": 12.0,
         "this_tilt_is_a_floor_the_measurement_cleared": True,
         "plane_inlier_fraction_was_at_most": 0.14,
         "evidence": "docs/evidence/open3d/up-axis-ambiguity.json",

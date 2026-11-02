@@ -66,7 +66,7 @@ default is published *as* the default. The record keeps six clouds -- two ambigu
 two constructed controls, the upstream demo scan, and a sampled Armadillo -- plus the detection rate
 at three repeat counts, because the check misses when the fits agree by chance and the honest figure
 is 27 of 30 runs rather than all of them. The Armadillo is the case repeat agreement does not catch:
-40 of 40 fits agree, on a plane tilted past 14 degrees off the axis they snap it to.
+40 of 40 fits agree, on a plane tilted past 12 degrees off the axis they snap it to.
 
 ## The viewer's own frame
 

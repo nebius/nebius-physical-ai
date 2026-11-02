@@ -18,14 +18,14 @@
               0.0,
               1.0
             ],
-            "chosen_by_fits": 29,
+            "chosen_by_fits": 28,
             "plane_inlier_fraction_range": [
               0.506358024691358,
-              0.5110493827160494
+              0.5109876543209877
             ],
             "tilt_to_snapped_axis_degrees_range": [
               0.02661921871477898,
-              0.07835675818116514
+              0.07764360145616234
             ]
           },
           {
@@ -34,14 +34,14 @@
               0.0,
               0.0
             ],
-            "chosen_by_fits": 11,
+            "chosen_by_fits": 12,
             "plane_inlier_fraction_range": [
-              0.5064814814814815,
-              0.5095679012345679
+              0.5072222222222222,
+              0.5116666666666667
             ],
             "tilt_to_snapped_axis_degrees_range": [
-              0.028516122146076423,
-              0.06872697373850428
+              0.034988533142868886,
+              0.08439073831017388
             ]
           }
         ],
@@ -63,7 +63,7 @@
               1.0
             ],
             "distinct_axes_found_by_repeats": 2,
-            "published_by_runs": 28
+            "published_by_runs": 29
           },
           {
             "source": "largest-plane-normal-snapped-to-axis",
@@ -73,11 +73,11 @@
               1.0
             ],
             "distinct_axes_found_by_repeats": 1,
-            "published_by_runs": 2
+            "published_by_runs": 1
           }
         ],
         "runner_up_relative_to_winner_range": [
-          0.9543973941368078,
+          0.9548690720405454,
           0.9748872363769353
         ]
       }
@@ -98,14 +98,14 @@
               1.0,
               0.0
             ],
-            "chosen_by_fits": 33,
+            "chosen_by_fits": 35,
             "plane_inlier_fraction_range": [
               0.5061111111111111,
-              0.5112345679012346
+              0.5117901234567901
             ],
             "tilt_to_snapped_axis_degrees_range": [
               0.025069099740312004,
-              0.0944253502303461
+              0.08567010387059729
             ]
           },
           {
@@ -114,14 +114,14 @@
               0.0,
               0.0
             ],
-            "chosen_by_fits": 7,
+            "chosen_by_fits": 5,
             "plane_inlier_fraction_range": [
-              0.5066666666666667,
-              0.5101234567901235
+              0.5064814814814815,
+              0.5088888888888888
             ],
             "tilt_to_snapped_axis_degrees_range": [
-              0.03541336789809577,
-              0.07578889760906105
+              0.03288293467160102,
+              0.05908403009450013
             ]
           }
         ],
@@ -157,7 +157,7 @@
           }
         ],
         "runner_up_relative_to_winner_range": [
-          0.9596559244002908,
+          0.9555770159343312,
           0.9758507135016465
         ]
       }
@@ -181,11 +181,11 @@
             "chosen_by_fits": 40,
             "plane_inlier_fraction_range": [
               0.8018765432098766,
-              0.8018765432098766
+              0.8031604938271605
             ],
             "tilt_to_snapped_axis_degrees_range": [
               0.0054783606669823485,
-              0.0054783606669823485
+              0.014790518317856941
             ]
           }
         ],
@@ -208,7 +208,7 @@
           }
         ],
         "runner_up_relative_to_winner_range": [
-          0.2449280708225747,
+          0.2470747629018352,
           0.2470747629018352
         ]
       }
@@ -232,11 +232,11 @@
             "chosen_by_fits": 40,
             "plane_inlier_fraction_range": [
               0.9101010101010101,
-              0.9104377104377105
+              0.9105499438832773
             ],
             "tilt_to_snapped_axis_degrees_range": [
               0.002540563840095247,
-              0.0050858866870444625
+              0.005083495337804406
             ]
           }
         ],
@@ -259,7 +259,7 @@
           }
         ],
         "runner_up_relative_to_winner_range": [
-          0.09877913429522753,
+          0.09769619317481829,
           0.09877913429522753
         ]
       }
@@ -282,12 +282,12 @@
             ],
             "chosen_by_fits": 40,
             "plane_inlier_fraction_range": [
-              0.3379485503055297,
-              0.39028843010536374
+              0.3526089471169563,
+              0.3841023964593759
             ],
             "tilt_to_snapped_axis_degrees_range": [
-              19.72627362550872,
-              20.419094597491576
+              19.839220597434654,
+              20.405176975246807
             ]
           }
         ],
@@ -310,8 +310,8 @@
           }
         ],
         "runner_up_relative_to_winner_range": [
-          0.621210925165772,
-          0.7254794992534742
+          0.6187213723124035,
+          0.7033871837824025
         ]
       }
     },
@@ -333,12 +333,12 @@
             ],
             "chosen_by_fits": 40,
             "plane_inlier_fraction_range": [
-              0.12365,
-              0.133075
+              0.124525,
+              0.1329
             ],
             "tilt_to_snapped_axis_degrees_range": [
-              14.106098830150774,
-              23.937713403369077
+              13.414148339907003,
+              22.92166279029068
             ]
           }
         ],
@@ -361,8 +361,8 @@
           }
         ],
         "runner_up_relative_to_winner_range": [
-          0.7477817632622239,
-          0.8755186721991701
+          0.7532746823069404,
+          0.8706811451135242
         ]
       }
     }
@@ -373,17 +373,17 @@
     "answers": [
       {
         "up": [
-          1.0,
           0.0,
-          0.0
+          0.0,
+          1.0
         ],
         "times": 6
       },
       {
         "up": [
+          1.0,
           0.0,
-          0.0,
-          1.0
+          0.0
         ],
         "times": 4
       }
@@ -395,14 +395,14 @@
         "repeats": 4,
         "fits": 5,
         "is_the_shipped_default": false,
-        "ambiguity_detected_in_runs": 26,
+        "ambiguity_detected_in_runs": 23,
         "of_runs": 30
       },
       {
         "repeats": 8,
         "fits": 9,
         "is_the_shipped_default": true,
-        "ambiguity_detected_in_runs": 30,
+        "ambiguity_detected_in_runs": 27,
         "of_runs": 30
       },
       {
@@ -414,6 +414,41 @@
       }
     ],
     "does_detection_rise_with_the_fit_count": {
+      "an_independent_lane_ran_this_too": {
+        "whose": "an independent review lane, on its own host and virtualenv, with a fresh download of the demo meshes and these harness bytes",
+        "runs_each": 300,
+        "detections_they_reported": [
+          233,
+          283,
+          296
+        ],
+        "per_configuration": [
+          {
+            "fits": 5,
+            "this_run": 0.7967,
+            "the_independent_run": 0.7767,
+            "difference_in_sigmas": -0.6,
+            "is_the_shipped_count": false
+          },
+          {
+            "fits": 9,
+            "this_run": 0.9333,
+            "the_independent_run": 0.9433,
+            "difference_in_sigmas": 0.51,
+            "is_the_shipped_count": true
+          },
+          {
+            "fits": 17,
+            "this_run": 0.9933,
+            "the_independent_run": 0.9867,
+            "difference_in_sigmas": -0.82,
+            "is_the_shipped_count": false
+          }
+        ],
+        "widest_disagreement_in_sigmas": 0.82,
+        "what_this_adds": "the rates themselves, not just the ordering. Two sweeps of this size sharing no interpreter, no virtualenv and no seed agreeing to within a sigma or so is what a real measurement looks like; one sweep is a measurement of one machine",
+        "where_the_two_runs_are_softest": "the step from nine fits to seventeen. Both runs find it positive and both find the step containing the shipped count far stronger, but the independent run put the upper step below three sigma where this one is higher. The shipped repeat count rests on the lower step, so quoting the seventeen-fit improvement on its own would be quoting the least reproducible part of this curve"
+      },
       "processes": 12,
       "each_process_is_a_fresh_interpreter": true,
       "runs_per_configuration": 300,
@@ -423,76 +458,90 @@
         17
       ],
       "detections": [
-        235,
-        281,
-        299
+        239,
+        280,
+        298
       ],
       "detection_rate": [
-        0.7833,
-        0.9367,
-        0.9967
+        0.7967,
+        0.9333,
+        0.9933
       ],
       "consecutive_pairs": [
         {
           "from_fits": 5,
           "to_fits": 9,
-          "detection_rose_by": 0.1533,
-          "one_sigma_of_the_difference": 0.0276,
-          "in_sigmas": 5.55,
-          "this_pair_includes_the_shipped_count": true
+          "detection_rose_by": 0.1367,
+          "one_sigma_of_the_difference": 0.0273,
+          "in_sigmas": 5.0,
+          "this_pair_includes_the_shipped_count": true,
+          "an_endpoint_detected_every_run": false
         },
         {
           "from_fits": 9,
           "to_fits": 17,
           "detection_rose_by": 0.06,
-          "one_sigma_of_the_difference": 0.0145,
-          "in_sigmas": 4.15,
-          "this_pair_includes_the_shipped_count": true
+          "one_sigma_of_the_difference": 0.0151,
+          "in_sigmas": 3.96,
+          "this_pair_includes_the_shipped_count": true,
+          "an_endpoint_detected_every_run": false
         }
       ],
       "every_step_rose": true,
-      "smallest_step_in_sigmas": 4.15,
+      "smallest_step_in_sigmas": 3.96,
+      "the_step_the_shipped_count_rests_on": {
+        "from_fits": 5,
+        "to_fits": 9,
+        "detection_rose_by": 0.1367,
+        "one_sigma_of_the_difference": 0.0273,
+        "in_sigmas": 5.0,
+        "this_pair_includes_the_shipped_count": true,
+        "an_endpoint_detected_every_run": false
+      },
+      "not_every_step_is_equally_firm": "the two steps are published separately because they do not reproduce equally well. The step up to the shipped count has come back above five sigma in every run including an independent lane's. The step from the shipped count to seventeen fits has come back anywhere from below three sigma to above five, and one regeneration put seventeen fits at 300 of 300, where the standard two-proportion formula flatters the comparison. Nothing shipped depends on that upper step, so the record orders it and declines to put a floor under it",
       "so": "detection rises with the fit count by more than the measurement's own noise at every step, which the thirty-run sweep above could not show and on one regeneration contradicted. That sweep is retained because its scatter is the subject of this record; this block is what the structural claim behind the shipped repeat count rests on",
       "what_it_does_not_say": "that more fits are free. Each repeat is another RANSAC fit on the downsampled cloud, and the record does not measure the cost, so this orders the configurations by detection and not by any trade-off"
     },
     "why_it_is_not_one": "The check fires when the repeats disagree, so it misses when every fit lands on the same branch. The chance-agreement account of the residual, (1-p)^n + p^n for a per-fit minority rate p over n fits, is consistent with the measurement when the measurement has the power to test it: see does_the_minority_rate_vary_between_processes, which puts 3600 checks against each process's own p and finds the predicted and observed miss counts within a couple of sigma. It is admissible, not confirmed -- the independence it assumes between fits in one run is untested. The rates above are measurements either way and are not derived from any model.",
     "independence_of_the_fits": {
       "model_tested": "(1-p)^n + p^n, for n fits and a fixed per-fit minority p",
-      "per_fit_minority_rate_measured_in_this_process": 0.275,
+      "per_fit_minority_rate_measured_in_this_process": 0.3,
       "exponent_is": "the number of fits, which is one plus the repeats",
       "predictions": [
         {
           "fits": 5,
-          "probability_all_fits_agree": 0.201877,
-          "predicted_misses": 6.056,
-          "observed_misses": 4,
-          "one_sided_p_of_at_most_the_observed": 0.2472
+          "probability_all_fits_agree": 0.1705,
+          "predicted_misses": 5.115,
+          "observed_misses": 7,
+          "one_sided_p_of_at_most_the_observed": 0.8744
         },
         {
           "fits": 9,
-          "probability_all_fits_agree": 0.055349,
-          "predicted_misses": 1.66,
-          "observed_misses": 0,
-          "one_sided_p_of_at_most_the_observed": 0.1812
+          "probability_all_fits_agree": 0.040373,
+          "predicted_misses": 1.211,
+          "observed_misses": 3,
+          "one_sided_p_of_at_most_the_observed": 0.9685
         },
         {
           "fits": 17,
-          "probability_all_fits_agree": 0.004224,
-          "predicted_misses": 0.127,
+          "probability_all_fits_agree": 0.002326,
+          "predicted_misses": 0.07,
           "observed_misses": 0,
-          "one_sided_p_of_at_most_the_observed": 0.8807
+          "one_sided_p_of_at_most_the_observed": 0.9325
         }
       ],
-      "counts_where_this_process_rejects_the_model": [],
+      "counts_where_this_process_rejects_the_model": [
+        9
+      ],
       "this_verdict_does_not_reproduce": "and that is the point -- see across_processes below. One process is not enough to decide this, so no verdict is published from this block alone",
       "does_the_minority_rate_vary_between_processes": {
         "and_does_it_predict_the_miss_rate": {
           "fits_per_check": 9,
           "checks_run": 3600,
-          "misses_predicted_by_each_process_own_minority_rate": 284.2,
-          "misses_observed": 287,
-          "one_sigma_of_the_prediction": 16.1,
-          "gap_in_sigmas": 0.17,
+          "misses_predicted_by_each_process_own_minority_rate": 306.0,
+          "misses_observed": 294,
+          "one_sigma_of_the_prediction": 16.7,
+          "gap_in_sigmas": -0.72,
           "model_rejected": false,
           "so": "stated as the comparison rather than as a verdict, because the quantity that decides it is a gap in sigmas and a reader should see both terms",
           "where_the_sign_of_this_gap_stands": {
@@ -503,11 +552,11 @@
               -1.04,
               -0.02,
               -2.72,
-              0.17
+              -0.72
             ],
             "this_runs_gap_is_the_last_of_them": true,
-            "mean_gap_in_sigmas": -1.01,
-            "pooled_z": -2.67,
+            "mean_gap_in_sigmas": -1.14,
+            "pooled_z": -3.01,
             "how_this_sample_was_sized": "adaptively, which a reader has to know to weigh the z above. The block was run once, then again because the first two gaps looked like a bias, and the decision to keep running was made after seeing them. A z from a sample whose size depended on the data it contains is weaker than the same z from a sample sized in advance, and the direction of the bias is towards overstating the effect. Each regeneration adds one draw on the same terms",
             "negative_means": "fewer misses observed than predicted, so the fits all agree less often than independence would make them and the check misses slightly less often than the model says. The direction favours the check",
             "so": "the gap has leaned negative across these runs, and pooled it is a couple of sigma from zero -- enough to suspect the model over-predicts misses by around a tenth, not enough to publish that as a figure, and in the direction that makes the check better than the model rather than worse. No single run rejects the model and the record does not assert it, so this changes nothing downstream. It is published because declining to look at the direction after six runs would be the same error as reading it after two"
@@ -532,28 +581,28 @@
         ],
         "per_fit_minority_per_process": [
           0.2575,
-          0.265,
-          0.245,
+          0.23,
           0.24,
-          0.245,
-          0.2675,
-          0.2925,
-          0.2825,
+          0.27,
           0.22,
-          0.225,
+          0.2825,
+          0.24,
+          0.2525,
           0.205,
-          0.2425
+          0.225,
+          0.26,
+          0.2225
         ],
         "per_fit_minority_range": [
           0.205,
-          0.2925
+          0.2825
         ],
-        "pooled_per_fit_minority": 0.249,
-        "one_sigma_of_counting_noise_at_that_rate": 0.0216,
-        "spread_in_sigmas": 4.05,
-        "chi_square": 15.39,
+        "pooled_per_fit_minority": 0.2421,
+        "one_sigma_of_counting_noise_at_that_rate": 0.0214,
+        "spread_in_sigmas": 3.62,
+        "chi_square": 12.59,
         "degrees_of_freedom": 11,
-        "chi_square_per_degree_of_freedom": 1.4,
+        "chi_square_per_degree_of_freedom": 1.14,
         "homogeneity_rejected": false,
         "so": "at ten times the power the four-process probe had, the per-process minority rates are consistent with one fixed rate: the chi-square per degree of freedom is near one and the spread is a couple of sigma of counting noise, where a rate genuinely spanning 0.2 to 0.375 would now be eight. The variation the low-power probe saw was its own noise. This removes the reason that probe gave for withdrawing the chance-agreement model, so a fixed-p model is admissible on this evidence",
         "what_this_still_does_not_establish": "that the model is correct. Admissible is not confirmed: this measures the rate's stability across processes, not whether the fits within one pipeline run are independent of each other, which is the assumption the model actually needs. The detection rates published above do not depend on it either way",
@@ -565,20 +614,20 @@
         "fits_per_minority_estimate": 40,
         "observations": [
           {
-            "per_fit_minority": 0.275,
-            "predicted_misses": 1.66,
-            "observed_misses": 7,
-            "of_runs": 30,
-            "one_sided_p": 0.9998,
-            "model_rejected_here": true
-          },
-          {
-            "per_fit_minority": 0.175,
-            "predicted_misses": 5.311,
+            "per_fit_minority": 0.225,
+            "predicted_misses": 3.026,
             "observed_misses": 1,
             "of_runs": 30,
-            "one_sided_p": 0.0216,
-            "model_rejected_here": true
+            "one_sided_p": 0.1798,
+            "model_rejected_here": false
+          },
+          {
+            "per_fit_minority": 0.2,
+            "predicted_misses": 4.027,
+            "observed_misses": 1,
+            "of_runs": 30,
+            "one_sided_p": 0.0749,
+            "model_rejected_here": false
           },
           {
             "per_fit_minority": 0.25,
@@ -589,23 +638,23 @@
             "model_rejected_here": false
           },
           {
-            "per_fit_minority": 0.125,
-            "predicted_misses": 9.02,
+            "per_fit_minority": 0.225,
+            "predicted_misses": 3.026,
             "observed_misses": 2,
             "of_runs": 30,
-            "one_sided_p": 0.0021,
-            "model_rejected_here": true
+            "one_sided_p": 0.4053,
+            "model_rejected_here": false
           }
         ],
         "per_fit_minority_range": [
-          0.125,
-          0.275
+          0.2,
+          0.25
         ],
-        "pooled_per_fit_minority": 0.2062,
-        "one_sigma_of_counting_noise_at_that_rate": 0.064,
-        "spread_in_sigmas": 2.34,
+        "pooled_per_fit_minority": 0.225,
+        "one_sigma_of_counting_noise_at_that_rate": 0.066,
+        "spread_in_sigmas": 0.76,
         "the_spread_exceeds_counting_noise": false,
-        "processes_rejecting_the_model": 3,
+        "processes_rejecting_the_model": 0,
         "so": "nothing, on its own. At forty fits per estimate this probe could not separate a varying rate from counting noise in either direction, and it was measuring repeated runs in one process while reporting them as separate processes. Its verdicts are retained as observations. The between-process question it was built for is answered at ten times this power by `does_the_minority_rate_vary_between_processes` above",
         "what_would_settle_it": "a few hundred fits per process across a dozen processes would separate a varying rate from counting noise. That is a question about RANSAC's threading, not about whether this check works, so it is named rather than answered here"
       },
@@ -623,7 +672,7 @@
     "construction": "the Armadillo mesh sampled to 40000 points: no floor, no wall",
     "repeats_that_agreed": 40,
     "of_repeats": 40,
-    "plane_tilt_to_the_snapped_axis_degrees": 14.0,
+    "plane_tilt_to_the_snapped_axis_degrees": 12.0,
     "this_tilt_is_a_floor_the_measurement_cleared": true,
     "plane_inlier_fraction_was_at_most": 0.14,
     "evidence": "docs/evidence/open3d/up-axis-ambiguity.json"

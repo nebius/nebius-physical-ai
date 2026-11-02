@@ -16,6 +16,8 @@ in the functional smoke.
 
 from __future__ import annotations
 
+import re
+import ast
 import json
 from pathlib import Path
 from typing import Any
@@ -364,23 +366,51 @@ def test_the_published_counterexample_reconstructs_from_the_record() -> None:
     assert branches[0]["chosen_by_fits"] == published["repeats_that_agreed"]
     assert case["single_fit_distribution"]["fits"] == published["of_repeats"]
 
-    # Bounds, checked by direction. Equality against the measured extremes is what
-    # went stale here: these fits are not reproducible, so the record's minimum moves
-    # on every regeneration and a constant quoting it is wrong by the next run.
-    low, _high = branches[0]["tilt_to_snapped_axis_degrees_range"]
+    # Bounds, checked by direction *and* by margin. Equality against the measured
+    # extremes went stale first, so this became a direction -- and that fixed the
+    # wrong half: a bound on the right side of one draw by a hair is still pinned to
+    # that draw. The tilt floor was 14.0 against observed minima of 14.11, 14.32,
+    # 13.74 and 13.41, so it held twice and then did not.
+    #
+    # The margin each bound needs is measured, not picked. Each branch publishes the
+    # range its 40 fits covered, and a bound has to clear the nearest end of that
+    # range by a tenth of its width. A flat percentage was the first attempt and it
+    # was the wrong rule: it asks as much of the inlier fraction, whose maximum has
+    # moved 0.25% across four runs, as of the tilt, whose minimum has moved 3%.
+    clearance = 0.1
+
+    def _clears(bound: float, nearest: float, spread: float, what: str) -> None:
+        assert abs(nearest - bound) >= clearance * spread, (
+            f"the published {what} {bound} sits {abs(nearest - bound):.4g} from the "
+            f"{nearest} this run measured, inside a tenth of the {spread:.4g} the "
+            "record's own fits span. A bound that close is pinned to this draw: the "
+            "tilt floor was 14.0 against a measured 14.11 by exactly this margin, "
+            "and two regenerations later the evidence had crossed it"
+        )
+
+    low, high = branches[0]["tilt_to_snapped_axis_degrees_range"]
+    floor = published["plane_tilt_to_the_snapped_axis_degrees"]
     assert published["this_tilt_is_a_floor_the_measurement_cleared"] is True
-    assert low >= published["plane_tilt_to_the_snapped_axis_degrees"], (
-        f"the record's smallest tilt {low} fell below the "
-        f"{published['plane_tilt_to_the_snapped_axis_degrees']} the code publishes as "
-        "a floor, so the published claim is no longer covered by its evidence"
+    assert low >= floor, (
+        f"the record's smallest tilt {low} fell below the {floor} the code publishes "
+        "as a floor, so the published claim is no longer covered by its evidence"
     )
-    _low, fraction_high = branches[0]["plane_inlier_fraction_range"]
-    assert fraction_high <= published["plane_inlier_fraction_was_at_most"], (
+    _clears(floor, low, high - low, "tilt floor")
+
+    fraction_low, fraction_high = branches[0]["plane_inlier_fraction_range"]
+    ceiling = published["plane_inlier_fraction_was_at_most"]
+    assert fraction_high <= ceiling, (
         f"the record's largest inlier fraction {fraction_high} exceeded the "
-        f"{published['plane_inlier_fraction_was_at_most']} the code publishes"
+        f"{ceiling} the code publishes"
     )
-    # The bound must still be worth stating: a floor of zero would always pass.
+    _clears(ceiling, fraction_high, fraction_high - fraction_low, "inlier ceiling")
+
+    # Both bounds must still be worth stating. A floor of zero degrees and a ceiling
+    # of every point in the cloud would clear every assertion above, and would say
+    # nothing: the claim is that this plane is tilted well off the axis it implies
+    # and is supported by a small minority of the points.
     assert published["plane_tilt_to_the_snapped_axis_degrees"] >= 10.0, published
+    assert ceiling <= 0.25, published
 
 
 def test_the_record_and_the_code_publish_the_same_counterexample() -> None:
@@ -674,6 +704,7 @@ def test_the_detection_rate_the_code_states_is_the_one_the_record_measured() -> 
     from npa.workbench.open3d.runner import (
         UP_AXIS_DETECTION_FLOOR_OF_THIRTY,
         UP_AXIS_DETECTION_RISES_WITH_FITS,
+        UP_AXIS_REPEATS,
     )
 
     rates = sorted(
@@ -710,15 +741,156 @@ def test_the_detection_rate_the_code_states_is_the_one_the_record_measured() -> 
     assert rise["each_process_is_a_fresh_interpreter"] is True, rise
     assert rise["runs_per_configuration"] >= 300, rise
     assert rise["detection_rate"] == sorted(rise["detection_rate"]), rise
-    # Rising by more than the difference's own noise, at every step, or the ordering
-    # is the thirty-run sweep's problem again with more decimal places.
-    assert rise["smallest_step_in_sigmas"] > 3.0, rise
+
+    # The sigma floor is applied to the step the shipped count rests on, and not to
+    # whichever step happens to be smallest. Those were the same assertion while both
+    # steps looked firm; they are not. An independent lane ran this harness and
+    # returned 2.91 sigma on the upper step where this run had 4.15, so a floor of 3.0
+    # over the minimum was a gate that a reproduction of my own measurement failed.
+    # The lower step has come back above five sigma in every run, including theirs.
+    shipped_step = rise["the_step_the_shipped_count_rests_on"]
+    assert shipped_step is not None, rise
+    assert shipped_step["to_fits"] == UP_AXIS_REPEATS + 1, shipped_step
+    assert shipped_step["in_sigmas"] > 3.0, shipped_step
+    assert not shipped_step["an_endpoint_detected_every_run"], (
+        "the step the default rests on now ends at a perfect rate, where the "
+        f"two-proportion sigma is optimistic, so this floor is flattered: {shipped_step}"
+    )
+    # The upper step is ordered, not bounded. Putting a floor under it would be
+    # re-pinning a claim to a measurement that has not reproduced at that strength.
+    for pair in rise["consecutive_pairs"]:
+        assert pair["detection_rose_by"] > 0.0, pair
     for pair in rise["consecutive_pairs"]:
         rebuilt = pair["detection_rose_by"] / pair["one_sigma_of_the_difference"]
         assert pair["in_sigmas"] == pytest.approx(rebuilt, rel=0.02), pair
     assert any(
         one["this_pair_includes_the_shipped_count"] for one in rise["consecutive_pairs"]
     ), rise
+
+
+def test_a_second_lane_measured_these_rates_on_its_own_machine() -> None:
+    """Two sweeps sharing nothing but the harness bytes agree on the rates.
+
+    One 900-run sweep measures one machine. An independent lane ran these harness
+    bytes on its own host, in its own virtualenv, against a fresh download of the
+    demo meshes, with no seed anywhere in the code, and landed within a couple of
+    sigma per configuration. That is a stronger statement about the rates than any
+    single run, and it is the reason this record can put numbers on the default
+    rather than an ordering.
+    """
+
+    reproduction = _record()["detection_by_repeat_count"][
+        "does_detection_rise_with_the_fit_count"
+    ]["an_independent_lane_ran_this_too"]
+
+    assert reproduction["runs_each"] >= 300, reproduction
+    assert len(reproduction["detections_they_reported"]) == len(
+        reproduction["per_configuration"]
+    )
+    # The citation is bound to the harness constant, in both directions. Recomputing
+    # the sigmas from the record's own numbers cannot catch a misquoted citation: the
+    # arithmetic stays self-consistent whatever the counts say. Parsed rather than
+    # imported so this does not need Open3D installed.
+    cited = next(
+        ast.literal_eval(node.value)
+        for node in ast.parse(
+            (EVIDENCE / "harness" / "up_axis_ambiguity.py").read_text()
+        ).body
+        if isinstance(node, ast.Assign)
+        and getattr(node.targets[0], "id", None) == "INDEPENDENT_RUN_DETECTIONS"
+    )
+    assert list(reproduction["detections_they_reported"]) == list(cited), (
+        "the record's citation of the independent run has drifted from the figures "
+        f"the harness computes against: {reproduction['detections_they_reported']} "
+        f"in the record, {list(cited)} in the harness"
+    )
+    # Recomputed from the two counts rather than read back, so a published sigma that
+    # does not follow from the proportions beside it fails here.
+    for row in reproduction["per_configuration"]:
+        mine, theirs = row["this_run"], row["the_independent_run"]
+        pooled = (mine + theirs) / 2.0
+        error = (2.0 * pooled * (1.0 - pooled) / reproduction["runs_each"]) ** 0.5
+        if error == 0:
+            assert row["difference_in_sigmas"] is None, row
+            continue
+        assert row["difference_in_sigmas"] == pytest.approx(
+            (theirs - mine) / error, rel=0.02
+        ), row
+
+    assert reproduction["widest_disagreement_in_sigmas"] < 3.0, (
+        "the independent run no longer agrees with this one, which is a finding about "
+        f"the measurement rather than a detail of the record: {reproduction}"
+    )
+    where = reproduction["where_the_two_runs_are_softest"]
+    assert "seventeen" in where, where
+    assert "rests on the lower step" in where, where
+
+
+def test_every_string_the_tests_demand_comes_from_the_harness() -> None:
+    """A disclosure only a hand-edit carries is dropped by the next regeneration.
+
+    `how_this_sample_was_sized` was the reviewer's condition for publishing the
+    pooled z, and it sat in the record while no producer emitted it. The test that
+    demands it passed against a file nothing reproduces, so regenerating removed the
+    disclosure and failed the test -- which is how this was found. Checking the
+    harness source for the keys this file asserts on is cheap and catches the shape
+    rather than the instance.
+    """
+
+    # The harness and the product both legitimately produce keys here: the harness
+    # writes its own measurements, and it quotes the runner's `up_axis_inference`
+    # output verbatim rather than restating it. Either is a producer. A key that is in
+    # neither is a hand-edit.
+    import npa.workbench.open3d
+
+    producers = "".join(
+        path.read_text()
+        for path in [EVIDENCE / "harness" / "up_axis_ambiguity.py"]
+        + sorted((Path(npa.workbench.open3d.__file__).parent).glob("*.py"))
+    )
+    asserted = set(
+        re.findall(r'\[\s*"([a-z][a-z0-9_]{6,})"\s*\]', Path(__file__).read_text())
+    )
+    published = json.dumps(_record())
+    missing = sorted(
+        key
+        for key in asserted
+        if f'"{key}"' not in producers and f'"{key}"' in published
+    )
+    assert not missing, (
+        "these keys are asserted by this file and present in the record, but nothing "
+        f"produces them, so a regeneration drops them: {missing}"
+    )
+
+
+def test_the_soft_step_is_named_rather_than_floored() -> None:
+    """The record must not present two steps of different firmness as one result.
+
+    `smallest_step_in_sigmas` was gated at 3.0, and an independent reproduction came
+    back at 2.91 on the upper step. The claim that survives both runs is the ordering
+    everywhere and a strong bound only on the step the default rests on.
+    """
+
+    rise = _record()["detection_by_repeat_count"][
+        "does_detection_rise_with_the_fit_count"
+    ]
+    caveat = rise["not_every_step_is_equally_firm"]
+    assert "below three" in caveat, caveat
+    assert "flatters" in caveat or "optimistic" in caveat, caveat
+    assert "Nothing shipped depends on that upper step" in caveat, caveat
+
+    # Checked in both directions. Only the first was asserted at first, and it has no
+    # teeth in a record where no rate reached 1.0: the loop ran zero times and a flag
+    # hardcoded to False passed. The converse is the one that matters, because the
+    # flag exists to warn that a perfect proportion contributes nothing to the pooled
+    # standard error and so flatters the sigma published beside it.
+    rate_of = dict(zip(rise["fits_per_configuration"], rise["detection_rate"]))
+    for pair in rise["consecutive_pairs"]:
+        endpoints = (rate_of[pair["from_fits"]], rate_of[pair["to_fits"]])
+        assert pair["an_endpoint_detected_every_run"] == (1.0 in endpoints), (
+            f"the flag disagrees with the rates it summarises: {endpoints} against "
+            f"{pair['an_endpoint_detected_every_run']}"
+        )
 
 
 def test_the_record_publishes_a_detection_rate_rather_than_a_guarantee() -> None:

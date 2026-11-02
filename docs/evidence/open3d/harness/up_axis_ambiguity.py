@@ -420,6 +420,79 @@ def sweep_in_this_process() -> list[int]:
     ]
 
 
+#: Detections per configuration reported by an independent lane that ran this harness on
+#: its own host, in its own virtualenv, against a fresh download of the demo meshes, at
+#: the same 300 runs across 12 interpreters. Quoted, not measured here -- which is why
+#: the comparison below is computed from it rather than restated, and why the record says
+#: whose numbers these are. Nothing is shared between the two runs but the harness bytes.
+INDEPENDENT_RUN_DETECTIONS = (233, 283, 296)
+
+
+def _against_the_independent_run(totals: list[int], of_runs: int) -> dict[str, Any]:
+    """Compare this run's proportions against the independently reported ones.
+
+    Two sweeps of nine hundred runs each, sharing no interpreter, no virtualenv and no
+    seed -- there is no seed anywhere in this harness -- are a stronger statement about
+    these rates than either sweep alone. The reason to compute the comparison instead of
+    noting that it agreed is that a regeneration moves these proportions, so the
+    agreement has to be recomputed to stay true.
+
+    The per-step result matters more than the headline. Both runs find every step
+    rising, but the step from nine fits to seventeen is the soft one in both, and the
+    independent run put it below three sigma. The shipped repeat count does not depend
+    on that step.
+    """
+
+    compared = []
+    for index, count in enumerate(REPEAT_COUNTS):
+        mine = totals[index] / of_runs
+        theirs = INDEPENDENT_RUN_DETECTIONS[index] / of_runs
+        pooled = (totals[index] + INDEPENDENT_RUN_DETECTIONS[index]) / (2 * of_runs)
+        error = (2.0 * pooled * (1.0 - pooled) / of_runs) ** 0.5
+        compared.append(
+            {
+                "fits": count + 1,
+                "this_run": round(mine, 4),
+                "the_independent_run": round(theirs, 4),
+                "difference_in_sigmas": round((theirs - mine) / error, 2)
+                if error > 0
+                else None,
+                "is_the_shipped_count": count == UP_AXIS_REPEATS,
+            }
+        )
+    widest = max(
+        (one for one in compared if one["difference_in_sigmas"] is not None),
+        key=lambda one: abs(one["difference_in_sigmas"]),
+        default=None,
+    )
+    return {
+        "whose": (
+            "an independent review lane, on its own host and virtualenv, with a fresh "
+            "download of the demo meshes and these harness bytes"
+        ),
+        "runs_each": of_runs,
+        "detections_they_reported": list(INDEPENDENT_RUN_DETECTIONS),
+        "per_configuration": compared,
+        "widest_disagreement_in_sigmas": (
+            abs(widest["difference_in_sigmas"]) if widest else None
+        ),
+        "what_this_adds": (
+            "the rates themselves, not just the ordering. Two sweeps of this size "
+            "sharing no interpreter, no virtualenv and no seed agreeing to within a "
+            "sigma or so is what a real measurement looks like; one sweep is a "
+            "measurement of one machine"
+        ),
+        "where_the_two_runs_are_softest": (
+            "the step from nine fits to seventeen. Both runs find it positive and both "
+            "find the step containing the shipped count far stronger, but the "
+            "independent run put the upper step below three sigma where this one is "
+            "higher. The shipped repeat count rests on the lower step, so quoting the "
+            "seventeen-fit improvement on its own would be quoting the least "
+            "reproducible part of this curve"
+        ),
+    }
+
+
 def rise_with_fit_count() -> dict[str, Any]:
     """Does detection actually rise with the fit count, measured with enough runs?
 
@@ -472,10 +545,20 @@ def rise_with_fit_count() -> dict[str, Any]:
                 "one_sigma_of_the_difference": round(error, 4),
                 "in_sigmas": round(difference / error, 2) if error > 0 else None,
                 "this_pair_includes_the_shipped_count": shipped in (lower, upper),
+                # A proportion of exactly 1.0 contributes nothing to the standard
+                # error, so a step ending at a clean sweep gets an optimistic sigma
+                # from the standard two-proportion formula. Seventeen fits returned
+                # 300 of 300 on one regeneration and 296 on an independent lane's,
+                # which is the same rate measured twice, not a rate of one. Flagged
+                # rather than adjusted: the formula is the usual one and the reader
+                # needs to know which cell it flattered.
+                "an_endpoint_detected_every_run": 1.0 in (rates[lower], rates[upper]),
             }
         )
     decisive = [one for one in pairs if one["in_sigmas"] is not None]
+    reproduction = _against_the_independent_run(totals, of_runs)
     return {
+        "an_independent_lane_ran_this_too": reproduction,
         "processes": HIGH_POWER_PROCESSES,
         "each_process_is_a_fresh_interpreter": True,
         "runs_per_configuration": of_runs,
@@ -486,6 +569,24 @@ def rise_with_fit_count() -> dict[str, Any]:
         "every_step_rose": all(one["detection_rose_by"] > 0.0 for one in pairs),
         "smallest_step_in_sigmas": (
             min(one["in_sigmas"] for one in decisive) if decisive else None
+        ),
+        "the_step_the_shipped_count_rests_on": next(
+            (
+                one
+                for one in pairs
+                if one["to_fits"] == UP_AXIS_REPEATS + 1 and one["in_sigmas"]
+            ),
+            None,
+        ),
+        "not_every_step_is_equally_firm": (
+            "the two steps are published separately because they do not reproduce "
+            "equally well. The step up to the shipped count has come back above five "
+            "sigma in every run including an independent lane's. The step from the "
+            "shipped count to seventeen fits has come back anywhere from below three "
+            "sigma to above five, and one regeneration put seventeen fits at 300 of "
+            "300, where the standard two-proportion formula flatters the comparison. "
+            "Nothing shipped depends on that upper step, so the record orders it and "
+            "declines to put a floor under it"
         ),
         "so": (
             "detection rises with the fit count by more than the measurement's own "
@@ -646,6 +747,21 @@ def _pooled_gap(gap: float | None) -> dict[str, Any]:
         "this_runs_gap_is_the_last_of_them": gap is not None,
         "mean_gap_in_sigmas": round(mean, 2),
         "pooled_z": round(pooled_z, 2),
+        # Emitted here because a regeneration has to carry it. This disclosure was the
+        # independent reviewer's condition for publishing the pooled z at all, and it
+        # had been hand-written into the record while no producer emitted it -- so the
+        # next regeneration would have dropped it and left the z standing alone, with
+        # the test that demands it passing only against a file nothing reproduces.
+        # Found by regenerating, which is the only thing that finds this.
+        "how_this_sample_was_sized": (
+            "adaptively, which a reader has to know to weigh the z above. The block "
+            "was run once, then again because the first two gaps looked like a bias, "
+            "and the decision to keep running was made after seeing them. A z from a "
+            "sample whose size depended on the data it contains is weaker than the "
+            "same z from a sample sized in advance, and the direction of the bias is "
+            "towards overstating the effect. Each regeneration adds one draw on the "
+            "same terms"
+        ),
         "negative_means": (
             "fewer misses observed than predicted, so the fits all agree less often "
             "than independence would make them and the check misses slightly less "
