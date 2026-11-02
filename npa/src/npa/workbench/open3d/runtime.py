@@ -37,6 +37,7 @@ from .artifacts import (
     validate_pose_graph,
     validate_result,
     validate_overlay_matches_crop,
+    validate_density_crop_contribution,
     validate_support,
     verify_rerun_recording,
 )
@@ -530,6 +531,7 @@ def reconstruct(request: ReconstructRequest) -> dict[str, Any]:
         validate_mesh(report["mesh"])
         validate_mesh(report["mesh_uncropped"])
         validate_support(report, voxel_size=_load_manifest_voxel(manifest_report))
+        validate_density_crop_contribution(report)
         mesh = (output / MESH_FILENAME).read_bytes()
         if sha256_bytes(mesh) != report["mesh"]["sha256"]:
             raise Open3dError("reconstructed mesh does not match its reported digest")

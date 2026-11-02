@@ -19,6 +19,28 @@ own question and method in its module docstring.
 | The floor is set by the voxel-to-sample-spacing ratio, not by geometry, sampling or mesh resolution | `floor-vs-voxel-multiple.json`, `floor-vs-resolution.json` |
 | Even sampling zeroes the headline fraction, so its failure is a capture-time artefact | `poisson-procedure-and-overcall-audit.json` |
 
+### The density crop's removal count described work the next stage was going to do
+
+`density-crop-contribution.json`. Reconstruction applies two filters in sequence: the density
+crop removes vertices in the lowest quantile of Poisson's sample density, and the support crop
+then removes vertices farther than `support_distance_factor` voxels from any observed point. The
+report published the density crop's removal count, which reads as surface that filter took out of
+the delivered mesh.
+
+At the shipped defaults on the upstream demo scan, **zero** of the 518 density-removed vertices lay
+within the support distance, and the delivered mesh is identical with the density crop disabled —
+to the triangle and to six decimal places of surface area. The count was never wrong; reading it as
+this filter's effect on the delivered surface was, and nothing in the report separated the two. The
+run now publishes how much of the removal was the density crop's own.
+
+The control carries the weight: with support cropping off the density crop is the only filter and
+removes 1023 triangles and 6.72 m² of surface, so "it changed nothing" at the defaults is overlap
+with the next filter rather than a measurement that cannot see a crop. Two further readings are
+recorded against the obvious misreadings — the crop is strongly selective (Spearman −0.72 of
+density against distance to the cloud), so this is not a filter trimming at random; and pushed to
+the 0.20 quantile it removes nearly nine thousand triangles of *supported* surface, so the answer
+is not to raise the quantile until it contributes.
+
 ## Reproducing
 
 ```bash

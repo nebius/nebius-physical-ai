@@ -395,6 +395,65 @@ def validate_overlay_matches_crop(recording: Any, reconstruction: Any) -> None:
         )
 
 
+#: Distinguishes "the report does not carry this block" from "it carries None",
+#: which are different facts: the first predates the block, the second published a
+#: measurement as nothing.
+_ABSENT = object()
+
+
+def validate_density_crop_contribution(report: Any) -> None:
+    """Hold the density crop's reported contribution to its own removal count.
+
+    `low_density_vertices_removed` reads as surface this filter took out of the
+    delivered mesh. Whenever support cropping is on, it usually is not: the two
+    crops overlap almost entirely, because a vertex the solver extrapolated into
+    empty space is both low-density and far from any observation. The contribution
+    block says how much of the removal was this crop's own, and this keeps that
+    block honest about the count beside it.
+
+    Optional: reports written before the block existed are still valid.
+    """
+
+    if not isinstance(report, dict):
+        raise Open3dError("density-crop check needs the reconstruction report")
+    contribution = report.get("density_crop_contribution", _ABSENT)
+    if contribution is _ABSENT or contribution is None:
+        return
+    if not isinstance(contribution, dict) or not contribution:
+        raise Open3dError(
+            "density_crop_contribution must be a non-empty mapping when present"
+        )
+    for key in ("vertices_removed", "removed_only_by_this_crop"):
+        value = contribution.get(key)
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise Open3dError(f"density_crop_contribution {key} must be a count")
+    removed = contribution["vertices_removed"]
+    exclusive = contribution["removed_only_by_this_crop"]
+    if exclusive > removed:
+        raise Open3dError(
+            "density_crop_contribution claims more exclusive removals than removals"
+        )
+    disabled = contribution.get("support_crop_was_disabled")
+    if not isinstance(disabled, bool):
+        raise Open3dError(
+            "density_crop_contribution must say whether support cropping was on"
+        )
+    # With no support crop to overlap with, every density removal is this crop's own.
+    # A report claiming otherwise is describing a pipeline that did not run.
+    if disabled and exclusive != removed:
+        raise Open3dError(
+            "support cropping was disabled, so every density removal is this crop's "
+            f"own, but the report credits it with {exclusive} of {removed}"
+        )
+    published = report.get("low_density_vertices_removed")
+    if isinstance(published, int) and not isinstance(published, bool):
+        if published != removed:
+            raise Open3dError(
+                "density_crop_contribution counts a different number of removals "
+                f"({removed}) than the report publishes ({published})"
+            )
+
+
 def validate_support(report: Any, *, voxel_size: float) -> None:
     """Check the support/coverage pair a reconstruction publishes about itself.
 
