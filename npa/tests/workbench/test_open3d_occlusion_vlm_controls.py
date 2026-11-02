@@ -488,3 +488,66 @@ def test_the_record_says_which_part_of_the_number_reproduces(controls) -> None:
         "fourth-decimal movement this statement exists to describe"
     )
     assert measured > FROZEN_A2_THRESHOLD, measured
+
+
+@pytest.fixture(scope="module")
+def layer_repeats() -> dict:
+    return json.loads((CONTROLS.parent / "vlm-control-layer-repeats.json").read_text())
+
+
+def test_the_pixel_counts_move_because_the_geometry_does(layer_repeats) -> None:
+    """The mechanism, because the obvious reading of a moving pixel count is wrong.
+
+    A fraction that shifts between renders of "the same" scene invites a reader to
+    suspect the rasterizer. Repeating the geometry half of this pipeline shows the fused
+    cloud arriving byte-identical every time and both Poisson layers arriving different,
+    so the renderer is drawing geometry that genuinely differs and is not itself accused
+    by anything measured here.
+
+    Asserted as verdicts rather than figures. Every number in that record is a
+    between-run comparison and is expected to move; a test pinning one would fail for
+    exactly the thing the record documents.
+
+    Needs no Open3D.
+    """
+    layers = layer_repeats["layers"]
+    assert layer_repeats["bit_identical_layers"] == ["fused"], layer_repeats[
+        "bit_identical_layers"
+    ]
+    assert sorted(layer_repeats["varying_layers"]) == ["retained", "subject"]
+
+    assert layers["fused"]["point_count_is_stable"]
+    for name in ("retained", "subject"):
+        one = layers[name]
+        assert not one["bit_identical_every_repeat"], one
+        # The distinction the harness exists to draw: different points, not a reordering.
+        assert not one["the_same_points_in_another_order"], (
+            f"{name} differs only in order, which a z-buffer tie would explain and "
+            "which would not move a point count"
+        )
+        assert one["largest_fraction_of_points_differing"] > 0.0, one
+
+    # The crop's own output is where a count can move, and it does.
+    assert not layers["subject"]["point_count_is_stable"], layers["subject"]
+
+
+def test_the_two_records_agree_on_where_the_variation_enters(
+    controls, layer_repeats
+) -> None:
+    """Two files making one claim, which is how the earlier inconsistency happened.
+
+    The manifest's statement sends a reader to the layer record. If that record were
+    regenerated into saying the fused cloud varies, or that the Poisson layers do not,
+    the statement would be stranded and still read as authoritative.
+    """
+    said = controls["reproducibility"]["what_reproduces"]
+    assert "vlm-control-layer-repeats.json" in said
+
+    assert "fused" in layer_repeats["bit_identical_layers"], (
+        "the manifest says the fused cloud is byte-identical across repeats and the "
+        "record it cites no longer shows that"
+    )
+    assert layer_repeats["varying_layers"], (
+        "the manifest blames an upstream stage and the record it cites shows every "
+        "layer reproducing"
+    )

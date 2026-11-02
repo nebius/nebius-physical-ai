@@ -78,7 +78,10 @@ def main() -> None:
             "defect this script exists to correct.",
         ],
         "inputs": {
-            "fused_ply": {"path": fused.name, "sha256": payload["pose_graph"]["fused_sha256"]},
+            "fused_ply": {
+                "path": fused.name,
+                "sha256": payload["pose_graph"]["fused_sha256"],
+            },
             "mesh_ply": {"path": mesh.name, "sha256": sha256(mesh)},
         },
         "output": {"recording": recording.name, "sha256": sha256(recording)},

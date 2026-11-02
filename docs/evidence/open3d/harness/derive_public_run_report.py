@@ -428,7 +428,10 @@ def build(artifacts: Path) -> dict:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--artifacts", required=True, type=Path, help="directory holding the run's artifacts"
+        "--artifacts",
+        required=True,
+        type=Path,
+        help="directory holding the run's artifacts",
     )
     parser.add_argument("--output", required=True, type=Path)
     args = parser.parse_args(argv)

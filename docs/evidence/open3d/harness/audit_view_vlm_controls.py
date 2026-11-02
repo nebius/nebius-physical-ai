@@ -77,27 +77,42 @@ RETAINED_TINT = (215, 215, 220)
 #: opaque surface at the same depth; oversized ones do the reverse.
 FUSED_POINT_RADIUS_PX = 0
 
-#: The pixel counts below are one draw each, and a rerun will not match them.
+#: The pixel counts below will not match a rerun, and the reason is not the rasterizer.
 #:
 #: Five repeats of this harness in one install gave five different render hashes. The
 #: visible count held at 3109 while the footprint it divides by moved between 5960 and
 #: 5961; an independent lane's five repeats moved the visible count too, 3108 to 3109,
-#: and the footprint 5959 to 5961. So the ratio is what reproduces -- 0.5215 to 0.5216
-#: across all ten runs, a spread of 1.7e-04 -- and the fifteen digits published beside
-#: it are one draw's arithmetic, not a reproducible quantity.
+#: and the footprint 5959 to 5961. The ratio is what reproduces -- 0.5215 to 0.5216
+#: across all ten runs, a spread of 1.7e-04.
 #:
-#: This matters only for how to read a rerun. Every one of those ten runs clears the
-#: criterion by more than 20 percentage points, so no conclusion here is near the line.
-#: Without this note a reader who reruns once and sees a different final digit has no
-#: way to tell a second draw from a bug.
+#: Attributing that to the draw would be wrong, and `layer_repeat_diff.py` is the
+#: measurement: repeat the geometry half of this pipeline and the fused cloud comes back
+#: byte-identical every time, while the two layers the frames are built from do not --
+#: and not by reordering. Around 1% of the retained layer's half-million points and 2%
+#: of the subject's eighty-odd thousand are present in one repeat and absent in another,
+#: and the subject's point count itself moves. Both layers come back from
+#: `reconstruct_and_crop`, so they are Poisson output, and #1024 isolated that
+#: reconstruction as the cause of the same class of variation in the support-crop record
+#: -- four distinct surface areas at a fixed thread count, no better at one thread. The
+#: rasterizer is faithfully drawing geometry that differs.
+#:
+#: What survives a 2% change in the point set is the measurement: every one of those ten
+#: runs clears the criterion by more than 20 percentage points. Without this note a
+#: reader who reruns once and sees a different final digit has no way to tell a second
+#: draw from a bug -- and would look for it in the renderer, which is the one part of
+#: this pipeline the evidence does not accuse.
 WHAT_REPRODUCES = (
-    "The ratio, to about three decimals. The pixel counts are a single draw: five "
-    "repeats in one install gave five render hashes and moved the subject's footprint "
-    "between 5960 and 5961 px, and an independent lane's five repeats also moved the "
-    "visible count, 3108 to 3109. Across those ten runs the ratio stayed within "
-    "0.5215..0.5216 and every run cleared the 50% criterion by over 20 points. Expect a "
-    "rerun to differ in the fourth decimal and beyond; the digits past that in "
-    "occluded_over_unoccluded are one draw's arithmetic."
+    "The ratio, to about three decimals. Five repeats in one install gave five render "
+    "hashes and moved the subject's footprint between 5960 and 5961 px; an independent "
+    "lane's five repeats also moved the visible count, 3108 to 3109. Across those ten "
+    "runs the ratio stayed within 0.5215..0.5216 and every run cleared the 50% "
+    "criterion by over 20 points. The cause is upstream of the draw: see "
+    "vlm-control-layer-repeats.json, where the fused cloud is byte-identical across "
+    "repeats while the Poisson layers the frames are built from differ by roughly 1% and "
+    "2% of their points, with the subject's point count itself moving. PR #1024 isolates "
+    "that reconstruction as the cause of the same variation in "
+    "capability-record-support-crop.json. Expect a rerun to differ in the fourth decimal "
+    "and beyond, and do not look for it in the renderer."
 )
 
 

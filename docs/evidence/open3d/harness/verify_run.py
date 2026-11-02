@@ -109,9 +109,9 @@ def held_out(root: Path):
                 "fraction_within_voxel": float((d < VOXEL).mean()),
                 "triangles": int(len(mesh.triangles)),
             }
-        row["median_delta"] = row["candidate"]["median_distance"] - row["baseline"][
-            "median_distance"
-        ]
+        row["median_delta"] = (
+            row["candidate"]["median_distance"] - row["baseline"]["median_distance"]
+        )
         out.append(row)
     return out
 
@@ -129,8 +129,7 @@ def main() -> int:
         "fused": {
             "points": len(fused.points),
             "extent": [
-                float(x)
-                for x in fused.get_axis_aligned_bounding_box().get_extent()
+                float(x) for x in fused.get_axis_aligned_bounding_box().get_extent()
             ],
         },
     }

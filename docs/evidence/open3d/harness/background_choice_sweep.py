@@ -73,7 +73,8 @@ def main() -> int:
         "frames_measured": [p.name for p in frames],
         "content_pixels": int(luminance.size),
         "content_luminance_percentiles": {
-            str(q): float(np.percentile(luminance, q)) for q in (1, 5, 25, 50, 75, 95, 99)
+            str(q): float(np.percentile(luminance, q))
+            for q in (1, 5, 25, 50, 75, 95, 99)
         },
         "shipped_background": shipped,
         "best_background": best,

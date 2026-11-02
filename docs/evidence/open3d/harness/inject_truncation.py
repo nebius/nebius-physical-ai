@@ -27,12 +27,16 @@ def injected(uri: str) -> bytes:
     call = len(log) + 1
     # Only the targeted read is disturbed; every other read is untouched.
     if call == TARGET and MODE == "raise":
-        log.append({"call": call, "uri_suffix": uri[-12:], "injected": "IncompleteRead"})
+        log.append(
+            {"call": call, "uri_suffix": uri[-12:], "injected": "IncompleteRead"}
+        )
         raise OSError("IncompleteRead(5848412 bytes read, 276537 more expected)")
     try:
         payload = real_read(uri)
     except Exception as exc:
-        log.append({"call": call, "uri_suffix": uri[-12:], "real_error": type(exc).__name__})
+        log.append(
+            {"call": call, "uri_suffix": uri[-12:], "real_error": type(exc).__name__}
+        )
         raise
     if call == TARGET and MODE == "short":
         cut = payload[: len(payload) // 2]
@@ -46,7 +50,9 @@ def injected(uri: str) -> bytes:
             }
         )
         return cut
-    log.append({"call": call, "uri_suffix": uri[-12:], "injected": None, "bytes": len(payload)})
+    log.append(
+        {"call": call, "uri_suffix": uri[-12:], "injected": None, "bytes": len(payload)}
+    )
     return payload
 
 

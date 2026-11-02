@@ -422,7 +422,9 @@ def main() -> int:
                 manifest["frames"][-1]["name"],
                 manifest["frames"][-1]["frame_sha256"][:16],
             )
-    Path(plan["manifest_out"]).write_text(json.dumps(manifest, indent=2, sort_keys=True))
+    Path(plan["manifest_out"]).write_text(
+        json.dumps(manifest, indent=2, sort_keys=True)
+    )
     return 0
 
 

@@ -40,13 +40,11 @@ def audit(path: Path, *, border: int = 2) -> dict:
     # The background is the modal corner colour: all four corners of a framed
     # render are background, and taking the mode tolerates one corner holding an
     # annotation.
-    corners = np.stack(
-        [rgb[0, 0], rgb[0, -1], rgb[-1, 0], rgb[-1, -1]]
-    )
+    corners = np.stack([rgb[0, 0], rgb[0, -1], rgb[-1, 0], rgb[-1, -1]])
     values, counts = np.unique(corners, axis=0, return_counts=True)
     background = values[int(np.argmax(counts))]
 
-    content = (np.abs(rgb - background).max(axis=2) > CONTENT_TOLERANCE)
+    content = np.abs(rgb - background).max(axis=2) > CONTENT_TOLERANCE
 
     edges = {
         "top": content[:border, :],

@@ -151,7 +151,9 @@ def main() -> int:
                 findings.append(f"{record.name}: cites missing {reference}")
 
         data = json.loads(text)
-        run_dir = data.get("artifacts_committed_under") if isinstance(data, dict) else None
+        run_dir = (
+            data.get("artifacts_committed_under") if isinstance(data, dict) else None
+        )
         bound, unbound = bound_pairs(data)
         unbound_total += [f"{record.name}:{w}" for w in unbound]
         for where, named, claimed in bound:
