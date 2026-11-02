@@ -18,6 +18,7 @@ own question and method in its module docstring.
 | It does under-call below a sensitivity floor, so a low reading is a lower bound | `floor-across-geometry-and-sampling.json` |
 | The floor is set by the voxel-to-sample-spacing ratio, not by geometry, sampling or mesh resolution | `floor-vs-voxel-multiple.json`, `floor-vs-resolution.json` |
 | Even sampling zeroes the headline fraction, so its failure is a capture-time artefact | `poisson-procedure-and-overcall-audit.json` |
+| Neither declared remedy for run-to-run movement works: seeding the sampling reduces it without removing it, and thread count is not the cause | `declared-reproducibility-causes.json` |
 
 ## Reproducing
 
@@ -187,6 +188,30 @@ so it does not depend on the audit's nearest-neighbour adapter. The zero-error c
 what changed is the conclusion drawn from them, the classification's name, and the note's wording. The
 cube now runs as a ground-truth control in the functional smoke, on the over-call side that a sweep of
 even sampling cannot reach.
+
+## Two limitations that sent a reader to the wrong knob
+
+`declared-reproducibility-causes.json` examines `limitations[3]` of two capability records. Both told a
+reader which knob stops a number moving: seed the 300k-point sampling
+(`capability-record-distance-bands.json`), or pin the container thread count
+(`capability-record-support-crop.json`). Neither settles the figure, and neither record is at fault —
+the reconstruction's own non-determinism was measured afterwards, in
+`poisson-figure-reproducibility.json`.
+
+Measured on the construction the first record names, reporting both figures from the same meshes.
+Seeding does make the input bit-identical, hashed to prove it, and it is the dominant cause: unseeded,
+the unsupported-area fraction spans 2.2e-03 to 5.6e-03 over repeated runs of four repeats, the same
+order as that record's own 0.0046 gap, straddling it rather than bounding it. Seeded, the spread falls
+by two orders — and the fraction still takes four distinct values in four runs. Surface area with the
+input fixed spans 1.6e-06 to 3.5e-06 relative across those runs, inside the second record's declared
+~4e-06 but not comfortably; setting the thread count to 1, engaged and recorded as 16 → 1, does not
+settle it either.
+
+So one string changed in each record: the sampling claim now says what seeding achieves and what it
+leaves, and the thread-count claim no longer names a cause the measurement rules out. Every figure in
+both records is untouched. The spread of the spread is the part worth keeping in mind — a sentence
+derived from one run of four repeats was falsified by the next run, which is why the comparisons are
+made against every run observed and the record says so.
 
 ## Results that are retained but do not support anything
 

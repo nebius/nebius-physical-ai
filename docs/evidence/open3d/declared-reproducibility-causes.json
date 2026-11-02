@@ -1,0 +1,282 @@
+{
+  "answer": "Neither settles the figure. Seeding the sampling does make the input bit-identical, and it does remove most of the movement, so that record's attribution is right about the dominant cause and wrong only in what it implies about reproducibility. Limiting threads leaves the residue intact. The residue is the reconstruction's own non-determinism, which neither record could have known about: it was measured afterwards.",
+  "claims_examined": {
+    "distance_bands": {
+      "field": "limitations[3]",
+      "recorded_values": [
+        0.2009,
+        0.2055
+      ],
+      "source": "docs/evidence/open3d/capability-record-distance-bands.json",
+      "text": "The Armadillo figure moves slightly between runs (0.2009 here, 0.2055 in the earlier threshold sweep) because the 300k-point sampling is not seeded. The separation being measured is three orders of magnitude, so this does not affect the finding, but the fourth decimal place is not reproducible.",
+      "what_does_not_hold": "That seeding would make the figure reproduce. The cloud's bytes are identical across the seeded repeats, hashed to prove it, and the fraction still takes 4 distinct values in 4 runs. 'The fourth decimal place is not reproducible' is true as written; what a reader would take from the sentence -- that the named cause is the whole cause -- is not.",
+      "what_holds": "The attribution. Unseeded, the fraction's spread over 4 repeats came out 2.236e-03 to 5.605e-03 across 5 independent runs of this harness -- the same order as the record's own gap of 0.0046 between its two values, straddling it rather than bounding it. So unseeded sampling alone produces differences of that magnitude, and the record needs no second explanation for the pair it saw. Seeding reduces the spread to 1.094e-05 in this run, so it really is the dominant cause and really is seedable.",
+      "what_this_does_not_settle_about_that_pair": "That sampling is all that separated the record's two values. They came from different runs of different harnesses, so other differences were available; this shows only that none is needed to explain a gap that size."
+    },
+    "support_crop": {
+      "declared_bound_relative_on_surface_area": 4e-06,
+      "field": "limitations[3]",
+      "source": "docs/evidence/open3d/capability-record-support-crop.json",
+      "text": "Floating-point results vary with container thread count; reproducibility is numeric to ~4e-06 relative on surface area, not byte-identical.",
+      "the_figure_is_conditional_on_something_it_does_not_say": "~4e-06 relative is a fixed-input number. On this construction, where the cloud is sampled rather than read, the same quantity spans 1.103e-04 relative -- about 28x the declared figure, and about 70x the fixed-input measurement beside it. That is not the record being wrong, because that is not the record's pipeline. It is worth stating because a reader carrying ~4e-06 to a pipeline that samples its own input would be two orders of magnitude out.",
+      "what_does_not_hold": "The cause. The variation is attributed to container thread count, and a reader pinning the thread count would expect it to stop. Every repeat in the seeded condition ran in one process at one thread count and the area still took 4 distinct values in 4 runs. Setting the count to 1 explicitly -- engaged and recorded, 16 to 1 -- left 4 distinct values in 4. Its relative spread at one thread came out 2.090e-06 to 4.455e-06 over 5 runs, against 1.586e-06 to 3.454e-06 at the default 16 threads -- overlapping. Either way it does not settle, which is what matters: thread count may contribute, but it is not what makes this irreproducible.",
+      "what_holds": "The magnitude, under the condition that record's pipeline runs in, and not by much. Surface area's relative spread with the input fixed came out 1.586e-06 to 3.454e-06 across 5 independent runs, all inside the declared ~4e-06 but close enough to it that a further run could exceed it. The record is right that the result is not byte-identical, and that pipeline reads a fused cloud from a file, so its input is fixed and the figure is measured where it applies."
+    }
+  },
+  "conditions": {
+    "as_both_records_ran_it": {
+      "downsampled_is_the_same_bytes_every_repeat": false,
+      "input_cloud_digests_observed": 4,
+      "input_cloud_is_the_same_bytes_every_repeat": false,
+      "label": "unseeded",
+      "max_threads_before": 16,
+      "max_threads_observed_during": 16,
+      "repeats": 4,
+      "sampling_seeded": false,
+      "surface_area": {
+        "absolute_spread": 4.04673994435143,
+        "distinct": 4,
+        "identical": false,
+        "relative_spread": 0.00011029405263496149,
+        "values": [
+          36691.461302846954,
+          36691.30306671974,
+          36687.52202335899,
+          36691.568763303345
+        ]
+      },
+      "the_thread_knob_engaged": null,
+      "triangles": {
+        "absolute_spread": 663.0,
+        "distinct": 4,
+        "identical": false,
+        "relative_spread": 0.0006382637685191559,
+        "values": [
+          1038746.0,
+          1038847.0,
+          1039046.0,
+          1038383.0
+        ]
+      },
+      "unsupported_area_fraction": {
+        "absolute_spread": 0.0037236616791296584,
+        "distinct": 4,
+        "identical": false,
+        "relative_spread": 0.018455038880914525,
+        "values": [
+          0.2039102567600719,
+          0.2002310246315222,
+          0.20274962754302497,
+          0.20018659508094225
+        ]
+      },
+      "vertices": {
+        "absolute_spread": 347.0,
+        "distinct": 4,
+        "identical": false,
+        "relative_spread": 0.0006628190055231733,
+        "values": [
+          523521.0,
+          523606.0,
+          523653.0,
+          523306.0
+        ]
+      }
+    },
+    "sampling_seeded": {
+      "downsampled_is_the_same_bytes_every_repeat": true,
+      "input_cloud_digests_observed": 1,
+      "input_cloud_is_the_same_bytes_every_repeat": true,
+      "label": "seeded",
+      "max_threads_before": 16,
+      "max_threads_observed_during": 16,
+      "repeats": 4,
+      "sampling_seeded": true,
+      "surface_area": {
+        "absolute_spread": 0.058220286045980174,
+        "distinct": 4,
+        "identical": false,
+        "relative_spread": 1.585911686538948e-06,
+        "values": [
+          36710.89689061052,
+          36710.90734251116,
+          36710.95511089657,
+          36710.943341693324
+        ]
+      },
+      "the_thread_knob_engaged": null,
+      "triangles": {
+        "absolute_spread": 5.0,
+        "distinct": 3,
+        "identical": false,
+        "relative_spread": 4.813875128560553e-06,
+        "values": [
+          1038664.0,
+          1038662.0,
+          1038667.0,
+          1038664.0
+        ]
+      },
+      "unsupported_area_fraction": {
+        "absolute_spread": 1.094425221825901e-05,
+        "distinct": 4,
+        "identical": false,
+        "relative_spread": 5.386712071396992e-05,
+        "values": [
+          0.2031655970752722,
+          0.20317654132749047,
+          0.20316735823857282,
+          0.20317564956294074
+        ]
+      },
+      "vertices": {
+        "absolute_spread": 0.0,
+        "distinct": 1,
+        "identical": true,
+        "relative_spread": 0.0,
+        "values": [
+          523290.0,
+          523290.0,
+          523290.0,
+          523290.0
+        ]
+      }
+    },
+    "sampling_seeded_and_one_thread": {
+      "downsampled_is_the_same_bytes_every_repeat": true,
+      "input_cloud_digests_observed": 1,
+      "input_cloud_is_the_same_bytes_every_repeat": true,
+      "label": "seeded+1thread",
+      "max_threads_before": 16,
+      "max_threads_observed_during": 1,
+      "repeats": 4,
+      "sampling_seeded": true,
+      "surface_area": {
+        "absolute_spread": 0.13573283299047034,
+        "distinct": 4,
+        "identical": false,
+        "relative_spread": 3.6973362850559173e-06,
+        "values": [
+          36710.95585647118,
+          36710.91009601149,
+          36711.00235121444,
+          36711.04582884448
+        ]
+      },
+      "the_thread_knob_engaged": true,
+      "triangles": {
+        "absolute_spread": 3.0,
+        "distinct": 3,
+        "identical": false,
+        "relative_spread": 2.8883222963317586e-06,
+        "values": [
+          1038665.0,
+          1038665.0,
+          1038664.0,
+          1038667.0
+        ]
+      },
+      "unsupported_area_fraction": {
+        "absolute_spread": 2.0798202002153543e-05,
+        "distinct": 4,
+        "identical": false,
+        "relative_spread": 0.00010236370205262072,
+        "values": [
+          0.2031654583262258,
+          0.20318625652822794,
+          0.2031811122666326,
+          0.20318502442602138
+        ]
+      },
+      "vertices": {
+        "absolute_spread": 0.0,
+        "distinct": 1,
+        "identical": true,
+        "relative_spread": 0.0,
+        "values": [
+          523290.0,
+          523290.0,
+          523290.0,
+          523290.0
+        ]
+      }
+    }
+  },
+  "generator": {
+    "density_quantile": 0.02,
+    "harness": "docs/evidence/open3d/harness/declared_reproducibility_causes.py",
+    "open3d_version": "0.20.0",
+    "poisson_depth": 9,
+    "python": "3.14.7",
+    "repository_commit": "d06e958462865af823b4f1479867df52421c8284",
+    "scene": "open3d.data.ArmadilloMesh, 300k uniform surface samples",
+    "seed": 1729
+  },
+  "observed_across_independent_runs_of_this_harness": {
+    "fixed_input_surface_area_relative_spread": {
+      "max": 3.454e-06,
+      "min": 1.585911686538948e-06,
+      "runs": 5,
+      "values": [
+        2.275e-06,
+        2.424e-06,
+        3.454e-06,
+        2.9766904159109415e-06,
+        1.585911686538948e-06
+      ]
+    },
+    "one_thread_surface_area_relative_spread": {
+      "max": 4.455e-06,
+      "min": 2.0900294400293636e-06,
+      "runs": 5,
+      "values": [
+        3.915e-06,
+        4.455e-06,
+        4.427e-06,
+        2.0900294400293636e-06,
+        3.6973362850559173e-06
+      ]
+    },
+    "the_declared_surface_area_figure": 4e-06,
+    "the_recorded_gap_being_compared_against": 0.004599999999999993,
+    "unseeded_unsupported_area_fraction_absolute_spread": {
+      "max": 0.005605,
+      "min": 0.002235571773337275,
+      "runs": 5,
+      "values": [
+        0.005605,
+        0.005298,
+        0.003645,
+        0.002235571773337275,
+        0.0037236616791296584
+      ]
+    },
+    "why_this_is_here": "A spread measured over four repeats is itself unstable, so a sentence derived from one run of it can be false in the next. That happened: the first draft said the unseeded spread contains the record's 0.0046 gap, which was true of two runs and false of the third. These are the values each run produced, so the comparisons above are made against the range rather than against whichever run wrote the file."
+  },
+  "question": "Two capability records tell a reader which knob to turn to stop a number moving: seed the sampling, or pin the thread count. Does either work?",
+  "schema": "npa.evidence.open3d.declared-reproducibility-causes/v0.0.1",
+  "the_corrections_applied": {
+    "how_to_read_the_quotes_above": "Each `text` is the sentence as it stood before this measurement, and it is no longer in the file it cites -- that is the point. The records are corrected in place rather than superseded, because a limitation that sends a reader to the wrong knob is worth fixing where they will read it, and a correction record they have to find first is not a fix.",
+    "what_changed": [
+      {
+        "field": "limitations[3]",
+        "file": "docs/evidence/open3d/capability-record-distance-bands.json",
+        "now_also_states": "that seeding reduces the movement by a large factor but does not remove it, with both measured spreads and the reason"
+      },
+      {
+        "field": "limitations[3]",
+        "file": "docs/evidence/open3d/capability-record-support-crop.json",
+        "now_also_states": "that thread count is not the cause, that the ~4e-06 figure is a fixed-input number, and what the cause is"
+      }
+    ],
+    "what_was_left_alone": "Every figure in both records, every other field, and the bytes of every artifact they describe. One string changed in each file. Nothing here re-measures either record's own pipeline: the construction used is the one the distance-bands record names, and the support-crop record's inputs are not reachable from this host."
+  },
+  "the_record_it_cites_is_not_on_main_yet": "`poisson-figure-reproducibility.json` is in pull request 1021 and is not in `docs/evidence/open3d/` on main, so a reviewer reading this on main cannot open it. Stated rather than left to be discovered: a citation a reviewer cannot resolve is a citation that has to be followed by asking the author, and this lane has already had one provenance pin re-based for exactly that reason. The measurements above stand on their own -- each condition's values are in this file -- and the dependency is for the mechanism's name, not for the result.",
+  "what_this_does_not_claim": [
+    "That 4 repeats bound anything. These are observed spreads over a sample, and a fifth run may exceed any of them.",
+    "That the sampling does not matter. It matters most, by a large factor, and it is seedable. The correction is to what seeding achieves.",
+    "That thread count has no effect on these figures. One thread count was compared against the default on one machine; that cannot separate a small thread-count contribution from the residue.",
+    "That either record's published figures are wrong. No figure in either record is changed by this; the limitation sentences are."
+  ],
+  "where_the_residue_comes_from": "`poisson-figure-reproducibility.json` establishes that `create_from_point_cloud_poisson` is non-deterministic on one fixed input in one process at a fixed thread count, and that neither seeding nor limiting threads fixes it. That is the floor underneath both statements here. It is also why neither record is at fault for the attribution: the reconstruction's own non-determinism had not been measured when they were written, so the visible causes were the ones they named."
+}
