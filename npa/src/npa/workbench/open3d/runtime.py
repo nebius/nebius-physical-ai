@@ -24,7 +24,7 @@ from urllib.parse import urlparse
 
 from npa.cli.path_contract import validate_read_path, validate_write_path
 from npa.workbench.dataset.storage import read_bytes_uri, uri_join, write_bytes_uri
-from npa.workbench.storage_scope import authorize_uri
+from npa.workbench.storage_scope import StorageAuthorizationError, authorize_uri
 
 from .artifacts import (
     PAIRS_JOURNAL,
@@ -299,8 +299,9 @@ def _load_manifest(input_path: str) -> RegistrationManifest:
     """Read the manifest, retrying a read that arrives unparseable.
 
     Unlike the fragments, the manifest has no digest recorded ahead of it — it is
-    where the fragments' digests come from — so a retry here is guarded only by
-    JSON well-formedness and schema validation. That is weaker than a digest and
+    where the fragments' digests come from — so a retry here is guarded only by the
+    bytes decoding and the JSON parsing. Schema validation does not gate a retry: it
+    is what stops one. That is weaker than a digest and
     is the honest limit of this guard: it catches a stream that ended early,
     because truncated JSON does not close, and it cannot detect a complete
     document that is the wrong one. It is still worth doing, since without it a
@@ -319,9 +320,21 @@ def _load_manifest(input_path: str) -> RegistrationManifest:
     for attempt in range(1, FRAGMENT_READ_ATTEMPTS + 1):
         try:
             document = json.loads(read_bytes_uri(uri))
-        except ValueError as exc:  # JSON did not parse: the stream may have ended
-            failures.append(f"attempt {attempt}: {type(exc).__name__}")
+        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+            # The bytes did not decode or did not parse, either of which a stream that
+            # ended early produces. Caught specifically rather than as ValueError:
+            # StorageAuthorizationError is also a ValueError, and retrying a refused
+            # read three times and then naming `prepare` as the remedy describes
+            # neither the cause nor an action that can help.
+            failures.append(f"attempt {attempt}: {type(exc).__name__}: {exc}")
             continue
+        except StorageAuthorizationError:
+            # Neither transient nor a parse failure: the read was refused because the
+            # URI falls outside the active scope. Retrying cannot change that, and the
+            # bounded-attempts message would offer `prepare` as the remedy for a
+            # permission boundary. Surfaced as itself -- it is a ValueError, which the
+            # CLI already renders -- so the operator sees the refusal and its reason.
+            raise
         except Exception as exc:  # transport-level: truncation, reset, timeout
             failures.append(f"attempt {attempt}: {type(exc).__name__}: {exc}")
             continue
@@ -333,11 +346,12 @@ def _load_manifest(input_path: str) -> RegistrationManifest:
             # the wrong shape will be the wrong shape on the next read too, so this
             # is where retrying stops: two more requests would buy nothing and the
             # bounded-attempts message would describe a transport that was fine.
+            earlier = f" Earlier attempts: {'; '.join(failures)}." if failures else ""
             raise Open3dError(
                 f"{uri} parsed as JSON but is not a registration manifest, so it will "
                 "not read differently on another attempt; run "
                 "`npa workbench open3d prepare` against this prefix to write one. "
-                f"{exc}"
+                f"{exc}{earlier}"
             ) from exc
     raise Open3dError(
         f"{uri} could not be read as a valid registration manifest after "

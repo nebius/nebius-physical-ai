@@ -8,9 +8,9 @@ kept ending early, produced the same sentence -- "the manifest and the stored sc
 disagree, or the transport kept truncating" -- while the manifest recorded the byte
 count that separates them:
 
-    diverged store:   32 bytes read, 32 recorded, every attempt
-    shorter object:   17, 17, 17 bytes read, 32 recorded
-    truncating link:   4,  9, 13 bytes read, 32 recorded
+    diverged store:   48 bytes read, 48 recorded, every attempt
+    shorter object:   17, 17, 17 bytes read, 48 recorded
+    truncating link:   4,  9, 13 bytes read, 48 recorded
 
 The actions differ. A diverged store has to be prepared again; a truncating link has
 to be retried. A message that offers both leaves the reader to guess at exactly the
@@ -33,6 +33,7 @@ import pytest
 from npa.workbench.open3d import runtime
 from npa.workbench.open3d.artifacts import Open3dError
 from npa.workbench.open3d.schemas import Fragment
+from npa.workbench.storage_scope import StorageAuthorizationError
 
 PREPARED = "s3://example-bucket/prepared"
 SCAN = b"the bytes prepare saw when it wrote the manifest"
@@ -438,3 +439,105 @@ def test_a_longer_object_is_not_described_as_the_recorded_length(monkeypatch) ->
     assert f"longer than the {fragment.bytes} bytes recorded" in message, message
     assert "arrived at the recorded length" not in message, message
     assert "Retrying will not help" in message, message
+
+
+def test_a_refused_read_is_not_retried_and_keeps_its_own_cause(monkeypatch) -> None:
+    """`except ValueError` swallowed a scope refusal and renamed it a missing manifest.
+
+    `StorageAuthorizationError` subclasses `ValueError`, so a read refused for falling
+    outside the active storage scope landed in the branch meant for JSON that did not
+    parse. It was retried twice more and reported as "could not be read as a valid
+    registration manifest after 3 attempts; run `npa workbench open3d prepare` against
+    this prefix first" -- a remedy for a permission boundary, with the reason text
+    dropped because that branch recorded only the exception class name.
+
+    This is the module's own principle applied to its own code: a non-transient failure
+    should not be retried. Reachable through `visualize`, which loads a manifest from a
+    path read out of a published result rather than one that went through `_tool_paths`.
+    """
+
+    reads = []
+
+    def refuse(uri: str) -> bytes:
+        reads.append(uri)
+        raise StorageAuthorizationError("uri outside the active scope")
+
+    monkeypatch.setattr(runtime, "read_bytes_uri", refuse)
+    with pytest.raises(StorageAuthorizationError) as raised:
+        runtime._load_manifest(PREPARED)
+
+    assert len(reads) == 1, (
+        f"the refusal was read {len(reads)} times; retrying a scope refusal cannot "
+        "change the answer"
+    )
+    assert "outside the active scope" in str(raised.value)
+    # Still a ValueError, which is what the CLI renders for a clean exit rather than a
+    # traceback, so surfacing it does not change the operator-facing contract.
+    assert isinstance(raised.value, ValueError)
+
+
+def test_a_manifest_that_did_not_decode_is_still_retried(monkeypatch) -> None:
+    """Narrowing the retry branch must not stop retrying the case it exists for.
+
+    A stream that ends mid-character raises `UnicodeDecodeError`, and one that ends
+    mid-document raises `json.JSONDecodeError`. Both subclass `ValueError`, so catching
+    `ValueError` covered them by accident; catching them by name has to cover them on
+    purpose. The reason text is now carried too, which the old branch dropped.
+    """
+
+    document = _manifest()
+    for truncated in (document[: len(document) // 2], b"\xff\xfe not utf-8 at all"):
+        served = iter([truncated, truncated, document])
+        monkeypatch.setattr(runtime, "read_bytes_uri", lambda uri: next(served))
+        manifest = runtime._load_manifest(PREPARED)
+        assert len(manifest.fragments) == 2, truncated[:8]
+
+    # And when every attempt fails that way, the reason reaches the operator. This
+    # branch used to record the exception class alone, unlike the transport branch
+    # beside it, so "JSONDecodeError" was all a reader got.
+    half = document[: len(document) // 2]
+    monkeypatch.setattr(runtime, "read_bytes_uri", lambda uri: half)
+    with pytest.raises(Open3dError) as raised:
+        runtime._load_manifest(PREPARED)
+    message = str(raised.value)
+    assert "JSONDecodeError:" in message, message
+    assert "Expecting" in message or "Unterminated" in message, (
+        "the parse failure's own text is the content of that failure and is what says "
+        "where the document stopped"
+    )
+
+
+def test_a_schema_rejection_keeps_what_the_earlier_attempts_did(monkeypatch) -> None:
+    """The terminal cause was right and it threw away the triage detail beside it.
+
+    A transport error on attempt 1 followed by a complete document of the wrong shape
+    on attempt 2 reported only the schema rejection, dropping the recorded failure. An
+    operator triaging a flaky store needs to see what each attempt did -- this module
+    asserts exactly that principle elsewhere.
+    """
+
+    served = iter(
+        [OSError("connection reset"), json.dumps({"voxel_size": 0.05}).encode()]
+    )
+
+    def read(uri: str) -> bytes:
+        value = next(served)
+        if isinstance(value, Exception):
+            raise value
+        return value
+
+    monkeypatch.setattr(runtime, "read_bytes_uri", read)
+    with pytest.raises(Open3dError) as raised:
+        runtime._load_manifest(PREPARED)
+
+    message = str(raised.value)
+    assert "parsed as JSON but is not a registration manifest" in message, message
+    assert "Earlier attempts:" in message, message
+    assert "OSError: connection reset" in message, message
+    # And a rejection on the first attempt has no earlier attempts to report.
+    monkeypatch.setattr(
+        runtime, "read_bytes_uri", lambda uri: json.dumps({"voxel_size": 0.05}).encode()
+    )
+    with pytest.raises(Open3dError) as clean:
+        runtime._load_manifest(PREPARED)
+    assert "Earlier attempts" not in str(clean.value)
