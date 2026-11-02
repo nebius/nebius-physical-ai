@@ -21,8 +21,11 @@ RESULT_SCHEMA = "npa.open3d.result.v1"
 PAIRS_JOURNAL = "pairs.jsonl"
 #: Absolute tolerance for "this 3x3 block is a rotation".
 ROTATION_TOLERANCE = 1e-6
-#: Prefix Rerun uses for entity paths it writes itself, such as `/__properties`. A
-#: recording containing only these decoded fine and carried nothing the caller logged.
+#: Prefix Rerun reserves for itself. Not a guess: `rerun/_log.py` documents that "paths
+#: prefixed with `__` are considered reserved for use by the Rerun SDK", and the SDK
+#: exports `RECORDING_PROPERTIES_PATH = "/__properties"`, which it writes into every
+#: recording whether or not the caller logged anything. A recording holding only these
+#: decodes fine and carries nothing anyone can look at.
 RERUN_INTERNAL = "/__"
 
 
@@ -486,7 +489,8 @@ def verify_rerun_recording(path: Path) -> None:
     # None of the three subsumes the others, and each rejection below is the only one
     # that fires on some shape -- a recording truncated to between 75 and 99 percent of
     # its length still decodes to `/points` through the reader's whole-file fallback,
-    # and only the CLI rejects it. The measurements are in
+    # and only the CLI rejects it. That band widens with recording size rather than
+    # being an artifact of a small one: 50 to 95 percent at 18 MB. The measurements are in
     # tests/workbench/test_open3d_rrd_verifier.py, which fails if any layer stops being
     # the sole catcher of its shape, rather than letting one be dropped as redundant.
     try:

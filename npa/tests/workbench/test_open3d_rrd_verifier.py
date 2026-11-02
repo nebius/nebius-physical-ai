@@ -24,6 +24,11 @@ one that rejects some row above -- which is why the last row is in the table, si
 is the case that stops the CLI check from being redundant once decoding is added.
 `test_each_check_is_the_only_one_that_catches_its_shape` re-measures all three and
 fails if that stops being true.
+
+That last row's band is not an artifact of a small recording, which was the obvious
+objection to keeping the CLI check. It widens with size: 75-99% for the 11 kB
+two-chunk recording above, 70-95% for a 1.8 MB one, and 50-95% for an 18 MB one. A
+small recording is the worst case for that check's value, not the best.
 """
 
 from __future__ import annotations
@@ -36,7 +41,11 @@ from pathlib import Path
 
 import pytest
 
-from npa.workbench.open3d.artifacts import Open3dError, verify_rerun_recording
+from npa.workbench.open3d.artifacts import (
+    RERUN_INTERNAL,
+    Open3dError,
+    verify_rerun_recording,
+)
 
 HEADER_BYTES = 40
 """Enough of a real recording for `rrd verify` to exit 0 on the remainder."""
@@ -67,6 +76,23 @@ def test_the_cli_is_resolvable_wherever_the_sdk_is_installed() -> None:
     pytest.importorskip("rerun")
     assert rerun_cli() is not None, (
         "rerun imports but its CLI is not resolvable, so the verifier tests would skip"
+    )
+
+
+def test_the_reserved_prefix_still_covers_rerun_own_metadata_path() -> None:
+    """Fail loudly if Rerun moves its internal path out from under the prefix.
+
+    `RERUN_INTERNAL` is how the verifier tells "Rerun wrote this" from "the caller
+    logged this", and it is the prefix Rerun documents as reserved for itself rather
+    than a pattern I inferred from one observation. If the SDK's own properties path
+    stopped matching it, the verifier would start counting metadata as logged data
+    and the hollow-recording check would quietly stop working.
+    """
+
+    rr = pytest.importorskip("rerun")
+    assert rr.RECORDING_PROPERTIES_PATH.startswith(RERUN_INTERNAL), (
+        f"Rerun's own metadata path {rr.RECORDING_PROPERTIES_PATH!r} no longer starts "
+        f"with {RERUN_INTERNAL!r}, so the logged-data check needs re-deriving"
     )
 
 
@@ -247,6 +273,57 @@ def test_an_unavailable_cli_is_reported_as_such(
     path.write_bytes(b"")
     with pytest.raises(Open3dError, match="Rerun CLI is unavailable"):
         verify_rerun_recording(path)
+
+
+@needs_cli
+def test_the_cli_is_not_redundant_at_a_realistic_recording_size(
+    tmp_path: Path,
+) -> None:
+    """Keep the CLI check honest on something bigger than a toy.
+
+    The case for keeping it rests on one band, and the obvious objection is that the
+    band is an artifact of an 11 kB two-chunk recording. It is not: it widens with
+    size. On a 1.8 MB recording every truncation from 70 to 95 percent is rejected
+    only by the CLI, and on an 18 MB one so is every truncation from 50 percent up.
+    A small recording is the *worst* case for this check's value, not the best.
+
+    This builds the 1.8 MB shape rather than the 18 MB one, because the finding
+    reproduces at both sizes and the smaller one keeps the test cheap.
+    """
+
+    rr = pytest.importorskip("rerun")
+    numpy = pytest.importorskip("numpy")
+    path = tmp_path / "many-frames.rrd"
+    rng = numpy.random.default_rng(0)
+    rr.init("npa-open3d-verifier-test-many", spawn=False)
+    rr.save(str(path))
+    for frame in range(50):
+        rr.set_time("frame", sequence=frame)
+        rr.log("points", rr.Points3D(rng.normal(size=(2000, 3))))
+        rr.log("mesh/verts", rr.Points3D(rng.normal(size=(1000, 3))))
+    rr.disconnect()
+    if not path.is_file() or path.stat().st_size < 100_000:
+        pytest.skip("Rerun did not write a multi-chunk recording on this machine")
+
+    payload = path.read_bytes()
+    truncated = tmp_path / "many-frames-cut.rrd"
+    truncated.write_bytes(payload[: len(payload) * 90 // 100])
+
+    from npa.viz.recordings import load_recordings
+
+    decoded = load_recordings(truncated)
+    substantive = [
+        str(chunk.entity_path)
+        for one in decoded
+        for chunk in one.chunks()
+        if not str(chunk.entity_path).startswith("/__")
+    ]
+    assert substantive, (
+        "a 90% truncation of a realistic recording no longer decodes to any logged "
+        "entity path, so re-measure the band before trusting the CLI-only claim"
+    )
+    with pytest.raises(Open3dError, match="rejected"):
+        verify_rerun_recording(truncated)
 
 
 @needs_cli
