@@ -420,6 +420,133 @@ def _whether_that_is_benign(moved: float, straddling: float, displacement: dict)
     )
 
 
+SCALING_TOLERANCE = 0.1
+"""How close a ratio must sit to 1.0, or to the vertex ratio, to be called either.
+
+Two densities give one ratio, so this cannot be a fitted confidence interval; it is a
+declared band. It exists because the alternative is a two-way branch, and a two-way
+branch has to hand the whole interval between its two cases to one of them. Ten percent
+is wide enough that the band boundaries are not doing the work of the conclusion and
+narrow enough that "proportional" still means proportional.
+"""
+
+
+def _how_displacement_scales(vertex_ratio: float, displacement_ratio: float) -> str:
+    """Which of four things the two ratios support, or that they support none of them.
+
+    Previously two branches split at `displacement_ratio >= vertex_ratio`, which gave
+    the entire open interval between 1.0 and the vertex ratio to "fixed-magnitude
+    artefact". At a displacement ratio of 4.2 against a vertex ratio of 4.29 that
+    published "fixed-magnitude" for near-perfect proportional scaling. A band that wide
+    is not a classification.
+    """
+
+    near_one = displacement_ratio <= 1.0 + SCALING_TOLERANCE
+    near_vertices = (
+        abs(displacement_ratio - vertex_ratio) <= SCALING_TOLERANCE * vertex_ratio
+    )
+
+    if near_one and near_vertices:
+        # Only when the capture barely changed, and then neither name means anything.
+        return "indeterminate"
+    if near_one:
+        return "shrinks" if displacement_ratio < 1.0 - SCALING_TOLERANCE else "fixed"
+    if near_vertices:
+        return "proportional"
+    if displacement_ratio > vertex_ratio:
+        return "faster_than_the_capture"
+    return "partial"
+
+
+_SCALING_READINGS = MappingProxyType(
+    {
+        "shrinks": (
+            "The displacement fell as the capture got denser, so it is not something "
+            "that scales with the cloud. The margin is therefore set by the cut, which "
+            "a caller chooses, and not by the capture, which they do not."
+        ),
+        "fixed": (
+            "The displacement held roughly constant as the capture got denser, so it "
+            "is a fixed-magnitude artefact of the reconstruction. The margin is "
+            "therefore set by the cut, which a caller chooses, and not by the capture, "
+            "which they do not."
+        ),
+        "proportional": (
+            "The displacement scaled with the capture, so the margin measured on one "
+            "cloud does not transfer to a denser one and this record cannot "
+            "generalise it."
+        ),
+        "faster_than_the_capture": (
+            "The displacement grew faster than the capture did, so a denser cloud is "
+            "worse than proportionally worse and this record cannot generalise to one."
+        ),
+        "partial": (
+            "The displacement grew, but by appreciably less than the capture did. Two "
+            "densities cannot separate partial scaling from a fixed artefact plus "
+            "noise, so neither reading is supported and this record does not claim "
+            "one. A third density would settle it."
+        ),
+        "indeterminate": (
+            "The two densities are too close together for their ratio to establish "
+            "anything about scaling. Treat this as one density measured twice."
+        ),
+    }
+)
+
+
+RATIOS_OBSERVED_ON_EARLIER_RUNS = MappingProxyType(
+    {
+        "displacement_denser_over_sparser": (0.548387,),
+        "vertices_denser_over_sparser": (4.293651,),
+        "band_each_time": ("shrinks",),
+        "measured_at": ("commit 9c492ad33a of this harness, same host, same inputs",),
+    }
+)
+"""The same quantity from an earlier run of this harness, kept rather than overwritten.
+
+It is a ratio of two maxima of 23-pair distributions, so it inherits their tails twice
+over and moves between harness runs far more than the figures it is built from. Quoting
+one value for it as though it reproduced would repeat, one level up, exactly the defect
+that made the margin a median dressed as a bound.
+"""
+
+
+def _is_the_ratio_reproducible(vertex_ratio: float, displacement_ratio: float) -> dict:
+    """What a reader may rely on from this comparison, and what they may not.
+
+    The band reproduced across runs; the ratio that selects it did not. Both facts
+    belong next to the figure, because a reader who quotes the number is quoting noise
+    and a reader who quotes the conclusion is not.
+    """
+
+    earlier = RATIOS_OBSERVED_ON_EARLIER_RUNS["displacement_denser_over_sparser"]
+    band = _how_displacement_scales(vertex_ratio, displacement_ratio)
+    bands = set(RATIOS_OBSERVED_ON_EARLIER_RUNS["band_each_time"]) | {band}
+    every = (*earlier, displacement_ratio)
+
+    return {
+        "the_ratio_is_not": (
+            "Every displacement ratio this harness has produced: "
+            + ", ".join(f"{one:.4f}" for one in sorted(every))
+            + ". It is a ratio of two maxima, so it carries both tails and moves "
+            "between runs by more than its own distance from the band edges. Do not "
+            "quote it as a measurement of how displacement scales with density."
+        ),
+        "the_band_is": (
+            f"Every run so far lands in {'/'.join(sorted(bands))}, and the readings for "
+            "shrinks and fixed support the same conclusion -- displacement that does "
+            "not grow with the capture, so the margin is set by the cut. That is what "
+            "this comparison establishes."
+            if bands <= {"shrinks", "fixed"}
+            else "Runs have landed in different bands with different readings: "
+            f"{'/'.join(sorted(bands))}. This comparison establishes nothing until "
+            "that is resolved."
+        ),
+        "every_displacement_ratio_observed": [float(one) for one in sorted(every)],
+        "runs_this_is_drawn_from": len(every),
+    }
+
+
 def _what_density_establishes(
     vertex_ratio: float, displacement_ratio: float, worst: float
 ) -> str:
@@ -437,21 +564,11 @@ def _what_density_establishes(
     else:
         direction = "exactly as far"
 
-    if displacement_ratio >= vertex_ratio:
-        reading = (
-            "The displacement tracks the capture, so the margin measured on one cloud "
-            "does not transfer to a denser one and this record cannot generalise it."
-        )
-    else:
-        reading = (
-            "The displacement does not track the capture, so it is a fixed-magnitude "
-            "artefact of the reconstruction rather than something that scales with the "
-            "cloud. The margin is therefore set by the cut, which a caller chooses, "
-            "and not by the capture, which they do not."
-        )
+    band = _how_displacement_scales(vertex_ratio, displacement_ratio)
 
     return (
-        f"A {vertex_ratio:.1f}x denser mesh moved its vertices {direction}. {reading} "
+        f"A {vertex_ratio:.1f}x denser mesh moved its vertices {direction}. "
+        f"{_SCALING_READINGS[band]} "
         f"A reader can compute their own margin: voxel * support_distance_factor over "
         f"about {worst:.1g} m."
     )
@@ -837,6 +954,13 @@ def main() -> int:
             "worst_displacement_per_case_m": displacements,
             "vertices_denser_over_sparser": vertex_ratio,
             "displacement_denser_over_sparser": displacement_ratio,
+            "how_the_displacement_scales": _how_displacement_scales(
+                vertex_ratio, displacement_ratio
+            ),
+            "scaling_band_tolerance": SCALING_TOLERANCE,
+            "is_this_ratio_itself_reproducible": _is_the_ratio_reproducible(
+                vertex_ratio, displacement_ratio
+            ),
             "what_that_establishes": _what_density_establishes(
                 vertex_ratio, displacement_ratio, max(displacements.values())
             ),

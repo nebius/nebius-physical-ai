@@ -247,6 +247,99 @@ def test_both_density_ratios_run_in_the_same_direction() -> None:
     )
 
 
+def _harness():
+    """The harness module itself, so its generators can be called with stated inputs.
+
+    Reading a generated sentence out of the record only ever exercises the one input the
+    record happens to hold. Review's B981 lived in a band the record does not visit.
+    """
+    path = EVIDENCE / _record()["provenance"]["harness"]
+    spec = importlib.util.spec_from_file_location("crop_decision_harness", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+# A phrase that must appear for each band, stated here rather than recomputed from the
+# generator's comparison. The previous guards branched on `displacement < vertices` and
+# then asserted the string that branch produces, so they ratified the boundary instead of
+# checking it -- and the boundary was wrong across a wide interval.
+_EXPECTED_READING = {
+    "shrinks": "fell as the capture got denser",
+    "fixed": "held roughly constant",
+    "proportional": "scaled with the capture",
+    "faster_than_the_capture": "grew faster than the capture",
+    "partial": "neither reading is supported",
+    "indeterminate": "too close together",
+}
+
+
+# (vertex ratio, displacement ratio) -> band, chosen by hand. The 4.2-against-4.2937 row
+# is the case that exposed the two-way branch: it is proportional scaling to within two
+# percent and was being published as a fixed-magnitude artefact. The 2.1 row is the one I
+# checked by hand and accepted the wrong answer for.
+_STATED_BANDS = (
+    (4.2937, 0.5484, "shrinks"),
+    (4.2937, 1.0, "fixed"),
+    (4.2937, 1.05, "fixed"),
+    (4.2937, 2.1, "partial"),
+    (4.2937, 3.5, "partial"),
+    (4.2937, 4.2, "proportional"),
+    (4.2937, 4.2937, "proportional"),
+    (4.2937, 6.0, "faster_than_the_capture"),
+    (1.02, 1.0, "indeterminate"),
+)
+
+
+def test_each_pair_of_ratios_lands_in_the_band_stated_for_it() -> None:
+    """The bands, against a table written out by hand.
+
+    Review found the two-way branch handed the whole interval between 1.0 and the vertex
+    ratio to "fixed-magnitude artefact", so a displacement ratio of 4.2 against a vertex
+    ratio of 4.2937 -- proportional to within two percent -- published as fixed. Both
+    guards missed it because both recomputed the generator's own comparison and then
+    asserted the string it produces.
+    """
+    harness = _harness()
+    for vertices, displacement, expected in _STATED_BANDS:
+        got = harness._how_displacement_scales(vertices, displacement)
+        assert got == expected, (vertices, displacement, got, expected)
+
+        said = harness._what_density_establishes(vertices, displacement, 1.0e-05)
+        assert _EXPECTED_READING[expected] in said, (vertices, displacement, said)
+        # And no other band's phrase, so a sentence cannot satisfy two readings at once.
+        for other, phrase in _EXPECTED_READING.items():
+            if other != expected:
+                assert phrase not in said, (vertices, displacement, other, said)
+
+
+def test_no_band_is_wide_enough_to_swallow_the_interval_between_its_neighbours() -> (
+    None
+):
+    """The defect was a band's width, so width is what this measures.
+
+    Walking the displacement ratio across the whole range at a fixed vertex ratio, no
+    single band may cover more than half of it. The two-way version gave one band
+    everything from 1.0 to 4.29 and the other everything above, which is exactly what
+    this rejects.
+    """
+    harness = _harness()
+    vertices = 4.2937
+    seen: dict[str, int] = {}
+    steps = 400
+    for index in range(steps):
+        displacement = 0.1 + index * (2.0 * vertices - 0.1) / (steps - 1)
+        band = harness._how_displacement_scales(vertices, displacement)
+        seen[band] = seen.get(band, 0) + 1
+
+    assert len(seen) >= 4, f"only {len(seen)} bands are reachable: {seen}"
+    widest, count = max(seen.items(), key=lambda pair: pair[1])
+    assert count <= steps // 2, (
+        f"the {widest!r} band covers {count} of {steps} sampled ratios, so it is "
+        "absorbing the interval between its neighbours rather than naming a case"
+    )
+
+
 def test_the_directional_claim_is_derived_from_the_direction() -> None:
     """A directional sentence written beside the numbers instead of from them.
 
@@ -264,13 +357,12 @@ def test_the_directional_claim_is_derived_from_the_direction() -> None:
     elif ratio > 1.0:
         assert f"{ratio:.2f}x further" in said, (ratio, said)
 
-    # The reading has to follow from the comparison, not from the author's hope.
-    if ratio < survived["vertices_denser_over_sparser"]:
-        assert "does not track the capture" in said, said
-        assert "fixed-magnitude" in said, said
-    else:
-        assert "tracks the capture" in said, said
-        assert "does not transfer" in said, said
+    # The reading has to follow from the band the generator reports, and the band has to
+    # be one of the named ones. Which band each pair of ratios belongs in is checked
+    # against a stated table below rather than against the generator's own comparison.
+    band = survived["how_the_displacement_scales"]
+    assert band in _EXPECTED_READING, band
+    assert _EXPECTED_READING[band] in said, (band, said)
 
 
 def test_the_margin_is_set_by_the_cut_and_not_by_the_capture() -> None:
@@ -294,7 +386,10 @@ def test_the_margin_is_set_by_the_cut_and_not_by_the_capture() -> None:
         "it tracks the capture and the margin reported here does not transfer to a "
         "denser scan"
     )
-    assert "fixed-magnitude" in survived["what_that_establishes"]
+    assert survived["how_the_displacement_scales"] in {"shrinks", "fixed"}, (
+        "the displacement neither fell nor held constant as the capture got denser, so "
+        "the margin reported here is a property of this input rather than of the crop"
+    )
 
 
 def test_the_aggregate_cannot_stand_in_for_the_per_element_answer() -> None:
@@ -412,3 +507,45 @@ def test_the_prose_matches_the_measurement_it_describes(key: str) -> None:
         assert "by a measured margin rather than by luck" in benign, benign
     else:
         assert "only to a Jaccard of" in rely, rely
+
+
+def test_the_ratio_that_selects_the_band_is_not_sold_as_reproducible() -> None:
+    """Two runs of this harness gave 0.5484 and 0.8889 for the same quantity.
+
+    It is a ratio of two maxima of 23-pair distributions, so it moves between runs by
+    more than its own distance from a band edge -- 0.8889 sits 0.011 from the shrinks
+    boundary. The conclusion survived because the two bands either side of that edge
+    carry the same reading, which is a fact about this comparison and not luck a reader
+    should have to notice for themselves.
+    """
+    survived = _record()["does_the_margin_survive_a_denser_capture"]
+    reproducible = survived["is_this_ratio_itself_reproducible"]
+
+    observed = reproducible["every_displacement_ratio_observed"]
+    assert len(observed) >= 2, (
+        "only one run is disclosed, so the record cannot show the ratio moving and a "
+        "reader has no reason to distrust the single value quoted"
+    )
+    assert reproducible["runs_this_is_drawn_from"] == len(observed)
+    assert survived["displacement_denser_over_sparser"] in observed, (
+        "this run's own ratio is missing from the list of ratios observed"
+    )
+
+    spread = max(observed) / min(observed)
+    assert spread > 1.1, (
+        f"the disclosed ratios span only {spread}x, which does not support the "
+        "warning the record attaches to them"
+    )
+    assert "Do not quote it" in reproducible["the_ratio_is_not"]
+
+    # And the conclusion has to be the thing that reproduced, stated as such.
+    harness = _harness()
+    bands = {
+        harness._how_displacement_scales(survived["vertices_denser_over_sparser"], one)
+        for one in observed
+    }
+    assert bands <= {"shrinks", "fixed"}, (
+        f"the disclosed ratios reach bands {bands} with different readings, so the "
+        "record's conclusion does not hold across its own observations"
+    )
+    assert "support the same conclusion" in reproducible["the_band_is"]

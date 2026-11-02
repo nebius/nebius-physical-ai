@@ -51,11 +51,17 @@ comparing two crop settings on one fused cloud.
 
 A margin measured on one sparse cloud would only describe that cloud, so the second case
 is a capture four times denser. The displacement does not follow it: 4.3x the vertices
-moved 1.8x *less* far, which places it as a fixed-magnitude artefact of the reconstruction
-rather than something that scales with the geometry. The practical form of that: the
-margin is set by the cut, which a caller chooses, and not by the capture, which they do
-not. A reader can compute their own as `voxel * support_distance_factor` over roughly
-7e-06 m.
+moved *less* far, so it is not something that scales with the geometry. The practical form
+of that: the margin is set by the cut, which a caller chooses, and not by the capture,
+which they do not. A reader can compute their own as `voxel * support_distance_factor`
+over roughly 7e-06 m.
+
+Quote that conclusion and not the ratio behind it. The ratio is a ratio of two maxima of
+23-pair distributions, so it carries both tails and moves between harness runs by more
+than its own distance from a band edge — 0.5484 on one run and 0.8889 on the next two,
+against a boundary at 0.9. What reproduced is the band, and the two bands either side of
+that boundary carry the same reading. The record states both halves, because a reader who
+quotes the number is quoting noise and a reader who quotes the conclusion is not.
 
 ## Reproducing
 
