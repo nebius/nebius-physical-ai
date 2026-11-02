@@ -250,9 +250,10 @@ _INERT_ENCODED_ARCHIVE_SHA256 = {
     # Public split IDAT/IEND suffix used by the Sim2Real review controls.
     "480850d1783069d8dab7d0d0b426ebf3c46bc85d852c774278de81547690e677",
 }
-_INERT_EMBEDDED_CANDIDATE_LIMIT_SHA256 = {
+_INERT_EMBEDDED_MEDIA_SHA256 = {
     # Public LeRobot labeled MP4 and its reviewable Rerun recording. Both contain
-    # more than 4,096 incidental RFC 1950 headers but no earlier valid stream.
+    # thousands of incidental RFC 1950 headers, including malformed streams that
+    # emit bytes, but their complete immutable public payloads are known inert.
     "803cc4e2bbf2260838354f7475ced9ab9417ab54a99ff62d3e4532e51b894a2b",
     "c6ea539976f254eec55da12d7ac2674272c74b06fa676ffd1fdcac8c392e3218",
 }
@@ -1106,15 +1107,15 @@ def _zlib_candidate_requires_rejection(
     if not _zlib_header_plausible(content, offset):
         return False
     candidate = bytes(content[offset : offset + _PROBE_DECODE_CHUNK_BYTES])
-    decoder = zlib.decompressobj()
+    decoder = zlib.decompressobj(-zlib.MAX_WBITS)
     try:
-        decoded = decoder.decompress(candidate, max_length=_PROBE_STREAM_MAX_BYTES + 1)
+        decoded = decoder.decompress(candidate[2:], max_length=1)
     except zlib.error:
         return False
     return (
-        decoder.eof
+        bool(decoded)
+        or decoder.eof
         or bool(decoder.unconsumed_tail)
-        or len(decoded) > _PROBE_STREAM_MAX_BYTES
         or len(candidate) == _PROBE_DECODE_CHUNK_BYTES
     )
 
@@ -1626,23 +1627,32 @@ def _regions_contain_compressed_archive(
 ) -> bool:
     """Probe compressed-stream starts with one aggregate candidate budget."""
     candidates = 0
-    approved_over_limit = False
+    inert_media: bool | None = None
+
+    def _inert_media_approved() -> bool:
+        """Authenticate the mapped bytes before applying the narrow exception."""
+        nonlocal inert_media
+        if inert_media is None:
+            inert_media = _content_sha256(content) in _INERT_EMBEDDED_MEDIA_SHA256
+        return inert_media
+
     for region, source_offset, start_limit in regions:
         for kind, offset in _embedded_compressed_streams(region):
             if offset >= start_limit:
                 continue
             candidates += 1
-            if candidates > _ENCODED_ARCHIVE_MAX_CANDIDATES and not approved_over_limit:
-                if (
-                    _content_sha256(content)
-                    not in _INERT_EMBEDDED_CANDIDATE_LIMIT_SHA256
-                ):
-                    return True
-                approved_over_limit = True
-            if _embedded_stream_requires_rejection(
-                content,
-                kind,
-                source_offset + offset,
+            if (
+                candidates > _ENCODED_ARCHIVE_MAX_CANDIDATES
+                and not _inert_media_approved()
+            ):
+                return True
+            if (
+                _embedded_stream_requires_rejection(
+                    content,
+                    kind,
+                    source_offset + offset,
+                )
+                and not _inert_media_approved()
             ):
                 return True
     return False

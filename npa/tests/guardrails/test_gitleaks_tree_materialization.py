@@ -11,6 +11,7 @@ import importlib.util
 import io
 import json
 import lzma
+import mmap
 import os
 import shutil
 import stat
@@ -2928,6 +2929,35 @@ def _strict_png(
     return _png_document(ancillary, idat)
 
 
+def _png_chunk_payload_ranges(
+    content: bytes, kind: bytes
+) -> tuple[tuple[int, int], ...]:
+    """Read exact payload ranges from checksum-framed PNG chunks."""
+    position = len(tree_scan._PNG_SIGNATURE)
+    ranges: list[tuple[int, int]] = []
+    while position + 12 <= len(content):
+        length = int.from_bytes(content[position : position + 4], "big")
+        data_start = position + 8
+        data_end = data_start + length
+        if content[position + 4 : data_start] == kind:
+            ranges.append((data_start, data_end))
+        position = data_end + 4
+    return tuple(ranges)
+
+
+def _output_bearing_malformed_zlib(payload: bytes, mutation: str) -> bytes:
+    """Build a zlib stream that emits payload before its terminal failure."""
+    compressed = bytearray(zlib.compress(payload))
+    if mutation == "truncated":
+        return bytes(compressed[:-1])
+    if mutation == "deflate-truncated":
+        return bytes(compressed[:-5])
+    if mutation == "checksum":
+        compressed[-1] ^= 1
+        return bytes(compressed)
+    raise AssertionError(f"unknown zlib mutation: {mutation}")
+
+
 @pytest.mark.parametrize("split_idat", [False, True])
 def test_embedded_archive_probe_excludes_only_strict_png_idat(
     tmp_path: Path,
@@ -2935,11 +2965,14 @@ def test_embedded_archive_probe_excludes_only_strict_png_idat(
 ) -> None:
     """Treat validated image data as media without weakening other bytes."""
     carrier = tmp_path / "frame.png"
-    carrier.write_bytes(_strict_png(split_idat=split_idat))
+    content = _strict_png(split_idat=split_idat)
+    carrier.write_bytes(content)
 
-    ranges = tree_scan._validated_png_idat_ranges(carrier.read_bytes())
-    assert ranges is not None
-    assert len(ranges) == (2 if split_idat else 1)
+    ranges = tree_scan._validated_png_idat_ranges(content)
+    assert ranges == _png_chunk_payload_ranges(content, b"IDAT")
+    for start, end in ranges:
+        assert content[start - 4 : start] == b"IDAT"
+        assert int.from_bytes(content[start - 8 : start - 4], "big") == end - start
     assert not tree_scan._contains_embedded_archive(carrier)
     tree_scan._validate_archive_file(carrier)
 
@@ -3084,6 +3117,27 @@ def test_png_regions_keep_lookahead_across_idat_boundary(
     assert tree_scan._regions_contain_immediate_archive(regions)
 
 
+def test_png_parser_regions_keep_exact_idat_lookahead() -> None:
+    """Bind parser-produced ranges to payload framing and bounded lookahead."""
+    content = _strict_png(split_idat=True)
+    ranges = tree_scan._validated_png_idat_ranges(content)
+    assert ranges == _png_chunk_payload_ranges(content, b"IDAT")
+    regions = tuple(tree_scan._embedded_scan_regions(content))
+    assert len(regions) == len(ranges) + 1
+
+    position = 0
+    for (region, source_offset, start_limit), (start, end) in zip(
+        regions[:-1],
+        ranges,
+        strict=True,
+    ):
+        expected_end = min(len(content), start + tree_scan._ARCHIVE_PREFIX_BYTES - 1)
+        assert source_offset == position
+        assert start_limit == start - position
+        assert bytes(region) == content[position:expected_end]
+        position = end
+
+
 def test_png_regions_translate_compressed_candidate_after_idat(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -3107,6 +3161,35 @@ def test_png_regions_translate_compressed_candidate_after_idat(
     assert tree_scan._regions_contain_compressed_archive(content, regions)
 
 
+def test_png_parser_regions_translate_post_idat_zlib_offset(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Translate a real parser-produced post-IDAT candidate to its source offset."""
+    hidden_stream = zlib.compress(b"hidden payload")
+    content = _png_document(
+        _png_chunk(b"IDAT", zlib.compress(b"\0\0")),
+        _png_chunk(b"tEXt", b"label\0" + hidden_stream),
+    )
+    ranges = tree_scan._validated_png_idat_ranges(content)
+    assert ranges == _png_chunk_payload_ranges(content, b"IDAT")
+    expected_offset = content.index(hidden_stream, ranges[-1][1])
+    observed: list[tuple[str, int]] = []
+    original_probe = tree_scan._embedded_stream_requires_rejection
+
+    def _recording_probe(source: bytes, kind: str, offset: int) -> bool:
+        observed.append((kind, offset))
+        return original_probe(source, kind, offset)
+
+    monkeypatch.setattr(
+        tree_scan,
+        "_embedded_stream_requires_rejection",
+        _recording_probe,
+    )
+    regions = tuple(tree_scan._embedded_scan_regions(content))
+    assert tree_scan._regions_contain_compressed_archive(content, regions)
+    assert ("zlib", expected_offset) in observed
+
+
 def _png_structure_mutation(mutation: str) -> bytes:
     """Build one image whose valid zlib stream has invalid PNG structure."""
     compressed = zlib.compress(b"\0\0")
@@ -3126,6 +3209,33 @@ def _png_structure_mutation(mutation: str) -> bytes:
     if mutation == "missing-palette":
         return _png_document(idat, ihdr=_png_ihdr(color_type=3))
     raise AssertionError(f"unknown PNG mutation: {mutation}")
+
+
+def _png_palette_mutation(mutation: str) -> bytes:
+    """Build one PNG with an invalid palette placement or shape."""
+    idat = _png_chunk(b"IDAT", zlib.compress(b"\0\0"))
+    palette = _png_chunk(b"PLTE", b"\0\0\0")
+    if mutation == "duplicate":
+        return _png_document(palette, palette, idat, ihdr=_png_ihdr(color_type=3))
+    if mutation == "late":
+        return _png_document(idat, palette, ihdr=_png_ihdr(color_type=3))
+    if mutation == "forbidden":
+        return _png_document(palette, idat)
+    if mutation == "empty":
+        empty = _png_chunk(b"PLTE", b"")
+        return _png_document(empty, idat, ihdr=_png_ihdr(color_type=3))
+    if mutation == "malformed":
+        malformed = _png_chunk(b"PLTE", b"\0\0")
+        return _png_document(malformed, idat, ihdr=_png_ihdr(color_type=3))
+    if mutation == "oversized":
+        oversized = _png_chunk(b"PLTE", b"\0" * 771)
+        rgb_idat = _png_chunk(b"IDAT", zlib.compress(b"\0\0\0\0"))
+        return _png_document(oversized, rgb_idat, ihdr=_png_ihdr(color_type=2))
+    if mutation == "indexed-oversized":
+        oversized = _png_chunk(b"PLTE", b"\0" * 9)
+        header = _png_ihdr(bit_depth=1, color_type=3)
+        return _png_document(oversized, idat, ihdr=header)
+    raise AssertionError(f"unknown PLTE mutation: {mutation}")
 
 
 @pytest.mark.parametrize(
@@ -3151,6 +3261,31 @@ def test_png_idat_exception_rejects_invalid_chunk_grammar(
     assert tree_scan._contains_embedded_archive(carrier)
 
 
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "duplicate",
+        "late",
+        "forbidden",
+        "empty",
+        "malformed",
+        "oversized",
+        "indexed-oversized",
+    ],
+)
+def test_png_idat_exception_rejects_invalid_palette_variants(
+    tmp_path: Path,
+    mutation: str,
+) -> None:
+    """Reject duplicate, late, forbidden, malformed, and oversized palettes."""
+    content = _png_palette_mutation(mutation)
+    carrier = tmp_path / "frame.png"
+    carrier.write_bytes(content)
+
+    assert tree_scan._validated_png_idat_ranges(content) is None
+    assert tree_scan._contains_embedded_archive(carrier)
+
+
 def test_png_idat_exception_handles_malformed_zlib_as_unvalidated(
     tmp_path: Path,
 ) -> None:
@@ -3160,7 +3295,49 @@ def test_png_idat_exception_handles_malformed_zlib_as_unvalidated(
     carrier.write_bytes(content)
 
     assert tree_scan._validated_png_idat_ranges(content) is None
+    assert not tree_scan._zlib_candidate_requires_rejection(b"\x78\x9c\xff", 0)
     assert not tree_scan._contains_embedded_archive(carrier)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ["truncated", "deflate-truncated", "checksum"],
+)
+def test_png_idat_exception_rejects_output_bearing_malformed_zlib(
+    tmp_path: Path,
+    mutation: str,
+) -> None:
+    """Fail closed when malformed IDAT emits the complete hidden plaintext."""
+    malformed = _output_bearing_malformed_zlib(b"\0\0", mutation)
+    content = _png_document(_png_chunk(b"IDAT", malformed))
+    carrier = tmp_path / "frame.png"
+    carrier.write_bytes(content)
+
+    assert tree_scan._validated_png_idat_ranges(content) is None
+    assert tree_scan._contains_embedded_archive(carrier)
+    with pytest.raises(tree_scan._ScanError, match="Embedded archive"):
+        tree_scan._validate_archive_file(carrier)
+
+
+@pytest.mark.parametrize("mutation", ["truncated", "trailing", "second-stream"])
+def test_png_idat_exception_requires_one_complete_zlib_stream(
+    tmp_path: Path,
+    mutation: str,
+) -> None:
+    """Reject exact-output truncation, trailing bytes, and a second stream."""
+    compressed = zlib.compress(b"\0\0")
+    if mutation == "truncated":
+        compressed = compressed[:-1]
+    elif mutation == "trailing":
+        compressed += b"trailing"
+    else:
+        compressed += zlib.compress(b"")
+    content = _png_document(_png_chunk(b"IDAT", compressed))
+    carrier = tmp_path / "frame.png"
+    carrier.write_bytes(content)
+
+    assert tree_scan._validated_png_idat_ranges(content) is None
+    assert tree_scan._contains_embedded_archive(carrier)
 
 
 def test_png_idat_exception_bounds_chunk_allocation(
@@ -3177,24 +3354,32 @@ def test_png_idat_exception_bounds_chunk_allocation(
     assert tree_scan._contains_embedded_archive(carrier)
 
 
-def test_embedded_candidate_limit_exceptions_are_byte_exact(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Bind two media files while still checking every compression candidate."""
-    fixtures = (
+def _exact_embedded_media_expectations() -> tuple[tuple[Path, int, int], ...]:
+    """Return pinned media paths, candidate counts, and rejecting probe counts."""
+    return (
         (
             ROOT / "docs/workbench/evidence/lerobot-video-subtasks/lerobot-labeled.mp4",
             4_187,
+            786,
         ),
         (
             ROOT
             / "docs/workbench/evidence/lerobot-video-subtasks/lerobot-video-subtasks.rrd",
             4_274,
+            792,
         ),
     )
-    assert tree_scan._INERT_EMBEDDED_CANDIDATE_LIMIT_SHA256 == {
-        hashlib.sha256(path.read_bytes()).hexdigest() for path, _count in fixtures
+
+
+def test_embedded_candidate_limit_exceptions_are_byte_exact(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Bind two media files while still checking every compression candidate."""
+    fixtures = _exact_embedded_media_expectations()
+    assert tree_scan._INERT_EMBEDDED_MEDIA_SHA256 == {
+        hashlib.sha256(path.read_bytes()).hexdigest()
+        for path, _count, _rejecting in fixtures
     }
     original_probe = tree_scan._embedded_stream_requires_rejection
     observed_candidates = 0
@@ -3207,17 +3392,95 @@ def test_embedded_candidate_limit_exceptions_are_byte_exact(
     monkeypatch.setattr(
         tree_scan, "_embedded_stream_requires_rejection", _recording_probe
     )
-    for path, expected_candidates in fixtures:
+    for path, expected_candidates, expected_rejecting in fixtures:
         raw = path.read_bytes()
         candidates = list(tree_scan._embedded_compressed_streams(raw))
         assert len(candidates) == expected_candidates
-        assert not any(original_probe(raw, kind, offset) for kind, offset in candidates)
+        rejecting = sum(
+            original_probe(raw, kind, offset) for kind, offset in candidates
+        )
+        assert rejecting == expected_rejecting
         observed_candidates = 0
         assert not tree_scan._contains_embedded_archive(path)
         assert observed_candidates == expected_candidates
         mutated = tmp_path / path.name
         mutated.write_bytes(b"J" + raw)
         assert tree_scan._contains_embedded_archive(mutated)
+
+
+def _record_path_swap_during_hash(
+    monkeypatch: pytest.MonkeyPatch,
+    carrier: Path,
+    staged: Path,
+) -> tuple[Callable[[bytes], str], dict[str, list[int]]]:
+    """Replace a path during admission hashing and record mapped identities."""
+    original_hash = tree_scan._content_sha256
+    original_probe = tree_scan._embedded_stream_requires_rejection
+    original_regions = tree_scan._embedded_scan_regions
+    observed: dict[str, list[int]] = {"regions": [], "hash": [], "probe": []}
+
+    def _recording_regions(content: bytes):
+        assert isinstance(content, mmap.mmap)
+        observed["regions"].append(id(content))
+        yield from original_regions(content)
+
+    def _replace_during_hash(content: bytes) -> str:
+        observed["hash"].append(id(content))
+        os.replace(staged, carrier)
+        return original_hash(content)
+
+    def _recording_probe(content: bytes, kind: str, offset: int) -> bool:
+        observed["probe"].append(id(content))
+        return original_probe(content, kind, offset)
+
+    monkeypatch.setattr(tree_scan, "_embedded_scan_regions", _recording_regions)
+    monkeypatch.setattr(tree_scan, "_content_sha256", _replace_during_hash)
+    monkeypatch.setattr(
+        tree_scan,
+        "_embedded_stream_requires_rejection",
+        _recording_probe,
+    )
+    return original_hash, observed
+
+
+def test_candidate_limit_hash_and_probe_share_open_mmap(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Keep admission hashing and stream probing bound across path replacement."""
+    invalid = b"\x78\x9cnot-a-zlib-stream"
+    original = b"prefix" + invalid + b"middle" + invalid
+    replacement = b"prefix" + invalid + b"middle" + zlib.compress(b"hidden")
+    carrier = tmp_path / "carrier.bin"
+    staged = tmp_path / "replacement.bin"
+    carrier.write_bytes(original)
+    staged.write_bytes(replacement)
+    original_hash, observed = _record_path_swap_during_hash(
+        monkeypatch,
+        carrier,
+        staged,
+    )
+    monkeypatch.setattr(tree_scan, "_ENCODED_ARCHIVE_MAX_CANDIDATES", 1)
+    monkeypatch.setattr(
+        tree_scan,
+        "_INERT_EMBEDDED_MEDIA_SHA256",
+        {hashlib.sha256(original).hexdigest()},
+    )
+
+    assert not tree_scan._contains_embedded_archive(carrier)
+    assert carrier.read_bytes() == replacement
+    assert len(observed["regions"]) == 1
+    assert len(observed["hash"]) == 1
+    assert set(observed["probe"]) == set(observed["hash"]) == set(observed["regions"])
+
+    monkeypatch.setattr(tree_scan, "_content_sha256", original_hash)
+    monkeypatch.setattr(tree_scan, "_ENCODED_ARCHIVE_MAX_CANDIDATES", 10)
+    monkeypatch.setattr(
+        tree_scan,
+        "_INERT_EMBEDDED_MEDIA_SHA256",
+        set(),
+    )
+    assert tree_scan._contains_embedded_archive(carrier)
 
 
 def test_zlib_header_recognizer_covers_pinned_archives_headers() -> None:
@@ -3279,6 +3542,46 @@ def test_embedded_archive_probe_recognizes_decodable_streams(
     carrier.write_bytes(prefix + compress(b"hidden payload"))
 
     assert tree_scan._contains_embedded_archive(carrier)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ["truncated", "deflate-truncated", "checksum"],
+)
+def test_zlib_probe_rejects_output_bearing_malformed_streams(
+    tmp_path: Path,
+    mutation: str,
+) -> None:
+    """Reject a malformed RFC 1950 carrier after its first decoded byte."""
+    token = b"".join((b"Qw7eR9tY", b"2uI4oP6a", b"S8dF0gH1", b"jK3lZ5xC"))
+    payload = b'api_key = "' + token + b'"\n'
+    malformed = _output_bearing_malformed_zlib(payload, mutation)
+    carrier = tmp_path / "carrier.bin"
+    carrier.write_bytes(b"ordinary-prefix" + malformed)
+
+    assert tree_scan._zlib_candidate_requires_rejection(malformed, 0)
+    one_byte = _output_bearing_malformed_zlib(b"x", mutation)
+    assert tree_scan._zlib_candidate_requires_rejection(one_byte, 0)
+    assert tree_scan._contains_embedded_archive(carrier)
+    with pytest.raises(tree_scan._ScanError, match="Embedded archive"):
+        tree_scan._validate_archive_file(carrier)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ["truncated", "deflate-truncated", "checksum"],
+)
+def test_archive_member_rejects_output_bearing_malformed_zlib(
+    tmp_path: Path,
+    mutation: str,
+) -> None:
+    """Reject hidden malformed zlib output inside an otherwise valid ZIP."""
+    malformed = _output_bearing_malformed_zlib(b"hidden payload", mutation)
+    carrier = tmp_path / "carrier.zip"
+    carrier.write_bytes(_zip_member("nested.bin", malformed))
+
+    with pytest.raises(tree_scan._ScanError, match="Nested archive"):
+        tree_scan._validate_archive_file(carrier)
 
 
 def test_embedded_archive_probe_rejects_truncated_output_and_unsupported_streams(

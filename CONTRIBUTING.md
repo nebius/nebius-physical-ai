@@ -623,11 +623,15 @@ ZIP local records must cover every byte before the central directory, and
 declared entry counts must agree, so self-extracting prefixes, concatenated
 archives, undeclared records, and metadata gaps fail closed.
 Container signatures embedded in otherwise nonarchive files or commit bodies
-also fail closed. Because three-byte gzip and bzip2 markers occur incidentally
-in ordinary media, those two markers are confirmed with a bounded decoder:
-decoded output, a complete empty stream, more than 4,096 candidates, or a
-candidate that remains ambiguous at the probe limit fails closed; a candidate
-rejected before producing any output is not treated as a container.
+also fail closed. Because short gzip, bzip2, and RFC 1950 zlib markers occur
+incidentally in ordinary media, those markers are confirmed with a bounded
+decoder. After an exact zlib wrapper header, a raw-DEFLATE probe limits output
+to one byte, so decoded output remains observable and fails closed even if later
+wrapper input truncates or fails its Adler-32 check. Outside the two exact-byte
+media admissions below, decoded output, a complete empty stream, more than 4,096
+candidates, or a candidate that remains ambiguous at the probe limit fails
+closed; a candidate rejected before producing any output is not treated as a
+container.
 
 Strict PNGs have one format-aware boundary. The helper validates the signature,
 critical-chunk grammar and order, every CRC, IHDR and palette constraints, at
@@ -638,12 +642,13 @@ remain scanned, with enough lookahead to detect a container that starts outside
 IDAT. A prefix, trailing bytes, malformed structure, invalid CRC, impossible
 layout or filter, or decoder error removes the PNG exception and returns the
 complete file to ordinary discovery. Two repository-owned public MP4/Rerun
-artifacts contain more than 4,096 incidental compression headers; only their
-exact full-file SHA-256 identities may cross that generic work boundary, and
-the helper still inspects every remaining candidate. Changed bytes do not
-inherit that exception, so an over-limit mutation fails closed at the ordinary
-boundary. Longer unsupported container signatures and embedded xz signatures
-remain fail-closed.
+artifacts contain more than 4,096 incidental compression headers and hundreds of
+malformed raw-DEFLATE prefixes that emit bytes before failing. Only their exact
+full-file SHA-256 identities admit those known bytes, and the helper still
+probes every candidate against the same open memory map. Changed bytes do not
+inherit that exception, so any output-bearing or over-limit mutation fails
+closed at the ordinary boundary. Longer unsupported container signatures and
+embedded xz signatures remain fail-closed.
 Malformed strongly identified Unicode or content that reaches the first
 unsupported decode layer also fails instead of being silently omitted. Encoded
 candidates are fully inspected for encoded containers under a 16-MiB
