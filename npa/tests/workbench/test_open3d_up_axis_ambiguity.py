@@ -722,16 +722,35 @@ def test_the_detection_rate_the_code_states_is_the_one_the_record_measured() -> 
 
 
 def test_the_record_publishes_a_detection_rate_rather_than_a_guarantee() -> None:
-    """The check misses sometimes, and the record has to say so with numbers."""
+    """The check misses sometimes, and the record has to say so with numbers.
 
-    rates = _record()["detection_by_repeat_count"]["rates"]
+    Asserted against the 300-run block, not the thirty-run sweep. At a true rate near
+    0.92 a sweep of thirty returns a clean 30 of 30 about once in twelve, and one
+    did: requiring the sweep to show a miss made the published limitation depend on
+    the measurement being unlucky. 276 of 300 is the same claim with the power to
+    hold it, and it is below perfect by many times its own noise.
+    """
+
+    detection = _record()["detection_by_repeat_count"]
+    rates = detection["rates"]
     assert len(rates) >= 3, rates
     default = [one for one in rates if one["is_the_shipped_default"]]
     assert len(default) == 1, "the sweep does not mark the shipped default"
-    assert default[0]["ambiguity_detected_in_runs"] < default[0]["of_runs"], (
-        "the retained record shows perfect detection at the default, which would make "
-        "the published limitation unsupported by its own evidence"
+
+    rise = detection["does_detection_rise_with_the_fit_count"]
+    shipped = rise["fits_per_configuration"].index(default[0]["fits"])
+    detected = rise["detections"][shipped]
+    of_runs = rise["runs_per_configuration"]
+    assert detected < of_runs, (
+        "the retained record shows perfect detection at the shipped count over "
+        f"{of_runs} runs, which would make the published limitation unsupported by "
+        "its own evidence"
     )
+    # Below perfect by more than noise, so the claim does not rest on a single miss.
+    # One sigma of the count at this rate is sqrt(n p (1-p)).
+    rate = detected / of_runs
+    noise = (of_runs * rate * (1.0 - rate)) ** 0.5
+    assert of_runs - detected > 3.0 * noise, (detected, of_runs, noise)
     # This block deliberately does not require the thirty-run counts to be ordered.
     # They are not, reliably: one regeneration returned 27 detections at five fits
     # against 26 at nine. The scatter is this record's subject, and the ordering is
@@ -860,6 +879,11 @@ def test_the_chance_agreement_model_is_tested_at_power_not_asserted() -> None:
     assert pooled["pooled_z"] == pytest.approx(
         pooled["mean_gap_in_sigmas"] * len(gaps) ** 0.5, rel=0.02
     ), pooled
+    # The sample size depended on the data in it: the block was run again because
+    # the first gaps looked like a bias. That weakens the z, in the direction of
+    # overstating it, and it has to sit in the same object as the number rather than
+    # in a paragraph a reader of the record may never see.
+    assert "adaptively" in pooled["how_this_sample_was_sized"], pooled
     # Admissible, not confirmed, and the record has to keep saying which.
     assert "not" in high["what_this_still_does_not_establish"]
 
