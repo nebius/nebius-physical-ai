@@ -407,8 +407,15 @@ def _is_a_measurement(node: ast.expr) -> bool:
 
     Deliberately permissive about *how*: a plain name is accepted, because binding the
     block to a local before putting it in the report is an ordinary thing to do and the
-    validator checks the value either way. What it will not accept is a value that
-    cannot have measured anything.
+    validator checks the value either way. A qualified call such as
+    `helpers._coverage_cost(...)` is accepted too. What it will not accept is a value
+    that cannot have measured anything.
+
+    The boundary, mapped by a reviewer looking for honest code this rejects: a
+    defensive copy spelled `{**_coverage_cost(...)}` or `dict(_coverage_cost(...))`,
+    a walrus, and a ternary. All four are a one-line fix -- bind the block to a name --
+    and widening the rule to admit them is how the enumeration this replaced kept
+    acquiring holes.
     """
 
     if isinstance(node, ast.Name):
