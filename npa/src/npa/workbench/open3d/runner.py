@@ -174,6 +174,11 @@ def _agreement(attempts: list[dict[str, Any]], points, voxel: float) -> dict[str
         "seeds": [int(attempt["seed"]) for attempt in attempts],
         "worst_pairwise_displacement": worst,
         "worst_pairwise_displacement_voxels": worst / voxel if voxel > 0 else None,
+        # The divisor, so the normalised figure above is checkable from the row. It is
+        # the number the README, the evidence record and the counterexample all quote,
+        # and it was the one field here the published validator could not check: a
+        # stale normalisation passed `validate` silently.
+        "voxel_size": float(voxel) if voxel > 0 else None,
         "worst_disagreeing_seeds": worst_pair,
         "fitness_spread": float(np.max(fitness) - np.min(fitness)),
         "inlier_rmse_spread": float(np.max(rmse) - np.min(rmse)),
@@ -330,19 +335,56 @@ def _measure_agreement(
 
     Returns `None` when the manifest did not ask for this, so a report keeps exactly
     the shape and cost it had before.
+
+    This no longer re-seeds on the way out, and `run_register` no longer interleaves
+    it with the primary alignments. It used to: the reset meant pair 2's first attempt
+    began from a freshly seeded generator when the diagnostic was on and from whatever
+    pair 1 left behind when it was off, so turning the measurement on changed the
+    published `transformation` and `aligned_sha256` of every pair after the first. A
+    diagnostic that changes the result it reports on is not an observation of that
+    result. Seeding every pair instead would have fixed the asymmetry by changing the
+    default path's registrations, which is the other way to get it wrong; `run_register`
+    completes the whole primary pass first instead.
     """
 
     if manifest.agreement_seeds <= 0:
         return None
     attempts = [{"seed": manifest.random_seed, **first}]
+    failed: list[dict[str, Any]] = []
     for offset in range(1, manifest.agreement_seeds + 1):
         seed = (manifest.random_seed + offset) % (2**31 - 1)
         o3d.utility.random.seed(seed)
-        attempts.append({"seed": seed, **_register_pair(o3d, source, target, manifest)})
-    # Reset the generator so the pairs that follow are seeded as the manifest says,
-    # rather than inheriting whatever the last agreement attempt left behind.
-    _seeded(o3d, manifest)
-    return _agreement(attempts, source.points, manifest.voxel_size)
+        try:
+            attempt = _register_pair(o3d, source, target, manifest)
+        except Open3dError as exc:
+            # A diagnostic re-run that fails is a fact about this pair under that
+            # seed, not a failure of the registration the caller asked for. Letting
+            # it propagate discarded every pair already computed and reported a
+            # RANSAC correspondence problem as though the primary alignment had hit
+            # it -- an untruthful failure, and in exactly the marginal-overlap
+            # population this measurement exists to flag.
+            failed.append({"seed": seed, "error": str(exc)})
+            continue
+        attempts.append({"seed": seed, **attempt})
+
+    if len(attempts) < 2:
+        # The validator requires two or more seeds, so there is no legal block to
+        # emit. Report the attempt that failed rather than silently omitting the
+        # measurement the manifest asked for.
+        return {
+            "measured": False,
+            "why_not": (
+                f"{manifest.agreement_seeds} extra seed(s) were requested and "
+                f"{len(failed)} failed to register, leaving fewer than the two "
+                "successful attempts an agreement needs"
+            ),
+            "failed_seeds": failed,
+        }
+
+    block = _agreement(attempts, source.points, manifest.voxel_size)
+    if failed:
+        block["failed_seeds"] = failed
+    return block
 
 
 def run_register(payload: dict[str, Any], output: Path, run_id: str) -> dict[str, Any]:
@@ -356,15 +398,44 @@ def run_register(payload: dict[str, Any], output: Path, run_id: str) -> dict[str
     aligned_dir.mkdir(parents=True, exist_ok=True)
     rows: list[dict[str, Any]] = []
     ordered = [fragment.id for fragment in manifest.fragments]
-    for source_id, target_id in zip(ordered, ordered[1:]):
+    pairs = list(zip(ordered, ordered[1:]))
+
+    # Every primary alignment first, with nothing between them. The agreement
+    # diagnostic sets the global generator per attempt, so running it inside this loop
+    # put a different RNG state in front of every pair after the first -- the published
+    # alignment then depended on whether the diagnostic had been requested. Finishing
+    # the primary pass before any extra seed is set keeps `agreement_seeds > 0` and
+    # `agreement_seeds == 0` byte-identical through here, without touching the seeding
+    # of the default path.
+    primary: list[tuple[str, str, dict[str, Any], float]] = []
+    for source_id, target_id in pairs:
         started = time.perf_counter()
         source = _read_cloud(o3d, paths[source_id])
         target = _read_cloud(o3d, paths[target_id])
         measured = _register_pair(o3d, source, target, manifest)
-        agreement = _measure_agreement(o3d, source, target, manifest, measured)
+        # Elapsed, not a start time: the diagnostic pass and the publish pass both
+        # come later now, and subtracting at the end would charge this pair for them.
+        primary.append((source_id, target_id, measured, time.perf_counter() - started))
+
+    # Then the diagnostic, which may now seed freely: no primary alignment is still
+    # outstanding. The clouds are re-read rather than retained, because a manifest may
+    # carry up to MAX_FRAGMENTS scans and holding them all costs more than the reads.
+    agreements: dict[str, dict[str, Any] | None] = {}
+    if manifest.agreement_seeds > 0:
+        _seeded(o3d, manifest)
+        for source_id, target_id, measured, _elapsed in primary:
+            source = _read_cloud(o3d, paths[source_id])
+            target = _read_cloud(o3d, paths[target_id])
+            agreements[f"{source_id}__{target_id}"] = _measure_agreement(
+                o3d, source, target, manifest, measured
+            )
+
+    for source_id, target_id, measured, elapsed in primary:
+        source = _read_cloud(o3d, paths[source_id])
+        pair_id = f"{source_id}__{target_id}"
+        agreement = agreements.get(pair_id)
         if agreement is not None:
             measured["agreement"] = agreement
-        pair_id = f"{source_id}__{target_id}"
         aligned = aligned_dir / f"{pair_id}.ply"
         # Write the source in the target's frame: that is the thing the
         # transformation claims, so it is the thing a reviewer should be able to
@@ -382,7 +453,7 @@ def run_register(payload: dict[str, Any], output: Path, run_id: str) -> dict[str
                 "aligned_points": len(moved.points),
                 "aligned_sha256": _digest(aligned),
                 "aligned_bytes": aligned.stat().st_size,
-                "wall_seconds": time.perf_counter() - started,
+                "wall_seconds": elapsed,
             }
         )
     (output / PAIRS_JOURNAL).write_text(

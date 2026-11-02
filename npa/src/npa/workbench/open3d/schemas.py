@@ -11,7 +11,7 @@ tutorials use, kept as factors so one `voxel_size` stays the single scale knob.
 from __future__ import annotations
 
 import re
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -78,6 +78,28 @@ class RegistrationManifest(StrictModel):
     #: Provenance only when `prepare --stage-demo-fragments` sourced the scans.
     demo_data_release: str | None = None
 
+    def canonical_document(self) -> dict[str, Any]:
+        """The dict whose canonical bytes are `manifest_sha256`.
+
+        `agreement_seeds` is omitted while it is zero. `manifest_sha256` binds the
+        published manifest bytes and `visualize` enforces that binding, so adding a
+        field with a default to `model_dump` changed the canonical bytes of every
+        manifest that never used the feature: a prefix published before this PR
+        stopped matching its own recorded digest, and "nothing changed" became "the
+        manifest does not match its recorded SHA256".
+
+        Omitting an inactive field rather than passing `exclude_defaults=True`, which
+        would have dropped every other defaulted field too and changed the canonical
+        form far more widely than this PR touches. A manifest that does ask for the
+        measurement carries the field and hashes differently, which is correct: it is
+        a different manifest.
+        """
+
+        document = self.model_dump(mode="json")
+        if not self.agreement_seeds:
+            document.pop("agreement_seeds", None)
+        return document
+
     @field_validator("fragments")
     @classmethod
     def unique_ids(cls, value: list[Fragment]) -> list[Fragment]:
@@ -101,6 +123,11 @@ class StageDemoRequest(StrictModel):
     output_path: str
     voxel_size: float = Field(default=0.05, gt=0.0, le=10.0)
     icp_estimation: IcpEstimation = "point_to_plane"
+    #: Written into the manifest, where `register` reads it. Without this the field
+    #: existed on `RegistrationManifest` and nothing could set it: the only way in
+    #: was to hand-edit a digest-bound `manifest.json` in object storage between
+    #: `prepare` and `register`, which is what that digest exists to prevent.
+    agreement_seeds: int = Field(default=0, ge=0, le=16)
 
 
 class PrepareRequest(StageDemoRequest):

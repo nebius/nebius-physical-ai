@@ -25,6 +25,11 @@ config:
   # FPFH and correspondence radii from it. 0.05 suits metre-scale indoor scans.
   open3d_voxel_size: "0.05"
   open3d_icp_estimation: point_to_plane
+  # Extra RANSAC seeds to re-register each pair under, to measure whether the
+  # alignment is the only one that fits. "0" measures nothing and costs nothing,
+  # which is this spec's default; raising it costs one more registration per pair
+  # per seed and adds an `agreement` block to every row of pairs.jsonl.
+  open3d_agreement_seeds: "0"
   open3d_poisson_depth: "9"
   open3d_density_quantile: "0.02"
   # Discard surface with no observed sample within one voxel. Poisson closes a

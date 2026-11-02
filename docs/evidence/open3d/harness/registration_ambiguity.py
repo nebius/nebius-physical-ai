@@ -32,8 +32,23 @@ from typing import Any
 import numpy as np
 import open3d as o3d
 
-REPO = Path(__file__).resolve().parents[4]
-sys.path.insert(0, str(REPO / "npa" / "src"))
+# Inside `npa-open3d` the package is installed, which is how the siblings here
+# import it and how the README's `docker run` reaches this file. The fallback is for
+# running it straight out of a checkout, which is how the committed record was in
+# fact produced; without it the documented container command could not work at all,
+# because `parents[4]` does not exist under the image's `/data` mount.
+try:
+    from npa.workbench.open3d.runner import _register_pair, _transform_displacement
+except ImportError:  # pragma: no cover - checkout, not container
+    # ImportError and not ModuleNotFoundError: an environment can have *an* npa on
+    # the path that is not this tree's, in which case the import fails on the missing
+    # name rather than the missing package -- and the partially imported modules stay
+    # cached, so adding a path is not enough on its own. Drop them, then prefer the
+    # tree this file lives in.
+    for _cached in [n for n in sys.modules if n == "npa" or n.startswith("npa.")]:
+        del sys.modules[_cached]
+    sys.path.insert(0, str(Path(__file__).resolve().parents[4] / "npa" / "src"))
+    from npa.workbench.open3d.runner import _register_pair, _transform_displacement
 
 from npa.workbench.open3d.runner import (
     _agreement,
@@ -42,7 +57,12 @@ from npa.workbench.open3d.runner import (
 )
 from npa.workbench.open3d.schemas import Fragment, RegistrationManifest
 
-OUT = Path(__file__).resolve().parents[1] / "registration-ambiguity.json"
+# `/data` is the README's mount of this directory; beside the script is the same
+# file when run from a checkout.
+_MOUNT = Path("/data")
+OUT = (_MOUNT if _MOUNT.is_dir() else Path(__file__).resolve().parents[1]) / (
+    "registration-ambiguity.json"
+)
 
 #: Enough seeds that a disagreement is not two runs, few enough to stay cheap.
 SEEDS = (0, 1, 2, 3, 4, 5)

@@ -17,16 +17,33 @@ import ast
 import json
 import math
 from pathlib import Path
+from unittest import mock
 
 import pytest
 
-from npa.workbench.open3d.artifacts import Open3dError, validate_pair
+import yaml
+from typer.testing import CliRunner
+
+from npa.cli.main import app
+from npa.orchestration.npa_workflow.catalog import TOOL_CATALOG
+from npa.workbench.open3d import runner as mod
+from npa.workbench.open3d import runtime
+from npa.workbench.open3d.artifacts import (
+    Open3dError,
+    canonical,
+    sha256_bytes,
+    validate_pair,
+)
 from npa.workbench.open3d.runner import (
     AGREEMENT_COUNTEREXAMPLE,
     _agreement,
     _transform_displacement,
 )
-from npa.workbench.open3d.schemas import RegistrationManifest
+from npa.workbench.open3d.schemas import (
+    Fragment,
+    RegistrationManifest,
+    StageDemoRequest,
+)
 
 REPO = Path(__file__).resolve().parents[3]
 EVIDENCE = REPO / "docs" / "evidence" / "open3d"
@@ -549,3 +566,610 @@ def test_the_harness_measures_through_the_shipped_registration() -> None:
     assert record()["environment"]["registration"] == (
         "the shipped _register_pair, unmodified"
     )
+
+
+# --- F1: the measurement is reachable from the surfaces an agent actually drives
+
+
+def test_the_measurement_can_be_asked_for_without_editing_object_storage() -> None:
+    """The field existed and nothing could set it.
+
+    `RegistrationManifest.agreement_seeds` was declared, but `_publish_manifest` built
+    the manifest from four other fields, no request model carried it, and no CLI flag
+    or catalog template mentioned it. The only way in was to hand-edit a digest-bound
+    `manifest.json` between `prepare` and `register` -- which is the one thing that
+    digest exists to prevent.
+    """
+
+    request = StageDemoRequest(output_path="s3://b/p/", agreement_seeds=3)
+    published: dict[str, bytes] = {}
+
+    def capture(uri: str, body: bytes) -> None:
+        published[uri] = body
+
+    with mock.patch.object(runtime, "_publish", capture):
+        result = runtime._publish_manifest(
+            request,
+            [
+                Fragment(id="a", uri="file:///a.ply", sha256="0" * 64, bytes=11),
+                Fragment(id="b", uri="file:///b.ply", sha256="1" * 64, bytes=22),
+            ],
+            demo_release=None,
+        )
+
+    assert result["agreement_seeds"] == 3
+    body = json.loads(next(iter(published.values())))
+    assert body["agreement_seeds"] == 3, (
+        "prepare published a manifest that does not carry the seeds it was asked for, "
+        "so register cannot read them"
+    )
+
+
+def test_both_staging_commands_expose_the_flag() -> None:
+    """A flag that only one of the two entry points has is reachable from one."""
+
+    runner = CliRunner()
+    for command in ("prepare", "stage-demo"):
+        helped = runner.invoke(app, ["workbench", "open3d", command, "--help"])
+        assert helped.exit_code == 0, helped.output
+        assert "--agreement-seeds" in helped.output, command
+
+
+def test_the_catalog_passes_the_flag_and_the_shipped_spec_defines_it() -> None:
+    """A workflow stage renders cleanly and then fails in the pod, or it is wired.
+
+    An argv_template naming a config key no spec defines renders as an empty string
+    and the stage dies on argument parsing; a spec key no template reads is inert.
+    Both halves have to be there.
+    """
+
+    spec = yaml.safe_load(
+        (REPO / "workflows" / "testing" / "open3d-registration.yaml").read_text()
+    )
+    assert "open3d_agreement_seeds" in spec["config"]
+    for name in ("workbench.open3d.prepare", "workbench.open3d.stage_demo"):
+        argv = TOOL_CATALOG[name].argv_template
+        assert "--agreement-seeds" in argv, name
+        value = argv[argv.index("--agreement-seeds") + 1]
+        assert value == "{{config.open3d_agreement_seeds}}", (name, value)
+
+
+def test_the_agent_facing_contract_mentions_the_measurement() -> None:
+    """An agent reading only the skill has to be able to find the input, and the
+    one-directional reading of its output, or it will read agreement as accuracy."""
+
+    skill = (REPO / "skills" / "tools" / "open3d" / "SKILL.md").read_text()
+    assert "--agreement-seeds" in skill
+    assert "agreement" in skill and "proves nothing" in skill
+
+
+# --- F2: turning the diagnostic on does not change what it reports on
+
+
+class _RngDouble:
+    """A generator whose draws depend on where in the stream they are taken.
+
+    Root's point: asserting byte equality out of real multi-threaded Open3D would be
+    asserting something #1033 has already measured to be false, because the reductions
+    are thread-ordered. What is being tested here is narrower and is exactly the defect
+    -- whether the primary registrations see the same RNG stream in both modes -- so the
+    generator is a double that makes any difference in stream position visible.
+    """
+
+    def __init__(self) -> None:
+        self.state = 0
+        self.draws: list[int] = []
+
+    def seed(self, value: int) -> None:
+        self.state = value * 1000
+
+    def draw(self) -> int:
+        self.state += 1
+        self.draws.append(self.state)
+        return self.state
+
+
+def _register_against(rng: _RngDouble):
+    def register(o3d, source, target, manifest) -> dict:
+        drawn = rng.draw()
+        return {
+            "source_points": 10,
+            "target_points": 10,
+            "source_downsampled_points": 5,
+            "target_downsampled_points": 5,
+            "fpfh_dimension": 33,
+            "global_registration": {
+                "fitness": 0.5,
+                "inlier_rmse": 0.02,
+                "correspondence_count": 3,
+            },
+            "icp": {
+                "fitness": 0.9 + drawn * 1e-6,
+                "inlier_rmse": 0.01,
+                "correspondence_count": 6,
+            },
+            # The alignment depends on the draw, which is what makes a changed RNG
+            # stream position observable in the published transform.
+            "transformation": shifted(dx=drawn * 1e-3),
+        }
+
+    return register
+
+
+def _primary_alignments(monkeypatch, tmp_path: Path, seeds: int) -> list[list]:
+    """Run `run_register` with the native library replaced, and return the published
+    primary transforms in order."""
+
+    rng = _RngDouble()
+    fake = mock.MagicMock()
+    fake.utility.random.seed.side_effect = rng.seed
+    fake.io.write_point_cloud.return_value = True
+
+    class _Cloud:
+        points = [[0.0, 0.0, 0.0]]
+
+        def transform(self, matrix) -> None:
+            return None
+
+    fake.geometry.PointCloud.side_effect = lambda source: _Cloud()
+
+    monkeypatch.setattr(mod, "_open3d", lambda: fake)
+    monkeypatch.setattr(mod, "_read_cloud", lambda o3d, path: _Cloud())
+    monkeypatch.setattr(mod, "_register_pair", _register_against(rng))
+    monkeypatch.setattr(mod, "_digest", lambda path: "d" * 64)
+    monkeypatch.setattr(
+        mod.Path, "stat", lambda self: mock.Mock(st_size=1), raising=False
+    )
+
+    out = tmp_path / f"seeds-{seeds}"
+    out.mkdir()
+    payload = {
+        "manifest": {
+            "fragments": [
+                {
+                    "id": name,
+                    "uri": f"file:///{name}.ply",
+                    "sha256": "0" * 64,
+                    "bytes": 1,
+                }
+                for name in ("a", "b", "c", "d")
+            ],
+            "voxel_size": 0.05,
+            "agreement_seeds": seeds,
+        },
+        "fragments": {name: f"/tmp/{name}.ply" for name in ("a", "b", "c", "d")},
+    }
+    mod.run_register(payload, out, "run-1")
+    rows = [
+        json.loads(line)
+        for line in (out / mod.PAIRS_JOURNAL).read_text().splitlines()
+        if line
+    ]
+    return [row["transformation"] for row in rows]
+
+
+def test_turning_the_diagnostic_on_does_not_move_the_alignment_it_reports(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """The defect, directly.
+
+    `_measure_agreement` seeds the global generator per attempt and used to run inside
+    the pair loop, leaving a re-seeded generator in front of pair 2. So pair 2 onwards
+    published a different `transformation` and a different `aligned_sha256` between two
+    runs of the same manifest that differed only in whether the diagnostic was asked
+    for -- and the attempt labelled with the manifest's own seed was an alignment that
+    existed only because the measurement was switched on.
+
+    Three pairs, because the first pair was never affected and a two-fragment manifest
+    cannot see this.
+    """
+
+    off = _primary_alignments(monkeypatch, tmp_path, seeds=0)
+    on = _primary_alignments(monkeypatch, tmp_path, seeds=2)
+    assert len(off) == 3
+    assert on == off, (
+        "the published primary alignments differ between agreement_seeds=0 and "
+        "agreement_seeds=2, so the diagnostic is changing the thing it measures"
+    )
+
+
+def test_the_default_path_is_not_reseeded_per_pair_either(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """The other way to get this wrong.
+
+    Seeding every pair would have made the two modes agree by changing the alignments
+    the default path publishes -- every manifest already registered without this
+    feature would move. The fix has to leave `agreement_seeds=0` alone, so this pins
+    the seeding of the default path to one call, before the pairs.
+    """
+
+    rng = _RngDouble()
+    fake = mock.MagicMock()
+    fake.utility.random.seed.side_effect = rng.seed
+    fake.io.write_point_cloud.return_value = True
+    seeded: list[int] = []
+    monkeypatch.setattr(
+        mod, "_seeded", lambda o3d, manifest: seeded.append(manifest.random_seed)
+    )
+    monkeypatch.setattr(mod, "_open3d", lambda: fake)
+
+    class _Cloud:
+        points = [[0.0, 0.0, 0.0]]
+
+        def transform(self, matrix) -> None:
+            return None
+
+    fake.geometry.PointCloud.side_effect = lambda source: _Cloud()
+    monkeypatch.setattr(mod, "_read_cloud", lambda o3d, path: _Cloud())
+    monkeypatch.setattr(mod, "_register_pair", _register_against(rng))
+    monkeypatch.setattr(mod, "_digest", lambda path: "d" * 64)
+    monkeypatch.setattr(
+        mod.Path, "stat", lambda self: mock.Mock(st_size=1), raising=False
+    )
+
+    out = tmp_path / "default-seeding"
+    out.mkdir()
+    mod.run_register(
+        {
+            "manifest": {
+                "fragments": [
+                    {
+                        "id": name,
+                        "uri": f"file:///{name}.ply",
+                        "sha256": "0" * 64,
+                        "bytes": 1,
+                    }
+                    for name in ("a", "b", "c", "d")
+                ],
+                "voxel_size": 0.05,
+            },
+            "fragments": {name: f"/tmp/{name}.ply" for name in ("a", "b", "c", "d")},
+        },
+        out,
+        "run-1",
+    )
+    assert seeded == [0], (
+        "the default path is seeded once before the pairs, as it always was; seeding "
+        "per pair would change every registration already published without this "
+        f"feature (saw {len(seeded)} seedings)"
+    )
+
+
+# --- F3: a failed diagnostic re-run is a fact about the pair, not a dead stage
+
+
+def test_one_failing_extra_seed_does_not_destroy_the_stage() -> None:
+    """`_register_pair` raises when RANSAC or ICP finds no correspondences, and the
+    extra attempts ran unguarded. A marginal-overlap pair -- the population this
+    feature exists to flag -- could clear the primary seed and fail on seed k, taking
+    `pairs.jsonl`, `result.json` and every already-computed pair with it, and
+    reporting a diagnostic's RANSAC failure as though the requested registration had
+    hit it."""
+
+    manifest = RegistrationManifest.model_validate(
+        {
+            "fragments": [
+                {"id": "a", "uri": "file:///a.ply", "sha256": "0" * 64, "bytes": 1},
+                {"id": "b", "uri": "file:///b.ply", "sha256": "1" * 64, "bytes": 1},
+            ],
+            "voxel_size": 0.05,
+            "agreement_seeds": 2,
+        }
+    )
+    calls = {"n": 0}
+
+    def flaky(o3d, source, target, manifest):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise Open3dError("RANSAC found no correspondences at this seed")
+        measured = attempt(0, shifted(dx=0.01), 0.9, 0.01)
+        measured.pop("seed")  # the real _register_pair does not label attempts
+        return measured
+
+    source = mock.Mock(points=[[0.0, 0.0, 0.0]])
+    with mock.patch.object(mod, "_register_pair", flaky):
+        block = mod._measure_agreement(
+            mock.MagicMock(),
+            source,
+            mock.Mock(),
+            manifest,
+            attempt(0, IDENTITY, 0.9, 0.01),
+        )
+
+    assert block is not None
+    assert block["failed_seeds"] == [
+        {"seed": 1, "error": "RANSAC found no correspondences at this seed"}
+    ]
+    assert block["seeds"] == [0, 2], "the seeds that did register are the ones compared"
+    validate_pair(good_row(agreement=block))
+
+
+def test_too_few_surviving_seeds_says_so_rather_than_vanishing() -> None:
+    """Dropping the key would be indistinguishable from never having asked for the
+    measurement, which is the distinction the opt-in shape depends on."""
+
+    manifest = RegistrationManifest.model_validate(
+        {
+            "fragments": [
+                {"id": "a", "uri": "file:///a.ply", "sha256": "0" * 64, "bytes": 1},
+                {"id": "b", "uri": "file:///b.ply", "sha256": "1" * 64, "bytes": 1},
+            ],
+            "voxel_size": 0.05,
+            "agreement_seeds": 1,
+        }
+    )
+
+    def always_fails(o3d, source, target, manifest):
+        raise Open3dError("ICP found no correspondences")
+
+    with mock.patch.object(mod, "_register_pair", always_fails):
+        block = mod._measure_agreement(
+            mock.MagicMock(),
+            mock.Mock(points=[[0.0, 0.0, 0.0]]),
+            mock.Mock(),
+            manifest,
+            attempt(0, IDENTITY, 0.9, 0.01),
+        )
+
+    assert block["measured"] is False
+    assert "fewer than the two" in block["why_not"]
+    assert block["failed_seeds"][0]["seed"] == 1
+    validate_pair(good_row(agreement=block))
+
+
+@pytest.mark.parametrize(
+    "broken",
+    [
+        {"measured": False},
+        {"measured": False, "why_not": ""},
+        {"measured": False, "why_not": "x", "failed_seeds": []},
+        {"measured": False, "why_not": "x", "failed_seeds": [{"seed": "one"}]},
+        {"measured": False, "why_not": "x", "failed_seeds": [{"seed": 1}]},
+    ],
+)
+def test_an_unmeasured_agreement_still_has_to_account_for_itself(broken: dict) -> None:
+    with pytest.raises(Open3dError):
+        validate_pair(good_row(agreement=broken))
+
+
+# --- F4: the manifest digest of an untouched prefix did not move
+
+
+#: `sha256(canonical(...))` of a two-fragment manifest at 0.05 voxels, computed by
+#: running the *base commit's* `RegistrationManifest.model_dump(mode="json")` -- the
+#: schema as it was before this PR added a field to it. Hard-coded on purpose: two
+#: hashes taken from the current model would agree with each other no matter what the
+#: current model does, and the thing being checked is agreement with history.
+PRE_CHANGE_MANIFEST_SHA256 = (
+    "fb4b0dad0b1f6c76e49b471189c33a795bf3c90e668277a1efcaad16c12a9675"
+)
+
+
+def _two_fragment_manifest(**extra) -> RegistrationManifest:
+    return RegistrationManifest.model_validate(
+        {
+            "fragments": [
+                {"id": "a", "uri": "file:///a.ply", "sha256": "0" * 64, "bytes": 11},
+                {"id": "b", "uri": "file:///b.ply", "sha256": "1" * 64, "bytes": 22},
+            ],
+            "voxel_size": 0.05,
+            **extra,
+        }
+    )
+
+
+def test_a_manifest_that_never_asked_hashes_as_it_did_before_the_field_existed() -> (
+    None
+):
+    """`manifest_sha256` binds the published manifest bytes and `visualize` enforces
+    that binding. Adding a defaulted field to `model_dump` changed the canonical bytes
+    of every manifest that never used the feature, so a prefix published before this
+    PR stopped matching its own recorded digest."""
+
+    body = canonical(_two_fragment_manifest().canonical_document())
+    assert sha256_bytes(body) == PRE_CHANGE_MANIFEST_SHA256
+
+
+def test_asking_for_the_measurement_is_a_different_manifest_and_hashes_differently() -> (
+    None
+):
+    """The compatibility is for prefixes that never asked, not a blanket exclusion."""
+
+    body = canonical(_two_fragment_manifest(agreement_seeds=2).canonical_document())
+    assert sha256_bytes(body) != PRE_CHANGE_MANIFEST_SHA256
+    assert json.loads(body)["agreement_seeds"] == 2
+
+
+def test_the_other_defaulted_fields_are_still_in_the_canonical_bytes() -> None:
+    """`exclude_defaults=True` would also have made the digest compatible -- by
+    dropping `random_seed`, `distance_factor`, `icp_estimation` and six more from the
+    canonical form of every manifest, which changes far more than this PR touches and
+    breaks the binding in the other direction."""
+
+    document = _two_fragment_manifest().canonical_document()
+    for field in (
+        "random_seed",
+        "distance_factor",
+        "feature_radius_factor",
+        "normal_radius_factor",
+        "icp_distance_factor",
+        "icp_estimation",
+        "ransac_max_iteration",
+        "ransac_confidence",
+        "demo_data_release",
+        "schema_version",
+    ):
+        assert field in document, field
+    assert "agreement_seeds" not in document
+
+
+def test_every_place_that_hashes_a_manifest_hashes_the_same_document() -> None:
+    """Three call sites bind this digest: `prepare` publishes it, `register` records
+    it, and `lineage` verifies it. One of them hashing a different document is the
+    failure this guards -- it would read as a tampered manifest."""
+
+    for path in ("runtime.py", "lineage.py"):
+        text = (SRC / path).read_text()
+        hashes = [
+            line
+            for line in text.splitlines()
+            if "canonical(manifest." in line or "canonical(\n" in line
+        ]
+        assert hashes, f"{path} no longer hashes a manifest at all"
+        for line in hashes:
+            assert "canonical_document()" in line, (path, line.strip())
+
+
+# --- F5 / F6: the evidence says what the record says, and says where it came from
+
+
+def test_the_readme_quotes_the_control_figure_the_record_measured() -> None:
+    """The README read the control's agreement as `0.00001 voxels`; the record says
+    `9.74e-05`, ten times larger. The figure is the one quoted to argue the measure is
+    quiet on working data."""
+
+    control = record()["cases"]["the_real_demo_scans"]["agreement_between_seeds"]
+    voxels = control["worst_pairwise_displacement_voxels"]
+    readme = (REPO / "docs" / "evidence" / "open3d" / "README.md").read_text()
+    assert f"{voxels:.3g}" in readme, (
+        f"the README does not quote the measured {voxels:.3g} voxels"
+    )
+    assert "0.00001 voxels" not in readme
+
+
+def test_the_record_does_not_claim_an_environment_it_did_not_run_in() -> None:
+    """The directory's blanket rule said every JSON here came from the `npa-open3d`
+    container. This one did not -- it is a host run on 3.14.7 against the image's
+    3.11. Disclosed rather than relabelled: the figures are of the same Open3D and
+    the same unmodified `_register_pair`, and regenerating them inside the image is a
+    separate act from describing them correctly."""
+
+    environment = record()["environment"]
+    assert environment["python"] == "3.14.7"
+    assert "not the npa-open3d image" in environment["interpreter"]
+    assert environment["why_that_is_recorded"]
+    readme = (REPO / "docs" / "evidence" / "open3d" / "README.md").read_text()
+    assert "Every JSON here was written by a script in `harness/`, run inside" not in (
+        readme
+    ), "the blanket container claim is back"
+
+
+def test_the_harness_can_run_the_way_the_readme_says_to_run_it() -> None:
+    """The documented way is `docker run -v .../docs/evidence/open3d:/data ... python
+    /data/harness/<name>.py`. Under that mount there is no repository above the file,
+    so a `parents[4]`-only import and an output path beside the script both fail --
+    the one documented route to regenerate this record could not execute."""
+
+    harness = (
+        REPO / "docs" / "evidence" / "open3d" / "harness" / "registration_ambiguity.py"
+    ).read_text()
+    assert "except ImportError" in harness, (
+        "the import has no path that works when npa is installed and there is no "
+        "repository above the file"
+    )
+    assert 'Path("/data")' in harness
+
+
+def test_the_harness_import_fallback_actually_recovers(tmp_path: Path) -> None:
+    """A fallback that cannot run is not a fallback.
+
+    The first attempt leaves its half-imported modules in `sys.modules`, so adding a
+    path and retrying returns the same failure -- which is what happens whenever
+    *some other* npa is importable, as it is in any environment with a second checkout
+    installed. The cache has to be dropped for the retry to reach this tree.
+    """
+
+    harness = (
+        REPO / "docs" / "evidence" / "open3d" / "harness" / "registration_ambiguity.py"
+    ).read_text()
+    fallback = harness[harness.index("except ImportError") :]
+    fallback = fallback[: fallback.index("\n\n")]
+    assert "del sys.modules[" in fallback, (
+        "the retry reuses the modules the failed import cached, so it fails the same "
+        "way"
+    )
+    assert "sys.path.insert" in fallback
+    readme = (REPO / "docs" / "evidence" / "open3d" / "README.md").read_text()
+    build = next(line for line in readme.splitlines() if "docker build -f" in line)
+    dockerfile = build.split("-f ")[1].split()[0]
+    assert (REPO / dockerfile).is_file(), (
+        f"the documented build names {dockerfile}, which is not a file"
+    )
+
+
+# --- F7: a hostile published journal is a clean error, not a traceback
+
+
+@pytest.mark.parametrize(
+    "unhashable",
+    [
+        {"seeds": [[1], [2]]},
+        {"seeds": [{}, {}]},
+        {"worst_disagreeing_seeds": [{}, {}]},
+        {"worst_disagreeing_seeds": [[0], [1]]},
+        {"seeds": [0, True]},
+    ],
+)
+def test_a_journal_whose_seeds_are_not_numbers_is_rejected_not_raised_through(
+    unhashable: dict,
+) -> None:
+    """`len(set(seeds))` and `set(pair) <= set(seeds)` called `set()` on list contents
+    with no type guard, so a published row carrying `"seeds": [[1], [2]]` raised
+    `TypeError: unhashable type` out of `read_journal`. The CLI catches
+    `(Open3dError, ValueError)`, so that surfaced as an unhandled traceback and a
+    non-contract exit -- the same hole this PR closed for `float(None)` one guard
+    further down."""
+
+    block = dict(good_row()["agreement"])
+    block.update(unhashable)
+    with pytest.raises(Open3dError):
+        validate_pair(good_row(agreement=block))
+
+
+def test_the_rejection_is_not_a_type_error_in_disguise() -> None:
+    """A guard that converts the traceback into `Open3dError` only by catching it
+    somewhere would still have lost the message."""
+
+    block = dict(good_row()["agreement"])
+    block["seeds"] = [[1], [2]]
+    with pytest.raises(Open3dError, match="integers"):
+        validate_pair(good_row(agreement=block))
+
+
+# --- F8: the voxel-normalised figure is checkable from the row
+
+
+def test_a_wrong_voxel_normalisation_is_caught_by_the_published_validator() -> None:
+    """`worst_pairwise_displacement_voxels` is the figure the README, the record and
+    the counterexample all quote, and the only one in the block the validator could
+    not check -- the row did not carry the voxel size, so a stale or wrong
+    normalisation passed `validate` silently."""
+
+    block = dict(good_row()["agreement"])
+    block["worst_pairwise_displacement_voxels"] = (
+        block["worst_pairwise_displacement_voxels"] * 10
+    )
+    with pytest.raises(Open3dError, match="divided by voxel_size"):
+        validate_pair(good_row(agreement=block))
+
+
+def test_the_normalised_figure_has_to_say_what_it_was_divided_by() -> None:
+    block = dict(good_row()["agreement"])
+    block.pop("voxel_size")
+    with pytest.raises(Open3dError, match="voxel size"):
+        validate_pair(good_row(agreement=block))
+
+
+def test_a_block_with_no_voxel_figure_needs_no_divisor() -> None:
+    """A zero voxel size reports no normalised figure rather than dividing, and that
+    shape stays legal."""
+
+    block = _agreement(
+        [attempt(0, IDENTITY, 0.9, 0.01), attempt(1, shifted(dx=0.2), 0.88, 0.011)],
+        [[0.0, 0.0, 0.0]],
+        voxel=0.0,
+    )
+    assert block["worst_pairwise_displacement_voxels"] is None
+    assert block["voxel_size"] is None
+    validate_pair(good_row(agreement=block))

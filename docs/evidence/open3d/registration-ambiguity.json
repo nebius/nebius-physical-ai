@@ -5,6 +5,8 @@
     "open3d": "0.20.0",
     "numpy": "2.5.4",
     "python": "3.14.7",
+    "interpreter": "host CPython, not the npa-open3d image (which pins 3.11-slim-trixie)",
+    "why_that_is_recorded": "This directory's convention is to generate inside the container so the Open3D version matches the tool's. This record did not: it was produced from a checkout on the host. Open3D is 0.20.0 either way and the registration is the shipped function unmodified, so the figures are of the same code -- but the claim that every record here came from the image was not true of this one, and the record says so rather than being relabelled as an image run it never had.",
     "registration": "the shipped _register_pair, unmodified"
   },
   "cases": {

@@ -5,9 +5,14 @@ The numbers quoted in `skills/tools/open3d/SKILL.md` and in the docstrings of
 repository, which meant a reader had to take them on trust; a reviewer asked for them to be
 committed so the claims can be checked against the data that produced them.
 
-Every JSON here was written by a script in `harness/`, run inside the `npa-open3d` container so the
-Open3D version and sampling behaviour match what the tool actually uses. Each harness documents its
-own question and method in its module docstring.
+Every JSON here was written by a script in `harness/`. Most were run inside the `npa-open3d`
+container so the Open3D version and sampling behaviour match what the tool actually uses; each
+record's own `environment` block says which interpreter produced it, and that block is the
+authority, not this sentence. `registration-ambiguity.json` is a host run on CPython 3.14.7
+rather than the image's 3.11, against the same Open3D 0.20.0 the image installs and the same
+unmodified `_register_pair`. Its figures are reported as what they are rather than reattributed
+to an image they did not come from. Each harness documents its own question and method in its
+module docstring.
 
 ## What the load-bearing claims rest on
 
@@ -23,7 +28,7 @@ own question and method in its module docstring.
 ## Reproducing
 
 ```bash
-docker build -f docker/workbench/open3d/Dockerfile \
+docker build -f npa/docker/workbench/open3d/Dockerfile \
     --build-arg NPA_SOURCE_SHA="$(git rev-parse HEAD)" -t npa-open3d:local npa/
 docker run --rm -v "$PWD/docs/evidence/open3d:/data" --entrypoint python npa-open3d:local \
     /data/harness/poisson_procedure_and_overcall_audit.py
@@ -209,8 +214,11 @@ noting it. On a square prism — invariant under 90 degrees about z — six seed
 wrong branch. So disagreement proves the published fitness is not accuracy; agreement
 proves nothing.
 
-The control is the pair every accepted record here was built from. Six seeds agree to
-five millionths of a unit, 0.00001 voxels, so the measure is quiet on working data. No
+The control is the pair every accepted record here was built from. In the recorded run six
+seeds agree to 4.87e-06 of a unit, which at this 0.05 voxel size is 9.74e-05 voxels, so the
+measure is quiet on working data. Rerunning the harness lands near that but not on it —
+1.00e-04 voxels on one repeat, and a different pair of seeds as the worst — because Open3D's
+reductions are thread-ordered, so read the order of magnitude rather than the digits. No
 threshold is derived from three cases.
 
 Off by default: `agreement_seeds` is 0 and a report then has exactly the shape and cost

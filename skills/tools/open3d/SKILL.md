@@ -75,6 +75,20 @@ be able to open the thing being asserted.
 - RANSAC is randomized. `random_seed` seeds Open3D's global generator so a rerun
   repeats, but a different seed can legitimately give a different transform on
   low-overlap fragments.
+- `prepare`/`stage-demo --agreement-seeds N` (0 by default, max 16, also
+  `config.open3d_agreement_seeds` in a spec) re-registers every pair under N more
+  seeds and adds an `agreement` block to each `pairs.jsonl` row:
+  `worst_pairwise_displacement` and its `_voxels` form over **all** attempt pairs,
+  the `voxel_size` that normalised it, the fitness and RMSE spreads, and the seeds.
+  Each seed costs one more full registration per pair, so N=2 on 4 pairs is 12
+  registrations rather than 4. Read it in one direction only: seeds disagreeing
+  proves the published `fitness`/`inlier_rmse` are not accuracy, and seeds agreeing
+  proves nothing, because they can agree on the same wrong branch of a symmetry —
+  the block ships the measured case where six seeds agreed within 0.13 voxels and
+  all six were 32.7 voxels from the truth. No threshold is supplied; three measured
+  cases do not set one. A seed whose re-run fails to register is recorded in
+  `failed_seeds` and does not fail the stage, and if fewer than two attempts
+  succeed the block says `measured: false` with a reason rather than vanishing.
 - A Poisson surface from partial indoor scans is normally **not** watertight and
   **not** edge-manifold. Those facts are reported, not asserted to be true. Do not
   treat an open surface as a failure, and do not treat a watertight one as proof of

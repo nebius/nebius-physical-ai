@@ -163,6 +163,30 @@ _AGREEMENT_FIELDS = (
 )
 
 
+def _is_seed(value: Any) -> bool:
+    """An Open3D seed is an int. `bool` is an int in Python and is not a seed."""
+
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _validate_failed_seeds(failed: Any) -> None:
+    """Seeds whose diagnostic re-run raised, recorded rather than dropped.
+
+    Optional, because a row from before this existed does not carry it and a run
+    where nothing failed has nothing to record.
+    """
+
+    if failed is None:
+        return
+    if not isinstance(failed, list) or not failed:
+        raise Open3dError("failed_seeds must be a non-empty list when present")
+    for entry in failed:
+        if not isinstance(entry, dict) or not _is_seed(entry.get("seed")):
+            raise Open3dError("each failed seed must name the integer seed it was")
+        if not isinstance(entry.get("error"), str) or not entry["error"]:
+            raise Open3dError("each failed seed must carry why it failed")
+
+
 def _validate_agreement(row: Any) -> None:
     """Check the multi-seed agreement block against the attempts it summarizes.
 
@@ -178,13 +202,34 @@ def _validate_agreement(row: Any) -> None:
     if "agreement" not in row:
         return
     block = row["agreement"]
-    if not isinstance(block, dict) or not set(_AGREEMENT_FIELDS) <= set(block):
+    if not isinstance(block, dict):
+        raise Open3dError("registration agreement block is missing measurements")
+
+    # A requested measurement that could not be taken. Fewer than two seeds
+    # registered successfully, so there is no legal agreement to summarize -- and
+    # omitting the key would be indistinguishable from never having asked for it.
+    if block.get("measured") is False:
+        if not isinstance(block.get("why_not"), str) or not block["why_not"]:
+            raise Open3dError(
+                "an agreement that was not measured has to say why it was not"
+            )
+        _validate_failed_seeds(block.get("failed_seeds"))
+        return
+
+    if not set(_AGREEMENT_FIELDS) <= set(block):
         raise Open3dError("registration agreement block is missing measurements")
     seeds = block["seeds"]
     if not isinstance(seeds, list) or len(seeds) < 2:
         raise Open3dError("agreement needs at least two seeds to compare")
+    # F7: `set()` on list contents without a type guard. A published journal row
+    # carrying `"seeds": [[1], [2]]` raised `TypeError: unhashable type` out of
+    # `read_journal`, which the CLI does not catch -- the same hole the `float(None)`
+    # guard below already closes for the counterexample path.
+    if not all(_is_seed(one) for one in seeds):
+        raise Open3dError("agreement seeds must be integers")
     if len(set(seeds)) != len(seeds):
         raise Open3dError("agreement seeds must be distinct, or they repeat one run")
+    _validate_failed_seeds(block.get("failed_seeds"))
     for key in ("fitness_by_seed", "inlier_rmse_by_seed"):
         values = block[key]
         if not isinstance(values, list) or len(values) != len(seeds):
@@ -207,11 +252,34 @@ def _validate_agreement(row: Any) -> None:
     if float(worst) > 0:
         if not isinstance(pair, list) or len(pair) != 2:
             raise Open3dError("a nonzero disagreement must name the two seeds it is")
+        if not all(_is_seed(one) for one in pair):
+            raise Open3dError("worst_disagreeing_seeds must name integer seeds")
         if not set(pair) <= set(seeds):
             raise Open3dError("worst_disagreeing_seeds names a seed that was not run")
     voxels = block["worst_pairwise_displacement_voxels"]
     if voxels is not None and not _finite_number(voxels):
         raise Open3dError("worst_pairwise_displacement_voxels must be finite or null")
+    # F8: the voxel-normalised figure is the one the README, the evidence record and
+    # the counterexample all quote, and it was the only field in the block with no
+    # internal consistency check -- a stale or wrong normalisation passed `validate`
+    # silently. The block now carries the voxel size it divided by, so the quotient
+    # is checkable from the row alone.
+    if voxels is not None:
+        voxel_size = block.get("voxel_size")
+        if not _finite_number(voxel_size) or float(voxel_size) <= 0:
+            raise Open3dError(
+                "a voxel-normalised disagreement must carry the positive voxel size "
+                "it was divided by, or the figure cannot be checked from the row"
+            )
+        expected = float(worst) / float(voxel_size)
+        # Relative, because the quotient spans many orders of magnitude across
+        # scenes and an absolute epsilon would be vacuous at one end and wrong at
+        # the other.
+        if abs(float(voxels) - expected) > max(1e-9, abs(expected) * 1e-9):
+            raise Open3dError(
+                "worst_pairwise_displacement_voxels is not "
+                "worst_pairwise_displacement divided by voxel_size"
+            )
     _validate_counterexample(block["agreement_is_not_correctness"])
 
 
@@ -246,6 +314,16 @@ def _validate_counterexample(limitation: Any) -> None:
     # Strictly more than ten times, so a case sitting exactly on the boundary is
     # rejected. This guard exists to make the claim hard to satisfy, and the measured
     # figures clear it by a factor of twenty-five.
+    #
+    # Note the coupling this creates, because it is deliberate and has a cost: the
+    # ratio is enforced on every agreement block the runtime *reads*, and the figures
+    # it is checked against are the editorial constant `AGREEMENT_COUNTEREXAMPLE` in
+    # `runner.py`. A future re-measurement that moved those figures below 10x would
+    # therefore make the runner emit journals its own validator rejects -- a runtime
+    # failure, not merely a red test. The trade is accepted: shipping the limitation
+    # as a checkable relation is what stops it from being invertible prose, and if the
+    # counterexample ever stops being one, the measurement's published claim has
+    # changed and the constant is the right place to be forced to notice.
     if wrong <= 10.0 * agreed:
         raise Open3dError(
             f"the counterexample is not one: the seeds agreed within {agreed} voxels "

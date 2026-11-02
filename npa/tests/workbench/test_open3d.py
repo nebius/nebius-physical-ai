@@ -882,7 +882,10 @@ def _visualize_payload(monkeypatch, tmp_path, *, factor, cropped) -> dict:
         ],
         "voxel_size": 0.05,
     }
-    manifest = RegistrationManifest.model_validate(manifest).model_dump(mode="json")
+    # The published document, which is what `manifest_sha256` binds and what
+    # `visualize` verifies against -- not `model_dump`, which carries fields the
+    # published manifest omits while they are inactive.
+    manifest = RegistrationManifest.model_validate(manifest).canonical_document()
     graph = {
         "nodes": [{"fragment_id": key, "pose": IDENTITY} for key in ("a", "b")],
         "edges": [
