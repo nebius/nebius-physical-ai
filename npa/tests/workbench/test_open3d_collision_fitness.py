@@ -268,3 +268,33 @@ def test_the_record_binds_its_harness_and_report_bytes() -> None:
         assert target.exists(), entry
         digest = hashlib.sha256(target.read_bytes()).hexdigest()
         assert digest == entry["sha256"], (entry["path"], digest, entry["sha256"])
+
+
+def test_the_record_binds_the_tests_that_pin_it() -> None:
+    """This file, by the hash of its own bytes.
+
+    A reviewer found the record named this file without binding it, so everything
+    `what_they_pin` claims could stop being true without the record noticing. The
+    binding is self-referential on purpose: editing these tests fails this assertion
+    until the record is updated, which is the only thing that makes the claim
+    maintained rather than a snapshot of one afternoon.
+
+    The path is resolved from the repository root, not from the evidence directory
+    like the provenance entries above. That difference cost the reviewer a wrong
+    MISSING verdict on their first pass, so the record states its base explicitly and
+    this test reads it rather than assuming.
+    """
+    import hashlib
+
+    bound = _record()["regression_tests"]
+    assert "repository root" in bound["path_is_relative_to"], bound
+    target = EVIDENCE.parents[2] / bound["file"]
+    assert target.exists(), (bound["file"], str(target))
+    assert target.resolve() == Path(__file__).resolve(), (
+        "the record binds a different file than the one making this assertion"
+    )
+    digest = hashlib.sha256(target.read_bytes()).hexdigest()
+    assert digest == bound["sha256"], (
+        f"{bound['file']} is now {digest}, the record says {bound['sha256']}; "
+        "update the record's sha256 together with whatever these tests now pin"
+    )

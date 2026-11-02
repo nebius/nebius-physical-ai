@@ -26,6 +26,8 @@
   "what_this_does_not_claim": "Nothing about accuracy against ground truth, which no artifact in this chain carries. A watertight mesh can be confidently wrong; closedness is necessary for a collision query to be defined and nowhere near sufficient for it to be safe. Nor does this say the reconstruction is bad at what it is for -- the same candidate artifact is the better one for occupancy mapping, and both statements are true at once.",
   "regression_tests": {
     "file": "npa/tests/workbench/test_open3d_collision_fitness.py",
+    "path_is_relative_to": "the repository root, unlike the provenance paths below, which are relative to this evidence directory",
+    "sha256": "c0bc9d5e7e1077e90694dd88688b6e0694cd5dca2ff4db4893a9eb5343b76d12",
     "what_they_pin": "That the verdict is stated rather than abstained on; that the instrument's closed-mesh control is present and passes, since without it the verdict is worthless; that parity and signed distance agree on the control; that the record does not present the baseline as a closed control; and that the narrower fit output is named with its measured figures."
   },
   "provenance": {
