@@ -669,7 +669,6 @@ class _RngDouble:
         return self.state
 
 
-
 def _fragment_files(root: Path) -> dict[str, str]:
     """Fragment input paths under the test's own temp directory.
 
@@ -685,6 +684,7 @@ def _fragment_files(root: Path) -> dict[str, str]:
         path.write_bytes(b"")
         paths[name] = str(path)
     return paths
+
 
 def _register_against(rng: _RngDouble):
     def register(o3d, source, target, manifest) -> dict:
