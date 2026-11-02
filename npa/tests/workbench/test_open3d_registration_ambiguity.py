@@ -669,6 +669,23 @@ class _RngDouble:
         return self.state
 
 
+
+def _fragment_files(root: Path) -> dict[str, str]:
+    """Fragment input paths under the test's own temp directory.
+
+    `_read_cloud` is stubbed in these tests, so nothing opens them; they are created
+    anyway so the payload names files that exist, and they live under `tmp_path`
+    rather than a hard-coded /tmp literal, which the security gate rejects.
+    """
+
+    root.mkdir(parents=True, exist_ok=True)
+    paths = {}
+    for name in ("a", "b", "c", "d"):
+        path = root / f"{name}.ply"
+        path.write_bytes(b"")
+        paths[name] = str(path)
+    return paths
+
 def _register_against(rng: _RngDouble):
     def register(o3d, source, target, manifest) -> dict:
         drawn = rng.draw()
@@ -723,6 +740,7 @@ def _primary_alignments(monkeypatch, tmp_path: Path, seeds: int) -> list[list]:
 
     out = tmp_path / f"seeds-{seeds}"
     out.mkdir()
+    fragments = _fragment_files(tmp_path / f"fragments-{seeds}")
     payload = {
         "manifest": {
             "fragments": [
@@ -737,7 +755,7 @@ def _primary_alignments(monkeypatch, tmp_path: Path, seeds: int) -> list[list]:
             "voxel_size": 0.05,
             "agreement_seeds": seeds,
         },
-        "fragments": {name: f"/tmp/{name}.ply" for name in ("a", "b", "c", "d")},
+        "fragments": fragments,
     }
     mod.run_register(payload, out, "run-1")
     rows = [
@@ -810,6 +828,7 @@ def test_the_default_path_is_not_reseeded_per_pair_either(
 
     out = tmp_path / "default-seeding"
     out.mkdir()
+    fragments = _fragment_files(tmp_path / "default-seeding-fragments")
     mod.run_register(
         {
             "manifest": {
@@ -824,7 +843,7 @@ def test_the_default_path_is_not_reseeded_per_pair_either(
                 ],
                 "voxel_size": 0.05,
             },
-            "fragments": {name: f"/tmp/{name}.ply" for name in ("a", "b", "c", "d")},
+            "fragments": fragments,
         },
         out,
         "run-1",
