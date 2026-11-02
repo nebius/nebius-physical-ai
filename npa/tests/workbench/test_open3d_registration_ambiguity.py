@@ -180,6 +180,35 @@ def test_the_published_block_carries_the_case_where_agreement_was_wrong() -> Non
     )
 
 
+def test_editing_one_report_does_not_change_what_the_next_one_claims() -> None:
+    """The counterexample is copied into each report, not shared with it.
+
+    Published by reference, one `report[...].update(...)` anywhere changed what every
+    later report in the process claimed. A test in this file did exactly that -- it
+    mutates the figure to check the validator rejects a non-counterexample -- and the
+    corruption only surfaced when xdist ran the tests in a different order, which is
+    the worst way to find out.
+    """
+
+    first = _agreement(
+        [attempt(0, IDENTITY, 0.9, 0.01), attempt(1, IDENTITY, 0.9, 0.01)],
+        [[1.0, 0.0, 0.0]],
+        voxel=1.0,
+    )
+    first["agreement_is_not_correctness"]["measured_counterexample"].update(
+        {"every_seed_was_wrong_by_voxels": 0.2, "construction": "nonsense"}
+    )
+    second = _agreement(
+        [attempt(0, IDENTITY, 0.9, 0.01), attempt(1, IDENTITY, 0.9, 0.01)],
+        [[1.0, 0.0, 0.0]],
+        voxel=1.0,
+    )
+    case = second["agreement_is_not_correctness"]["measured_counterexample"]
+    assert case == dict(AGREEMENT_COUNTEREXAMPLE)
+    with pytest.raises(TypeError):
+        AGREEMENT_COUNTEREXAMPLE["seeds"] = 99  # type: ignore[index]
+
+
 def test_the_counterexample_the_code_publishes_is_the_one_that_was_measured() -> None:
     """The figures in the source have to be the record's, or they are decoration."""
 

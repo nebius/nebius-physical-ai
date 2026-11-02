@@ -16,6 +16,7 @@ import hashlib
 import json
 import time
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any, NamedTuple
 
 from .artifacts import (
@@ -99,13 +100,19 @@ def _result_summary(result) -> dict[str, Any]:
 #: The measured case where every seed agreed and every seed was wrong, published with
 #: the measurement rather than described beside it. `docs/evidence/open3d/
 #: registration-ambiguity.json` is where it was measured; these are its figures.
-AGREEMENT_COUNTEREXAMPLE = {
-    "construction": "a square prism, invariant under 90 degrees about z",
-    "seeds": 6,
-    "seeds_agreed_within_voxels": 0.13,
-    "every_seed_was_wrong_by_voxels": 32.7,
-    "evidence": "docs/evidence/open3d/registration-ambiguity.json",
-}
+#:
+#: Read-only, and copied into each report rather than shared. Published by reference it
+#: was one `report[...].update(...)` away from changing what every later report in the
+#: process claimed, which is how a caller's local edit becomes a false record.
+AGREEMENT_COUNTEREXAMPLE = MappingProxyType(
+    {
+        "construction": "a square prism, invariant under 90 degrees about z",
+        "seeds": 6,
+        "seeds_agreed_within_voxels": 0.13,
+        "every_seed_was_wrong_by_voxels": 32.7,
+        "evidence": "docs/evidence/open3d/registration-ambiguity.json",
+    }
+)
 
 
 def _transform_displacement(first, second, points) -> float:
@@ -178,7 +185,7 @@ def _agreement(attempts: list[dict[str, Any]], points, voxel: float) -> dict[str
         # opposite without failing anything. The relation between these two figures is
         # the claim, and it is checkable.
         "agreement_is_not_correctness": {
-            "measured_counterexample": AGREEMENT_COUNTEREXAMPLE,
+            "measured_counterexample": dict(AGREEMENT_COUNTEREXAMPLE),
             "so": (
                 "Disagreement here proves that fitness and inlier_rmse are not "
                 "accuracy. Agreement proves nothing, because the seeds can agree on "
