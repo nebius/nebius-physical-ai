@@ -19,8 +19,21 @@ moment they have least information.
 The middle row is the correction to the first version of this module, which had only
 the outer two and so could treat "short of the recorded length" as meaning truncation.
 A store rewritten with a shorter object reads short on every attempt, and telling its
-reader to retry sends them to repeat a request whose bytes are gone. Length alone does
-not separate those two; whether the lengths repeat does.
+reader to retry sends them to repeat a request whose bytes are gone.
+
+The second correction is that repetition does not separate those two either, which the
+version before this one claimed. A transport that truncates at a fixed point -- a
+buffer cap, a proxy cutoff, a repeatable stream failure -- returns the same prefix
+every attempt. Against an unchanged 100-byte object, a deterministic 50-byte cutoff
+produces [50, 50, 50]; so does a genuine 50-byte replacement. The second row and the
+truncation row are therefore observationally identical, and the first repair replaced
+one categorical misdiagnosis with its converse.
+
+What these tests hold now is narrower: the message reports what was observed, names
+every cause consistent with it, points at the store metadata that does discriminate,
+and does not claim to have ruled anything out. `test_the_same_observation_under_both_
+causes_is_not_told_apart` drives one stable-short observation through both labelled
+causes and requires the two diagnoses to be the same sentence.
 """
 
 from __future__ import annotations
@@ -34,6 +47,24 @@ from npa.workbench.open3d import runtime
 from npa.workbench.open3d.artifacts import Open3dError
 from npa.workbench.open3d.schemas import Fragment
 from npa.workbench.storage_scope import StorageAuthorizationError
+
+#: Phrasings that claim a cause was identified. Every one of these was in the message
+#: at some point, and each is unsupported by read lengths alone: the first repair said
+#: stable lengths proved a shorter stored object, and root reproduced [50, 50, 50] from
+#: a 100-byte object that never changed with a deterministic 50-byte cutoff. The
+#: converse phrasings are here too, so this guard does not just forbid one direction.
+_VERDICT_PHRASES = (
+    "complete read of a shorter object rather than",
+    "rather than a truncated stream",
+    "rather than the store holding",
+    "intact and is not the one prepare recorded",
+    "Retrying will not help",
+    "retrying the stage is the action",
+    "so this is a",
+    "the transport truncated the stream rather than",
+    "rarely stop",
+    "rarely land",
+)
 
 PREPARED = "s3://example-bucket/prepared"
 SCAN = b"the bytes prepare saw when it wrote the manifest"
@@ -146,11 +177,14 @@ def test_a_manifest_that_did_not_parse_is_still_retried(monkeypatch) -> None:
     assert len(reads) == 3, reads
 
 
-def test_a_store_holding_different_intact_bytes_says_so(monkeypatch) -> None:
+def test_a_full_length_read_names_both_divergence_and_corruption(monkeypatch) -> None:
     """The reproduction: full-length reads with the wrong digest, three times.
 
-    Nothing is wrong with the transport. The object is not the one prepare recorded,
-    and the only action that helps is writing the manifest again.
+    This is the strongest case in the table and it still does not reach a verdict.
+    Bytes of the recorded length that do not match the recorded digest are consistent
+    with an object of the same length whose content differs, and with bytes corrupted
+    in transit -- which `_read_fragment`'s own docstring already acknowledged while
+    the message asserted the first.
     """
 
     fragment = _fragment()
@@ -159,19 +193,25 @@ def test_a_store_holding_different_intact_bytes_says_so(monkeypatch) -> None:
         runtime._read_fragment(fragment)
 
     message = str(raised.value)
-    assert "intact and is not the one prepare recorded" in message, message
-    assert "Retrying will not help" in message, message
-    assert "truncat" not in message, (
-        "a full-length read is not a truncation, and offering it as a possibility is "
-        "what sent a reader looking at the network"
+    assert f"arrived at exactly {fragment.bytes} bytes" in message, message
+    assert "content differs from what prepare digested" in message, message
+    assert "corrupted in transit" in message, (
+        "an in-transit corruption of the right length produces this observation too, "
+        "and the function's own docstring says so"
     )
-    assert f"of {fragment.bytes} recorded" in message, (
-        "the recorded length is the evidence for the diagnosis and belongs in it"
+    assert "cannot settle which it is" in message, message
+    assert f"against the {fragment.bytes} bytes" in message, (
+        "the recorded length is the evidence for the observation and belongs in it"
     )
 
 
-def test_a_transport_that_keeps_truncating_says_so(monkeypatch) -> None:
-    """The reproduction's other half, which produced the same sentence."""
+def test_varied_short_reads_do_not_exclude_a_changing_object(monkeypatch) -> None:
+    """The reproduction's other half, which produced the same sentence.
+
+    Varying lengths point at a stream ending wherever the connection broke, and that
+    is said. What is not said is that the store is therefore fine: an object being
+    rewritten between attempts produces varying short reads too.
+    """
 
     fragment = _fragment()
     lengths = iter([4, 9, 13])
@@ -180,15 +220,24 @@ def test_a_transport_that_keeps_truncating_says_so(monkeypatch) -> None:
         runtime._read_fragment(fragment)
 
     message = str(raised.value)
-    assert "ended short of the recorded length" in message, message
-    assert "retrying the stage is the action" in message, message
-    assert "re-run `npa workbench open3d prepare`" not in message, (
-        "re-preparing a prefix whose stored object is fine is wasted work"
+    assert "ended short of the recorded 48 bytes at 3 different lengths" in message
+    assert "ending wherever the connection broke" in message, message
+    assert "being rewritten between attempts" in message, (
+        "varying lengths do not rule out a changing object, and the previous version "
+        "of this message said they did"
     )
+    for phrase in _VERDICT_PHRASES:
+        assert phrase not in message, (phrase, message)
 
 
-def test_the_two_diagnoses_are_not_the_same_sentence(monkeypatch) -> None:
-    """The defect stated directly: one message for two causes and two actions."""
+def test_the_two_observations_are_not_the_same_sentence(monkeypatch) -> None:
+    """The original defect stated directly: one message for two unlike observations.
+
+    Full-length mismatches and varying short reads are different things to have seen
+    and still read differently. What they now share is the discriminating step, which
+    is correct: neither observation settles the cause, so both hand the operator the
+    same comparison to make.
+    """
 
     fragment = _fragment()
     messages = []
@@ -206,12 +255,22 @@ def test_the_two_diagnoses_are_not_the_same_sentence(monkeypatch) -> None:
             runtime._read_fragment(fragment)
         messages.append(str(raised.value))
 
-    diverged, truncated = messages
-    assert diverged != truncated
-    # Not merely different text: different actions, each absent from the other.
-    action = "re-run `npa workbench open3d prepare`"
-    assert action in diverged and action not in truncated
-    assert "retrying the stage" in truncated and "retrying the stage" not in diverged
+    full_length, varied_short = messages
+    assert full_length != varied_short
+    # Different observations, each quoting its own evidence.
+    assert f"arrived at exactly {fragment.bytes} bytes" in full_length
+    assert "arrived at exactly" not in varied_short
+    assert "at 3 different lengths" in varied_short
+    assert "different lengths" not in full_length
+    # And different candidate causes, because the observations differ.
+    assert "corrupted in transit" in full_length
+    assert "corrupted in transit" not in varied_short
+    assert "ending wherever the connection broke" in varied_short
+    assert "ending wherever the connection broke" not in full_length
+    # The same discriminating step, because neither observation decides anything.
+    for message in messages:
+        assert "cannot settle which it is" in message
+        assert "Compare what the store currently reports" in message
 
 
 def test_both_causes_in_one_run_are_reported_as_both(monkeypatch) -> None:
@@ -232,13 +291,21 @@ def test_both_causes_in_one_run_are_reported_as_both(monkeypatch) -> None:
         runtime._read_fragment(fragment)
 
     message = str(raised.value)
-    assert "2 read(s) ended short of the recorded length" in message, message
-    assert "1 arrived at the recorded length" in message, message
-    # Both actions, in the order of what the evidence most supports. Asserted as
-    # positions rather than one substring, so adding "against this prefix" to the
-    # re-prepare instruction cannot break a test about ordering.
-    assert message.index("open3d prepare`") < message.index("retry the stage"), message
-    assert "if it still fails, retry the stage" in message, message
+    assert f"2 read(s) ended short of the recorded {fragment.bytes} bytes" in message
+    assert f"1 arrived at exactly {fragment.bytes} bytes" in message, message
+    # Every cause either side of the mixed observation is consistent with, not a
+    # choice between them. Three causes here: two for the short reads and one for the
+    # full-length mismatch.
+    for cause in (
+        "a stream ending before the object did",
+        "now shorter than the one prepare recorded",
+        "content differs from what prepare digested",
+        "corrupted in transit",
+    ):
+        assert cause in message, (cause, message)
+    assert "cannot settle which it is" in message, message
+    for phrase in _VERDICT_PHRASES:
+        assert phrase not in message, (phrase, message)
 
 
 def test_transport_errors_alone_are_not_reported_as_a_content_disagreement(
@@ -257,6 +324,19 @@ def test_transport_errors_alone_are_not_reported_as_a_content_disagreement(
     message = str(raised.value)
     assert "no attempt returned any bytes to compare" in message, message
     assert "connection reset" in message, "the transport errors are the evidence"
+    # This is the one state where an unqualified action is supportable -- nothing
+    # arrived, so there is no content to disagree about. That makes it the state most
+    # at risk of acquiring a claim about the store, which it cannot support either.
+    # Asserted against the diagnosis alone: the exception's own prefix says "the bytes
+    # the manifest recorded at prepare time", so a check against the whole message
+    # would match that prefix and pass no matter what the diagnosis claimed.
+    diagnosis = runtime._diagnose_fragment_read([], _fragment().bytes)
+    assert diagnosis in message, "the diagnosis has to be the one in the exception"
+    for claim in ("diverged", "shorter", "prepare recorded", "prepare saw"):
+        assert claim not in diagnosis, (claim, diagnosis)
+    assert "re-run `npa workbench open3d prepare`" not in diagnosis, (
+        "no bytes were compared, so nothing here points at the manifest"
+    )
 
 
 def test_a_matching_read_is_returned_whenever_it_arrives(monkeypatch) -> None:
@@ -300,93 +380,138 @@ def test_the_diagnosis_covers_every_combination_of_what_was_seen() -> None:
     )
     assert all(one.strip() for one in seen.values())
 
-    # The actions have to follow the cause, not just differ from each other.
-    retry_is_pointless = (
-        "stable short",
-        "at the recorded length",
-        "longer than recorded",
-    )
-    for name in retry_is_pointless:
-        assert "Retrying will not help" in seen[name], (name, seen[name])
-    assert "retrying the stage is the action" in seen["varying short"]
-    assert "cannot say whether" in seen["one short"]
+    # Each state describes its own observation, and none of them reaches a verdict.
+    assert "at the same 17 bytes every time" in seen["stable short"]
+    assert "at 3 different lengths" in seen["varying short"]
+    assert "there is not even a repeated length" in seen["one short"]
+    assert "arrived at exactly 48 bytes" in seen["at the recorded length"]
+    assert "longer than the 48 bytes recorded" in seen["longer than recorded"]
+    assert "did not complete" in seen["nothing to compare"]
+
+    for name, message in seen.items():
+        if name == "nothing to compare":
+            # Nothing arrived, so there is no content disagreement to be undecided
+            # about; this is the one state where an unqualified action is supportable.
+            continue
+        assert "Consistent with" in message, (name, message)
+        assert "cannot settle which it is" in message, (name, message)
+        for phrase in _VERDICT_PHRASES:
+            assert phrase not in message, (name, phrase, message)
 
 
-def test_a_store_rewritten_with_a_shorter_object_is_not_called_a_truncation(
-    monkeypatch,
-) -> None:
-    """The diagnosis this path got wrong, reproduced before it was changed.
+def test_the_same_observation_under_both_causes_is_not_told_apart(monkeypatch) -> None:
+    """Root's counterexample, as a test. Two causes, one observation, one sentence.
 
-    A short read has two causes, not one. A stream that ended early is short, and so is
-    a complete read of a shorter object that replaced the one `prepare` recorded. The
-    shipped code took short to mean truncation and told the reader "the transport
-    truncated the stream rather than the store holding different bytes; retrying the
-    stage is the action" -- for a case where the bytes being asked for are gone and no
-    number of retries can produce them.
+    Row A: the store has been rewritten with a 17-byte object. Every read is complete
+    and returns 17 bytes.
 
-    The table in this module's docstring assumed a diverged store keeps its recorded
-    length. A store rewritten with a shorter object breaks that assumption while
-    looking, by length alone, exactly like a truncating link.
+    Row B: the store still holds exactly the 48 bytes `prepare` recorded and its
+    digest is still correct, but the transport truncates at a fixed 17 bytes -- a
+    buffer cap, a consistent proxy cutoff, a repeatable stream failure. Every read
+    returns the same first 17 bytes.
+
+    Row C: the control. A varying truncation, which is the only short case whose
+    lengths carry any information at all, and even that does not exclude an object
+    being rewritten between attempts.
+
+    A and B are observationally identical: [17, 17, 17] of 48 recorded, digest never
+    matching. The previous version of this code read that as proof of row A and told
+    the operator the store no longer held what prepare recorded and that retrying
+    would not help -- false for row B, where the store is intact and the transport is
+    the whole problem. A and B must therefore produce the same sentence, and that
+    sentence must not pick one.
     """
 
     fragment = _fragment()
-    rewritten = b"a complete object, just not that one"
-    assert len(rewritten) < fragment.bytes, (
-        "the fixture has to read short to be the case"
-    )
-    monkeypatch.setattr(runtime, "read_bytes_uri", lambda uri: rewritten)
+    assert fragment.bytes == 48
+    rewritten = b"a complete object, just not that one"[:17]
 
-    with pytest.raises(Open3dError) as raised:
-        runtime._read_fragment(fragment)
-
-    message = str(raised.value)
-    assert f"every read ended at the same {len(rewritten)} bytes" in message, message
-    assert "complete read of a shorter object" in message, message
-    assert "re-run `npa workbench open3d prepare`" in message, message
-    assert "Retrying will not help" in message, message
-    assert "retrying the stage is the action" not in message, (
-        "this is the misdiagnosis: the recommended action can never succeed, because "
-        "the object the manifest recorded is no longer in the store"
-    )
-
-
-def test_repetition_is_what_separates_the_two_short_read_causes(monkeypatch) -> None:
-    """Same number of short reads, same shortfall, opposite diagnoses.
-
-    Length alone cannot separate a truncated stream from a shorter object, so the
-    discriminator has to be whether the reads agree. A stream that ends early stops
-    wherever the connection broke; a complete read of a shorter object returns that
-    object's length every time. This drives both through the real `_read_fragment` with
-    the same count of short reads to show the decision is not the count.
-    """
-
-    fragment = _fragment()
-    verdicts = {}
-    for label, lengths in (("stable", [17, 17, 17]), ("varying", [15, 17, 19])):
-        served = iter(lengths)
-        monkeypatch.setattr(
-            runtime,
-            "read_bytes_uri",
-            lambda uri, served=served: b"x" * next(served),
-        )
+    def diagnose(serve) -> str:
+        monkeypatch.setattr(runtime, "read_bytes_uri", serve)
         with pytest.raises(Open3dError) as raised:
             runtime._read_fragment(fragment)
-        verdicts[label] = str(raised.value)
+        return str(raised.value)
 
-    assert "Retrying will not help" in verdicts["stable"]
-    assert "retrying the stage is the action" in verdicts["varying"]
-    assert "different lengths" in verdicts["varying"]
-    # The lengths are the evidence for the diagnosis, so they belong in the sentence
-    # that makes it. Asserted against the diagnosis alone: the full exception also
-    # lists every attempt, so checking the whole message would pass on that list even
-    # if the sentence showed nothing.
-    sentence = runtime._diagnose_fragment_read([15, 17, 19], fragment.bytes)
-    assert "different lengths" in sentence, sentence
-    for length in (15, 17, 19, fragment.bytes):
-        assert str(length) in sentence, (length, sentence)
-    # Both sets are three short reads of comparable size, so neither the count nor the
-    # magnitude can be what produced the difference.
-    assert "re-run `npa workbench open3d prepare`" not in verdicts["varying"]
+    # Row A: a genuinely shorter stored object, read completely every time.
+    assert len(rewritten) == 17
+    shorter_object = diagnose(lambda uri: rewritten)
+
+    # Row B: the recorded object, unchanged, behind a deterministic 17-byte cutoff.
+    assert len(SCAN) == fragment.bytes
+    assert hashlib.sha256(SCAN).hexdigest() == fragment.sha256, (
+        "row B has to serve the object the manifest recorded, or it is not the case "
+        "root reproduced: an unchanged store behind a truncating transport"
+    )
+    fixed_truncation = diagnose(lambda uri: SCAN[:17])
+
+    # Row C: a varying truncation of the same unchanged object.
+    varying = iter([15, 17, 19])
+    varied_truncation = diagnose(lambda uri, it=varying: SCAN[: next(it)])
+
+    def sentence(message: str) -> str:
+        return message.split("fragment scan-a could not be read")[-1].split(
+            "attempt 1:"
+        )[0]
+
+    assert sentence(shorter_object) == sentence(fixed_truncation), (
+        "the two causes produce identical read lengths, so any difference in the "
+        "diagnosis is an inference the observation does not support\n"
+        f"A: {sentence(shorter_object)}\nB: {sentence(fixed_truncation)}"
+    )
+    assert sentence(varied_truncation) != sentence(fixed_truncation), (
+        "stable and varying lengths are different observations and should read "
+        "differently, even though neither is decisive"
+    )
+
+    for label, message in (
+        ("shorter object", shorter_object),
+        ("fixed truncation", fixed_truncation),
+        ("varied truncation", varied_truncation),
+    ):
+        for phrase in _VERDICT_PHRASES:
+            assert phrase not in message, (label, phrase, message)
+        assert "Consistent with" in message, (label, message)
+        assert "cannot settle which it is" in message, (label, message)
+        assert "a stream ending before the object did" in message, (label, message)
+        assert "now shorter than the one prepare recorded" in message, (label, message)
+
+
+def test_the_message_points_at_the_check_that_does_discriminate(monkeypatch) -> None:
+    """Naming both causes is only half an answer; the operator still has to choose.
+
+    The discriminating evidence is not in the read at all -- it is what the store says
+    it currently holds, against what the manifest says `prepare` saw. That comparison
+    separates the two causes that the lengths cannot, and it is cheap.
+
+    It also has to be the comparison and not the remedy. Re-preparing rewrites the
+    manifest to match whatever is in the store now, so for row B above it would make
+    the error disappear while leaving every later run reading truncated scans.
+    """
+
+    fragment = _fragment()
+    monkeypatch.setattr(runtime, "read_bytes_uri", lambda uri: SCAN[:17])
+    with pytest.raises(Open3dError) as raised:
+        runtime._read_fragment(fragment)
+    message = str(raised.value)
+
+    assert "Compare what the store currently reports for this object" in message
+    assert "checksum or version metadata" in message
+    assert "If the store still reports what prepare saw" in message
+    assert "the transport is the cause" in message
+    assert "If the store reports something else" in message
+    assert "re-run `npa workbench open3d prepare`" in message
+
+    assert "Do not re-prepare on the strength of the read lengths alone" in message, (
+        "re-preparing on the lengths alone rewrites the manifest around a truncating "
+        "transport, which hides the fault instead of fixing it"
+    )
+    assert "hides a truncating transport rather than fixing it" in message, (
+        "the caution has to say why, or the same sentence can be turned into its "
+        "opposite -- 'which is the remedy' -- without any guard noticing"
+    )
+    assert message.index("Compare what the store") < message.index(
+        "re-run `npa workbench open3d prepare`"
+    ), "the comparison has to come before the action it selects"
 
 
 def test_one_short_read_is_reported_as_undecidable(monkeypatch) -> None:
@@ -415,9 +540,16 @@ def test_one_short_read_is_reported_as_undecidable(monkeypatch) -> None:
         runtime._read_fragment(fragment)
 
     message = str(raised.value)
-    assert "a single length cannot say whether" in message, message
-    assert "Retry the stage first" in message, message
-    assert "re-run `npa workbench open3d prepare`" in message, message
+    assert "there is not even a repeated length to describe" in message, message
+    assert "a stream ending before the object did" in message, message
+    assert "now shorter than the one prepare recorded" in message, message
+    assert "cannot settle which it is" in message, message
+    # No repetition was observed, so neither the fixed-cutoff nor the
+    # rewritten-between-attempts qualifier is supportable here.
+    assert "at the same byte on every attempt" not in message, message
+    assert "being rewritten between attempts" not in message, message
+    for phrase in _VERDICT_PHRASES:
+        assert phrase not in message, (phrase, message)
 
 
 def test_a_longer_object_is_not_described_as_the_recorded_length(monkeypatch) -> None:
@@ -437,8 +569,14 @@ def test_a_longer_object_is_not_described_as_the_recorded_length(monkeypatch) ->
 
     message = str(raised.value)
     assert f"longer than the {fragment.bytes} bytes recorded" in message, message
-    assert "arrived at the recorded length" not in message, message
-    assert "Retrying will not help" in message, message
+    assert "arrived at exactly" not in message, message
+    assert "ended short" not in message, message
+    # A longer read is not a truncation, but it is not proof of a replaced object
+    # either: a transport that re-sends or concatenates delivers more than the object.
+    assert "has grown or been replaced since prepare" in message, message
+    assert "re-send or concatenation" in message, message
+    for phrase in _VERDICT_PHRASES:
+        assert phrase not in message, (phrase, message)
 
 
 def test_a_refused_read_is_not_retried_and_keeps_its_own_cause(monkeypatch) -> None:

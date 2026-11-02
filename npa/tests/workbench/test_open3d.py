@@ -642,7 +642,11 @@ def test_download_refuses_a_scan_that_changed_since_prepare(
         return b"rewritten".ljust(manifest.fragments[0].bytes, b"\0")
 
     monkeypatch.setattr(runtime, "read_bytes_uri", rewritten)
-    with pytest.raises(Open3dError, match="intact and is not the one prepare recorded"):
+    # The message reports the observation -- reads at exactly the recorded length with
+    # the wrong digest -- and both causes consistent with it. It used to assert the
+    # store had diverged, which these bytes cannot establish: a corruption in transit
+    # that preserves length produces the same reads.
+    with pytest.raises(Open3dError, match="arrived at exactly"):
         runtime._download_fragments(manifest, tmp_path)
     # A store that really has diverged must stop, not retry forever.
     assert len(calls) == runtime.FRAGMENT_READ_ATTEMPTS

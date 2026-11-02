@@ -377,9 +377,12 @@ def _read_fragment(fragment, attempts: int = FRAGMENT_READ_ATTEMPTS) -> bytes:
     Every attempt is still made in that case, because a full-length read with a wrong
     digest could in principle be corruption in transit rather than a different
     object, and two extra requests are cheap next to a wrong diagnosis. What the
-    attempts buy is the diagnosis itself -- not only the recorded length but whether
-    the read lengths repeat, which is the only thing that separates a truncated stream
-    from a complete read of a shorter object: see `_diagnose_fragment_read`.
+    attempts buy is an observation -- whether any bytes arrived, and whether the
+    lengths fell short of, matched or exceeded the recorded count, and whether they
+    repeated -- not a verdict. Repeating lengths in particular do not separate a
+    truncated stream from a shorter stored object: a fixed-point truncation repeats
+    too. `_diagnose_fragment_read` reports the observation, names the causes it is
+    consistent with, and points at the store metadata that does discriminate.
     """
 
     failures: list[str] = []
@@ -409,91 +412,143 @@ def _read_fragment(fragment, attempts: int = FRAGMENT_READ_ATTEMPTS) -> bytes:
 #: A read shorter than the recorded length has two causes, not one. A stream that ended
 #: early is short, and so is a complete read of a shorter object that replaced the one
 #: `prepare` recorded. Treating short as truncation sends a reader to retry a stage that
-#: can never succeed, because the bytes they are asking for are no longer there.
+#: can never succeed; treating it as divergence sends them to rewrite a manifest that
+#: was right all along.
 #:
-#: Repetition is what separates them. A stream that ends early ends wherever the
-#: connection broke, so repeated truncations rarely land on the same byte. A complete
-#: read of a shorter object returns that object's length every time. One short read
-#: distinguishes nothing, and the message says so rather than guessing.
+#: Repetition does not separate them. That was the first correction's mistake, and it
+#: was wrong: a transport that truncates at a fixed point -- a buffer cap, a proxy
+#: cutoff, a repeatable stream failure -- returns the same prefix on every attempt,
+#: exactly as a complete read of a shorter object does. Against a 100-byte object that
+#: never changed, a deterministic 50-byte cutoff produces [50, 50, 50], and so does a
+#: genuine 50-byte replacement. No inference from these lengths can tell those apart.
+#:
+#: What the lengths do establish is narrower and still worth reporting: whether any
+#: bytes arrived at all, whether they fell short of, matched, or exceeded the recorded
+#: count, and whether the count repeated. The message states that observation, names
+#: every cause consistent with it, and then names the one check that does discriminate
+#: -- the store's own current size and checksum metadata against the manifest.
 _RE_PREPARE = "re-run `npa workbench open3d prepare` against this prefix"
+
+#: The check that separates a diverged store from a damaged transport, which no number
+#: of read attempts can. The store is asked what it currently holds; the manifest says
+#: what `prepare` saw. Deliberately not phrased as "re-prepare and see if it goes away":
+#: re-preparing rewrites the manifest to match whatever is there now, so it makes a
+#: truncating transport look resolved while leaving the run reading short objects.
+_DISCRIMINATE = (
+    "These read lengths cannot settle which it is. Compare what the store currently "
+    "reports for this object -- its size, and its checksum or version metadata if the "
+    "backend exposes them -- against the {recorded} bytes and the digest the manifest "
+    "recorded. If the store still reports what prepare saw, the object is intact and "
+    "the transport is the cause: retry the stage or repair the path to it. If the store "
+    "reports something else, it has diverged and {re_prepare}. Do not re-prepare on "
+    "the strength of the read lengths alone: that rewrites the manifest to match "
+    "whatever is there now, which hides a truncating transport rather than fixing it."
+)
 
 
 def _diagnose_fragment_read(lengths: list[int], recorded: int) -> str:
-    """Which cause the attempts point at, and what to do about it.
+    """What the attempts observed, which causes that is consistent with, and the
+    check that separates them.
 
-    The message used to offer both -- "the manifest and the stored scan disagree, or
-    the transport kept truncating" -- while the manifest records the byte count that
-    separates them. The two need different actions: a diverged store has to be
-    prepared again, and a truncating transport has to be retried, so leaving the
-    reader to guess is the part worth fixing.
+    The message used to offer both causes with no way to choose -- "the manifest and
+    the stored scan disagree, or the transport kept truncating" -- and the first
+    correction replaced that with a verdict read off the lengths. The verdict was
+    unsound. Against a 100-byte object that never changed, a transport truncating at
+    a fixed 50 bytes returns [50, 50, 50]; so does a genuine 50-byte replacement.
+    Stating either as the cause is wrong half the time, and the two call for opposite
+    actions, so being wrong is expensive.
 
-    Length alone does not separate them, which is the correction here. A read at the
-    recorded length with the wrong digest is an intact object that is not the one
-    `prepare` saw. A read *short* of it is either a truncated stream or a complete read
-    of a shorter object, and only whether the lengths repeat tells them apart. A read
-    *longer* than recorded is neither: it is a different object outright.
+    What a set of lengths supports is an observation, not an attribution: whether any
+    bytes arrived, how they compare with the recorded count, and whether the count
+    repeated. Each branch below reports that, lists every cause consistent with it,
+    and hands over the discriminating step. Nothing here claims to have ruled a cause
+    out.
     """
+
+    discriminate = _DISCRIMINATE.format(recorded=recorded, re_prepare=_RE_PREPARE)
 
     if not lengths:
         return (
-            "no attempt returned any bytes to compare, so the failures above are "
-            "transport errors rather than a disagreement about content."
+            "no attempt returned any bytes to compare against the manifest, so the "
+            "failures above are the whole of what was observed: the reads did not "
+            "complete. Retry the stage. If they keep failing without ever delivering "
+            "bytes, the path to the store is the thing to repair, not the manifest."
         )
 
     short = [one for one in lengths if one < recorded]
     exact = [one for one in lengths if one == recorded]
-    long = [one for one in lengths if one > recorded]
-    diverged = exact or long
+    longer = [one for one in lengths if one > recorded]
 
-    if short and diverged:
-        others = []
-        if exact:
-            others.append(f"{len(exact)} arrived at the recorded length")
-        if long:
-            others.append(f"{len(long)} arrived longer than the {recorded} recorded")
-        return (
-            f"{len(short)} read(s) ended short of the recorded length and "
-            f"{' and '.join(others)} with the wrong digest, so the transport is "
-            "unreliable and the stored object may also differ from the manifest; "
-            f"{_RE_PREPARE} and, if it still fails, retry the stage."
+    seen = []
+    if short:
+        distinct = sorted(set(short))
+        lens = ", ".join(str(one) for one in distinct)
+        seen.append(
+            f"{len(short)} read(s) ended short of the recorded {recorded} bytes "
+            + (
+                f"at the same {distinct[0]} bytes every time"
+                if len(distinct) == 1
+                else f"at {len(distinct)} different lengths ({lens})"
+            )
+        )
+    if exact:
+        seen.append(f"{len(exact)} arrived at exactly {recorded} bytes")
+    if longer:
+        seen.append(
+            f"{len(longer)} arrived longer than the {recorded} bytes recorded "
+            f"({', '.join(str(one) for one in sorted(set(longer)))})"
         )
 
-    if diverged:
-        described = (
-            "at the recorded length"
-            if not long
-            else f"longer than the {recorded} bytes recorded"
+    causes = []
+    if short:
+        # One short read says nothing about repetition, so it gets neither qualifier.
+        stable = len(short) > 1 and len(set(short)) == 1
+        varied = len(set(short)) > 1
+        causes.append(
+            "a stream ending before the object did"
+            + (
+                ", which a fixed buffer cap, proxy cutoff or repeatable failure will "
+                "do at the same byte on every attempt"
+                if stable
+                else ", ending wherever the connection broke"
+                if varied
+                else ""
+            )
         )
-        return (
-            f"every read arrived {described} with the wrong digest, so the stored "
-            f"object is intact and is not the one prepare recorded; {_RE_PREPARE}. "
-            "Retrying will not help."
+        causes.append(
+            "a complete read of an object that is now shorter than the one prepare "
+            "recorded"
+            + (", if it is being rewritten between attempts" if varied else "")
+        )
+    if exact:
+        causes.append(
+            "an object of the recorded length whose content differs from what prepare "
+            "digested, or bytes of the right length corrupted in transit"
+        )
+    if longer:
+        causes.append(
+            "an object that has grown or been replaced since prepare, or a transport "
+            "delivering more than the object (a re-send or concatenation)"
         )
 
-    if len(short) == 1:
+    if len(short) == 1 and not exact and not longer:
         return (
             f"one read ended short of the recorded length ({short[0]} of {recorded} "
-            "bytes) and the other attempts returned no bytes at all, so a single "
-            "length cannot say whether the stream ended early or the store holds a "
-            f"shorter object. Retry the stage first, since that is cheap; if it fails "
-            f"the same way, {_RE_PREPARE}."
-        )
-
-    if len(set(short)) == 1:
-        return (
-            f"every read ended at the same {short[0]} bytes against {recorded} "
-            "recorded, so this is a complete read of a shorter object rather than a "
-            "truncated stream -- a stream that ended early would rarely stop on the "
-            f"same byte {len(short)} times. The store no longer holds what prepare "
-            f"recorded; {_RE_PREPARE}. Retrying will not help."
+            "bytes) and the other attempts returned no bytes at all, so there is not "
+            "even a repeated length to describe. Consistent with "
+            f"{_join(causes, last='or')}. {discriminate}"
         )
 
     return (
-        f"the reads ended short of the recorded length at {len(set(short))} different "
-        f"lengths ({', '.join(str(one) for one in short)} of {recorded}), so the "
-        "stream is ending early rather than the store holding a shorter object; "
-        "retrying the stage is the action."
+        f"{_join(seen)}, with the digest never matching. Consistent with "
+        f"{_join(causes, last='or')}. {discriminate}"
     )
+
+
+def _join(parts: list[str], last: str = "and") -> str:
+    if len(parts) == 1:
+        return parts[0]
+    return ", ".join(parts[:-1]) + f", {last} {parts[-1]}"
 
 
 def _download_fragments(manifest: RegistrationManifest, root: Path) -> dict[str, str]:
