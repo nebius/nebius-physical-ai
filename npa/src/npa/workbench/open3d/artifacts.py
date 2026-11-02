@@ -406,6 +406,11 @@ def validate_overlay_matches_crop(recording: Any, reconstruction: Any) -> None:
 _DECLARED_UP_SOURCES = frozenset(
     {"default", "default-weak-plane", "default-ambiguous-plane"}
 )
+#: The one source that names a measured axis, plus the defaults above. Kept as a
+#: closed set because the semantic checks are keyed to these literals: a source
+#: outside it would reach none of them and be accepted unexamined.
+_MEASURED_UP_SOURCE = "largest-plane-normal-snapped-to-axis"
+_KNOWN_UP_SOURCES = _DECLARED_UP_SOURCES | {_MEASURED_UP_SOURCE}
 #: What the counterexample must say to be one: repeats that agreed, and a tilt large
 #: enough that agreeing on it is visibly not the same as the plane meaning something.
 _COUNTEREXAMPLE_TILT_DEGREES = 10.0
@@ -435,6 +440,18 @@ def validate_up_axis_inference(recording: Any) -> None:
     up = inference.get("up")
     if not isinstance(source, str) or not source:
         raise Open3dError("up_axis_inference does not say where its axis came from")
+    # Both semantic claims below are keyed to literal source strings, so a source
+    # this function does not recognise reaches neither of them and is accepted with
+    # any number of disagreeing axes. Nothing emits an unrecognised source today, so
+    # this was safe by circumstance rather than by construction -- and the dangerous
+    # shape is not a wild string but a near miss like `largest-plane-normal`, a
+    # truncation of the real one, which would turn both checks off silently instead
+    # of failing loudly.
+    if source not in _KNOWN_UP_SOURCES:
+        raise Open3dError(
+            f"up_axis_inference reports an unrecognised source {source!r}; the "
+            "checks below are keyed to the known sources and would not apply"
+        )
     if not isinstance(up, list) or len(up) != 3:
         raise Open3dError("up_axis_inference does not publish a three-vector")
     if not all(
@@ -471,6 +488,26 @@ def validate_up_axis_inference(recording: Any) -> None:
         raise Open3dError(
             f"the agreement report found {distinct} axes in {repeats} repeats"
         )
+    attempted = agreement.get("attempted_fits", _ABSENT)
+    if attempted is not _ABSENT:
+        if not isinstance(attempted, int) or isinstance(attempted, bool):
+            raise Open3dError("attempted_fits must be a count")
+        if attempted < repeats:
+            raise Open3dError(
+                f"the agreement report counts {repeats} repeats out of "
+                f"{attempted} attempted fits"
+            )
+        # A majority, so "the repeats agreed" cannot be satisfied by a sample of one
+        # out of nine. Without this, a scan whose fits were weak eight times in nine
+        # and strong on the draw that happened to be first was published as measured.
+        if (
+            source == "largest-plane-normal-snapped-to-axis"
+            and 2 * repeats <= attempted
+        ):
+            raise Open3dError(
+                f"the report names a measured axis from {repeats} usable fits out of "
+                f"{attempted} attempted, which is not a majority of them"
+            )
     # The two claims that must not come apart: naming an axis requires the repeats to
     # have agreed, and reporting disagreement requires not naming one.
     if source == "largest-plane-normal-snapped-to-axis" and distinct != 1:

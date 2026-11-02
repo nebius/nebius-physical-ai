@@ -18,14 +18,14 @@
               0.0,
               1.0
             ],
-            "chosen_by_fits": 32,
+            "chosen_by_fits": 30,
             "plane_inlier_fraction_range": [
               0.506358024691358,
-              0.5114814814814815
+              0.5114197530864197
             ],
             "tilt_to_snapped_axis_degrees_range": [
               0.02661921871477898,
-              0.08782661791059229
+              0.08305845180762936
             ]
           },
           {
@@ -34,14 +34,14 @@
               0.0,
               0.0
             ],
-            "chosen_by_fits": 8,
+            "chosen_by_fits": 10,
             "plane_inlier_fraction_range": [
-              0.5064197530864197,
-              0.5082716049382716
+              0.5069753086419753,
+              0.5104938271604939
             ],
             "tilt_to_snapped_axis_degrees_range": [
-              0.027696533997615874,
-              0.09688376775131563
+              0.033913301763729475,
+              0.07020645634885964
             ]
           }
         ],
@@ -63,7 +63,7 @@
               1.0
             ],
             "distinct_axes_found_by_repeats": 2,
-            "published_by_runs": 27
+            "published_by_runs": 29
           },
           {
             "source": "largest-plane-normal-snapped-to-axis",
@@ -73,11 +73,11 @@
               1.0
             ],
             "distinct_axes_found_by_repeats": 1,
-            "published_by_runs": 3
+            "published_by_runs": 1
           }
         ],
         "runner_up_relative_to_winner_range": [
-          0.9562643469856228,
+          0.9553409776704889,
           0.9748872363769353
         ]
       }
@@ -98,14 +98,14 @@
               1.0,
               0.0
             ],
-            "chosen_by_fits": 35,
+            "chosen_by_fits": 31,
             "plane_inlier_fraction_range": [
               0.5061111111111111,
-              0.5114197530864197
+              0.5115432098765432
             ],
             "tilt_to_snapped_axis_degrees_range": [
               0.025069099740312004,
-              0.08616141082430989
+              0.08514036308462346
             ]
           },
           {
@@ -114,14 +114,14 @@
               0.0,
               0.0
             ],
-            "chosen_by_fits": 5,
+            "chosen_by_fits": 9,
             "plane_inlier_fraction_range": [
-              0.5064197530864197,
-              0.5104938271604939
+              0.5061728395061729,
+              0.509753086419753
             ],
             "tilt_to_snapped_axis_degrees_range": [
-              0.03371303900719535,
-              0.08256735277536234
+              0.030302101962741603,
+              0.0708084085074896
             ]
           }
         ],
@@ -143,7 +143,7 @@
               1.0
             ],
             "distinct_axes_found_by_repeats": 2,
-            "published_by_runs": 22
+            "published_by_runs": 21
           },
           {
             "source": "largest-plane-normal-snapped-to-axis",
@@ -153,11 +153,11 @@
               0.0
             ],
             "distinct_axes_found_by_repeats": 1,
-            "published_by_runs": 8
+            "published_by_runs": 9
           }
         ],
         "runner_up_relative_to_winner_range": [
-          0.9612590799031477,
+          0.9558131111915973,
           0.9758507135016465
         ]
       }
@@ -181,11 +181,11 @@
             "chosen_by_fits": 40,
             "plane_inlier_fraction_range": [
               0.8018765432098766,
-              0.8019753086419753
+              0.8028641975308642
             ],
             "tilt_to_snapped_axis_degrees_range": [
               0.0054783606669823485,
-              0.00600533446780707
+              0.012232120738915912
             ]
           }
         ],
@@ -208,7 +208,7 @@
           }
         ],
         "runner_up_relative_to_winner_range": [
-          0.24584717607973422,
+          0.2437047045817467,
           0.2470747629018352
         ]
       }
@@ -232,11 +232,11 @@
             "chosen_by_fits": 40,
             "plane_inlier_fraction_range": [
               0.9101010101010101,
-              0.9105499438832773
+              0.910662177328844
             ],
             "tilt_to_snapped_axis_degrees_range": [
               0.002540563840095247,
-              0.005083495337804406
+              0.005569410249357246
             ]
           }
         ],
@@ -259,7 +259,7 @@
           }
         ],
         "runner_up_relative_to_winner_range": [
-          0.09877913429522753,
+          0.0975609756097561,
           0.09877913429522753
         ]
       }
@@ -282,12 +282,12 @@
             ],
             "chosen_by_fits": 40,
             "plane_inlier_fraction_range": [
-              0.33976915532979607,
-              0.38564639022304925
+              0.34319410566550157,
+              0.38640078457012095
             ],
             "tilt_to_snapped_axis_degrees_range": [
-              19.61738004280869,
-              20.517314275979547
+              19.812252492767783,
+              20.62697735095836
             ]
           }
         ],
@@ -310,8 +310,8 @@
           }
         ],
         "runner_up_relative_to_winner_range": [
-          0.6199288162750686,
-          0.7289066825674007
+          0.6208283227950399,
+          0.7225246537080317
         ]
       }
     },
@@ -333,12 +333,12 @@
             ],
             "chosen_by_fits": 40,
             "plane_inlier_fraction_range": [
-              0.12415,
-              0.13265
+              0.123475,
+              0.131
             ],
             "tilt_to_snapped_axis_degrees_range": [
-              14.140890382877812,
-              22.936451741777937
+              14.95387344167009,
+              22.360362592758772
             ]
           }
         ],
@@ -361,8 +361,8 @@
           }
         ],
         "runner_up_relative_to_winner_range": [
-          0.7573149741824441,
-          0.8662892836228773
+          0.692836676217765,
+          0.8777486382892878
         ]
       }
     }
@@ -373,19 +373,19 @@
     "answers": [
       {
         "up": [
-          1.0,
-          0.0,
-          0.0
-        ],
-        "times": 6
-      },
-      {
-        "up": [
           0.0,
           0.0,
           1.0
         ],
-        "times": 4
+        "times": 5
+      },
+      {
+        "up": [
+          1.0,
+          0.0,
+          0.0
+        ],
+        "times": 5
       }
     ]
   },
@@ -395,14 +395,14 @@
         "repeats": 4,
         "fits": 5,
         "is_the_shipped_default": false,
-        "ambiguity_detected_in_runs": 23,
+        "ambiguity_detected_in_runs": 25,
         "of_runs": 30
       },
       {
         "repeats": 8,
         "fits": 9,
         "is_the_shipped_default": true,
-        "ambiguity_detected_in_runs": 27,
+        "ambiguity_detected_in_runs": 26,
         "of_runs": 30
       },
       {
@@ -413,7 +413,88 @@
         "of_runs": 30
       }
     ],
-    "why_it_is_not_one": "The check fires when the repeats disagree, so it misses when every fit lands on the same branch by chance. At the per-fit split measured beside this, (1-p)^n + p^n accounts for the observed misses at all three counts, which means the residual is the branches agreeing by chance rather than a defect in the check. The rate falls as one branch gets rarer -- and a rarer branch also rolls the view less often."
+    "why_it_is_not_one": "The check fires when the repeats disagree, so it misses when every fit lands on the same branch. A previous version of this record explained the residual as the branches agreeing by chance, following (1-p)^n + p^n. That explanation is withdrawn: see independence_of_the_fits, which tests it against the per-fit split measured in the same process and finds it does not hold. The rates above are measurements and are not derived from any model.",
+    "independence_of_the_fits": {
+      "model_tested": "(1-p)^n + p^n, for n fits and a fixed per-fit minority p",
+      "per_fit_minority_rate_measured_in_this_process": 0.25,
+      "exponent_is": "the number of fits, which is one plus the repeats",
+      "predictions": [
+        {
+          "fits": 5,
+          "probability_all_fits_agree": 0.238281,
+          "predicted_misses": 7.148,
+          "observed_misses": 5,
+          "one_sided_p_of_at_most_the_observed": 0.2464
+        },
+        {
+          "fits": 9,
+          "probability_all_fits_agree": 0.075089,
+          "predicted_misses": 2.253,
+          "observed_misses": 4,
+          "one_sided_p_of_at_most_the_observed": 0.9295
+        },
+        {
+          "fits": 17,
+          "probability_all_fits_agree": 0.007517,
+          "predicted_misses": 0.226,
+          "observed_misses": 0,
+          "one_sided_p_of_at_most_the_observed": 0.7974
+        }
+      ],
+      "counts_where_this_process_rejects_the_model": [],
+      "this_verdict_does_not_reproduce": "and that is the point -- see across_processes below. One process is not enough to decide this, so no verdict is published from this block alone",
+      "across_processes": {
+        "processes": 4,
+        "fits_per_run": 9,
+        "fits_per_minority_estimate": 40,
+        "observations": [
+          {
+            "per_fit_minority": 0.275,
+            "predicted_misses": 1.66,
+            "observed_misses": 0,
+            "of_runs": 30,
+            "one_sided_p": 0.1812,
+            "model_rejected_here": false
+          },
+          {
+            "per_fit_minority": 0.275,
+            "predicted_misses": 1.66,
+            "observed_misses": 3,
+            "of_runs": 30,
+            "one_sided_p": 0.9182,
+            "model_rejected_here": false
+          },
+          {
+            "per_fit_minority": 0.25,
+            "predicted_misses": 2.253,
+            "observed_misses": 3,
+            "of_runs": 30,
+            "one_sided_p": 0.815,
+            "model_rejected_here": false
+          },
+          {
+            "per_fit_minority": 0.2,
+            "predicted_misses": 4.027,
+            "observed_misses": 4,
+            "of_runs": 30,
+            "one_sided_p": 0.6236,
+            "model_rejected_here": false
+          }
+        ],
+        "per_fit_minority_range": [
+          0.2,
+          0.275
+        ],
+        "pooled_per_fit_minority": 0.25,
+        "one_sigma_of_counting_noise_at_that_rate": 0.0685,
+        "spread_in_sigmas": 1.1,
+        "the_spread_exceeds_counting_noise": false,
+        "processes_rejecting_the_model": 0,
+        "so": "the explanation is withdrawn rather than replaced. The minority rate varies enough between processes to make a fixed-p model doubtful, and forty fits per estimate is not enough to separate that variation from counting noise, so this record cannot establish the chance-agreement account and does not assert it. Individual per-process verdicts are low-powered at thirty runs and are published as observations, not as a finding. What is withdrawn is the explanation of why the check misses; the measured detection rates above stand on their own",
+        "what_would_settle_it": "a few hundred fits per process across a dozen processes would separate a varying rate from counting noise. That is a question about RANSAC's threading, not about whether this check works, so it is named rather than answered here"
+      },
+      "what_this_does_not_change": "the check still detects the ambiguity in most runs at the shipped count, and the rate is published rather than claimed away. What is withdrawn is the explanation of why it misses, not the measurement of how often"
+    }
   },
   "what_the_cases_establish": [
     "A single fit on the ambiguous room returns two different axes, and the inlier fraction and tilt ranges of the two branches overlap, so no field the function publishes separates them.",

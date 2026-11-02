@@ -739,20 +739,23 @@ def _uncropped_facts(o3d, path: Path) -> dict[str, Any]:
 #: labelled as a convention wherever it is used, because these scans carry none.
 DECLARED_UP = (0.0, 0.0, 1.0)
 
-#: How often the ambiguity was actually detected, as `(fits, runs_detected, runs)`.
-#: Carried as data rather than in a sentence so a test can hold it to
-#: `docs/evidence/open3d/up-axis-ambiguity.json` instead of a comment quietly
-#: drifting away from the evidence -- which it did twice while this was being
-#: written, because the rate moves by a few counts between runs.
-UP_AXIS_DETECTION_MEASURED = ((5, 23, 30), (9, 27, 30), (17, 30, 30))
+#: What the detection sweep must show, as a floor rather than the counts observed.
+#: Exact counts were pinned here first and went stale on the next regeneration:
+#: across five sweeps the shipped count returned 25, 26, 27, 25 and 27 of 30. The
+#: rate is not reproducible, which is this record's own subject, so the claim is the
+#: part that survives a rerun -- a floor every observation clears, and detection
+#: rising with the fit count. See `docs/evidence/open3d/up-axis-ambiguity.json`.
+UP_AXIS_DETECTION_FLOOR_OF_THIRTY = 20
+UP_AXIS_DETECTION_RISES_WITH_FITS = True
 
 #: Extra plane fits used to decide whether the scan determines an up axis at all.
-#: Eight, from measurement rather than taste: see `UP_AXIS_DETECTION_MEASURED` for
-#: the rate at this and two other counts, and the record for the rest. The misses
-#: are the branches agreeing by chance, following (1-p)^n + p^n at the measured
-#: per-fit minority rate of 8 in 40 fits, not a defect in the check -- so this is
-#: not a guarantee, and the rate falls as one branch gets rarer, though a rarer
-#: branch also rolls the view less often. Nine fits cost about 0.7 s on a
+#: Eight, from measurement rather than taste: see `UP_AXIS_DETECTION_FLOOR_OF_THIRTY`
+#: for the floor it clears at this and two other counts, and the record for the
+#: sweep itself. The misses
+#: are the branches agreeing by chance, most likely the branches agreeing by chance, though
+#: the record withholds that explanation: forty fits per estimate cannot separate a
+#: varying per-fit rate from counting noise. So this is not a guarantee, and the
+#: measured rate is published rather than a mechanism for it. Nine fits cost about 0.7 s on a
 #: 200k-point scan against a multi-second reconstruction.
 UP_AXIS_REPEATS = 8
 
@@ -846,11 +849,13 @@ def _runner_up_plane(
     lets a reviewer see a miss: drop the winning plane's inliers, fit the remainder,
     and report how large the runner-up was relative to the winner.
 
-    No threshold is attached, on purpose. Measured over six clouds the two ambiguous
-    constructions sat at 0.956-0.976 while four determined clouds sat at 0.099-0.866,
-    which is a real separation and still only six clouds -- not enough to place a line
-    that decides whether a camera axis is trustworthy. The number is published so the
-    reader can judge how close the competition was.
+    No threshold is attached, on purpose. Over six clouds every ambiguous
+    construction's ratio came in above 0.95 and every determined cloud's below 0.90,
+    with no overlap -- a real separation, and still only six clouds, which is not
+    enough to place a line deciding whether a camera axis is trustworthy. The bounds
+    are stated rather than the measured extremes because the extremes move on each
+    regeneration; the ordering is the part that survives one. The number is published
+    so a reader can judge how close the competition was.
     """
 
     kept = cloud.select_by_index(winner["inlier_indices"], invert=True)
@@ -869,10 +874,10 @@ def _runner_up_plane(
             None if second["weak"] else second["up"] != winner["up"]
         ),
         "no_threshold_is_applied_to_this": (
-            "Measured at 0.956-0.976 for two ambiguous constructions and at "
-            "0.099-0.866 for four determined clouds. Six clouds are not enough to "
-            "place a line that decides whether a camera axis is trustworthy, so this "
-            "is evidence for a reader, not a gate."
+            "Over six clouds every ambiguous construction came in above 0.95 and "
+            "every determined cloud below 0.90, with no overlap. Six clouds are not "
+            "enough to place a line that decides whether a camera axis is "
+            "trustworthy, so this is evidence for a reader, not a gate."
         ),
     }
 
@@ -922,12 +927,38 @@ def _up_axis(
         }
 
     usable = [one for one in readings if one is not None and not one["weak"]]
+    # A majority of the fits attempted must be usable, not merely the first one.
+    # Weakness of the first reading disqualified the scan above, while the others
+    # were filtered out silently, so their weakness only shrank the sample -- and a
+    # scan that fit weakly eight times in nine, strongly on the draw that happened
+    # to be first, was published as a measured axis with `repeats: 1`. "The repeats
+    # agreed" is true vacuously when there is one repeat. This is reachable from the
+    # evidence rather than hypothetical: the Armadillo case records inlier fractions
+    # of 0.122 to 0.134 against a weak threshold of 0.1, so ordinary RANSAC variance
+    # puts some of its fits either side of the line.
+    if 2 * len(usable) <= len(readings):
+        return {
+            "source": "default-weak-plane",
+            "up": list(DECLARED_UP),
+            "plane_inliers": first["plane_inliers"],
+            "plane_inlier_fraction": first["plane_inlier_fraction"],
+            "usable_fits": len(usable),
+            "attempted_fits": len(readings),
+            "why": (
+                "most fits found no plane holding a tenth of the points, so the "
+                "sample behind any agreement would be a minority of the attempts"
+            ),
+        }
+
     counts: dict[tuple[float, ...], int] = {}
     for one in usable:
         key = tuple(one["up"])
         counts[key] = counts.get(key, 0) + 1
     agreement = {
         "repeats": len(usable),
+        # Published so a consumer, and the validator, can see how much of the
+        # sample was thrown away before the repeats were counted.
+        "attempted_fits": len(readings),
         "distinct_axes": len(counts),
         "candidates": [
             {"up": list(axis), "chosen_by_repeats": count}

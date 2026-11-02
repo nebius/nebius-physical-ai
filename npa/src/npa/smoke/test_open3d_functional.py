@@ -297,7 +297,7 @@ def _assert_the_up_axis_is_decided_by_the_scan(o3d) -> None:
         return cloud
 
     # Equal point counts on two perpendicular planes. The check is allowed to miss --
-    # its measured rate is 27 of 30 runs on the floor-and-wall room -- so this asserts
+    # its measured rate is 25 to 27 of 30 runs on the floor-and-wall room -- so this asserts
     # the two outcomes it may legitimately produce, and that neither is a named axis
     # contradicted by its own repeats.
     ambiguous = _up_axis(o3d, two_walls(8100, 8100), VOXEL_SIZE)

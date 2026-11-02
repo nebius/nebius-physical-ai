@@ -62,6 +62,8 @@ ARMADILLO_VOXEL = 2.0
 
 #: Side length of both faces of the constructed rooms, in the same units as VOXEL.
 ROOM_SIDE = 4.0
+#: Equal point counts on floor and wall: the construction the ambiguity needs.
+ROOM_POINTS = 8100
 
 
 def room(floor_points: int, wall_points: int):
@@ -258,7 +260,9 @@ def what_the_pipeline_publishes(cloud, voxel: float) -> dict[str, Any]:
     }
 
 
-def detection_by_repeat_count(cloud, voxel: float) -> dict[str, Any]:
+def detection_by_repeat_count(
+    cloud, voxel: float, distribution: dict[str, Any]
+) -> dict[str, Any]:
     """How often the ambiguity is caught, as a function of the repeat count.
 
     This is the honest cost of the check: it detects a swap when the repeats happen
@@ -266,6 +270,17 @@ def detection_by_repeat_count(cloud, voxel: float) -> dict[str, Any]:
     probability p. Published as counts at three repeat counts, with the per-fit
     split beside them, so the residual is attributable rather than mysterious.
     """
+
+    # The per-fit minority rate from the same cloud's single-fit sweep, passed in
+    # rather than re-measured so the model is checked against the split published
+    # beside it instead of a second sample of the same quantity.
+    branches = distribution["branches"]
+    attempted = distribution["fits"]
+    minority = (
+        min(one["chosen_by_fits"] for one in branches) / attempted
+        if len(branches) > 1
+        else 0.0
+    )
 
     rates = []
     for repeats in REPEAT_COUNTS:
@@ -288,11 +303,183 @@ def detection_by_repeat_count(cloud, voxel: float) -> dict[str, Any]:
         "rates": rates,
         "why_it_is_not_one": (
             "The check fires when the repeats disagree, so it misses when every fit "
-            "lands on the same branch by chance. At the per-fit split measured beside "
-            "this, (1-p)^n + p^n accounts for the observed misses at all three counts, "
-            "which means the residual is the branches agreeing by chance rather than a "
-            "defect in the check. The rate falls as one branch gets rarer -- and a "
-            "rarer branch also rolls the view less often."
+            "lands on the same branch. A previous version of this record explained "
+            "the residual as the branches agreeing by chance, following "
+            "(1-p)^n + p^n. That explanation is withdrawn: see "
+            "independence_of_the_fits, which tests it against the per-fit split "
+            "measured in the same process and finds it does not hold. The rates "
+            "above are measurements and are not derived from any model."
+        ),
+        "independence_of_the_fits": _independence_check(rates, minority),
+    }
+
+
+def _independence_check(rates: list[dict], minority: float) -> dict[str, Any]:
+    """Test the chance-agreement explanation against the split measured beside it.
+
+    The claim being tested is that a miss is every fit landing on the same branch
+    independently, so misses should follow (1-p)^n + p^n for n fits -- one plus the
+    repeats, because the first fit counts too.
+
+    This is a within-run test on purpose. Comparing regenerations would show the
+    same thing (the per-fit minority moved from 0.200 to 0.375 between two runs
+    while detection at nine fits moved the wrong way, from 27 of 30 down to 25 of
+    30, when a larger minority must raise detection under independence) but it would
+    depend on a file that is no longer committed. Measuring p and the detection rate
+    in one process needs no such reference.
+
+    Two people checked the arithmetic of the old claim and neither of us checked
+    whether the model was admissible. Review recomputed it with the repeat count as
+    the exponent rather than the fit count and reported that it failed at the
+    smallest count; at the right exponent that particular objection dissolves. The
+    objection that survives is larger than either of us made: `segment_plane` is
+    threaded and the record already shows its split moving between processes, so the
+    fits are not independent draws and a fixed-p binomial is not a description of
+    them. The honest residual is unexplained, and the rates stand on their own.
+    """
+
+    from math import comb
+
+    predictions = []
+    for rate in rates:
+        runs = rate["of_runs"]
+        misses = runs - rate["ambiguity_detected_in_runs"]
+        fits = rate["fits"]
+        agree = (1.0 - minority) ** fits + minority**fits
+        predictions.append(
+            {
+                "fits": fits,
+                "probability_all_fits_agree": round(agree, 6),
+                "predicted_misses": round(agree * runs, 3),
+                "observed_misses": misses,
+                "one_sided_p_of_at_most_the_observed": round(
+                    sum(
+                        comb(runs, k) * agree**k * (1.0 - agree) ** (runs - k)
+                        for k in range(misses + 1)
+                    ),
+                    4,
+                ),
+            }
+        )
+    disagreements = [
+        one
+        for one in predictions
+        if not 0.05 <= one["one_sided_p_of_at_most_the_observed"] <= 0.95
+    ]
+    return {
+        "model_tested": "(1-p)^n + p^n, for n fits and a fixed per-fit minority p",
+        "per_fit_minority_rate_measured_in_this_process": minority,
+        "exponent_is": "the number of fits, which is one plus the repeats",
+        "predictions": predictions,
+        "counts_where_this_process_rejects_the_model": [
+            one["fits"] for one in disagreements
+        ],
+        "this_verdict_does_not_reproduce": (
+            "and that is the point -- see across_processes below. One process is not "
+            "enough to decide this, so no verdict is published from this block alone"
+        ),
+        "across_processes": independence_across_processes(),
+        "what_this_does_not_change": (
+            "the check still detects the ambiguity in most runs at the shipped count, "
+            "and the rate is published rather than claimed away. What is withdrawn is "
+            "the explanation of why it misses, not the measurement of how often"
+        ),
+    }
+
+
+def _probe_one_process() -> dict[str, Any]:
+    """Per-fit minority and misses at the shipped count, measured in one process."""
+
+    cloud = room(ROOM_POINTS, ROOM_POINTS)
+    distribution = single_fit_distribution(cloud, VOXEL)
+    branches = distribution["branches"]
+    minority = (
+        min(one["chosen_by_fits"] for one in branches) / distribution["fits"]
+        if len(branches) > 1
+        else 0.0
+    )
+    fits = UP_AXIS_REPEATS + 1
+    misses = sum(
+        1
+        for _ in range(PIPELINE_RUNS)
+        if _up_axis(o3d, cloud, VOXEL, repeats=UP_AXIS_REPEATS)["source"]
+        != "default-ambiguous-plane"
+    )
+    return {"minority": minority, "fits": fits, "misses": misses, "runs": PIPELINE_RUNS}
+
+
+def independence_across_processes(processes: int = 4) -> dict[str, Any]:
+    """The same test in separate processes, because its verdict moves between them.
+
+    Run once, this test said the model held (predicted 3.03 misses against 3
+    observed at nine fits, p = 0.64). Run again it rejected the model outright
+    (p = 0.375 measured, 0.44 misses predicted, 5 observed). Publishing either
+    verdict would be publishing a figure that does not reproduce, which is the
+    defect this whole record is about, arriving one level up.
+
+    So the verdict is the spread. `segment_plane` is threaded and the seeded split
+    already moves between processes, so the per-fit minority is not a constant of
+    the geometry and a fixed-p model has no fixed p to be given.
+    """
+
+    from math import comb
+
+    observations = []
+    for _ in range(processes):
+        probe = _probe_one_process()
+        agree = (1.0 - probe["minority"]) ** probe["fits"] + probe["minority"] ** probe[
+            "fits"
+        ]
+        runs, misses = probe["runs"], probe["misses"]
+        tail = sum(
+            comb(runs, k) * agree**k * (1.0 - agree) ** (runs - k)
+            for k in range(misses + 1)
+        )
+        observations.append(
+            {
+                "per_fit_minority": round(probe["minority"], 4),
+                "predicted_misses": round(agree * runs, 3),
+                "observed_misses": misses,
+                "of_runs": runs,
+                "one_sided_p": round(tail, 4),
+                "model_rejected_here": not 0.05 <= tail <= 0.95,
+            }
+        )
+    minorities = [one["per_fit_minority"] for one in observations]
+    rejecting = [one for one in observations if one["model_rejected_here"]]
+    # Is the spread in the minority rate more than counting noise? Each estimate is
+    # FITS Bernoulli draws, so under a constant p the standard deviation is
+    # sqrt(p(1-p)/FITS). Without this comparison the observed spread looks like
+    # evidence that p varies, and it is not.
+    pooled = sum(minorities) / len(minorities)
+    noise = (pooled * (1.0 - pooled) / FITS) ** 0.5
+    spread = max(minorities) - min(minorities)
+    return {
+        "processes": processes,
+        "fits_per_run": UP_AXIS_REPEATS + 1,
+        "fits_per_minority_estimate": FITS,
+        "observations": observations,
+        "per_fit_minority_range": [min(minorities), max(minorities)],
+        "pooled_per_fit_minority": round(pooled, 4),
+        "one_sigma_of_counting_noise_at_that_rate": round(noise, 4),
+        "spread_in_sigmas": round(spread / noise, 2) if noise > 0 else None,
+        "the_spread_exceeds_counting_noise": spread > 4.0 * noise,
+        "processes_rejecting_the_model": len(rejecting),
+        "so": (
+            "the explanation is withdrawn rather than replaced. The minority rate "
+            "varies enough between processes to make a fixed-p model doubtful, and "
+            "forty fits per estimate is not enough to separate that variation from "
+            "counting noise, so this record cannot establish the chance-agreement "
+            "account and does not assert it. Individual per-process verdicts are "
+            "low-powered at thirty runs and are published as observations, not as a "
+            "finding. What is withdrawn is the explanation of why the check misses; "
+            "the measured detection rates above stand on their own"
+        ),
+        "what_would_settle_it": (
+            "a few hundred fits per process across a dozen processes would separate a "
+            "varying rate from counting noise. That is a question about RANSAC's "
+            "threading, not about whether this check works, so it is named rather "
+            "than answered here"
         ),
     }
 
@@ -311,7 +498,7 @@ def case(name: str, cloud, voxel: float, note: str) -> dict[str, Any]:
 
 
 def main() -> None:
-    ambiguous = room(8100, 8100)
+    ambiguous = room(ROOM_POINTS, ROOM_POINTS)
     cases = [
         case(
             "ambiguous_room",
@@ -332,14 +519,14 @@ def main() -> None:
         ),
         case(
             "floor_four_to_one",
-            room(8100, 2025),
+            room(ROOM_POINTS, 2025),
             VOXEL,
             "The same room with a quarter as many wall points. A positive control: "
             "the scan does determine an axis and the pipeline must still name it.",
         ),
         case(
             "floor_ten_to_one",
-            room(8100, 810),
+            room(ROOM_POINTS, 810),
             VOXEL,
             "And with a tenth, so that 'determined' is not a single example either.",
         ),
@@ -377,7 +564,9 @@ def main() -> None:
         ),
         "cases": cases,
         "seeding_is_not_a_remedy": seeding_is_not_a_remedy(ambiguous, VOXEL),
-        "detection_by_repeat_count": detection_by_repeat_count(ambiguous, VOXEL),
+        "detection_by_repeat_count": detection_by_repeat_count(
+            ambiguous, VOXEL, cases[0]["single_fit_distribution"]
+        ),
         "what_the_cases_establish": [
             (
                 "A single fit on the ambiguous room returns two different axes, and the "

@@ -402,6 +402,191 @@ def test_the_record_and_the_code_publish_the_same_counterexample() -> None:
     ), "the record's copy of the counterexample is not what the code publishes"
 
 
+_WEAK_READING = {"weak": True, "plane_inliers": 90, "plane_inlier_fraction": 0.09}
+
+
+def _drive_readings(monkeypatch, readings: list[dict | None], repeats: int = 8) -> dict:
+    """Script the fits themselves, including weak and absent ones.
+
+    `_drive_up_axis` scripts only the axis each usable fit implies, which cannot
+    express "this fit found no plane worth using". That is the seam the vacuous-
+    agreement defect lived behind.
+    """
+
+    from npa.workbench.open3d import runner
+
+    iterator = iter(readings)
+    monkeypatch.setattr(runner, "_plane_up_reading", lambda *_a, **_k: next(iterator))
+    monkeypatch.setattr(
+        runner, "_runner_up_plane", lambda *_a, **_k: {"measured": False}
+    )
+    return runner._up_axis(None, None, 0.05, repeats=repeats)
+
+
+def _strong(axis: tuple[float, float, float] = (0.0, 0.0, 1.0)) -> dict:
+    return {
+        "weak": False,
+        "up": list(axis),
+        "measured_plane_normal": list(axis),
+        "angle_to_snapped_axis_degrees": 0.05,
+        "plane_inliers": 5000,
+        "plane_inlier_fraction": 0.5,
+        "inlier_indices": list(range(10)),
+    }
+
+
+def test_one_usable_fit_in_nine_is_not_a_measured_axis(monkeypatch) -> None:
+    """A majority of the attempts must be usable, not merely the first one.
+
+    Weakness of the *first* reading disqualified the scan; the other eight were
+    filtered out silently, so their weakness only shrank the sample. A scan that fit
+    weakly eight times in nine and strongly on the draw that happened to be first
+    was published as `largest-plane-normal-snapped-to-axis` with `repeats: 1`, and
+    the record guard accepted it, because "the repeats agreed" is vacuously true of
+    one repeat. That is the publication this whole change exists to prevent.
+
+    It is reachable from the committed evidence, not hypothetical: the Armadillo
+    case records inlier fractions of 0.122 to 0.134 against a weak threshold of 0.1,
+    so ordinary RANSAC variance puts some of its fits either side of the line.
+    """
+
+    inference = _drive_readings(monkeypatch, [_strong()] + [dict(_WEAK_READING)] * 8)
+
+    assert inference["source"] == "default-weak-plane", inference
+    assert inference["up"] == [0.0, 0.0, 1.0], inference
+    assert inference["usable_fits"] == 1, inference
+    assert inference["attempted_fits"] == 9, inference
+    validate_up_axis_inference({"up_axis_inference": inference})
+
+
+@pytest.mark.parametrize(
+    ("usable", "expect_measured"),
+    [
+        pytest.param(1, False, id="one_of_nine"),
+        pytest.param(4, False, id="four_of_nine_is_not_a_majority"),
+        pytest.param(5, True, id="five_of_nine_is"),
+        pytest.param(9, True, id="all_nine"),
+    ],
+)
+def test_the_boundary_of_a_usable_majority_is_where_it_says(
+    monkeypatch, usable: int, expect_measured: bool
+) -> None:
+    """Four of nine is not a majority and five is, so the guard is off by nothing."""
+
+    readings = [_strong()] * usable + [dict(_WEAK_READING)] * (9 - usable)
+    inference = _drive_readings(monkeypatch, readings)
+    measured = inference["source"] == "largest-plane-normal-snapped-to-axis"
+    assert measured is expect_measured, inference
+    validate_up_axis_inference({"up_axis_inference": inference})
+
+
+def test_a_record_naming_an_axis_from_a_minority_of_fits_is_rejected() -> None:
+    """The validator must refuse it too, not only the producer.
+
+    The runner no longer emits this shape, so without a guard here the record
+    contract would depend on the producer staying correct.
+    """
+
+    inference = {
+        "source": "largest-plane-normal-snapped-to-axis",
+        "up": [1.0, 0.0, 0.0],
+        "agreement": {
+            "repeats": 1,
+            "attempted_fits": 9,
+            "distinct_axes": 1,
+            "candidates": [{"up": [1.0, 0.0, 0.0], "chosen_by_repeats": 1}],
+            "agreement_is_not_meaningfulness": {
+                "measured_counterexample": _counterexample(),
+                "so": "agreement proves only that one plane dominates",
+            },
+        },
+    }
+    with pytest.raises(Open3dError, match="not a majority"):
+        validate_up_axis_inference({"up_axis_inference": inference})
+
+
+def test_an_agreement_report_claiming_more_repeats_than_attempts_is_rejected() -> None:
+    inference = {
+        "source": "largest-plane-normal-snapped-to-axis",
+        "up": [0.0, 0.0, 1.0],
+        "agreement": {
+            "repeats": 9,
+            "attempted_fits": 3,
+            "distinct_axes": 1,
+            "candidates": [{"up": [0.0, 0.0, 1.0], "chosen_by_repeats": 9}],
+            "agreement_is_not_meaningfulness": {
+                "measured_counterexample": _counterexample(),
+                "so": "agreement proves only that one plane dominates",
+            },
+        },
+    }
+    with pytest.raises(Open3dError, match="out of"):
+        validate_up_axis_inference({"up_axis_inference": inference})
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        pytest.param("largest-plane-normal", id="a_truncation_of_the_real_string"),
+        pytest.param("plane-normal-v2", id="a_plausible_successor"),
+        pytest.param("Largest-Plane-Normal-Snapped-To-Axis", id="different_case"),
+        pytest.param("default-ambiguous", id="a_truncated_default"),
+    ],
+)
+def test_an_unrecognised_source_is_refused_rather_than_waved_through(
+    source: str,
+) -> None:
+    """Both semantic checks are keyed to literal strings, so an unknown one met none.
+
+    A record could name an axis, report five different ones across eight repeats,
+    and be accepted, provided its source string was not one the validator knew. The
+    dangerous shape is not a wild string: it is a near miss like
+    `largest-plane-normal`, which turns both checks off silently rather than failing.
+    """
+
+    inference = {
+        "source": source,
+        "up": [1.0, 0.0, 0.0],
+        "agreement": {
+            "repeats": 8,
+            "distinct_axes": 5,
+            "candidates": [
+                {"up": [1.0, 0.0, 0.0], "chosen_by_repeats": 4},
+                {"up": [0.0, 1.0, 0.0], "chosen_by_repeats": 1},
+                {"up": [0.0, 0.0, 1.0], "chosen_by_repeats": 1},
+                {"up": [-1.0, 0.0, 0.0], "chosen_by_repeats": 1},
+                {"up": [0.0, -1.0, 0.0], "chosen_by_repeats": 1},
+            ],
+            "agreement_is_not_meaningfulness": {
+                "measured_counterexample": _counterexample(),
+                "so": "agreement proves only that one plane dominates",
+            },
+        },
+    }
+    with pytest.raises(Open3dError, match="unrecognised source"):
+        validate_up_axis_inference({"up_axis_inference": inference})
+
+
+def test_every_source_the_runner_can_emit_is_one_the_validator_knows() -> None:
+    """The closed set must not lock out the producer.
+
+    Rejecting unknown sources is only safe if the two lists agree, so this reads the
+    sources out of the runner's own branches rather than restating them.
+    """
+
+    import re
+
+    from npa.workbench.open3d import artifacts, runner
+
+    source = Path(runner.__file__).read_text()
+    emitted = set(re.findall(r'"source": "([a-z-]+)"', source))
+    assert emitted, "no source strings found in the runner; has the shape changed?"
+    assert emitted <= artifacts._KNOWN_UP_SOURCES, (
+        f"the runner can emit {sorted(emitted - artifacts._KNOWN_UP_SOURCES)}, which "
+        "the validator would now refuse"
+    )
+
+
 def test_the_record_keeps_a_negative_control_and_more_than_one_of_each_kind() -> None:
     """One ambiguous cloud and one determined cloud would prove very little."""
 
@@ -437,16 +622,33 @@ def test_the_detection_rate_the_code_states_is_the_one_the_record_measured() -> 
     as data, the drift is a failure instead of a quiet inaccuracy.
     """
 
-    from npa.workbench.open3d.runner import UP_AXIS_DETECTION_MEASURED
-
-    measured = {
-        (one["fits"], one["ambiguity_detected_in_runs"], one["of_runs"])
-        for one in _record()["detection_by_repeat_count"]["rates"]
-    }
-    assert set(UP_AXIS_DETECTION_MEASURED) == measured, (
-        "the detection figures in runner.py are not the ones in the retained record; "
-        "regenerate one or the other rather than leaving them disagreeing"
+    from npa.workbench.open3d.runner import (
+        UP_AXIS_DETECTION_FLOOR_OF_THIRTY,
+        UP_AXIS_DETECTION_RISES_WITH_FITS,
     )
+
+    rates = sorted(
+        _record()["detection_by_repeat_count"]["rates"], key=lambda one: one["fits"]
+    )
+    assert len(rates) >= 3, rates
+    for rate in rates:
+        assert rate["of_runs"] == 30, rate
+        assert (
+            rate["ambiguity_detected_in_runs"] >= UP_AXIS_DETECTION_FLOOR_OF_THIRTY
+        ), (
+            "the retained sweep fell below the floor the code publishes; the figure in "
+            f"runner.py no longer describes the evidence: {rate}"
+        )
+    detected = [one["ambiguity_detected_in_runs"] for one in rates]
+    assert UP_AXIS_DETECTION_RISES_WITH_FITS is True
+    assert detected == sorted(detected), (
+        "detection no longer rises with the fit count, which is the structural claim "
+        f"the repeat default rests on: {detected}"
+    )
+    # The floor has to be worth clearing: a floor of zero would always pass, and a
+    # floor at the observed figure would go stale on the next sweep, which is what
+    # happened to the exact counts this replaced.
+    assert 0 < UP_AXIS_DETECTION_FLOOR_OF_THIRTY < min(detected)
 
 
 def test_the_record_publishes_a_detection_rate_rather_than_a_guarantee() -> None:
@@ -464,6 +666,63 @@ def test_the_record_publishes_a_detection_rate_rather_than_a_guarantee() -> None
     assert [count for _, count in by_count] == sorted(count for _, count in by_count), (
         f"detection should not fall as fits increase: {by_count}"
     )
+
+
+def test_the_runner_up_separation_holds_as_an_ordering_not_as_two_ranges() -> None:
+    """The bound the code states, checked by direction.
+
+    Exact ranges were quoted here first and drifted twice: 0.956-0.975 became
+    0.956-0.976 became 0.955-0.976, and the determined band's top moved from 0.877
+    to 0.866 to 0.878. The ordering is what survives a regeneration, so the claim is
+    the ordering plus bounds loose enough to mean something.
+    """
+
+    ambiguous, determined = [], []
+    for case in _record()["cases"]:
+        band = case["what_the_pipeline_publishes"]["runner_up_relative_to_winner_range"]
+        if case["single_fit_distribution"]["distinct_axes"] > 1:
+            ambiguous.append(band)
+        else:
+            determined.append(band)
+    assert len(ambiguous) >= 2 and len(determined) >= 2, (
+        len(ambiguous),
+        len(determined),
+    )
+
+    lowest_ambiguous = min(band[0] for band in ambiguous)
+    highest_determined = max(band[1] for band in determined)
+    assert lowest_ambiguous > highest_determined, (
+        "the ambiguous and determined runner-up ratios now overlap, so the separation "
+        f"the code describes no longer holds: {lowest_ambiguous} vs {highest_determined}"
+    )
+    assert lowest_ambiguous > 0.95, lowest_ambiguous
+    assert highest_determined < 0.90, highest_determined
+
+
+def test_the_chance_agreement_explanation_is_withdrawn_not_asserted() -> None:
+    """The record used to explain the residual misses and now declines to.
+
+    Two of us checked that model's arithmetic and neither checked whether it was
+    admissible. It is not: the per-fit minority moves between processes, and forty
+    fits per estimate cannot separate that movement from counting noise, so the
+    record publishes the comparison and withholds the conclusion.
+    """
+
+    detection = _record()["detection_by_repeat_count"]
+    assert "withdrawn" in detection["why_it_is_not_one"], detection["why_it_is_not_one"]
+
+    across = detection["independence_of_the_fits"]["across_processes"]
+    assert across["processes"] >= 3, across
+    assert across["fits_per_minority_estimate"] >= 40, across
+    low, high = across["per_fit_minority_range"]
+    assert low < high, "a single minority value across processes is not a range"
+    # The noise comparison is the reason the question is left open, so it has to be
+    # present and have been actually computed rather than asserted.
+    assert across["spread_in_sigmas"] == pytest.approx(
+        (high - low) / across["one_sigma_of_counting_noise_at_that_rate"], rel=0.02
+    ), across
+    assert "withdrawn rather than replaced" in across["so"]
+    assert "named rather than" in across["what_would_settle_it"]
 
 
 def test_the_runner_up_measurement_is_published_without_a_threshold() -> None:
