@@ -228,6 +228,16 @@ _MAX_EXACT_PATH_SHARDS = 1024
 _INERT_ENCODED_ARCHIVE_SHA256 = {
     # Public empty-metadata gzip fixture in test_curobo_image_verifier.py.
     "4f4fb700ef54461cfa02571ae0db9a0dc1e0cdb5577484a6d75e68dc38e8acc1",
+    # Public one-pixel PNG fixtures used by smoke, browser, workflow, and USD tests.
+    "4b5c5c92cec3b23e6a294fc0eea43234ef5126c5a64f4c6c531ac8430ab0b844",
+    "6ae7d93ee3b1d0f0f5a583464e14faf9ed653501de0edcdda1a6bc80145e18d7",
+    "431ced6916a2a21a156e38701afe55bbd7f88969fbbfc56d7fe099d47f265460",
+    "6b1048f8a6d40bac0b2954c18fefa40c4ea7a96120fc2e54b7317c0e43c2bbec",
+    # Public PNG frame payloads embedded in sim2real_sample.mcap.
+    "1dd175255efb8aea73319d143f249bf0affb74e9552a00e323990a29b2fb77a4",
+    "96aed7926711b877936a49cc737402eded5f59cfc02cc90b5833a824525498a8",
+    # Public split IDAT/IEND suffix used by the Sim2Real review controls.
+    "480850d1783069d8dab7d0d0b426ebf3c46bc85d852c774278de81547690e677",
 }
 _BINARY_CONTROL_FILES = (
     "binary-wrapper-control.txt",

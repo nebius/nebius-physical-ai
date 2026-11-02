@@ -3344,21 +3344,53 @@ def test_gitleaks_report_is_bounded_while_scanner_runs(
     assert report.stat().st_size <= tree_scan._MAX_GITLEAKS_REPORT_BYTES
 
 
+def _public_inert_encoded_archive_fixtures() -> list[bytes]:
+    """Recover each public compressed fixture covered by the exact allowlist."""
+    fixtures = [
+        bytes.fromhex(
+            "1f8b08000000000000ff621805a360148c5800080000ffff2eafb5ef00040000"
+        ),
+        *(
+            base64.b64decode(value, validate=True)
+            for value in (
+                "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=",
+                "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a9RkAAAAASUVORK5CYII=",
+                "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+                "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=",
+            )
+        ),
+        bytes.fromhex(
+            "0000000b4944415478da6364f80f00010501012718e3660000000049454e44ae426082"
+        ),
+    ]
+    mcap = (
+        Path(__file__).parents[1] / "browser/cypress/fixtures/sim2real_sample.mcap"
+    ).read_bytes()
+    base64_pattern = dict(tree_scan._ENCODING_CANDIDATES)["base64"]
+    for match in base64_pattern.finditer(mcap):
+        fixtures.extend(
+            decoded
+            for decoded in tree_scan._decode_candidate("base64", match.group())
+            if decoded.startswith(b"\x89PNG\r\n\x1a\n")
+        )
+    return list({hashlib.sha256(value).digest(): value for value in fixtures}.values())
+
+
 def test_inert_encoded_archive_exception_is_exact(tmp_path: Path) -> None:
-    """Keep the sole public empty-metadata fixture byte-exact and non-secret."""
-    archive = bytes.fromhex(
-        "1f8b08000000000000ff621805a360148c5800080000ffff2eafb5ef00040000"
-    )
+    """Keep public non-secret compressed fixtures byte-exact."""
+    fixtures = _public_inert_encoded_archive_fixtures()
+    archive = fixtures[0]
+    assert len(fixtures) == 8
     assert archive[3] == 0
     assert gzip.decompress(archive) == b"\0" * 1024
     assert tree_scan._INERT_ENCODED_ARCHIVE_SHA256 == {
-        tree_scan.hashlib.sha256(archive).hexdigest()
+        hashlib.sha256(value).hexdigest() for value in fixtures
     }
 
-    tree_scan._reject_encoded_archives(archive.hex().encode("ascii"))
-    mutated = archive[:-1] + bytes([archive[-1] ^ 1])
-    with pytest.raises(tree_scan._ScanError, match="Encoded archive"):
-        tree_scan._reject_encoded_archives(mutated.hex().encode("ascii"))
+    for fixture in fixtures:
+        tree_scan._reject_encoded_archives(fixture.hex().encode("ascii"))
+        with pytest.raises(tree_scan._ScanError, match="Encoded archive"):
+            tree_scan._reject_encoded_archives((b"J" + fixture).hex().encode("ascii"))
 
     prefixed_zip = (b"J" * 9_000) + _zip_member("payload.txt", b"safe\n")
     with pytest.raises(tree_scan._ScanError, match="Encoded archive"):
