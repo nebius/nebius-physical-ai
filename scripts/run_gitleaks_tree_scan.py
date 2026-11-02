@@ -166,6 +166,17 @@ _IMMEDIATE_EMBEDDED_ARCHIVE_SIGNATURES = (
     b"\x04\x22\x4d\x18",
     b"\x02\x21\x4c\x18",
 )
+_PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+_PNG_ADAM7_PASSES = (
+    (0, 0, 8, 8),
+    (4, 0, 8, 8),
+    (0, 4, 4, 8),
+    (2, 0, 4, 4),
+    (0, 2, 2, 4),
+    (1, 0, 2, 2),
+    (0, 1, 1, 2),
+)
+_MAX_PNG_CHUNKS = 100_000
 # tarfile.nti() decodes through the first NUL and delegates text syntax to
 # int(..., 8), whose accepted ASCII forms include str.strip() whitespace,
 # signs, 0o prefixes, and underscores. Keep discovery a parser-complete
@@ -238,6 +249,12 @@ _INERT_ENCODED_ARCHIVE_SHA256 = {
     "96aed7926711b877936a49cc737402eded5f59cfc02cc90b5833a824525498a8",
     # Public split IDAT/IEND suffix used by the Sim2Real review controls.
     "480850d1783069d8dab7d0d0b426ebf3c46bc85d852c774278de81547690e677",
+}
+_INERT_EMBEDDED_CANDIDATE_LIMIT_SHA256 = {
+    # Public LeRobot labeled MP4 and its reviewable Rerun recording. Both contain
+    # more than 4,096 incidental RFC 1950 headers but no earlier valid stream.
+    "803cc4e2bbf2260838354f7475ced9ab9417ab54a99ff62d3e4532e51b894a2b",
+    "c6ea539976f254eec55da12d7ac2674272c74b06fa676ffd1fdcac8c392e3218",
 }
 _BINARY_CONTROL_FILES = (
     "binary-wrapper-control.txt",
@@ -1136,52 +1153,415 @@ def _contains_non_tar_archive_signature(content: bytes) -> bool:
     return False
 
 
-def _contains_tar_header(
-    content: bytes | mmap.mmap,
-    budget: _ArchiveBudget | None = None,
-) -> bool:
-    """Recognize any checksum-valid TAR header at any offset in one window."""
-    seen: set[int] = set()
-    examined = 0
+class _TarHeaderSearch:
+    """Validate bounded TAR-header candidates in one byte window."""
 
-    def check(checksum_start: int) -> bool:
-        nonlocal examined
+    def __init__(
+        self,
+        content: bytes | mmap.mmap,
+        budget: _ArchiveBudget | None,
+        maximum_header_start: int | None,
+    ) -> None:
+        self.content = content
+        self.budget = budget
+        self.maximum_header_start = maximum_header_start
+        self.seen: set[int] = set()
+        self.examined = 0
+
+    def check(self, checksum_start: int) -> bool:
+        """Validate the header associated with one checksum-field match."""
         header_start = checksum_start - 148
         if (
             header_start < 0
-            or header_start in seen
-            or header_start + _ARCHIVE_PREFIX_BYTES > len(content)
+            or header_start in self.seen
+            or header_start + _ARCHIVE_PREFIX_BYTES > len(self.content)
+            or (
+                self.maximum_header_start is not None
+                and header_start >= self.maximum_header_start
+            )
         ):
             return False
-        seen.add(header_start)
-        if not _tar_header_layout_plausible(content, header_start):
+        self.seen.add(header_start)
+        if not _tar_header_layout_plausible(self.content, header_start):
             return False
-        if budget is not None:
-            exhausted = budget.examine_tar_header_candidate()
-        else:
-            examined += 1
-            exhausted = examined > _MAX_EMBEDDED_TAR_CHECKSUM_CANDIDATES
-        if exhausted:
+        if self._work_exhausted():
             return True
         return _tar_header_checksum_valid(
-            content[header_start : header_start + _ARCHIVE_PREFIX_BYTES]
+            self.content[header_start : header_start + _ARCHIVE_PREFIX_BYTES]
         )
 
+    def _work_exhausted(self) -> bool:
+        """Charge one plausible header against the shared or local budget."""
+        if self.budget is not None:
+            return self.budget.examine_tar_header_candidate()
+        self.examined += 1
+        return self.examined > _MAX_EMBEDDED_TAR_CHECKSUM_CANDIDATES
+
+
+def _contains_tar_header(
+    content: bytes | mmap.mmap,
+    budget: _ArchiveBudget | None = None,
+    *,
+    maximum_header_start: int | None = None,
+) -> bool:
+    """Recognize any checksum-valid TAR header at any offset in one window."""
+    search = _TarHeaderSearch(content, budget, maximum_header_start)
     for pattern in (
         _TAR_TEXT_CHECKSUM_FIELD,
         _TAR_NUL_TERMINATED_CHECKSUM_FIELD,
     ):
         for match in pattern.finditer(content):
-            if check(match.start(1)):
+            if search.check(match.start(1)):
                 return True
     for match in _TAR_BASE256_CHECKSUM_MARKER.finditer(content):
-        if check(match.start()):
+        if search.check(match.start()):
             return True
     return False
 
 
-def _embedded_compressed_streams(
+def _png_pass_layout(
+    width: int,
+    height: int,
+    bits_per_pixel: int,
+    interlace: int,
+) -> tuple[int, tuple[tuple[int, int], ...]] | None:
+    """Calculate bounded row sizes for sequential or Adam7 image data."""
+    passes = ((0, 0, 1, 1),) if interlace == 0 else _PNG_ADAM7_PASSES
+    expected = 0
+    layout: list[tuple[int, int]] = []
+    for x_start, y_start, x_step, y_step in passes:
+        if width <= x_start or height <= y_start:
+            continue
+        pass_width = (width - x_start + x_step - 1) // x_step
+        pass_height = (height - y_start + y_step - 1) // y_step
+        row_bytes = (pass_width * bits_per_pixel + 7) // 8
+        expected += pass_height * (row_bytes + 1)
+        if expected > _MAX_ARCHIVE_MEMBER_BYTES:
+            return None
+        layout.append((row_bytes, pass_height))
+    return expected, tuple(layout)
+
+
+def _png_image_layout(
+    ihdr: bytes,
+) -> tuple[int, tuple[tuple[int, int], ...]] | None:
+    """Return exact row-byte and row-count constraints for one PNG IHDR."""
+    if len(ihdr) != 13:
+        return None
+    width, height, bit_depth, color_type, compression, filtering, interlace = (
+        struct.unpack(">IIBBBBB", ihdr)
+    )
+    channel_counts = {0: 1, 2: 3, 3: 1, 4: 2, 6: 4}
+    allowed_depths = {
+        0: {1, 2, 4, 8, 16},
+        2: {8, 16},
+        3: {1, 2, 4, 8},
+        4: {8, 16},
+        6: {8, 16},
+    }
+    if (
+        not width
+        or not height
+        or color_type not in channel_counts
+        or bit_depth not in allowed_depths[color_type]
+        or compression != 0
+        or filtering != 0
+        or interlace not in {0, 1}
+    ):
+        return None
+    return _png_pass_layout(
+        width,
+        height,
+        channel_counts[color_type] * bit_depth,
+        interlace,
+    )
+
+
+def _consume_png_filtered_bytes(
+    content: bytes,
+    layout: tuple[tuple[int, int], ...],
+    state: list[int],
+) -> bool:
+    """Consume filtered rows and reject impossible PNG filter markers."""
+    pass_index, rows_remaining, row_bytes_remaining = state
+    position = 0
+    while position < len(content):
+        while rows_remaining == 0 and row_bytes_remaining == 0:
+            pass_index += 1
+            if pass_index >= len(layout):
+                return False
+            _row_bytes, rows_remaining = layout[pass_index]
+        row_bytes = layout[pass_index][0]
+        if row_bytes_remaining == 0:
+            if content[position] > 4:
+                return False
+            position += 1
+            rows_remaining -= 1
+            row_bytes_remaining = row_bytes
+            if position >= len(content):
+                break
+        consumed = min(row_bytes_remaining, len(content) - position)
+        position += consumed
+        row_bytes_remaining -= consumed
+    state[:] = [pass_index, rows_remaining, row_bytes_remaining]
+    return True
+
+
+class _PngChunk(NamedTuple):
+    """Describe one checksum-valid PNG chunk."""
+
+    kind: bytes
+    data_start: int
+    data_end: int
+    end: int
+
+
+class _PngStructure(NamedTuple):
+    """Retain the bounded image layout and exact IDAT byte ranges."""
+
+    expected_image_bytes: int
+    image_layout: tuple[tuple[int, int], ...]
+    idat_ranges: tuple[tuple[int, int], ...]
+
+
+class _PngParser:
+    """Parse the structural subset needed to isolate strict PNG image data."""
+
+    def __init__(self, content: bytes | mmap.mmap) -> None:
+        self.content = content
+        self.position = len(_PNG_SIGNATURE)
+        self.chunk_index = 0
+        self.bit_depth: int | None = None
+        self.color_type: int | None = None
+        self.expected_image_bytes: int | None = None
+        self.image_layout: tuple[tuple[int, int], ...] | None = None
+        self.idat_ranges: list[tuple[int, int]] = []
+        self.seen_idat = False
+        self.idat_closed = False
+        self.seen_plte = False
+
+    def parse(self) -> _PngStructure | None:
+        """Return bounded structural metadata or reject the PNG boundary."""
+        while self.position + 12 <= len(self.content):
+            if self.chunk_index >= _MAX_PNG_CHUNKS:
+                return None
+            chunk = self._read_chunk()
+            if chunk is None or not self._accept_chunk(chunk):
+                return None
+            self.position = chunk.end
+            self.chunk_index += 1
+            if chunk.kind == b"IEND":
+                return self._finish(chunk)
+        return None
+
+    def _read_chunk(self) -> _PngChunk | None:
+        """Read and authenticate one chunk without copying its payload."""
+        length = struct.unpack(">I", self.content[self.position : self.position + 4])[0]
+        kind = bytes(self.content[self.position + 4 : self.position + 8])
+        data_start = self.position + 8
+        data_end = data_start + length
+        chunk_end = data_end + 4
+        if (
+            chunk_end > len(self.content)
+            or not all(65 <= value <= 90 or 97 <= value <= 122 for value in kind)
+            or kind[2] & 0x20
+        ):
+            return None
+        expected_crc = struct.unpack(">I", self.content[data_end:chunk_end])[0]
+        actual_crc = zlib.crc32(kind)
+        payload = memoryview(self.content)[data_start:data_end]
+        actual_crc = zlib.crc32(payload, actual_crc) & 0xFFFFFFFF
+        if actual_crc != expected_crc:
+            return None
+        return _PngChunk(kind, data_start, data_end, chunk_end)
+
+    def _accept_chunk(self, chunk: _PngChunk) -> bool:
+        """Apply critical-chunk ordering and palette constraints."""
+        if self.chunk_index == 0:
+            if not self._accept_header(chunk):
+                return False
+        elif chunk.kind == b"IHDR":
+            return False
+        known_critical = {b"IHDR", b"PLTE", b"IDAT", b"IEND"}
+        if not chunk.kind[0] & 0x20 and chunk.kind not in known_critical:
+            return False
+        if chunk.kind == b"PLTE":
+            return self._accept_palette(chunk)
+        if chunk.kind == b"IDAT":
+            if self.idat_closed:
+                return False
+            self.seen_idat = True
+            if chunk.data_start < chunk.data_end:
+                self.idat_ranges.append((chunk.data_start, chunk.data_end))
+        elif self.seen_idat:
+            self.idat_closed = True
+        return True
+
+    def _accept_header(self, chunk: _PngChunk) -> bool:
+        """Record a valid first IHDR and its bounded image layout."""
+        if chunk.kind != b"IHDR":
+            return False
+        ihdr = bytes(self.content[chunk.data_start : chunk.data_end])
+        parsed_layout = _png_image_layout(ihdr)
+        if parsed_layout is None:
+            return False
+        self.expected_image_bytes, self.image_layout = parsed_layout
+        self.bit_depth = ihdr[8]
+        self.color_type = ihdr[9]
+        return True
+
+    def _accept_palette(self, chunk: _PngChunk) -> bool:
+        """Validate the one optional or required palette before image data."""
+        length = chunk.data_end - chunk.data_start
+        if (
+            self.seen_plte
+            or self.seen_idat
+            or not length
+            or length % 3
+            or length > 768
+            or (
+                self.color_type == 3
+                and self.bit_depth is not None
+                and length > 3 * (1 << self.bit_depth)
+            )
+        ):
+            return False
+        self.seen_plte = True
+        return True
+
+    def _finish(self, chunk: _PngChunk) -> _PngStructure | None:
+        """Require an exact IEND and return complete parser state."""
+        if (
+            chunk.data_start != chunk.data_end
+            or not self.seen_idat
+            or self.position != len(self.content)
+            or self.color_type is None
+            or self.expected_image_bytes is None
+            or self.image_layout is None
+            or (self.color_type == 3 and not self.seen_plte)
+            or (self.color_type in {0, 4} and self.seen_plte)
+        ):
+            return None
+        return _PngStructure(
+            self.expected_image_bytes,
+            self.image_layout,
+            tuple(self.idat_ranges),
+        )
+
+
+class _PngImageDecoder:
+    """Validate bounded PNG image bytes without retaining decompressed pixels."""
+
+    def __init__(self, structure: _PngStructure) -> None:
+        self.structure = structure
+        self.decoder = zlib.decompressobj()
+        self.decoded_bytes = 0
+        self.row_state = [0, structure.image_layout[0][1], 0]
+
+    def validate(self, content: bytes | mmap.mmap) -> bool:
+        """Consume every IDAT range and require one exact zlib stream."""
+        try:
+            for start, end in self.structure.idat_ranges:
+                for position in range(start, end, _ARCHIVE_READ_BYTES):
+                    chunk_end = min(position + _ARCHIVE_READ_BYTES, end)
+                    if not self._consume_compressed(bytes(content[position:chunk_end])):
+                        return False
+            flushed = self.decoder.flush()
+        except zlib.error:
+            return False
+        return self._complete(flushed)
+
+    def _consume_compressed(self, pending: bytes) -> bool:
+        """Consume one bounded input chunk and validate decoded filter rows."""
+        while pending:
+            remaining = self.structure.expected_image_bytes - self.decoded_bytes + 1
+            decoded = self.decoder.decompress(
+                pending,
+                max_length=min(_ARCHIVE_READ_BYTES, max(1, remaining)),
+            )
+            self.decoded_bytes += len(decoded)
+            if (
+                self.decoded_bytes > self.structure.expected_image_bytes
+                or self.decoder.unused_data
+                or not _consume_png_filtered_bytes(
+                    decoded,
+                    self.structure.image_layout,
+                    self.row_state,
+                )
+            ):
+                return False
+            if not self.decoder.unconsumed_tail:
+                return True
+            if len(self.decoder.unconsumed_tail) >= len(pending) and not decoded:
+                return False
+            pending = self.decoder.unconsumed_tail
+        return True
+
+    def _complete(self, flushed: bytes) -> bool:
+        """Require exact output size, valid rows, and no trailing stream."""
+        self.decoded_bytes += len(flushed)
+        if (
+            not self.decoder.eof
+            or self.decoder.unconsumed_tail
+            or self.decoder.unused_data
+            or self.decoded_bytes != self.structure.expected_image_bytes
+            or not _consume_png_filtered_bytes(
+                flushed,
+                self.structure.image_layout,
+                self.row_state,
+            )
+        ):
+            return False
+        return self.row_state == [len(self.structure.image_layout) - 1, 0, 0]
+
+
+def _validated_png_idat_ranges(
+    content: bytes | mmap.mmap,
+) -> tuple[tuple[int, int], ...] | None:
+    """Return exact image-data ranges only for one strict, decodable PNG."""
+    if (
+        len(content) < len(_PNG_SIGNATURE)
+        or bytes(content[: len(_PNG_SIGNATURE)]) != _PNG_SIGNATURE
+    ):
+        return None
+    structure = _PngParser(content).parse()
+    if structure is None or not _PngImageDecoder(structure).validate(content):
+        return None
+    return structure.idat_ranges
+
+
+_EmbeddedScanRegion = tuple[bytes | mmap.mmap, int, int]
+
+
+def _embedded_scan_regions(
     content: mmap.mmap,
+) -> Iterator[_EmbeddedScanRegion]:
+    """Yield outside bytes, bounded lookahead, source offset, and start limit."""
+    idat_ranges = _validated_png_idat_ranges(content)
+    if idat_ranges is None:
+        yield content, 0, len(content)
+        return
+    position = 0
+    for start, end in idat_ranges:
+        if position < start:
+            lookahead_end = min(len(content), start + _ARCHIVE_PREFIX_BYTES - 1)
+            yield bytes(content[position:lookahead_end]), position, start - position
+        position = end
+    if position < len(content):
+        yield bytes(content[position:]), position, len(content) - position
+
+
+def _content_sha256(content: bytes | mmap.mmap) -> str:
+    """Hash the same mapped carrier bytes used for embedded discovery."""
+    digest = hashlib.sha256()
+    for position in range(0, len(content), 1024 * 1024):
+        end = min(position + 1024 * 1024, len(content))
+        digest.update(memoryview(content)[position:end])
+    return digest.hexdigest()
+
+
+def _embedded_compressed_streams(
+    content: bytes | mmap.mmap,
 ) -> Iterator[tuple[str, int]]:
     """Yield plausible gzip, bzip2, and RFC 1950 zlib stream offsets."""
     for kind, signature in (("gzip", b"\x1f\x8b\x08"), ("bzip2", b"BZh")):
@@ -1195,33 +1575,77 @@ def _embedded_compressed_streams(
             yield "zlib", match.start()
 
 
-def _embedded_stream_requires_rejection(path: Path, kind: str, offset: int) -> bool:
+def _embedded_stream_requires_rejection(
+    content: bytes | mmap.mmap,
+    kind: str,
+    offset: int,
+) -> bool:
     """Reject output, complete streams, and bounded-but-ambiguous candidates."""
+    candidate = bytes(content[offset : offset + _PROBE_DECODE_CHUNK_BYTES])
     if kind == "zlib":
-        with path.open("rb") as stream:
-            stream.seek(offset)
-            return _zlib_candidate_requires_rejection(
-                stream.read(_PROBE_DECODE_CHUNK_BYTES),
-                0,
-            )
+        return _zlib_candidate_requires_rejection(candidate, 0)
     if kind == "gzip":
         decoder = zlib.decompressobj(16 + zlib.MAX_WBITS)
     elif kind == "bzip2":
         decoder = bz2.BZ2Decompressor()
     else:  # pragma: no cover - yielded kinds are closed above.
         raise _ScanError("Unknown embedded compression kind")
-    with path.open("rb") as stream:
-        stream.seek(offset)
-        content = stream.read(_PROBE_DECODE_CHUNK_BYTES)
-    for position in range(0, len(content), _EMBEDDED_ARCHIVE_PROBE_CHUNK_BYTES):
-        chunk = content[position : position + _EMBEDDED_ARCHIVE_PROBE_CHUNK_BYTES]
+    for position in range(0, len(candidate), _EMBEDDED_ARCHIVE_PROBE_CHUNK_BYTES):
+        chunk = candidate[position : position + _EMBEDDED_ARCHIVE_PROBE_CHUNK_BYTES]
         try:
             decoded = decoder.decompress(chunk, max_length=1)
         except (EOFError, OSError, zlib.error):
             return False
         if decoded or decoder.eof:
             return True
-    return len(content) == _PROBE_DECODE_CHUNK_BYTES
+    return len(candidate) == _PROBE_DECODE_CHUNK_BYTES
+
+
+def _regions_contain_immediate_archive(
+    regions: tuple[_EmbeddedScanRegion, ...],
+) -> bool:
+    """Detect fixed signatures and TAR headers from every allowed start."""
+    tar_budget = _ArchiveBudget()
+    for region, _source_offset, start_limit in regions:
+        has_signature = any(
+            0 <= region.find(signature) < start_limit
+            for signature in _IMMEDIATE_EMBEDDED_ARCHIVE_SIGNATURES
+        )
+        if has_signature or _contains_tar_header(
+            region,
+            tar_budget,
+            maximum_header_start=start_limit,
+        ):
+            return True
+    return False
+
+
+def _regions_contain_compressed_archive(
+    content: mmap.mmap,
+    regions: tuple[_EmbeddedScanRegion, ...],
+) -> bool:
+    """Probe compressed-stream starts with one aggregate candidate budget."""
+    candidates = 0
+    approved_over_limit = False
+    for region, source_offset, start_limit in regions:
+        for kind, offset in _embedded_compressed_streams(region):
+            if offset >= start_limit:
+                continue
+            candidates += 1
+            if candidates > _ENCODED_ARCHIVE_MAX_CANDIDATES and not approved_over_limit:
+                if (
+                    _content_sha256(content)
+                    not in _INERT_EMBEDDED_CANDIDATE_LIMIT_SHA256
+                ):
+                    return True
+                approved_over_limit = True
+            if _embedded_stream_requires_rejection(
+                content,
+                kind,
+                source_offset + offset,
+            ):
+                return True
+    return False
 
 
 def _contains_embedded_archive(path: Path) -> bool:
@@ -1232,20 +1656,10 @@ def _contains_embedded_archive(path: Path) -> bool:
         path.open("rb") as stream,
         mmap.mmap(stream.fileno(), 0, access=mmap.ACCESS_READ) as content,
     ):
-        if any(
-            content.find(signature) >= 0
-            for signature in _IMMEDIATE_EMBEDDED_ARCHIVE_SIGNATURES
-        ) or _contains_tar_header(content):
-            return True
-        for candidate, (kind, offset) in enumerate(
-            _embedded_compressed_streams(content),
-            start=1,
-        ):
-            if candidate > _ENCODED_ARCHIVE_MAX_CANDIDATES:
-                return True
-            if _embedded_stream_requires_rejection(path, kind, offset):
-                return True
-    return False
+        regions = tuple(_embedded_scan_regions(content))
+        return _regions_contain_immediate_archive(
+            regions
+        ) or _regions_contain_compressed_archive(content, regions)
 
 
 def _has_archive_suffix(name: str) -> bool:

@@ -625,10 +625,25 @@ archives, undeclared records, and metadata gaps fail closed.
 Container signatures embedded in otherwise nonarchive files or commit bodies
 also fail closed. Because three-byte gzip and bzip2 markers occur incidentally
 in ordinary media, those two markers are confirmed with a bounded decoder:
-decoded output, a complete empty stream, too many candidates, or a candidate
-that remains ambiguous at the probe limit fails closed; a candidate rejected
-before producing any output is not treated as a container. Longer unsupported
-container signatures and embedded xz signatures remain fail-closed.
+decoded output, a complete empty stream, more than 4,096 candidates, or a
+candidate that remains ambiguous at the probe limit fails closed; a candidate
+rejected before producing any output is not treated as a container.
+
+Strict PNGs have one format-aware boundary. The helper validates the signature,
+critical-chunk grammar and order, every CRC, IHDR and palette constraints, at
+most 100,000 chunks, the bounded exact decompressed image size, every row filter,
+and one complete zlib stream. Only the authenticated IDAT payload ranges are
+excluded from embedded-container discovery. Chunk framing and ancillary data
+remain scanned, with enough lookahead to detect a container that starts outside
+IDAT. A prefix, trailing bytes, malformed structure, invalid CRC, impossible
+layout or filter, or decoder error removes the PNG exception and returns the
+complete file to ordinary discovery. Two repository-owned public MP4/Rerun
+artifacts contain more than 4,096 incidental compression headers; only their
+exact full-file SHA-256 identities may cross that generic work boundary, and
+the helper still inspects every remaining candidate. Changed bytes do not
+inherit that exception, so an over-limit mutation fails closed at the ordinary
+boundary. Longer unsupported container signatures and embedded xz signatures
+remain fail-closed.
 Malformed strongly identified Unicode or content that reaches the first
 unsupported decode layer also fails instead of being silently omitted. Encoded
 candidates are fully inspected for encoded containers under a 16-MiB

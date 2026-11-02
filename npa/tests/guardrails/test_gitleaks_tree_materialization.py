@@ -2875,6 +2875,351 @@ def test_embedded_archive_probe_ignores_invalid_media_signatures(
     assert not tree_scan._contains_embedded_archive(carrier)
 
 
+def _png_chunk(kind: bytes, content: bytes) -> bytes:
+    """Build one checksum-valid PNG chunk."""
+    checksum = zlib.crc32(kind + content) & 0xFFFFFFFF
+    return (
+        len(content).to_bytes(4, "big") + kind + content + checksum.to_bytes(4, "big")
+    )
+
+
+def _png_ihdr(
+    *,
+    width: int = 1,
+    height: int = 1,
+    bit_depth: int = 8,
+    color_type: int = 0,
+    interlace: int = 0,
+) -> bytes:
+    """Build one PNG image header."""
+    return (
+        width.to_bytes(4, "big")
+        + height.to_bytes(4, "big")
+        + bytes((bit_depth, color_type, 0, 0, interlace))
+    )
+
+
+def _png_document(*chunks: bytes, ihdr: bytes | None = None) -> bytes:
+    """Frame image chunks inside one checksum-valid PNG document."""
+    return (
+        tree_scan._PNG_SIGNATURE
+        + _png_chunk(b"IHDR", _png_ihdr() if ihdr is None else ihdr)
+        + b"".join(chunks)
+        + _png_chunk(b"IEND", b"")
+    )
+
+
+def _strict_png(
+    image_bytes: bytes = b"\0\0",
+    *,
+    ancillary: bytes = b"",
+    split_idat: bool = False,
+) -> bytes:
+    """Build one strict 1x1 8-bit grayscale PNG."""
+    compressed = zlib.compress(image_bytes)
+    if split_idat:
+        midpoint = len(compressed) // 2
+        idat = _png_chunk(b"IDAT", compressed[:midpoint]) + _png_chunk(
+            b"IDAT",
+            compressed[midpoint:],
+        )
+    else:
+        idat = _png_chunk(b"IDAT", compressed)
+    return _png_document(ancillary, idat)
+
+
+@pytest.mark.parametrize("split_idat", [False, True])
+def test_embedded_archive_probe_excludes_only_strict_png_idat(
+    tmp_path: Path,
+    split_idat: bool,
+) -> None:
+    """Treat validated image data as media without weakening other bytes."""
+    carrier = tmp_path / "frame.png"
+    carrier.write_bytes(_strict_png(split_idat=split_idat))
+
+    ranges = tree_scan._validated_png_idat_ranges(carrier.read_bytes())
+    assert ranges is not None
+    assert len(ranges) == (2 if split_idat else 1)
+    assert not tree_scan._contains_embedded_archive(carrier)
+    tree_scan._validate_archive_file(carrier)
+
+
+@pytest.mark.parametrize(
+    ("ihdr", "expected_size", "needs_palette"),
+    [
+        (_png_ihdr(bit_depth=1), 2, False),
+        (_png_ihdr(bit_depth=16), 3, False),
+        (_png_ihdr(bit_depth=16, color_type=2), 7, False),
+        (_png_ihdr(bit_depth=4, color_type=3), 2, True),
+        (_png_ihdr(bit_depth=16, color_type=4), 5, False),
+        (_png_ihdr(bit_depth=16, color_type=6), 9, False),
+        (_png_ihdr(width=8, height=8, color_type=6, interlace=1), 271, False),
+    ],
+)
+def test_png_idat_exception_covers_legal_profiles(
+    tmp_path: Path,
+    ihdr: bytes,
+    expected_size: int,
+    needs_palette: bool,
+) -> None:
+    """Validate packed, high-depth, indexed, and Adam7 image layouts."""
+    layout = tree_scan._png_image_layout(ihdr)
+    assert layout is not None
+    total_size, rows = layout
+    assert total_size == expected_size
+    image = b"".join((b"\0" + (b"\0" * width)) * count for width, count in rows)
+    chunks = [_png_chunk(b"PLTE", b"\0\0\0")] if needs_palette else []
+    chunks.append(_png_chunk(b"IDAT", zlib.compress(image)))
+    content = _png_document(*chunks, ihdr=ihdr)
+    carrier = tmp_path / "profile.png"
+    carrier.write_bytes(content)
+
+    assert tree_scan._validated_png_idat_ranges(content) is not None
+    assert not tree_scan._contains_embedded_archive(carrier)
+
+
+@pytest.mark.parametrize(
+    ("bit_depth", "color_type"),
+    [(4, 2), (1, 4), (4, 6), (16, 3)],
+)
+def test_png_idat_exception_rejects_illegal_color_depths(
+    bit_depth: int,
+    color_type: int,
+) -> None:
+    """Reject color-depth pairs excluded by the PNG specification."""
+    content = _png_document(
+        _png_chunk(b"IDAT", zlib.compress(b"\0\0")),
+        ihdr=_png_ihdr(bit_depth=bit_depth, color_type=color_type),
+    )
+    assert tree_scan._validated_png_idat_ranges(content) is None
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ["prefix", "trailing", "crc", "image-size", "filter"],
+)
+def test_png_idat_exception_rejects_noncanonical_mutations(
+    tmp_path: Path,
+    mutation: str,
+) -> None:
+    """Keep malformed or wrapped PNG streams inside the fail-closed boundary."""
+    image_bytes = {
+        "image-size": b"\0\0\0",
+        "filter": b"\x05\0",
+    }.get(mutation, b"\0\0")
+    content = bytearray(_strict_png(image_bytes=image_bytes))
+    if mutation == "prefix":
+        content = bytearray(b"J" + content)
+    elif mutation == "trailing":
+        content.extend(b"J")
+    elif mutation == "crc":
+        content[29] ^= 1
+    carrier = tmp_path / "frame.png"
+    carrier.write_bytes(content)
+
+    assert tree_scan._validated_png_idat_ranges(content) is None
+    assert tree_scan._contains_embedded_archive(carrier)
+    with pytest.raises(tree_scan._ScanError, match="Embedded archive"):
+        tree_scan._validate_archive_file(carrier)
+
+
+def test_png_idat_exception_rejects_ancillary_zlib_carrier(tmp_path: Path) -> None:
+    """Continue inspecting compressed bytes outside the exact IDAT ranges."""
+    token_value = "".join(("Qw7eR9tY", "2uI4oP6a", "S8dF0gH1", "jK3lZ5xC"))
+    token = f'api_key = "{token_value}"\n'.encode()
+    ancillary = _png_chunk(b"zTXt", b"label\0\0" + zlib.compress(token))
+    carrier = tmp_path / "frame.png"
+    carrier.write_bytes(_strict_png(ancillary=ancillary))
+
+    assert tree_scan._validated_png_idat_ranges(carrier.read_bytes()) is not None
+    assert tree_scan._contains_embedded_archive(carrier)
+    with pytest.raises(tree_scan._ScanError, match="Embedded archive"):
+        tree_scan._validate_archive_file(carrier)
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [b"prefixPK\x03\x04suffix", _tar_member("payload.txt", b"safe\n")],
+    ids=["fixed-signature", "tar-header"],
+)
+def test_png_idat_exception_rejects_other_ancillary_containers(
+    tmp_path: Path,
+    payload: bytes,
+) -> None:
+    """Inspect fixed signatures and TAR headers outside exact IDAT ranges."""
+    ancillary = _png_chunk(b"tEXt", payload)
+    carrier = tmp_path / "frame.png"
+    carrier.write_bytes(_strict_png(ancillary=ancillary))
+
+    assert tree_scan._validated_png_idat_ranges(carrier.read_bytes()) is not None
+    assert tree_scan._contains_embedded_archive(carrier)
+
+
+@pytest.mark.parametrize(
+    ("payload", "excluded_start"),
+    [
+        (b"PK\x03\x04", 2),
+        (_tar_member("payload.txt", b"safe\n"), 256),
+    ],
+    ids=["fixed-signature", "tar-header"],
+)
+def test_png_regions_keep_lookahead_across_idat_boundary(
+    monkeypatch: pytest.MonkeyPatch,
+    payload: bytes,
+    excluded_start: int,
+) -> None:
+    """Detect immediate containers whose allowed start precedes excluded bytes."""
+    prefix = b"outside-prefix"
+    content = prefix + payload + b"outside-suffix"
+    payload_offset = len(prefix)
+    monkeypatch.setattr(
+        tree_scan,
+        "_validated_png_idat_ranges",
+        lambda _content: (
+            (payload_offset + excluded_start, payload_offset + len(payload)),
+        ),
+    )
+
+    regions = tuple(tree_scan._embedded_scan_regions(content))
+    assert tree_scan._regions_contain_immediate_archive(regions)
+
+
+def test_png_regions_translate_compressed_candidate_after_idat(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Probe an allowed candidate by its source offset between excluded ranges."""
+    first_prefix = b"N" * 64
+    first_excluded = b"X" * 32
+    middle = b"M" * 17
+    compressed = zlib.compress(b"decoded payload")
+    candidate_offset = len(first_prefix) + len(first_excluded) + len(middle)
+    content = first_prefix + first_excluded + middle + compressed + b"outside-suffix"
+    monkeypatch.setattr(
+        tree_scan,
+        "_validated_png_idat_ranges",
+        lambda _content: (
+            (len(first_prefix), len(first_prefix) + len(first_excluded)),
+            (candidate_offset + 1, candidate_offset + len(compressed)),
+        ),
+    )
+
+    regions = tuple(tree_scan._embedded_scan_regions(content))
+    assert tree_scan._regions_contain_compressed_archive(content, regions)
+
+
+def _png_structure_mutation(mutation: str) -> bytes:
+    """Build one image whose valid zlib stream has invalid PNG structure."""
+    compressed = zlib.compress(b"\0\0")
+    idat = _png_chunk(b"IDAT", compressed)
+    if mutation == "duplicate-ihdr":
+        return _png_document(_png_chunk(b"IHDR", _png_ihdr()), idat)
+    if mutation == "unknown-critical":
+        return _png_document(_png_chunk(b"ABCD", b""), idat)
+    if mutation == "reserved-bit":
+        return _png_document(_png_chunk(b"abcD", b""), idat)
+    if mutation == "nonconsecutive-idat":
+        return _png_document(
+            idat,
+            _png_chunk(b"tEXt", b"label\0value"),
+            _png_chunk(b"IDAT", b""),
+        )
+    if mutation == "missing-palette":
+        return _png_document(idat, ihdr=_png_ihdr(color_type=3))
+    raise AssertionError(f"unknown PNG mutation: {mutation}")
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "duplicate-ihdr",
+        "unknown-critical",
+        "reserved-bit",
+        "nonconsecutive-idat",
+        "missing-palette",
+    ],
+)
+def test_png_idat_exception_rejects_invalid_chunk_grammar(
+    tmp_path: Path,
+    mutation: str,
+) -> None:
+    """Do not exclude image bytes when critical PNG grammar is invalid."""
+    content = _png_structure_mutation(mutation)
+    carrier = tmp_path / "frame.png"
+    carrier.write_bytes(content)
+
+    assert tree_scan._validated_png_idat_ranges(content) is None
+    assert tree_scan._contains_embedded_archive(carrier)
+
+
+def test_png_idat_exception_handles_malformed_zlib_as_unvalidated(
+    tmp_path: Path,
+) -> None:
+    """Return to ordinary discovery instead of leaking a decoder exception."""
+    content = _png_document(_png_chunk(b"IDAT", b"\x78\x9c\xff"))
+    carrier = tmp_path / "frame.png"
+    carrier.write_bytes(content)
+
+    assert tree_scan._validated_png_idat_ranges(content) is None
+    assert not tree_scan._contains_embedded_archive(carrier)
+
+
+def test_png_idat_exception_bounds_chunk_allocation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Reject a PNG boundary when its structural work limit is exhausted."""
+    content = _strict_png()
+    carrier = tmp_path / "frame.png"
+    carrier.write_bytes(content)
+    monkeypatch.setattr(tree_scan, "_MAX_PNG_CHUNKS", 2)
+
+    assert tree_scan._validated_png_idat_ranges(content) is None
+    assert tree_scan._contains_embedded_archive(carrier)
+
+
+def test_embedded_candidate_limit_exceptions_are_byte_exact(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Bind two media files while still checking every compression candidate."""
+    fixtures = (
+        (
+            ROOT / "docs/workbench/evidence/lerobot-video-subtasks/lerobot-labeled.mp4",
+            4_187,
+        ),
+        (
+            ROOT
+            / "docs/workbench/evidence/lerobot-video-subtasks/lerobot-video-subtasks.rrd",
+            4_274,
+        ),
+    )
+    assert tree_scan._INERT_EMBEDDED_CANDIDATE_LIMIT_SHA256 == {
+        hashlib.sha256(path.read_bytes()).hexdigest() for path, _count in fixtures
+    }
+    original_probe = tree_scan._embedded_stream_requires_rejection
+    observed_candidates = 0
+
+    def _recording_probe(content: bytes, kind: str, offset: int) -> bool:
+        nonlocal observed_candidates
+        observed_candidates += 1
+        return original_probe(content, kind, offset)
+
+    monkeypatch.setattr(
+        tree_scan, "_embedded_stream_requires_rejection", _recording_probe
+    )
+    for path, expected_candidates in fixtures:
+        raw = path.read_bytes()
+        candidates = list(tree_scan._embedded_compressed_streams(raw))
+        assert len(candidates) == expected_candidates
+        assert not any(original_probe(raw, kind, offset) for kind, offset in candidates)
+        observed_candidates = 0
+        assert not tree_scan._contains_embedded_archive(path)
+        assert observed_candidates == expected_candidates
+        mutated = tmp_path / path.name
+        mutated.write_bytes(b"J" + raw)
+        assert tree_scan._contains_embedded_archive(mutated)
+
+
 def test_zlib_header_recognizer_covers_pinned_archives_headers() -> None:
     """Match the pinned mholt/archives RFC 1950 header population exactly."""
     valid_headers = {
