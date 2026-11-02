@@ -176,7 +176,19 @@ def _fragment_paths(payload: dict[str, Any]) -> dict[str, Path]:
 
 
 def _seeded(o3d, manifest: RegistrationManifest) -> None:
-    """Make RANSAC repeatable; Open3D seeds a global generator, not a call."""
+    """Fix RANSAC's draw; Open3D seeds a global generator, not a call.
+
+    This said "make RANSAC repeatable", which overstated it. With the seed, the
+    inputs and the process held fixed, sixteen repeats return sixteen distinct
+    transformations, so each run's `aligned_sha256` is a digest of that run and
+    never matches the last. The answer is stable to about a trillionth of a voxel
+    on a well-conditioned pair, which is why it went unnoticed.
+
+    The seed is not what is loose: point-to-plane ICP accumulates in parallel, and
+    holding Open3D to one thread makes the whole pipeline bit-reproducible.
+    `OMP_NUM_THREADS` does not reach it. Measured per stage in
+    `docs/evidence/open3d/register-seed-determinism.json`.
+    """
 
     o3d.utility.random.seed(manifest.random_seed)
 

@@ -335,6 +335,50 @@ removed the owned controller, with its absence independently confirmed. One defe
 there: cleanup reported degraded local metadata, because the ownership record it went to remove
 named a different cluster.
 
+## What the random seed buys, and what it does not
+
+`register-seed-determinism.json`, from `harness/register_seed_determinism.py`. `_seeded` said
+it made RANSAC repeatable and the skill told readers a rerun repeats. With the seed, the input
+and the process all held fixed, 16 repeats return **16 distinct transformations**, so the
+`aligned_sha256` the report publishes per pair is a digest of that run and never matches the
+last one. A reviewer comparing two runs' hashes sees a mismatch every time, with nothing saying
+that is expected.
+
+The answer is nonetheless stable, which is why this survived: the repeats disagree by about a
+trillionth of a voxel on a well-conditioned pair and under a thousandth on a deliberately
+ambiguous one. `icp.fitness` is identical across every repeat in all three cases, so a consumer
+watching *that* figure sees a perfectly steady pipeline. Not every published figure is steady:
+`icp.inlier_rmse` takes 16, 8 and 15 distinct values across the sixteen repeats of the three
+cases, so it moves visibly and is also published per pair.
+
+The seed is not what is loose. Taken alone, normal estimation, FPFH and point-to-point ICP each
+return identical bytes every time; the shipped **point-to-plane** ICP does not, while being
+handed provably identical points, normals, pose and distance. **This needs no contrived
+surface:** it happens on `DemoICPPointClouds`, the capture every accepted record in this
+directory is built from, which is where a reviewer found it after reading an earlier version of
+this paragraph claim it took a near-degenerate pair. RANSAC global registration is not
+bit-reproducible alone either, on those same two cases and from fixed clouds and fixed features:
+2 distinct results of 16 on the ripple, 4 on the demo scan. So a fixed seed does not make the
+RANSAC repeat.
+
+An earlier version of this paragraph read "only on a well-conditioned constructed bowl is that
+call reproducible, which is what makes this conditioning rather than a broken solver". The
+record's own numbers do not support it. On the bowl every stage alone is bit-identical while the
+composed pipeline returns 16 distinct results, and the only further stochastic surface in
+`_register_pair` is that same point-to-plane call — so it is non-reproducible on the bowl too.
+What differed was the start pose: the stage-alone cell was handed a +0.8 m translation the
+harness constructs, roughly sixteen voxels out at an ICP correspondence distance of one and a
+half, which may be a call with nothing to converge to. The record now starts the same call from
+the pipeline's own coarse pose and publishes each call's fitness and correspondence count.
+
+Held to one thread through Open3D's own API, that call and the whole pipeline become
+bit-reproducible — measured on the constructed ripple and on the demo capture, rather than
+generalised from the construction alone. `OMP_NUM_THREADS` does not reach it, which is the lever
+a reader of the thread-count finding in `capability-record-support-crop.json` would try first;
+that is now measured in a child process started under the variable rather than asserted, because
+asserting it was the same defect this record is about. One thread is a measured trade, not a
+recommendation: the cost in parallelism is not measured here.
+
 `ATTRIBUTION.md` covers the data all of this is computed from. The published capture renders
 Open3D's `DemoICPPointClouds`, which is Redwood's augmented ICL-NUIM `living-room1` -- a
 synthetic scene, not a sensor capture -- under CC BY 3.0. That is a grant on the data and is

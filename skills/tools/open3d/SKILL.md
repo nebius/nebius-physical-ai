@@ -72,9 +72,25 @@ be able to open the thing being asserted.
   so no accuracy claim can be made from a real run against them; the golden eval
   is where a ground-truth check exists, because it applies a known transform and
   asserts the pipeline recovered it.
-- RANSAC is randomized. `random_seed` seeds Open3D's global generator so a rerun
-  repeats, but a different seed can legitimately give a different transform on
-  low-overlap fragments.
+- RANSAC is randomized. `random_seed` seeds Open3D's global generator, and a
+  different seed can legitimately give a different transform on low-overlap
+  fragments. It does **not** make a rerun byte-identical: with the seed, the input
+  and the process all held fixed, 16 repeats produced 16 distinct transformations,
+  so each run's `aligned_sha256` is a digest of *that* run and never matches the
+  last one. The answer is stable — the repeats disagree by about a trillionth of a
+  voxel on a well-conditioned pair — so a hash mismatch between two runs is
+  expected and is not evidence that anything changed.
+- The variation is parallel accumulation in point-to-plane ICP, not the seed, and it
+  happens on the upstream `DemoICPPointClouds` capture — not only on contrived or
+  low-overlap geometry. A fixed seed does not make RANSAC repeat either: 16 seeded
+  repeats from fixed clouds and fixed features gave 2 distinct results on an ambiguous
+  construction and 4 on the demo capture. `o3d.utility.set_max_threads(1)` makes the
+  whole pipeline bit-reproducible on both cases measured — the constructed ripple and
+  the demo capture — and `OMP_NUM_THREADS` does not reach it, measured in a child
+  process started under the variable. That is a trade with an unmeasured cost in
+  parallelism, not a recommendation, and `RegistrationManifest` exposes no thread knob,
+  so it is not reachable through `npa workbench`. Measured per stage and per pair in
+  `docs/evidence/open3d/register-seed-determinism.json`.
 - A Poisson surface from partial indoor scans is normally **not** watertight and
   **not** edge-manifold. Those facts are reported, not asserted to be true. Do not
   treat an open surface as a failure, and do not treat a watertight one as proof of

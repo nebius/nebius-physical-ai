@@ -114,8 +114,12 @@ def _assert_support_crop_kept_the_observations(report) -> None:
     correspondences in thread-scheduling order, so `registration_icp`,
     `get_information_matrix_from_point_clouds`, `compute_fpfh_feature` and
     `global_optimization` return results that depend on how many threads the
-    container was given. Integer counts and RANSAC correspondence choices repeat
-    bit-for-bit because the generator is seeded; floating-point sums do not. On
+    container was given. Integer counts repeat bit-for-bit; RANSAC correspondence
+    choices do not, despite the seeded generator -- sixteen seeded repeats from
+    fixed clouds and fixed features gave 2 distinct results on an ambiguous
+    construction and 4 on the upstream demo scan
+    (`docs/evidence/open3d/register-seed-determinism.json`), and the shipped
+    point-to-plane ICP gave sixteen. Floating-point sums do not either. On
     the upstream demo scans two builds of this image agreed to 4e-06 relative on
     surface area and about 1e-08 on pose, which is the contract a consumer can
     actually rely on.
