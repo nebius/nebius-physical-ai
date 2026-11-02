@@ -599,12 +599,21 @@ def test_git_blob_framing_is_not_raw_sha1() -> None:
     )
 
 
-def _synthetic_snapshot(root: Path, name: str, payload: bytes) -> dict[str, object]:
+def _synthetic_snapshot(
+    root: Path,
+    name: str,
+    payload: bytes,
+    *,
+    identity_kind: str = "git_blob_sha1",
+) -> dict[str, object]:
     root.mkdir()
     file_path = root / name
     file_path.write_bytes(payload)
     file_path.chmod(0o444)
     root.chmod(0o555)
+    identity = contract.git_blob_sha1(payload)
+    if identity_kind == "sha256":
+        identity = hashlib.sha256(payload).hexdigest()
     return {
         "repository": "example/synthetic",
         "revision": "1" * 40,
@@ -613,11 +622,75 @@ def _synthetic_snapshot(root: Path, name: str, payload: bytes) -> dict[str, obje
                 "path": name,
                 "role": "synthetic",
                 "size": len(payload),
-                "identity_kind": "git_blob_sha1",
-                "identity": contract.git_blob_sha1(payload),
+                "identity_kind": identity_kind,
+                "identity": identity,
             }
         ],
     }
+
+
+def _verified_input(root: Path, payload: bytes) -> contract.VerifiedSnapshot:
+    snapshot = _synthetic_snapshot(
+        root,
+        "frame.bin",
+        payload,
+        identity_kind="sha256",
+    )
+    return contract.verify_snapshot(root, snapshot, category="input")
+
+
+def _rewrite_retained_input(root: Path, payload: bytes) -> None:
+    source = root / "frame.bin"
+    source.chmod(0o600)
+    source.write_bytes(payload)
+    source.chmod(0o444)
+
+
+def test_retained_input_reads_the_verified_bytes(tmp_path: Path) -> None:
+    root = tmp_path / "input"
+    verified = _verified_input(root, b"frame-a")
+    try:
+        assert contract._read_verified_inputs(verified) == [b"frame-a"]
+    finally:
+        verified.close()
+        root.chmod(0o755)
+
+
+def test_retained_input_rejects_changed_size(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "input"
+    verified = _verified_input(root, b"frame-a")
+    expected = verified.records[0]["identity"]
+    _rewrite_retained_input(root, b"frame-longer")
+    monkeypatch.setattr(
+        contract.hashlib,
+        "sha256",
+        lambda *_: SimpleNamespace(hexdigest=lambda: expected),
+    )
+    try:
+        with pytest.raises(contract.MolmoActInferenceError) as caught:
+            contract._read_verified_inputs(verified)
+        assert caught.value.code == "MOLMOACT_INPUT_IDENTITY"
+        assert caught.value.detail == "input changed during retained read"
+    finally:
+        verified.close()
+        root.chmod(0o755)
+
+
+def test_retained_input_rejects_same_size_changed_hash(tmp_path: Path) -> None:
+    root = tmp_path / "input"
+    verified = _verified_input(root, b"frame-a")
+    _rewrite_retained_input(root, b"frame-b")
+    try:
+        with pytest.raises(contract.MolmoActInferenceError) as caught:
+            contract._read_verified_inputs(verified)
+        assert caught.value.code == "MOLMOACT_INPUT_IDENTITY"
+        assert caught.value.detail == "input changed during retained read"
+    finally:
+        verified.close()
+        root.chmod(0o755)
 
 
 def test_snapshot_exact_set_and_git_identity(tmp_path: Path) -> None:
