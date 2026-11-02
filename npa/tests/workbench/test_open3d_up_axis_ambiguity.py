@@ -694,16 +694,31 @@ def test_the_detection_rate_the_code_states_is_the_one_the_record_measured() -> 
         "the retained sweep fell below the floor the code publishes at the shipped "
         f"count; the figure in runner.py no longer describes the evidence: {shipped[0]}"
     )
-    detected = [one["ambiguity_detected_in_runs"] for one in rates]
-    assert UP_AXIS_DETECTION_RISES_WITH_FITS is True
-    assert detected == sorted(detected), (
-        "detection no longer rises with the fit count, which is the structural claim "
-        f"the repeat default rests on: {detected}"
-    )
     # The floor has to be worth clearing: a floor of zero would always pass, and a
     # floor at the observed figure would go stale on the next sweep, which is what
     # happened to the exact counts this replaced.
     assert 0 < UP_AXIS_DETECTION_FLOOR_OF_THIRTY < detected_at_default
+
+    # Monotonicity is asserted where it can be measured. The thirty-run sweep cannot
+    # order two configurations a few runs apart -- a regeneration returned 27 at five
+    # fits against 26 at nine -- so requiring it there pinned the structural claim to
+    # a measurement without the power to support it.
+    rise = _record()["detection_by_repeat_count"][
+        "does_detection_rise_with_the_fit_count"
+    ]
+    assert UP_AXIS_DETECTION_RISES_WITH_FITS is rise["every_step_rose"], rise
+    assert rise["each_process_is_a_fresh_interpreter"] is True, rise
+    assert rise["runs_per_configuration"] >= 300, rise
+    assert rise["detection_rate"] == sorted(rise["detection_rate"]), rise
+    # Rising by more than the difference's own noise, at every step, or the ordering
+    # is the thirty-run sweep's problem again with more decimal places.
+    assert rise["smallest_step_in_sigmas"] > 3.0, rise
+    for pair in rise["consecutive_pairs"]:
+        rebuilt = pair["detection_rose_by"] / pair["one_sigma_of_the_difference"]
+        assert pair["in_sigmas"] == pytest.approx(rebuilt, rel=0.02), pair
+    assert any(
+        one["this_pair_includes_the_shipped_count"] for one in rise["consecutive_pairs"]
+    ), rise
 
 
 def test_the_record_publishes_a_detection_rate_rather_than_a_guarantee() -> None:
@@ -717,9 +732,13 @@ def test_the_record_publishes_a_detection_rate_rather_than_a_guarantee() -> None
         "the retained record shows perfect detection at the default, which would make "
         "the published limitation unsupported by its own evidence"
     )
-    by_count = sorted((one["fits"], one["ambiguity_detected_in_runs"]) for one in rates)
-    assert [count for _, count in by_count] == sorted(count for _, count in by_count), (
-        f"detection should not fall as fits increase: {by_count}"
+    # This block deliberately does not require the thirty-run counts to be ordered.
+    # They are not, reliably: one regeneration returned 27 detections at five fits
+    # against 26 at nine. The scatter is this record's subject, and the ordering is
+    # measured at 300 runs per configuration in
+    # `does_detection_rise_with_the_fit_count`.
+    assert all(
+        0 <= one["ambiguity_detected_in_runs"] <= one["of_runs"] for one in rates
     )
 
 
@@ -825,6 +844,22 @@ def test_the_chance_agreement_model_is_tested_at_power_not_asserted() -> None:
     assert model["fits_per_check"] == 9, model
     assert abs(model["gap_in_sigmas"]) <= 3.0, model
     assert model["model_rejected"] is False, model
+
+    # The gap's direction across runs, derived from the list rather than described.
+    # One run cannot separate a tenth-sized bias from noise, so a record that only
+    # ever showed the latest gap would keep inviting the reading that this block
+    # records getting wrong.
+    pooled = model["where_the_sign_of_this_gap_stands"]
+    gaps = pooled["gaps_in_sigmas"]
+    assert len(gaps) >= 6, gaps
+    assert pooled["this_runs_gap_is_the_last_of_them"] is True, pooled
+    assert gaps[-1] == pytest.approx(model["gap_in_sigmas"], abs=0.01), (gaps, model)
+    assert pooled["mean_gap_in_sigmas"] == pytest.approx(
+        sum(gaps) / len(gaps), abs=0.01
+    ), pooled
+    assert pooled["pooled_z"] == pytest.approx(
+        pooled["mean_gap_in_sigmas"] * len(gaps) ** 0.5, rel=0.02
+    ), pooled
     # Admissible, not confirmed, and the record has to keep saying which.
     assert "not" in high["what_this_still_does_not_establish"]
 

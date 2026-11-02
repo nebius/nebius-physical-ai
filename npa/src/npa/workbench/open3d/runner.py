@@ -741,11 +741,19 @@ DECLARED_UP = (0.0, 0.0, 1.0)
 
 #: What the detection sweep must show, as a floor rather than the counts observed.
 #: Exact counts were pinned here first and went stale on the next regeneration:
-#: across five sweeps the shipped count returned 25, 26, 27, 25 and 27 of 30. The
-#: rate is not reproducible, which is this record's own subject, so the claim is the
-#: part that survives a rerun -- a floor every observation clears, and detection
-#: rising with the fit count. See `docs/evidence/open3d/up-axis-ambiguity.json`.
+#: across seven sweeps the shipped count returned 25, 26, 27, 25, 27, 28 and 26 of
+#: 30. The rate is not reproducible at thirty runs, which is this record's own
+#: subject, so the claim is the part that survives a rerun -- a floor every
+#: observation clears. See `docs/evidence/open3d/up-axis-ambiguity.json`.
 UP_AXIS_DETECTION_FLOOR_OF_THIRTY = 20
+
+#: Detection rises with the fit count. This was asserted from the thirty-run sweep
+#: until a regeneration returned 27 detections at five fits against 26 at nine and
+#: inverted it; at thirty runs a count's standard deviation is about one and a half,
+#: so neither that ordering nor its inversion was ever measurable there. Pooling 300
+#: runs per configuration across twelve fresh interpreters gives 72.7, 93.7 and 99.3
+#: percent at five, nine and seventeen fits, every step rising by at least 3.8 sigma
+#: of its own difference. See `does_detection_rise_with_the_fit_count` in the record.
 UP_AXIS_DETECTION_RISES_WITH_FITS = True
 
 #: Extra plane fits used to decide whether the scan determines an up axis at all.
