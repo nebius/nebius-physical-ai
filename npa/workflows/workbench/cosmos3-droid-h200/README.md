@@ -22,6 +22,9 @@ matched the original reader. Native plan/dryrun and all eight terminal rank
 receipts passed: 32 microsteps and one optimizer operation per rank, 8,192 global
 samples, finite losses and no new checkpoints. The historical timing does not
 measure this refactor. The integration check makes no timing or quality claim.
+The receipt records the source hashes before the dataset-root preflight fix.
+That fix adds input validation; the training settings, reader and launch argv
+remain unchanged. No additional GPU run is claimed for the preflight change.
 
 ## Prepared inputs
 
@@ -33,7 +36,12 @@ Use a single eight-H200 node with the following inputs already available:
   used Python 3.13, PyTorch 2.10.0+cu130, torchcodec 0.10.0+cu130, PyAV 18.1.0
   and LeRobot 0.4.4. Keep this environment separate from the NPA client.
 - The `success/` split of [nvidia/Cosmos3-DROID](https://huggingface.co/datasets/nvidia/Cosmos3-DROID)
-  at the pinned revision. Place `success/meta/` and `success/data/` locally.
+  at the pinned revision. Name the real dataset directory
+  `droid_plus_lerobot_640x360_20260412` and place `success/meta/` and
+  `success/data/` inside it. The pinned loader selects its schema from that
+  basename. `--dataset-root` resolves symlinks, so an alias must point to a real
+  directory with the required name. All operations reject incompatible roots
+  before launching the framework.
   Store video objects under `success/videos/` in the selected bucket. The measured
   split contains 3,133 files and 628,036,574,065 bytes, including 3,063 MP4 files.
 - A manifest with `files` entries containing each bucket-relative `path` and
@@ -78,7 +86,7 @@ Run these commands from the Workbench repository root with the framework Python:
 
 ```bash
 : "${FRAMEWORK_ROOT:?Set the pinned framework checkout}"
-: "${DROID_ROOT:?Set the directory containing success/meta and success/data}"
+: "${DROID_ROOT:?Set the real droid_plus_lerobot_640x360_20260412 directory}"
 : "${DROID_MANIFEST:?Set the verified path and size manifest}"
 : "${BASE_DCP:?Set the converted Nano DCP directory}"
 : "${WAN_VAE:?Set the pinned Wan VAE file}"

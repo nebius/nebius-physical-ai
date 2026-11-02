@@ -11,6 +11,7 @@ import sys
 
 _ROOT = Path(__file__).resolve().parent
 _FRAMEWORK = "cf5d68c00d97ccd2480a2320ed652b92dec63102"
+_DATASET_VERSION = "droid_plus_lerobot_640x360_20260412"
 
 
 def _parser():
@@ -58,8 +59,7 @@ def _settings(args):
     )
     if not (Path(settings["base_dcp"]) / "model/.metadata").is_file():
         raise ValueError("base DCP has no model metadata")
-    if not (Path(settings["dataset_root"]) / "success/meta/info.json").is_file():
-        raise ValueError("dataset root must contain success/meta/info.json")
+    _verify_dataset_root(Path(settings["dataset_root"]))
     _verify_prepared_layout(settings)
     revision = subprocess.check_output(
         ["git", "rev-parse", "HEAD"], cwd=settings["framework"], text=True
@@ -74,6 +74,15 @@ def _settings(args):
     native_video.install(settings)
     native_video.uninstall()
     return settings
+
+
+def _verify_dataset_root(root):
+    if root.name != _DATASET_VERSION:
+        raise ValueError(
+            "dataset root must resolve to a directory named " + _DATASET_VERSION
+        )
+    if not (root / "success/meta/info.json").is_file():
+        raise ValueError("dataset root must contain success/meta/info.json")
 
 
 def _verify_prepared_layout(settings):

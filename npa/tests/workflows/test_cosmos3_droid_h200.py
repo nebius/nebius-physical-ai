@@ -165,6 +165,116 @@ def test_toml_rejects_unknown_upstream_instead_of_partial_replacement(tmp_path):
         recipe._toml({"framework": str(tmp_path), "updates": 5})
 
 
+def _prepared_recipe_inputs(tmp_path):
+    paths = {
+        name: tmp_path / name
+        for name in [
+            "framework",
+            "manifest",
+            "base_dcp",
+            "vae",
+            "tokenizer",
+            "avae_cache",
+        ]
+    }
+    paths["dataset_root"] = tmp_path / "droid_plus_lerobot_640x360_20260412"
+    paths["framework"].mkdir()
+    files = [
+        paths["dataset_root"] / "success/meta/info.json",
+        paths["base_dcp"] / "model/.metadata",
+        paths["vae"],
+        paths["tokenizer"] / "tokenizer.json",
+    ] + [
+        paths["avae_cache"] / name
+        for name in [
+            "config.json",
+            "diffusion_pytorch_model.safetensors",
+            "avae_48k_noncausal_25hz_64ch.ckpt",
+            "avae_48k_noncausal_25hz_64ch.json",
+        ]
+    ]
+    for path in files:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("{}")
+    paths["manifest"].write_text(
+        json.dumps({"files": [{"path": "success/videos/camera/video.mp4", "size": 1}]})
+    )
+    return SimpleNamespace(
+        **paths,
+        operation="plan",
+        output_dir=tmp_path / "output",
+        bucket="test-bucket",
+        endpoint_url="https://storage.example.test",
+        region="test-region",
+        aws_profile=None,
+        updates=1,
+    )
+
+
+@pytest.mark.parametrize("root_name", ["Cosmos3-DROID", "cosmos3-droid"])
+@pytest.mark.parametrize("symlink", [False, True])
+def test_incompatible_dataset_root_stops_before_launch_or_outputs(
+    tmp_path, monkeypatch, root_name, symlink
+):
+    recipe = _load("recipe")
+    args = _prepared_recipe_inputs(tmp_path)
+    native_root = args.dataset_root
+    generic_root = tmp_path / root_name
+    native_root.rename(generic_root)
+    if symlink:
+        native_root.symlink_to(generic_root, target_is_directory=True)
+    else:
+        args.dataset_root = generic_root
+
+    def reject_subprocess(*args, **kwargs):
+        pytest.fail("incompatible dataset roots must fail before any subprocess")
+
+    monkeypatch.setattr(recipe.subprocess, "check_output", reject_subprocess)
+    monkeypatch.setattr(recipe.subprocess, "run", reject_subprocess)
+    previous_umask = recipe.os.umask(0o077)
+    try:
+        with pytest.raises(
+            ValueError, match="directory named droid_plus_lerobot_640x360_20260412"
+        ):
+            recipe._execute(args)
+    finally:
+        recipe.os.umask(previous_umask)
+    assert not args.output_dir.exists()
+
+
+@pytest.mark.parametrize("symlink", [False, True])
+def test_native_dataset_root_preserves_resolved_training_path(
+    tmp_path, monkeypatch, fsspec, symlink
+):
+    recipe = _load("recipe")
+    args = _prepared_recipe_inputs(tmp_path)
+    native_root = args.dataset_root
+    if symlink:
+        args.dataset_root = tmp_path / "dataset-alias"
+        args.dataset_root.symlink_to(native_root, target_is_directory=True)
+    monkeypatch.setitem(sys.modules, "native_video", _load("native_video"))
+    monkeypatch.setattr(
+        recipe.subprocess, "check_output", lambda *args, **kwargs: recipe._FRAMEWORK
+    )
+    commands = []
+    monkeypatch.setattr(
+        recipe.subprocess, "run", lambda command, **kwargs: commands.append(command)
+    )
+    settings = recipe._settings(args)
+    environment = recipe._environment(settings, args.output_dir)
+    assert environment["DROID_ROOT"] == str(native_root.resolve())
+    assert settings["dataset_root"] == environment["DROID_ROOT"]
+    assert commands == [["git", "diff", "--quiet", "HEAD"]]
+
+
+def test_native_dataset_root_still_requires_success_metadata(tmp_path):
+    recipe = _load("recipe")
+    root = tmp_path / "droid_plus_lerobot_640x360_20260412"
+    root.mkdir()
+    with pytest.raises(ValueError, match="success/meta/info.json"):
+        recipe._verify_dataset_root(root)
+
+
 def _verification_runtime(monkeypatch, tmp_path):
     monkeypatch.setenv("RANK", "0")
     monkeypatch.setenv("WORLD_SIZE", "8")
