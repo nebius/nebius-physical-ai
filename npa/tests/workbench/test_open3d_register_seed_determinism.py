@@ -14,6 +14,7 @@ else reads the committed record, so the claims stay gated in CI either way.
 from __future__ import annotations
 
 import json
+import os
 import pathlib
 from pathlib import Path
 
@@ -523,17 +524,15 @@ def test_loading_the_harness_leaves_the_import_path_alone() -> None:
     )
 
 
-def test_the_non_determinism_test_skips_rather_than_fails_at_one_thread() -> None:
-    """The gate, exercised. This host has sixteen threads, so removing it is invisible.
+def _assert_the_gate_skips(o3d) -> None:
+    """Fake one thread, require a skip, and prove the fake was undone.
 
-    The record measures the pipeline as bit-reproducible at one thread, so asserting
-    non-determinism unconditionally turns a correct single-vCPU runner or
-    single-threaded Open3D build into a red pipeline. That cannot be proved by
-    running on a sixteen-thread host, so the thread count is faked and the outcome
-    checked: a skip, not a failure.
+    Shared with the child process below so that the same assertions run against a
+    real one-thread Open3D and against a monkeypatch on a many-thread host.
     """
 
-    o3d = pytest.importorskip("open3d")
+    original_getter = o3d.utility.get_max_threads
+    original_count = original_getter()
 
     monkeypatched = pytest.MonkeyPatch()
     try:
@@ -542,8 +541,94 @@ def test_the_non_determinism_test_skips_rather_than_fails_at_one_thread() -> Non
             test_the_measurement_itself_reproduces(True)
     finally:
         monkeypatched.undo()
+
     assert "no non-determinism to observe" in str(skipped.value), skipped.value
-    assert o3d.utility.get_max_threads() > 1, "the monkeypatch outlived the test"
+
+    # Against the state captured above, not against a thread count this host is
+    # assumed to have. `assert get_max_threads() > 1` was the first version, and it
+    # asserted the host rather than the restoration -- the same defect this gate
+    # exists to prevent, reintroduced in the gate itself. It fails on a legitimate
+    # one-thread host, where `original_count` is 1 and nothing is wrong.
+    assert o3d.utility.get_max_threads is original_getter, (
+        "the monkeypatch outlived the test: the getter was not restored"
+    )
+    assert o3d.utility.get_max_threads() == original_count, (
+        "the getter was restored but reports a different count than before the patch"
+    )
+
+
+def test_the_non_determinism_test_skips_rather_than_fails_at_one_thread() -> None:
+    """The gate, exercised. This host has many threads, so removing it is invisible.
+
+    The record measures the pipeline as bit-reproducible at one thread, so asserting
+    non-determinism unconditionally turns a correct single-vCPU runner or
+    single-threaded Open3D build into a red pipeline. That cannot be proved by
+    running on a many-thread host, so the thread count is faked and the outcome
+    checked: a skip, not a failure.
+    """
+
+    o3d = pytest.importorskip("open3d")
+    _assert_the_gate_skips(o3d)
+
+
+def test_the_gate_holds_on_a_real_one_thread_open3d() -> None:
+    """The control the monkeypatch cannot give: `set_max_threads(1)` for real.
+
+    `o3d.utility.set_max_threads` is process-global, so it runs in a child rather
+    than inside this session. The child is the whole point of the control -- a
+    restoration assertion written against an assumed many-thread host passes here
+    and fails on a single-vCPU runner, which is where this gate matters.
+    """
+
+    pytest.importorskip("open3d")
+
+    import subprocess
+    import sys
+
+    child = subprocess.run(  # noqa: S603 - this interpreter, a literal argv
+        [sys.executable, str(pathlib.Path(__file__).resolve()), "--one-thread-child"],
+        capture_output=True,
+        text=True,
+        check=False,
+        env={**os.environ, "PYTHONPATH": os.environ.get("PYTHONPATH", "")},
+    )
+
+    assert child.returncode == 0, (
+        f"the gate does not hold at one real thread:\n{child.stdout}\n{child.stderr}"
+    )
+    assert "skipped at 1 real thread(s)" in child.stdout, child.stdout
+
+
+def _one_thread_child() -> int:
+    """Run the gate's assertions under a real one-thread Open3D."""
+
+    import open3d as o3d
+
+    o3d.utility.set_max_threads(1)
+    threads = o3d.utility.get_max_threads()
+    if threads != 1:
+        print(f"this build ignores set_max_threads: reports {threads}")
+        return 0 if threads > 0 else 1
+
+    _assert_the_gate_skips(o3d)
+    print(f"skipped at {threads} real thread(s), and the getter was restored to it")
+    return 0
+
+
+def test_the_other_direction_runs_the_measurement_rather_than_skipping() -> None:
+    """The normal-thread control: with the real getter, the gate must not skip.
+
+    Both halves are needed. A gate that always skipped would satisfy the test above
+    and measure nothing, which is the failure mode this PR's own record documents
+    for the bowl's ICP cell.
+    """
+
+    o3d = pytest.importorskip("open3d")
+
+    if o3d.utility.get_max_threads() <= 1:
+        pytest.skip("this host really has one thread; the skip above is the behaviour")
+
+    test_the_measurement_itself_reproduces(True)
 
 
 def test_the_skill_scopes_the_remedy_to_the_cases_it_was_measured_on() -> None:
@@ -576,3 +661,11 @@ def test_the_skill_scopes_the_remedy_to_the_cases_it_was_measured_on() -> None:
         "this change set out to remove"
     )
     assert "not a recommendation" in bullet or "trade" in bullet, bullet
+
+
+if __name__ == "__main__":
+    import sys
+
+    if "--one-thread-child" in sys.argv:
+        raise SystemExit(_one_thread_child())
+    raise SystemExit("this module is a pytest file; --one-thread-child is its only mode")
