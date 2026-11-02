@@ -50,7 +50,8 @@
     "repository_commit": "1441e211400cf7d07c8d832d3ad787ff71d7fad2",
     "runner_source_dirty_at_generation": true,
     "dirty_note": "The runner was mounted into the image from the working tree, so the module hash above is the binding, not the commit. The commit is recorded for context only.",
-    "binding_note": "Generated from dirty working-tree source, which is now committed at cbbb22e17 with byte-identical runner bytes. The generation history is kept rather than rewritten to read as though it had been clean."
+    "binding_note": "Generated from dirty working-tree source, which is now committed at cbbb22e17 with byte-identical runner bytes. The generation history is kept rather than rewritten to read as though it had been clean.",
+    "hashes_that_name_no_file_here": "runner_module_sha256 is of the runner module as it was mounted into the image from a dirty working tree, which is the binding for this generation; see dirty_note and binding_note beside it. Those bytes are now committed, but at a different path than this record names, so the hash binds to nothing here by construction."
   },
   "camera": {
     "Scene: observed scan and supported surface": {

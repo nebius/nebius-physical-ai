@@ -19,6 +19,7 @@ the point is to change the page, never the data.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -29,6 +30,16 @@ from PIL import Image
 WEIGHTS = np.array([0.2126, 0.7152, 0.0722])
 #: Content this close to the background is drawn and effectively unreadable.
 LOW_CONTRAST_LIMIT = 24
+
+
+def digest(path: Path) -> str:
+    """The frame's bytes as measured, so the record binds what it read."""
+
+    sha = hashlib.sha256()
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(1 << 20), b""):
+            sha.update(block)
+    return sha.hexdigest()
 
 
 def content_luminance(path: Path) -> np.ndarray:
@@ -70,10 +81,16 @@ def main() -> int:
             "function of background luminance. Content luminances are taken from "
             "the delivered frames and never altered; only the page changes."
         ),
-        "frames_measured": [p.name for p in frames],
+        # Named and bound, not just named. The nine frames were listed by filename
+        # alone, so `audit_evidence_references.py` had nothing to hash and reported
+        # them as unbindable; a review lane appended a byte to one of them and the
+        # audit stayed byte-identically green. A `frame`/`sha256` pair is the form it
+        # binds, so a replaced frame now fails the audit.
+        "frames_measured": [{"frame": p.name, "sha256": digest(p)} for p in frames],
         "content_pixels": int(luminance.size),
         "content_luminance_percentiles": {
-            str(q): float(np.percentile(luminance, q)) for q in (1, 5, 25, 50, 75, 95, 99)
+            str(q): float(np.percentile(luminance, q))
+            for q in (1, 5, 25, 50, 75, 95, 99)
         },
         "shipped_background": shipped,
         "best_background": best,

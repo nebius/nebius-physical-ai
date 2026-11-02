@@ -108,7 +108,8 @@
     "fragments": {
       "cloud_bin_0": "e1e100802c29ef454c6b523084668ee0e2f365ec52eaeebe79ae804c20447b15",
       "cloud_bin_1": "a4c3dc0ad7b1279736491b9b2638991d4c808605997be4f9ab174c24a9fa6e52",
-      "cloud_bin_2": "1e68e194ebc1941f0f29764e4daf89340e69b224d2b80db5efbc1373a17f8b4a"
+      "cloud_bin_2": "1e68e194ebc1941f0f29764e4daf89340e69b224d2b80db5efbc1373a17f8b4a",
+      "hashes_that_name_no_file_here": "The three upstream DemoICPPointClouds scans as Open3D distributes them, not redistributed here."
     },
     "voxel_size": 0.05
   },
@@ -240,6 +241,7 @@
       "2a6d901f3 Add Open3D point-cloud registration and reconstruction workbench tool"
     ],
     "evaluation_plan_hash": "dd758d06a3df6cf3793504d355f34dfefc49b32516bb0c7aed1318fffadae122",
+    "hashes_that_name_no_file_here": "evaluation_plan_hash is of the plan document the run consumed, which lived in object storage for the run and is not committed here.",
     "image_digest": "sha256:e4996abccabcd1adf467a9cee929ae624dafe8e08e80b60180eb7dec8496b8b2",
     "image_tag": "npa-open3d:0.20.0-cpu-20260918",
     "producing_tree_identity": "46ae993d10e251913fc4942fa5cf0e4fa689dfe7",

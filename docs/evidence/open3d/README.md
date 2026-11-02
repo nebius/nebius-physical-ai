@@ -19,6 +19,33 @@ own question and method in its module docstring.
 | The floor is set by the voxel-to-sample-spacing ratio, not by geometry, sampling or mesh resolution | `floor-vs-voxel-multiple.json`, `floor-vs-resolution.json` |
 | Even sampling zeroes the headline fraction, so its failure is a capture-time artefact | `poisson-procedure-and-overcall-audit.json` |
 
+## What binds a record to what it cites
+
+`harness/audit_evidence_references.py` recomputes every digest a record binds to a named
+file, and `npa/tests/workbench/test_open3d_evidence_audit.py` runs it, so a replaced frame
+or a stale digest is a failing test rather than a thing a reader might notice.
+
+A hash binds when the record says which file it belongs to — a `<name>` with a sibling
+`<name>_sha256`, a bare `sha256` beside a `file`, `path`, `frame`, `script` or `recording`,
+or a hash keyed by its own filename. Listing a filename on its own is not binding: it says
+the file exists, not that these are the bytes the measurement read. The nine frames in
+`background-choice-sweep-refit.json` were in that state, and a review lane appended a byte
+to one of them and got an identical green audit.
+
+Plenty of hashes legitimately bind to nothing here — a run's own artifacts, or a source file
+pinned at a commit the tree has moved past. Those must carry a
+`hashes_that_name_no_file_here` note saying what the bytes are. The note may sit beside the
+hash or at any enclosing object and covers everything beneath it, and declaring never
+overrides binding: a hash that names a file is still hashed and compared, so a note cannot
+excuse a stale digest. An undeclared one fails the audit, because these were previously
+reported as a count on a passing run, and a count is not a category anyone maintains.
+`replay-b18d-public-report.json` had said what its hashes were all along under a name of its
+own, which the audit could not read — a declaration nothing can find is prose.
+
+Both halves are worth running after any edit here. Changing the derived report to carry its
+declaration made its own bound digests stale in two records, which is the chain working:
+the mechanism that catches a frame replaced by hand catches its author too.
+
 ## Reproducing
 
 ```bash

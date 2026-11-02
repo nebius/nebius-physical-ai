@@ -48,7 +48,6 @@
   "no_substitutes": "Nothing was put in place of an omitted field. There is no placeholder bucket, path or run identifier here to be mistaken for a real one.",
   "retained_originals": {
     "where": "The unmodified artifacts are retained in access-controlled lane evidence, not in this repository.",
-    "hashes_are_of_the_originals": "Each sha256 below is of the artifact as the run wrote it, so it identifies those bytes and deliberately matches no file here. The hash of this derived file is recorded separately, in capability-record-workflow-replay.json.",
     "artifacts": [
       {
         "artifact": "npa-workflow/status.json",
@@ -994,5 +993,6 @@
         }
       }
     }
-  }
+  },
+  "hashes_that_name_no_file_here": "Every sha256 in this report is of bytes the run wrote -- either an artifact as it was produced, hashed under retained_originals, or a hash the run's own result documents carried, quoted under derived_fields. None of them name a file committed here, by construction. The hash of this derived file is recorded separately, in capability-record-workflow-replay.json."
 }

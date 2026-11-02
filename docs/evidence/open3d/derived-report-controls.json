@@ -18,8 +18,10 @@
       "examples": []
     },
     "committed_report_is_current": {
-      "committed_sha256": "40e7a891e6ac77736b38cd4774e1feee83de1bfd1a04623e9e62f7186501264b",
-      "regenerated_sha256": "40e7a891e6ac77736b38cd4774e1feee83de1bfd1a04623e9e62f7186501264b",
+      "committed": "replay-b18d-public-report.json",
+      "committed_sha256": "9a28ebdac089d1da297b90515aedc7a0b1f8a25168db4aa32a05bbee1ec456b3",
+      "regenerated_sha256": "9a28ebdac089d1da297b90515aedc7a0b1f8a25168db4aa32a05bbee1ec456b3",
+      "hashes_that_name_no_file_here": "`regenerated_sha256` is of bytes this run built in memory and did not write, so it names no file by design; when `identical` is true it equals the committed hash above, which is bound and rechecked.",
       "identical": true
     }
   },

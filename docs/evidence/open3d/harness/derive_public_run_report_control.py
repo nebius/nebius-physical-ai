@@ -117,8 +117,19 @@ def main(argv: list[str] | None = None) -> int:
                 "examples": drifted[:5],
             },
             "committed_report_is_current": {
+                # Named, so the evidence audit binds `committed_sha256` to the file
+                # and rechecks it. Without the name this control could go stale in
+                # silence, and did: editing the report left this record asserting a
+                # digest of bytes no longer on disk, beneath a claim that the two
+                # agreed. A hash that can be bound should never be left unbound.
+                "committed": REPORT.name,
                 "committed_sha256": hashlib.sha256(committed).hexdigest(),
                 "regenerated_sha256": hashlib.sha256(regenerated).hexdigest(),
+                "hashes_that_name_no_file_here": (
+                    "`regenerated_sha256` is of bytes this run built in memory and did "
+                    "not write, so it names no file by design; when `identical` is true "
+                    "it equals the committed hash above, which is bound and rechecked."
+                ),
                 "identical": committed == regenerated,
             },
         },

@@ -53,6 +53,21 @@ RUN_ARTIFACT_NAMES = frozenset(
 #: Keys whose value is a path that a sibling bare `sha256` belongs to.
 PATH_KEYS = ("file", "path", "frame", "script", "recording", "harness", "generator")
 
+#: How a record declares that a hash deliberately names no file committed here --
+#: the bytes of a run's own artifact, or of a source file pinned at a commit the
+#: working tree has moved past.
+#:
+#: The key may sit beside the hash or at any ancestor, and it covers everything
+#: beneath it. Declaring never overrides binding: a hash that names a file is
+#: hashed and compared regardless, so this cannot be used to excuse a stale digest.
+#:
+#: This exists because the unbindable hashes were a count on a passing run. A review
+#: lane asked for them to be reduced or justified, one record was justified in prose
+#: that nothing read, and the rest stayed as they were for a month inside a number
+#: that never moved. A category nothing enforces is a category that drifts, so an
+#: undeclared unbindable hash is now a finding.
+DECLARATION_KEY = "hashes_that_name_no_file_here"
+
 REFERENCE = re.compile(r"\b((?:harness|viewer-ui)/[\w./-]+)\b")
 SHA256 = re.compile(r"\A[0-9a-f]{64}\Z")
 #: A JSON key that is itself a filename, which several records use to key a hash by its file.
@@ -95,16 +110,19 @@ def resolve(value: str, run_dir: str | None) -> Path | None:
 
 
 def bound_pairs(
-    node: object, where: str = ""
-) -> tuple[list[tuple[str, str, str]], list[str]]:
+    node: object, where: str = "", declared: bool = False
+) -> tuple[list[tuple[str, str, str]], list[tuple[str, bool]]]:
     """Split every hash in a record into those bound to a named file and those not.
 
-    Returns (bound, unbound) where each bound entry is (json path, named file, claimed hash).
+    Returns (bound, unbound). A bound entry is (json path, named file, claimed hash);
+    an unbound entry is (json path, whether a `DECLARATION_KEY` covers it).
     """
 
     bound: list[tuple[str, str, str]] = []
-    unbound: list[str] = []
+    unbound: list[tuple[str, bool]] = []
     if isinstance(node, dict):
+        note = node.get(DECLARATION_KEY)
+        declared = declared or bool(isinstance(note, str) and note.strip())
         for key, value in node.items():
             here = f"{where}.{key}" if where else key
             if isinstance(value, str) and SHA256.match(value):
@@ -125,14 +143,14 @@ def bound_pairs(
                 if isinstance(named, str) and named:
                     bound.append((here, named, value))
                 else:
-                    unbound.append(here)
+                    unbound.append((here, declared))
             else:
-                sub_bound, sub_unbound = bound_pairs(value, here)
+                sub_bound, sub_unbound = bound_pairs(value, here, declared)
                 bound += sub_bound
                 unbound += sub_unbound
     elif isinstance(node, list):
         for index, value in enumerate(node):
-            sub_bound, sub_unbound = bound_pairs(value, f"{where}[{index}]")
+            sub_bound, sub_unbound = bound_pairs(value, f"{where}[{index}]", declared)
             bound += sub_bound
             unbound += sub_unbound
     return bound, unbound
@@ -143,6 +161,7 @@ def main() -> int:
     verified = 0
     unresolvable: list[str] = []
     unbound_total: list[str] = []
+    undeclared: list[str] = []
 
     for record in sorted(ROOT.glob("*.json")):
         text = record.read_text()
@@ -151,9 +170,12 @@ def main() -> int:
                 findings.append(f"{record.name}: cites missing {reference}")
 
         data = json.loads(text)
-        run_dir = data.get("artifacts_committed_under") if isinstance(data, dict) else None
+        run_dir = (
+            data.get("artifacts_committed_under") if isinstance(data, dict) else None
+        )
         bound, unbound = bound_pairs(data)
-        unbound_total += [f"{record.name}:{w}" for w in unbound]
+        unbound_total += [f"{record.name}:{w}" for w, _ in unbound]
+        undeclared += [f"{record.name}:{w}" for w, covered in unbound if not covered]
         for where, named, claimed in bound:
             # Resolve before exempting: a run's artifacts are often not committed here, but when
             # a run directory *is* committed its hashes are checkable like anything else, and the
@@ -176,6 +198,11 @@ def main() -> int:
             else:
                 verified += 1
 
+    findings += [
+        f"{one} is a hash naming no file here and no enclosing object declares why; "
+        f"add a {DECLARATION_KEY!r} note saying what these bytes are"
+        for one in undeclared
+    ]
     if findings:
         print(f"{len(findings)} finding(s):")
         for finding in findings:
@@ -193,7 +220,10 @@ def main() -> int:
     held_elsewhere = "name a file this directory does not hold, mostly a run's own artifacts recorded by hash"
     for label, items in (
         (held_elsewhere, unresolvable),
-        ("name no file and so cannot be bound to anything", unbound_total),
+        (
+            f"name no file here and are declared as such by a {DECLARATION_KEY!r} note",
+            unbound_total,
+        ),
     ):
         if items:
             count = len(items)
