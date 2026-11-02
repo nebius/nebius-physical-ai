@@ -363,12 +363,13 @@ def _read_fragment(fragment, attempts: int = FRAGMENT_READ_ATTEMPTS) -> bytes:
     Every attempt is still made in that case, because a full-length read with a wrong
     digest could in principle be corruption in transit rather than a different
     object, and two extra requests are cheap next to a wrong diagnosis. What the
-    recorded length buys is the diagnosis itself: see `_diagnose_fragment_read`.
+    attempts buy is the diagnosis itself -- not only the recorded length but whether
+    the read lengths repeat, which is the only thing that separates a truncated stream
+    from a complete read of a shorter object: see `_diagnose_fragment_read`.
     """
 
     failures: list[str] = []
-    short_reads = 0
-    complete_reads = 0
+    lengths: list[int] = []
     for attempt in range(1, attempts + 1):
         try:
             payload = read_bytes_uri(fragment.uri)
@@ -377,10 +378,7 @@ def _read_fragment(fragment, attempts: int = FRAGMENT_READ_ATTEMPTS) -> bytes:
             continue
         if sha256_bytes(payload) == fragment.sha256:
             return payload
-        if len(payload) < fragment.bytes:
-            short_reads += 1
-        else:
-            complete_reads += 1
+        lengths.append(len(payload))
         failures.append(
             f"attempt {attempt}: digest mismatch ({len(payload)} bytes read of "
             f"{fragment.bytes} recorded)"
@@ -388,12 +386,26 @@ def _read_fragment(fragment, attempts: int = FRAGMENT_READ_ATTEMPTS) -> bytes:
     raise Open3dError(
         f"fragment {fragment.id} could not be read as the bytes the manifest "
         f"recorded at prepare time after {attempts} attempts. "
-        f"{_diagnose_fragment_read(short_reads, complete_reads)} " + "; ".join(failures)
+        f"{_diagnose_fragment_read(lengths, fragment.bytes)} " + "; ".join(failures)
     )
 
 
-def _diagnose_fragment_read(short_reads: int, complete_reads: int) -> str:
-    """Which of the two causes the attempts point at, and what to do about it.
+#: What a set of read lengths can distinguish, and what it cannot.
+#:
+#: A read shorter than the recorded length has two causes, not one. A stream that ended
+#: early is short, and so is a complete read of a shorter object that replaced the one
+#: `prepare` recorded. Treating short as truncation sends a reader to retry a stage that
+#: can never succeed, because the bytes they are asking for are no longer there.
+#:
+#: Repetition is what separates them. A stream that ends early ends wherever the
+#: connection broke, so repeated truncations rarely land on the same byte. A complete
+#: read of a shorter object returns that object's length every time. One short read
+#: distinguishes nothing, and the message says so rather than guessing.
+_RE_PREPARE = "re-run `npa workbench open3d prepare` against this prefix"
+
+
+def _diagnose_fragment_read(lengths: list[int], recorded: int) -> str:
+    """Which cause the attempts point at, and what to do about it.
 
     The message used to offer both -- "the manifest and the stored scan disagree, or
     the transport kept truncating" -- while the manifest records the byte count that
@@ -401,36 +413,72 @@ def _diagnose_fragment_read(short_reads: int, complete_reads: int) -> str:
     prepared again, and a truncating transport has to be retried, so leaving the
     reader to guess is the part worth fixing.
 
-    A read that arrives short of the recorded length is a stream that ended early. A
-    read that arrives at the recorded length with the wrong digest is an intact
-    object that is not the one `prepare` saw, and no number of retries will change
-    it. Both can happen in one set of attempts, and when they do the message says so
-    rather than picking the more convenient one.
+    Length alone does not separate them, which is the correction here. A read at the
+    recorded length with the wrong digest is an intact object that is not the one
+    `prepare` saw. A read *short* of it is either a truncated stream or a complete read
+    of a shorter object, and only whether the lengths repeat tells them apart. A read
+    *longer* than recorded is neither: it is a different object outright.
     """
 
-    if complete_reads and short_reads:
+    if not lengths:
         return (
-            f"{short_reads} read(s) ended early and {complete_reads} arrived at the "
-            "recorded length with the wrong digest, so the transport is unreliable "
-            "and the stored object may also differ from the manifest; re-run "
-            "`npa workbench open3d prepare` and, if it still fails, retry the stage."
+            "no attempt returned any bytes to compare, so the failures above are "
+            "transport errors rather than a disagreement about content."
         )
-    if complete_reads:
+
+    short = [one for one in lengths if one < recorded]
+    exact = [one for one in lengths if one == recorded]
+    long = [one for one in lengths if one > recorded]
+    diverged = exact or long
+
+    if short and diverged:
+        others = []
+        if exact:
+            others.append(f"{len(exact)} arrived at the recorded length")
+        if long:
+            others.append(f"{len(long)} arrived longer than the {recorded} recorded")
         return (
-            "every read arrived at the recorded length with the wrong digest, so the "
-            "stored object is intact and is not the one prepare recorded; re-run "
-            "`npa workbench open3d prepare` against this prefix. Retrying will not "
-            "help."
+            f"{len(short)} read(s) ended short of the recorded length and "
+            f"{' and '.join(others)} with the wrong digest, so the transport is "
+            "unreliable and the stored object may also differ from the manifest; "
+            f"{_RE_PREPARE} and, if it still fails, retry the stage."
         )
-    if short_reads:
+
+    if diverged:
+        described = (
+            "at the recorded length"
+            if not long
+            else f"longer than the {recorded} bytes recorded"
+        )
         return (
-            "every read ended short of the recorded length, so the transport "
-            "truncated the stream rather than the store holding different bytes; "
-            "retrying the stage is the action."
+            f"every read arrived {described} with the wrong digest, so the stored "
+            f"object is intact and is not the one prepare recorded; {_RE_PREPARE}. "
+            "Retrying will not help."
         )
+
+    if len(short) == 1:
+        return (
+            f"one read ended short of the recorded length ({short[0]} of {recorded} "
+            "bytes) and the other attempts returned no bytes at all, so a single "
+            "length cannot say whether the stream ended early or the store holds a "
+            f"shorter object. Retry the stage first, since that is cheap; if it fails "
+            f"the same way, {_RE_PREPARE}."
+        )
+
+    if len(set(short)) == 1:
+        return (
+            f"every read ended at the same {short[0]} bytes against {recorded} "
+            "recorded, so this is a complete read of a shorter object rather than a "
+            "truncated stream -- a stream that ended early would rarely stop on the "
+            f"same byte {len(short)} times. The store no longer holds what prepare "
+            f"recorded; {_RE_PREPARE}. Retrying will not help."
+        )
+
     return (
-        "no attempt returned any bytes to compare, so the failures above are "
-        "transport errors rather than a disagreement about content."
+        f"the reads ended short of the recorded length at {len(set(short))} different "
+        f"lengths ({', '.join(str(one) for one in short)} of {recorded}), so the "
+        "stream is ending early rather than the store holding a shorter object; "
+        "retrying the stage is the action."
     )
 
 
