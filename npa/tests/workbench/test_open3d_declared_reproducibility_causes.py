@@ -66,6 +66,108 @@ def test_each_corrected_record_points_at_the_measurement(filename: str) -> None:
     assert "poisson-figure-reproducibility.json" in limitation
 
 
+def _introduced() -> dict:
+    block = record()["figures_this_correction_put_into_the_capability_records"]
+    return block["by_record"]
+
+
+@pytest.mark.parametrize("filename", sorted(FALSIFIED_ATTRIBUTIONS))
+def test_every_figure_this_correction_introduced_reconstructs(filename: str) -> None:
+    """Each new figure in a capability record has to be findable in the evidence.
+
+    These two documents are pinned by nothing: a reviewer changed a figure in one of
+    them to 9.9e-01 and all 181 tests passed. That was already true of the figures
+    the records carried before this lane touched them, but a correction that adds new
+    derived figures to an unpinned document owns the new ones. One of them, 2.3e-05,
+    turned out to be an unretained run's value that nobody -- including its author --
+    could reconstruct.
+    """
+
+    sentence = json.loads((EVIDENCE / filename).read_text())["limitations"][3]
+    figures = [
+        value
+        for entry in _introduced()[filename]
+        for value in entry["range_quoted_in_the_sentence"]
+    ]
+    assert figures, f"{filename} claims no introduced figures, so nothing is checked"
+    for value in figures:
+        assert value in sentence, (
+            f"{filename} limitations[3] no longer contains {value}, which "
+            f"{RECORD.name} says this correction put there. Either the sentence was "
+            "edited away from its evidence or a fresh harness run moved the range "
+            "and the sentence was not updated with it."
+        )
+
+
+@pytest.mark.parametrize("filename", sorted(FALSIFIED_ATTRIBUTIONS))
+def test_the_introduced_figures_are_the_ends_of_a_retained_range(filename: str) -> None:
+    """A range over runs, not one run's value, because the spread is what moves.
+
+    The sentence that quoted 2.3e-05 also quoted 5.3e-03 for a quantity this record
+    exists to show is unstable: a single run standing where a range belonged.
+    """
+
+    across = record()["observed_across_independent_runs_of_this_harness"]
+    for entry in _introduced()[filename]:
+        observed = across[entry["series"]]
+        assert observed["runs"] >= 2, (
+            f"{entry['series']} has {observed['runs']} run(s), so its range is one "
+            "measurement wearing the shape of a range"
+        )
+        assert entry["range_quoted_in_the_sentence"] == [
+            f"{observed['min']:.1e}",
+            f"{observed['max']:.1e}",
+        ], (
+            f"the figures quoted for {entry['series']} are not its retained minimum "
+            "and maximum, so the sentence is narrower or wider than the evidence"
+        )
+
+
+def test_the_falsified_advice_is_gone_from_product_source() -> None:
+    """The third site is the one that told a maintainer which knob to reach for.
+
+    The other two are limitations a consumer reads. This one is advice inside the
+    eval that produced the ~4e-06 figure, and it pointed at pinning the thread count
+    as the thing standing between the tolerances and byte equality. It is not.
+    """
+
+    third = record()["the_corrections_applied"]["a_third_site_in_product_source"]
+    source = REPO / third["file"]
+    assert source.exists(), f"{third['file']} moved, so this correction is unverified"
+    # Both sides collapsed, because the phrase is wrapped across lines in a docstring
+    # and a substring test against the raw file would pass no matter what it said.
+    text = " ".join(source.read_text().split())
+    removed = " ".join(third["the_phrase_removed"].split())
+    assert removed not in text, (
+        "the falsified advice is back in the file this record says it was removed from"
+    )
+    assert "will not get you there" in text
+    assert "declared-reproducibility-causes.json" in text, (
+        "the corrected advice has to be followable to the measurement that falsified "
+        "the old advice, or the maintainer is only told less"
+    )
+
+
+def test_the_series_that_was_retained_late_says_so() -> None:
+    """The reviewer found the gap by looking for a figure and not finding it.
+
+    Keeping the shorter series quietly beside three longer ones would leave the next
+    reader to repeat that search.
+    """
+
+    across = record()["observed_across_independent_runs_of_this_harness"]
+    late = across["one_series_was_retained_late"]
+    assert late["which"] in across
+    assert "2.3e-05" in late["why_it_is_shorter"]
+    assert "not reconstructed from memory" in late["why_it_is_shorter"]
+    short = across[late["which"]]
+    for name in late["series_kept_from_the_first_run"]:
+        assert short["runs"] <= across[name]["runs"], (
+            f"{late['which']} is no longer the shorter series, so this disclosure "
+            "describes a state that has passed and should be retired"
+        )
+
+
 @pytest.mark.parametrize("name", ["distance_bands", "support_crop"])
 def test_each_examined_claim_quotes_the_sentence_it_replaced(name: str) -> None:
     """The quote must be the pre-correction text, and must no longer be in the file.

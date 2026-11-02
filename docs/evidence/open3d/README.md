@@ -200,18 +200,27 @@ the reconstruction's own non-determinism was measured afterwards, in
 
 Measured on the construction the first record names, reporting both figures from the same meshes.
 Seeding does make the input bit-identical, hashed to prove it, and it is the dominant cause: unseeded,
-the unsupported-area fraction spans 2.2e-03 to 5.6e-03 over repeated runs of four repeats, the same
-order as that record's own 0.0046 gap, straddling it rather than bounding it. Seeded, the spread falls
-by two orders — and the fraction still takes four distinct values in four runs. Surface area with the
-input fixed spans 1.6e-06 to 3.5e-06 relative across those runs, inside the second record's declared
-~4e-06 but not comfortably; setting the thread count to 1, engaged and recorded as 16 → 1, does not
-settle it either.
+the unsupported-area fraction spans 9.5e-04 to 5.6e-03 over seven runs of four repeats, the same order
+as that record's own 0.0046 gap, straddling it rather than bounding it. Seeded, the spread falls to
+5.3e-06 to 2.3e-05 — and the fraction still takes four distinct values in four runs. Surface area with
+the input fixed spans 2.3e-06 to 3.6e-06 relative across those runs, inside the second record's
+declared ~4e-06 but not comfortably; setting the thread count to 1, engaged and recorded as 16 → 1,
+does not settle it either.
 
 So one string changed in each record: the sampling claim now says what seeding achieves and what it
 leaves, and the thread-count claim no longer names a cause the measurement rules out. Every figure in
-both records is untouched. The spread of the spread is the part worth keeping in mind — a sentence
-derived from one run of four repeats was falsified by the next run, which is why the comparisons are
-made against every run observed and the record says so.
+both records is untouched. A third site carried the same misdirection and mattered more — the
+`_assert_support_crop_kept_the_observations` docstring in `npa/src/npa/smoke/test_open3d_functional.py`,
+which is where the ~4e-06 figure comes from, told the next maintainer not to tighten the tolerances
+"without pinning the thread count". That reads as a knob that would let them, and there is none.
+
+The spread of the spread is the part worth keeping in mind: the unseeded spread itself ranges over a
+factor of six across runs, so a sentence derived from one run of four repeats was falsified by the
+next. Comparisons are therefore made against every run observed. One series was retained late and says
+so in the record — a reviewer went looking for a figure the first corrected sentence quoted, could not
+find it, and was right that nobody including its author could reconstruct it. The corrected sentences
+now quote ranges over retained runs, and a test requires each figure in them to be the end of a series
+the evidence keeps, because these capability records are pinned by nothing else.
 
 ## Results that are retained but do not support anything
 

@@ -76,20 +76,43 @@ EARLIER_RUNS = {
         5.298e-03,
         3.645e-03,
         0.002235571773337275,
+        0.004882696105666856,
+        0.0009468462263132194,
     ],
     "fixed_input_surface_area_relative_spread": [
         2.275e-06,
         2.424e-06,
         3.454e-06,
         2.9766904159109415e-06,
+        3.555532551652766e-06,
+        2.2903013427507294e-06,
     ],
     "one_thread_surface_area_relative_spread": [
         3.915e-06,
         4.455e-06,
         4.427e-06,
         2.0900294400293636e-06,
+        3.469837523287435e-06,
+        2.28332400462555e-06,
+    ],
+    #: Retained from the third run onwards. A reviewer went looking for 2.3e-05 -- a
+    #: figure the first corrected sentence quoted -- and could not find it here, because
+    #: this series was not being kept while the other three were. It was run two's
+    #: value. Two runs' worth is therefore missing from this list and not reconstructed,
+    #: rather than back-filled from memory into something that reads like a measurement.
+    "seeded_unsupported_area_fraction_absolute_spread": [
+        2.106e-05,
+        2.341e-05,
+        5.3443300723765574e-06,
+        1.6251176341935958e-05,
     ],
 }
+#: The series above that were kept from the first run, against the one that was not.
+SERIES_RETAINED_FROM_THE_FIRST_RUN = (
+    "unseeded_unsupported_area_fraction_absolute_spread",
+    "fixed_input_surface_area_relative_spread",
+    "one_thread_surface_area_relative_spread",
+)
 
 
 def digest(points) -> str:
@@ -264,6 +287,42 @@ def main() -> int:
         "one_thread_surface_area_relative_spread",
         limited["surface_area"]["relative_spread"],
     )
+    seeded_observed = observed(
+        "seeded_unsupported_area_fraction_absolute_spread",
+        seeded["unsupported_area_fraction"]["absolute_spread"],
+    )
+
+    def figure(value: float) -> str:
+        """One spelling for a figure, so a record and a sentence can be compared."""
+
+        return f"{value:.1e}"
+
+    # Exactly the figures this lane's correction put into the two capability records.
+    # A reviewer mutated one of them to 9.9e-01 and nothing failed, because those
+    # documents are not pinned by anything -- which was true before this PR and is why
+    # new derived figures must not be left in that space. Each is listed with the series
+    # it came from so the sentence and the evidence can be checked against each other.
+    def quoted(series: str, observed: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "series": series,
+            "range_quoted_in_the_sentence": [
+                figure(observed["min"]),
+                figure(observed["max"]),
+            ],
+        }
+
+    introduced = {
+        "capability-record-distance-bands.json": [
+            quoted(
+                "unseeded_unsupported_area_fraction_absolute_spread",
+                unseeded_observed,
+            ),
+            quoted("seeded_unsupported_area_fraction_absolute_spread", seeded_observed),
+        ],
+        "capability-record-support-crop.json": [
+            quoted("fixed_input_surface_area_relative_spread", fixed_observed),
+        ],
+    }
 
     record = {
         "schema": "npa.evidence.open3d.declared-reproducibility-causes/v0.0.1",
@@ -395,6 +454,27 @@ def main() -> int:
                     ),
                 },
             ],
+            "a_third_site_in_product_source": {
+                "file": "npa/src/npa/smoke/test_open3d_functional.py",
+                "where": "_assert_support_crop_kept_the_observations docstring",
+                "why_it_matters_more_than_the_other_two": (
+                    "This is where the ~4e-06 figure the support-crop record quotes "
+                    "comes from, and it is advice to the next maintainer rather than a "
+                    "limitation to a consumer: it told them not to tighten the "
+                    "tolerances 'without pinning the thread count', which reads as a "
+                    "knob that would let them. There is no such knob. Someone acting "
+                    "on it would pin the count, watch the figure keep moving, and have "
+                    "no account of why."
+                ),
+                "the_phrase_removed": (
+                    "Do not tighten these to byte equality without pinning the thread "
+                    "count"
+                ),
+                "what_it_says_now": (
+                    "that pinning the count will not get you there, with the measured "
+                    "behaviour and the Poisson reconstruction named as the residue"
+                ),
+            },
             "what_was_left_alone": (
                 "Every figure in both records, every other field, and the bytes of "
                 "every artifact they describe. One string changed in each file. Nothing "
@@ -414,10 +494,37 @@ def main() -> int:
                 "the range rather than against whichever run wrote the file."
             ),
             "unseeded_unsupported_area_fraction_absolute_spread": unseeded_observed,
+            "seeded_unsupported_area_fraction_absolute_spread": seeded_observed,
             "fixed_input_surface_area_relative_spread": fixed_observed,
             "one_thread_surface_area_relative_spread": one_thread_observed,
             "the_recorded_gap_being_compared_against": recorded_gap,
             "the_declared_surface_area_figure": RECORDED_SURFACE_AREA_BOUND,
+            "one_series_was_retained_late": {
+                "which": "seeded_unsupported_area_fraction_absolute_spread",
+                "why_it_is_shorter": (
+                    "It was not kept while the other three were, and a reviewer "
+                    "noticed by looking for a figure the corrected sentence quoted -- "
+                    "2.3e-05, which was run two's value -- and not finding it here. "
+                    "Two runs' worth is missing and is not reconstructed from memory, "
+                    "because a back-filled number reads exactly like a measured one."
+                ),
+                "series_kept_from_the_first_run": list(
+                    SERIES_RETAINED_FROM_THE_FIRST_RUN
+                ),
+            },
+        },
+        "figures_this_correction_put_into_the_capability_records": {
+            "why_this_is_here": (
+                "Those documents are pinned by nothing: a reviewer changed one of these "
+                "figures to 9.9e-01 and no test failed, and the same is true of the "
+                "figures that were already in them before this PR. That is not "
+                "something this PR introduced, but two new derived figures in an "
+                "unpinned document are, so each one is listed here with the series it "
+                "came from and a test requires it to appear in both places. Each is a "
+                "range over retained runs, not a single run's value, because the "
+                "instability of these spreads is the subject of this record."
+            ),
+            "by_record": introduced,
         },
         "where_the_residue_comes_from": (
             "`poisson-figure-reproducibility.json` establishes that "
