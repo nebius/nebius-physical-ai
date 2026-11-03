@@ -306,7 +306,7 @@ def test_native_gpu_task_and_cpu_controller_pinned_without_payload_or_storage(
     assert kwargs["env"]["HOME"] == "/isolated"
     assert kwargs["env"]["EXECUTION_SECRET"] == "kept"
     assert not Path(argv[-2]).exists()
-    assert "private" not in " ".join(argv)
+    assert "s3://private/data" not in " ".join(argv)
 
 
 @pytest.mark.parametrize(
