@@ -301,6 +301,36 @@ def test_counterbalanced_request_guard_rejects_each_violation(case, expected):
         vlm_eval._assert_counterbalanced_requests(requests[case], baseline, candidate)
 
 
+def test_compare_rejects_malformed_counterbalance_before_journal_or_transport(
+    monkeypatch, tmp_path
+):
+    build_requests = vlm_eval._preference_requests
+
+    def malformed_requests(context):
+        requests, orders = build_requests(context)
+        return (requests[0], requests[0]), orders
+
+    monkeypatch.setattr(vlm_eval, "_preference_requests", malformed_requests)
+    monkeypatch.setattr(
+        vlm_eval,
+        "_create_preference_journal",
+        lambda *args, **kwargs: pytest.fail("journal must not be created"),
+    )
+    monkeypatch.setattr(
+        vlm_eval,
+        "_post_with_readiness_retry",
+        lambda **kwargs: pytest.fail("transport must not be called"),
+    )
+
+    with pytest.raises(
+        vlm_eval.VlmEvalError,
+        match="preference requests are not exact reversed orders",
+    ):
+        vlm_eval.compare_vlm_preference(_request(tmp_path))
+
+    assert not (tmp_path / "evidence").exists()
+
+
 def test_vlm_module_has_no_duplicate_top_level_assignment_targets():
     tree = ast.parse(inspect.getsource(vlm_eval))
     targets = [
