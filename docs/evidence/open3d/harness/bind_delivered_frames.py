@@ -24,13 +24,13 @@ passing -- the same "both look healthy" failure that copying was meant to preven
 along. The audit record now carries a digest per frame, and this binder refuses to copy a
 measurement whose source digest is not the digest it just computed itself.
 
-On `content_fraction`: it is recorded as a **regression ratchet, not a quality gate**. The review
-lane is right that every delivered frame sits at or below the occupancy that prompted the original
-complaint, and four are under 13%. A minimum-occupancy gate would be the wrong remedy, because the
+On `content_fraction`: it is recorded as a **byte-bound measurement, not a quality gate or a
+cross-regeneration ratchet**. Every delivered frame sits at or below the occupancy that prompted
+the original complaint, and five are under 13%. A minimum-occupancy gate would be the wrong remedy, because the
 cheapest way to pass one is to crop in -- and what gets cropped is the sparse, incomplete geometry
-these views exist to show. Pinning the measured value instead catches a silent reframing without
-rewarding a tighter crop. The honest state of that complaint is: measured, published, and
-deliberately ungated, with the reason written down.
+these views exist to show. The honest state of that complaint is: measured, published, bound to
+the bytes it describes, and deliberately ungated, with the reason written down. Re-running the
+measurement can change the value; this manifest does not impose a threshold across regenerations.
 
 Run from the repository root:
     python3 docs/evidence/open3d/harness/bind_delivered_frames.py            # write
@@ -114,11 +114,12 @@ def build() -> dict:
         "measurements_are_not_recomputed_here": "Copying rather than recomputing means this file "
         "and the record that measured these frames cannot drift apart while both look healthy. A "
         "mismatch fails --verify instead of sitting unread in two places.",
-        "content_fraction_is_a_ratchet_not_a_gate": "Occupancy is pinned so a silent reframing is "
-        "caught, and deliberately not floored. The cheapest way to pass a minimum-occupancy gate "
+        "content_fraction_is_recorded_not_gated": "Occupancy is recorded beside the digest of the "
+        "frame it describes, and deliberately not floored. The cheapest way to pass a minimum-occupancy gate "
         "is to crop in, and what gets cropped is the sparse incomplete geometry these views exist "
         "to show. Every delivered frame sits at or below the occupancy that prompted the original "
-        "complaint and four are under 13%; that is measured, published and ungated on purpose.",
+        "complaint and five are under 13%; that is measured, published and ungated on purpose. "
+        "This is not a cross-regeneration threshold.",
         "what_this_does_not_establish": [
             (
                 "Nothing about whether the frames are good. This binds measurements to bytes; "
@@ -178,7 +179,11 @@ def verify() -> int:
                 f"{actual[:12]}.., so the copied measurements describe bytes that are gone"
             )
         for key in COPIED:
-            if key in row and key in audit_row and row[key] != audit_row[key]:
+            if key not in row:
+                findings.append(f"{path}: manifest omits required measurement {key}")
+            elif key not in audit_row:
+                findings.append(f"{path}: {AUDIT.name} omits required measurement {key}")
+            elif row[key] != audit_row[key]:
                 findings.append(
                     f"{path}: manifest records {key}={row[key]!r} but {AUDIT.name} says "
                     f"{audit_row[key]!r}"

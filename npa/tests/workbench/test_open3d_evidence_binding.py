@@ -100,6 +100,31 @@ def test_a_measurement_that_drifts_from_the_record_that_took_it_is_caught(
     assert "content_fraction" in result.stdout
 
 
+def test_a_required_measurement_cannot_be_deleted(evidence: Path) -> None:
+    def delete_measurement(data: dict) -> None:
+        data["frames"][0].pop("content_fraction")
+
+    edit(evidence, "delivered-frames-manifest.json", delete_measurement)
+
+    result = run(evidence, BIND, "--verify")
+    assert result.returncode == 1, result.stdout
+    assert "omits required measurement content_fraction" in result.stdout
+
+
+def test_the_background_sweep_is_bound_to_the_frames_it_measured(evidence: Path) -> None:
+    sweep = json.loads((evidence / "background-choice-sweep-refit.json").read_text())
+    assert len(sweep["frame_bindings"]) == len(sweep["frames_measured"]) == 9
+
+    sweep["frame_bindings"][0]["sha256"] = "0" * 64
+    (evidence / "background-choice-sweep-refit.json").write_text(
+        json.dumps(sweep, indent=2, sort_keys=True) + "\n"
+    )
+
+    result = run(evidence, AUDIT)
+    assert result.returncode == 1, result.stdout
+    assert "background-choice-sweep-refit.json" in result.stdout
+
+
 def test_a_frame_delivered_without_a_binding_is_caught(evidence: Path) -> None:
     shutil.copy(
         evidence / "frames-refit" / "observed_scan_only__overview.png",

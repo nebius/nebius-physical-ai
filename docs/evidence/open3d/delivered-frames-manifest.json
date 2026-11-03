@@ -1,5 +1,5 @@
 {
-  "content_fraction_is_a_ratchet_not_a_gate": "Occupancy is pinned so a silent reframing is caught, and deliberately not floored. The cheapest way to pass a minimum-occupancy gate is to crop in, and what gets cropped is the sparse incomplete geometry these views exist to show. Every delivered frame sits at or below the occupancy that prompted the original complaint and four are under 13%; that is measured, published and ungated on purpose.",
+  "content_fraction_is_recorded_not_gated": "Occupancy is recorded beside the digest of the frame it describes, and deliberately not floored. The cheapest way to pass a minimum-occupancy gate is to crop in, and what gets cropped is the sparse incomplete geometry these views exist to show. Every delivered frame sits at or below the occupancy that prompted the original complaint and five are under 13%; that is measured, published and ungated on purpose. This is not a cross-regeneration threshold.",
   "frames": [
     {
       "bytes": 102382,
