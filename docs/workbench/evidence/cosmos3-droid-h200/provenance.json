@@ -1,0 +1,18 @@
+{
+  "scope": "Numeric field extracts from original rank receipts; no source datasets, filter, weights, credentials or infrastructure identifiers.",
+  "original_rank_sha256": {
+    "rank-0.json": "311ca61315c1722ff565457acb512b3dccc26cc657cbcb8dfbc2bb3bb585ae21",
+    "rank-1.json": "d7ad3b7c7156b62968f7adf6ff41ed89cba89afe8b3ca4363c25697b67a2a234",
+    "rank-2.json": "60b77968c247db5b4d87e73d5e8c1c784028478b89d7b1af5815f9fa12afe5d9",
+    "rank-3.json": "d5048b363d7891f8ed29a00ea20fefa745fb2e8f65379b1a205bf92867f03e07",
+    "rank-4.json": "6484340101bbcdbaa7d3000c12c81debe4ee6b40805c7cd1e9bfeb00eafb9751",
+    "rank-5.json": "954c4fce81154eb218eb61fe243a398b29e075e5ce9f0599fb3f59e409c7a41a",
+    "rank-6.json": "03a700a551c7ec9a3ed783b2113639e3c71e165af2319d488fcf68eb91719d82",
+    "rank-7.json": "e1b3814bab9a4c04dd2892fe914dd0a1956208395ead8cc762d4e160a3e03da4"
+  },
+  "extract_sha256": {
+    "microsteps.csv": "c83a967027744d48e3bcdf2b7296e98627500ced7682c2a95f0ef23b1266da8f",
+    "updates.csv": "99fa3738f7fe97a41cc6f8c6a04194e3b25fe3f379c91b67935de06ff8f518ac",
+    "environment.json": "e6f22d85688b2b76a315616cb369b292493c0082d303e05a0878d9912bb79c8d"
+  }
+}

@@ -526,7 +526,7 @@ def materialize_command(_ctx: typer.Context) -> None:
         "direct-Kubernetes controller. Submit the canonical compositional workflow "
         "instead:\n"
         "  npa workbench workflow submit "
-        "workflows/main/sim2real.yaml --runtime skypilot",
+        "workflows/main/sim2real.yaml --runtime",
         err=True,
     )
     raise typer.Exit(code=2)
