@@ -330,6 +330,13 @@ your Python environment; remote workloads use their container dependencies.
 See [installation](../docs/install.md) for supported platforms, virtual
 environments, and the separate SkyPilot environment.
 
+For experimental real-data GR00T N1.5 policy improvement, use the
+[offline policy improvement recipe](../docs/workbench/cookbooks/groot-n15-offline-policy-improvement.md).
+Its runtime-local `python -m npa.workbench.groot.offline` entrypoint prepares
+success/failure or per-frame progress weights, trains in a separate pinned
+native N1.5 CUDA environment, and compares recorded matched policy trials.
+It does not change the promoted N1.7 fine-tuning image or require simulation.
+
 Cosmos checkpoint fetch supports the current Hugging Face `hf` CLI and older
 `huggingface-cli` environments, including installations whose scripts are absent
 from `PATH`. Self-hosted Cosmos Reason supports the official Reason1 7B and

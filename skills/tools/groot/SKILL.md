@@ -48,6 +48,19 @@ conversion, serving, inference, and validation.
 
 ## Routing And Validation
 
+For experimental N1.5 improvement from real rollouts, use
+`docs/workbench/cookbooks/groot-n15-offline-policy-improvement.md` and the
+runtime-local `npa.workbench.groot.offline` module. Keep its clean pinned native
+N1.5 environment separate from the promoted N1.7 image. Prepare explicit grouped
+train/eval splits before training. Outcome mode uses recorded binary returns;
+progress mode needs measured or ARM-produced per-frame progress. This recipe
+does not train ARM or a critic. Preserve action units and frames through the
+operator's native data config, require precomputed frozen statistics, and never
+fabricate dense progress from episode labels. Training receipts are not robot
+success evidence; compare real matched trials and leave deployment to the
+operator. The opt-in native CUDA test is
+`npa/tests/e2e/test_groot_n15_offline_live.py`; an unconfigured skip is not proof.
+
 - GR00T does not require RT cores for the standard model paths.
 - Route throughput-heavy training/eval to H100/H200 unless a command or image
   specifically requires another target.
