@@ -11,11 +11,13 @@ import json
 import multiprocessing
 import os
 from pathlib import Path
+import platform
 import shutil
 import socket
 import stat
 import subprocess
 import sys
+import sysconfig
 import textwrap
 from types import SimpleNamespace
 from typing import Any
@@ -539,6 +541,22 @@ def test_gate_a_serializer_and_record_vectors() -> None:
     )
 
 
+def test_gate_a_accepts_the_running_venv_projection() -> None:
+    projection = contract.gate_a_distribution_projection()
+    assert projection
+    assert projection == sorted(projection, key=lambda item: item["normalized_name"])
+
+    executable = sys.executable
+    value = {
+        "abi": str(sysconfig.get_config_var("SOABI") or ""),
+        "implementation": platform.python_implementation(),
+        "path": executable,
+        "python_version": platform.python_version(),
+        "sha256": hashlib.sha256(Path(executable).resolve().read_bytes()).hexdigest(),
+    }
+    contract._validate_gate_a_interpreter(value, executable)
+
+
 def test_canonical_json_rejects_nonfinite_values() -> None:
     with pytest.raises(ValueError):
         contract.canonical_json_bytes({"value": float("nan")})
@@ -1008,6 +1026,31 @@ def test_mountinfo_observation_binds_mount_and_device(tmp_path: Path) -> None:
         assert observation.mount_id == 42
         assert (observation.major, observation.minor) == (major, minor)
         assert observation.statvfs_read_only is True
+    finally:
+        os.close(descriptor)
+        root.chmod(0o755)
+
+
+def test_mountinfo_observation_rejects_a_nested_mount(tmp_path: Path) -> None:
+    root = _private_directory(tmp_path / "view")
+    root.chmod(0o555)
+    descriptor = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        details = os.fstat(descriptor)
+        major = os.major(details.st_dev)
+        minor = os.minor(details.st_dev)
+        mountinfo = (
+            f"42 1 {major}:{minor} / {root} ro,nosuid - ext4 /dev/test ro\n"
+            f"43 42 {major}:{minor} / {root}/molmoact_model rw - tmpfs tmpfs rw\n"
+        )
+        with pytest.raises(contract.MolmoActInferenceError) as caught:
+            contract.observe_consumer_mount(
+                str(root),
+                descriptor,
+                mountinfo_text=mountinfo,
+                statvfs_result=SimpleNamespace(f_flag=os.ST_RDONLY),
+            )
+        assert caught.value.code == "MOLMOACT_EGRESS_EVIDENCE"
     finally:
         os.close(descriptor)
         root.chmod(0o755)
@@ -1645,9 +1688,8 @@ def test_offline_ordering_and_scratch_cleanup_are_child_contained(
         try:
             contract._execute_in_scratch(context, str(parent))
         except contract.MolmoActInferenceError as exc:
-            assert exc.code == "MOLMOACT_OFFLINE_STATE"
-            assert isinstance(exc.__cause__, contract.MolmoActInferenceError)
-            assert exc.__cause__.code == "MOLMOACT_INPUT_IDENTITY"
+            assert exc.code == "MOLMOACT_INPUT_IDENTITY"
+            assert any("scratch cleanup also failed" in note for note in exc.__notes__)
         else:
             raise AssertionError("cleanup failure did not take precedence")
         assert list(parent.iterdir()) == []
@@ -1729,6 +1771,46 @@ def test_publication_uses_real_openat2_and_canonical_readback(tmp_path: Path) ->
     assert raw.endswith(b"\n")
     assert hashlib.sha256(raw).hexdigest() == receipt["final_file_sha256"]
     assert not list(parent.glob(".molmoact-*.tmp"))
+
+
+def test_publication_receipt_is_durable_and_never_replaced(tmp_path: Path) -> None:
+    parent = _private_directory(tmp_path / "output")
+    result = parent / "result.json"
+    receipt_path = parent / "publication-receipt.json"
+    receipt = contract.publish_result(result, _result_envelope())
+
+    contract.persist_publication_receipt(receipt_path, receipt)
+    assert receipt_path.read_bytes() == _canonical(receipt) + b"\n"
+    with pytest.raises(contract.MolmoActInferenceError) as caught:
+        contract.persist_publication_receipt(receipt_path, receipt)
+    assert caught.value.code == "MOLMOACT_OUTPUT_COLLISION"
+
+
+def test_main_returns_machine_errors_without_tracebacks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert contract.main([]) == 1
+    missing = json.loads(capsys.readouterr().err)
+    assert missing["error"]["code"] == "MOLMOACT_OFFLINE_STATE"
+
+    parent = _private_directory(tmp_path / "output")
+    receipt_path = parent / "receipt.json"
+    monkeypatch.setattr(contract, "preflight_destination", lambda path: None)
+
+    def unexpected(**kwargs: object) -> dict[str, object]:
+        del kwargs
+        raise OSError("private detail that must not escape")
+
+    monkeypatch.setattr(contract, "run_inference", unexpected)
+    args = [
+        "--decision", "/decision", "--isolation-receipt", "/isolation",
+        "--consumer-view", "/consumer", "--scratch-parent", "/scratch",
+        "--output", "/output", "--publication-receipt", str(receipt_path),
+    ]
+    assert contract.main(args) == 2
+    rendered = capsys.readouterr().err
+    assert "Traceback" not in rendered and "private detail" not in rendered
+    assert json.loads(rendered)["error"]["code"] == "MOLMOACT_UNEXPECTED"
 
 
 def test_publication_fsyncs_file_and_directory(

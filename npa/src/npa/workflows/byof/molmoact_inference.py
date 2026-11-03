@@ -30,7 +30,7 @@ import sys
 import sysconfig
 import time
 from types import SimpleNamespace
-from typing import Any, Callable, Iterator, Mapping, Sequence
+from typing import Any, Callable, Iterator, Mapping, NoReturn, Sequence
 import unicodedata
 from urllib.parse import urlsplit
 
@@ -1553,13 +1553,30 @@ def _record_rows(record_path: Path, relative_record_path: str) -> list[dict[str,
 def _validate_record_row(
     path: str, digest: str, size: str, relative_record_path: str
 ) -> None:
-    _validate_relative_path(path)
+    # PEP 376 RECORD paths are relative to site-packages. Installers therefore
+    # legitimately record console scripts as ../../../bin/<name> from a venv's
+    # site-packages directory. Keep that one canonical external shape while
+    # retaining strict relative paths for package content.
+    external_path = path.startswith("../../../")
+    if external_path:
+        external_parts = path.removeprefix("../../../").split("/")
+        if not external_parts or external_parts[0] not in {"bin", "share"}:
+            raise ValueError("RECORD external path is outside the venv projection")
+        for component in external_parts:
+            _validate_component(component)
+    else:
+        _validate_relative_path(path)
     is_own_record = path == relative_record_path
     if is_own_record:
         if bool(digest) != bool(size):
             raise ValueError("RECORD self-row hash and size disagree")
         if not digest:
             return
+    # PEP 376 permits generated .pyc rows to omit both hash and size. They are
+    # still included in the canonical projection, but cannot be byte-verified
+    # from RECORD and must not make every ordinary pip/uv environment invalid.
+    if not digest and not size and path.endswith(".pyc") and not external_path:
+        return
     if not digest or not size:
         raise ValueError("non-RECORD row lacks hash or size")
     if re.fullmatch(r"0|[1-9][0-9]*", size) is None:
@@ -1782,7 +1799,8 @@ def _validate_gate_a_digest(payload: Mapping[str, Any], value: Any) -> None:
 def _validate_gate_a_interpreter(value: Mapping[str, Any], executable: str) -> None:
     if executable != sys.executable:
         raise ValueError("Gate A interpreter path is not the running executable")
-    raw_bytes, _ = _read_absolute_regular(executable)
+    resolved = os.path.realpath(executable)
+    raw_bytes, _ = _read_absolute_regular(resolved)
     if value["path"] != executable:
         raise ValueError("Gate A interpreter path differs")
     if hashlib.sha256(raw_bytes).hexdigest() != value["sha256"]:
@@ -2092,9 +2110,11 @@ def observe_consumer_mount(
             if mountinfo_text is not None
             else Path("/proc/self/mountinfo").read_text(encoding="utf-8")
         )
-        matches = _matching_mount_entries(text, root_path)
+        matches, nested = _matching_mount_entries(text, root_path)
         if len(matches) != 1:
             raise ValueError("consumer view does not have one mountinfo entry")
+        if nested:
+            raise ValueError("consumer view contains a nested mount")
         fields, separator = matches[0]
         mount_id = int(fields[0], 10)
         major_text, minor_text = fields[2].split(":", 1)
@@ -2124,8 +2144,13 @@ def observe_consumer_mount(
         ) from exc
 
 
-def _matching_mount_entries(text: str, root_path: str) -> list[tuple[list[str], int]]:
+def _matching_mount_entries(
+    text: str, root_path: str
+) -> tuple[list[tuple[list[str], int]], list[str]]:
     matches: list[tuple[list[str], int]] = []
+    nested: list[str] = []
+    normalized_root = os.path.normpath(root_path)
+    root_prefix = normalized_root + os.sep
     for line in text.splitlines():
         fields = line.split(" ")
         if "-" not in fields or len(fields) < 10:
@@ -2134,9 +2159,12 @@ def _matching_mount_entries(text: str, root_path: str) -> list[tuple[list[str], 
         if separator < 6 or len(fields) <= separator + 3:
             raise ValueError("mountinfo line is incomplete")
         mountpoint = _decode_mount_field(fields[4])
-        if os.path.normpath(mountpoint) == root_path:
+        normalized_mountpoint = os.path.normpath(mountpoint)
+        if normalized_mountpoint == normalized_root:
             matches.append((fields, separator))
-    return matches
+        elif normalized_mountpoint.startswith(root_prefix):
+            nested.append(normalized_mountpoint)
+    return matches, nested
 
 
 def verify_consumer_view(
@@ -2250,6 +2278,11 @@ def _create_scratch(
             return scratch_path, parent
         except FileExistsError:
             continue
+        except OSError as exc:
+            os.close(parent.descriptor)
+            raise MolmoActInferenceError(
+                "MOLMOACT_OFFLINE_STATE", "cannot allocate scratch directory"
+            ) from exc
     os.close(parent.descriptor)
     raise MolmoActInferenceError(
         "MOLMOACT_OFFLINE_STATE", "cannot allocate unique scratch directory"
@@ -3799,8 +3832,11 @@ def _execute_in_scratch(
                 _cleanup_scratch(scratch, anchor)
             except MolmoActInferenceError as cleanup_error:
                 if active_error is not None:
-                    raise cleanup_error from active_error
-                raise
+                    active_error.add_note(
+                        f"scratch cleanup also failed: {cleanup_error.code}"
+                    )
+                else:
+                    raise
         os.close(anchor.descriptor)
 
 
@@ -3869,8 +3905,15 @@ def _verify_all_snapshots(
         raise
 
 
+class _MachineArgumentParser(argparse.ArgumentParser):
+    def error(self, message: str) -> NoReturn:
+        raise MolmoActInferenceError(
+            "MOLMOACT_OFFLINE_STATE", f"invalid command arguments: {message}"
+        )
+
+
 def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
+    parser = _MachineArgumentParser(
         description="Private one-shot MolmoAct offline inference contract."
     )
     parser.add_argument("--decision", required=True)
@@ -3878,7 +3921,64 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--consumer-view", required=True)
     parser.add_argument("--scratch-parent", required=True)
     parser.add_argument("--output", required=True)
+    parser.add_argument("--publication-receipt", required=True)
     return parser
+
+
+def persist_publication_receipt(
+    destination: str | os.PathLike[str], receipt: Mapping[str, Any]
+) -> None:
+    """Durably save the successful publication receipt without replacement."""
+
+    if (
+        receipt.get("schema") != "npa.molmoact.publication-receipt.v1"
+        or receipt.get("publication_verified") is not True
+    ):
+        raise MolmoActInferenceError(
+            "MOLMOACT_OUTPUT_DURABILITY", "publication receipt is invalid"
+        )
+    raw_bytes = canonical_json_bytes(receipt) + b"\n"
+    try:
+        parent_path, name = _validate_destination(destination)
+    except (TypeError, UnicodeError, ValueError) as exc:
+        raise MolmoActInferenceError(
+            "MOLMOACT_DESTINATION", "publication receipt path is invalid"
+        ) from exc
+    parent = _private_parent(parent_path, "MOLMOACT_DESTINATION")
+    descriptor: int | None = None
+    try:
+        _destination_absent(parent.descriptor, name)
+        descriptor = os.open(
+            name,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
+            0o600,
+            dir_fd=parent.descriptor,
+        )
+        _write_all(descriptor, raw_bytes)
+        os.fsync(descriptor)
+        os.close(descriptor)
+        descriptor = None
+        os.fsync(parent.descriptor)
+        read_descriptor = os.open(
+            name, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=parent.descriptor
+        )
+        try:
+            if os.read(read_descriptor, len(raw_bytes) + 1) != raw_bytes:
+                raise OSError(errno.EIO, "publication receipt readback differs")
+        finally:
+            os.close(read_descriptor)
+    except MolmoActInferenceError:
+        raise
+    except OSError as exc:
+        raise MolmoActInferenceError(
+            "MOLMOACT_OUTPUT_DURABILITY",
+            "publication receipt durability could not be proven",
+            receipt_path=os.fspath(destination),
+        ) from exc
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+        os.close(parent.descriptor)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -3887,13 +3987,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     Args:
         argv: Optional private command arguments.
     Returns:
-        Zero after a verified publication; two after a stable contract failure.
+        Zero after a verified publication and durable receipt; one after an
+        expected contract failure; two after an unexpected internal failure.
     Raises:
-        SystemExit: Argument parsing fails when called by ``__main__``.
+        None. Failures are returned as stable exit codes and JSON diagnostics.
     """
 
-    arguments = _build_parser().parse_args(argv)
     try:
+        arguments = _build_parser().parse_args(argv)
+        preflight_destination(arguments.publication_receipt)
         receipt = run_inference(
             decision_path=arguments.decision,
             isolation_receipt_path=arguments.isolation_receipt,
@@ -3901,10 +4003,25 @@ def main(argv: Sequence[str] | None = None) -> int:
             scratch_parent=arguments.scratch_parent,
             output_path=arguments.output,
         )
+        persist_publication_receipt(arguments.publication_receipt, receipt)
     except MolmoActInferenceError as exc:
         print(
             canonical_json_bytes(
                 {"schema": "npa.molmoact.inference-error.v1", "error": exc.as_dict()}
+            ).decode("utf-8"),
+            file=sys.stderr,
+        )
+        return 1
+    except Exception:
+        print(
+            canonical_json_bytes(
+                {
+                    "schema": "npa.molmoact.inference-error.v1",
+                    "error": {
+                        "code": "MOLMOACT_UNEXPECTED",
+                        "message": "unexpected internal failure",
+                    },
+                }
             ).decode("utf-8"),
             file=sys.stderr,
         )
