@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections import Counter
 from collections.abc import Callable
+from functools import lru_cache
 import base64
 import bz2
 import gzip
@@ -37,6 +38,34 @@ RUNNER_SPEC = importlib.util.spec_from_file_location("run_gitleaks_tree_scan", R
 assert RUNNER_SPEC is not None and RUNNER_SPEC.loader is not None
 tree_scan = importlib.util.module_from_spec(RUNNER_SPEC)
 RUNNER_SPEC.loader.exec_module(tree_scan)
+
+
+@lru_cache(maxsize=1)
+def _trusted_gitleaks_available() -> bool:
+    """Return true only for the exact binary the real-scanner tests accept."""
+
+    executable = shutil.which("gitleaks")
+    if executable is None:
+        return False
+    try:
+        tree_scan._verify_gitleaks_identity(executable)
+    except (OSError, tree_scan._ScanError):
+        return False
+    return True
+
+
+def test_real_gitleaks_gate_rejects_an_untrusted_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    executable = tmp_path / "gitleaks"
+    executable.write_text("#!/bin/sh\necho 8.28.0\n", encoding="utf-8")
+    executable.chmod(0o755)
+    monkeypatch.setattr(shutil, "which", lambda name: str(executable))
+    _trusted_gitleaks_available.cache_clear()
+    try:
+        assert _trusted_gitleaks_available() is False
+    finally:
+        _trusted_gitleaks_available.cache_clear()
 
 _CONTROLLED_DECODE_PROBE = (
     "assert '--ignore-gitleaks-allow' in sys.argv\n"
@@ -953,7 +982,7 @@ def test_history_view_preserves_compound_archive_basename(tmp_path: Path) -> Non
 
 
 @pytest.mark.skipif(
-    shutil.which("gitleaks") is None, reason="gitleaks is not installed"
+    not _trusted_gitleaks_available(), reason="gitleaks is not installed"
 )
 def test_scan_view_never_joins_rule_matches_across_unrelated_blobs(
     tmp_path: Path,
@@ -1044,7 +1073,7 @@ def test_scan_environment_drops_process_injection_variables(
 
 
 @pytest.mark.skipif(
-    shutil.which("gitleaks") is None, reason="gitleaks is not installed"
+    not _trusted_gitleaks_available(), reason="gitleaks is not installed"
 )
 def test_no_git_scan_preserves_relative_policy_path_context(tmp_path: Path) -> None:
     """Keep test allowlists scoped while scanning aggregate paths from their root."""
@@ -1108,7 +1137,7 @@ def test_runner_rejects_truncated_or_rewritten_history(
 
 
 @pytest.mark.skipif(
-    shutil.which("gitleaks") is None, reason="gitleaks is not installed"
+    not _trusted_gitleaks_available(), reason="gitleaks is not installed"
 )
 def test_complete_tree_runner_rejects_late_secret_after_earlier_binary_blob(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -1418,7 +1447,7 @@ def _write_archive_carrier(repo: Path, carrier: str, assignment: str) -> bool:
 
 
 @pytest.mark.skipif(
-    shutil.which("gitleaks") is None, reason="gitleaks is not installed"
+    not _trusted_gitleaks_available(), reason="gitleaks is not installed"
 )
 @pytest.mark.parametrize(
     ("path", "carrier"),
@@ -1468,7 +1497,7 @@ def test_runner_rejects_unscannable_zip_names(
 
 
 @pytest.mark.skipif(
-    shutil.which("gitleaks") is None, reason="gitleaks is not installed"
+    not _trusted_gitleaks_available(), reason="gitleaks is not installed"
 )
 def test_runner_rejects_archive_substring_alias_for_empty_path_rule(
     tmp_path: Path,
@@ -1550,7 +1579,7 @@ def _assert_carrier_failure(carrier: str, token: str, out: str, err: str) -> Non
 
 
 @pytest.mark.skipif(
-    shutil.which("gitleaks") is None, reason="gitleaks is not installed"
+    not _trusted_gitleaks_available(), reason="gitleaks is not installed"
 )
 @pytest.mark.parametrize(
     "carrier",
@@ -1619,7 +1648,7 @@ def test_runner_rejects_nonplaintext_secret_carriers(
 
 
 @pytest.mark.skipif(
-    shutil.which("gitleaks") is None, reason="gitleaks is not installed"
+    not _trusted_gitleaks_available(), reason="gitleaks is not installed"
 )
 def test_blob_wrapper_preserves_policy_path_suffix(
     tmp_path: Path,
@@ -1654,7 +1683,7 @@ def test_blob_wrapper_preserves_policy_path_suffix(
 
 
 @pytest.mark.skipif(
-    shutil.which("gitleaks") is None, reason="gitleaks is not installed"
+    not _trusted_gitleaks_available(), reason="gitleaks is not installed"
 )
 def test_fragment_overlap_preserves_exact_policy_path(
     tmp_path: Path,
@@ -1703,7 +1732,7 @@ def test_fragment_overlap_preserves_exact_policy_path(
 
 
 @pytest.mark.skipif(
-    shutil.which("gitleaks") is None, reason="gitleaks is not installed"
+    not _trusted_gitleaks_available(), reason="gitleaks is not installed"
 )
 def test_exact_path_view_preserves_binary_content_anchors(
     tmp_path: Path,
@@ -1739,7 +1768,7 @@ def test_exact_path_view_preserves_binary_content_anchors(
 
 
 @pytest.mark.skipif(
-    shutil.which("gitleaks") is None, reason="gitleaks is not installed"
+    not _trusted_gitleaks_available(), reason="gitleaks is not installed"
 )
 @pytest.mark.parametrize("encoding", ["utf-16le", "utf-32be"])
 def test_exact_path_transcoding_preserves_absolute_content_anchor(
@@ -1777,7 +1806,7 @@ def test_exact_path_transcoding_preserves_absolute_content_anchor(
 
 
 @pytest.mark.skipif(
-    shutil.which("gitleaks") is None, reason="gitleaks is not installed"
+    not _trusted_gitleaks_available(), reason="gitleaks is not installed"
 )
 def test_localized_transcoding_preserves_absolute_content_anchor(
     tmp_path: Path,
@@ -1814,7 +1843,7 @@ def test_localized_transcoding_preserves_absolute_content_anchor(
 
 
 @pytest.mark.skipif(
-    shutil.which("gitleaks") is None, reason="gitleaks is not installed"
+    not _trusted_gitleaks_available(), reason="gitleaks is not installed"
 )
 @pytest.mark.parametrize("encoding", ["utf-16le", "utf-32be"])
 def test_historical_exact_path_transcoding_preserves_absolute_content_anchor(
@@ -1854,7 +1883,7 @@ def test_historical_exact_path_transcoding_preserves_absolute_content_anchor(
 
 
 @pytest.mark.skipif(
-    shutil.which("gitleaks") is None, reason="gitleaks is not installed"
+    not _trusted_gitleaks_available(), reason="gitleaks is not installed"
 )
 @pytest.mark.parametrize("encoding", ["utf-16le", "utf-32be"])
 def test_archive_exact_path_transcoding_preserves_absolute_content_anchor(
@@ -1894,7 +1923,7 @@ def test_archive_exact_path_transcoding_preserves_absolute_content_anchor(
 
 
 @pytest.mark.skipif(
-    shutil.which("gitleaks") is None, reason="gitleaks is not installed"
+    not _trusted_gitleaks_available(), reason="gitleaks is not installed"
 )
 def test_archive_member_starting_angle_bracket_retains_exact_path(
     tmp_path: Path,
@@ -1935,7 +1964,7 @@ def test_archive_member_starting_angle_bracket_retains_exact_path(
 
 
 @pytest.mark.skipif(
-    shutil.which("gitleaks") is None, reason="gitleaks is not installed"
+    not _trusted_gitleaks_available(), reason="gitleaks is not installed"
 )
 def test_exact_view_covers_rule_wider_than_fragment_overlap(
     tmp_path: Path,
@@ -1995,7 +2024,7 @@ def test_exact_view_covers_rule_wider_than_fragment_overlap(
 
 
 @pytest.mark.skipif(
-    shutil.which("gitleaks") is None, reason="gitleaks is not installed"
+    not _trusted_gitleaks_available(), reason="gitleaks is not installed"
 )
 def test_forced_text_exact_view_ignores_candidate_git_controls(
     tmp_path: Path,
@@ -2043,7 +2072,7 @@ def test_forced_text_exact_view_ignores_candidate_git_controls(
 
 
 @pytest.mark.skipif(
-    shutil.which("gitleaks") is None, reason="gitleaks is not installed"
+    not _trusted_gitleaks_available(), reason="gitleaks is not installed"
 )
 def test_forced_text_exact_history_scans_same_path_root_variants(
     tmp_path: Path,
@@ -2098,7 +2127,7 @@ def test_forced_text_exact_history_scans_same_path_root_variants(
 
 
 @pytest.mark.skipif(
-    shutil.which("gitleaks") is None, reason="gitleaks is not installed"
+    not _trusted_gitleaks_available(), reason="gitleaks is not installed"
 )
 def test_exact_path_batches_scan_every_root_with_real_gitleaks(
     tmp_path: Path,
@@ -3057,7 +3086,7 @@ def test_exact_path_allocator_advances_repeated_path_monotonically(
 
 
 @pytest.mark.skipif(
-    shutil.which("gitleaks") is None, reason="gitleaks is not installed"
+    not _trusted_gitleaks_available(), reason="gitleaks is not installed"
 )
 def test_encoded_probe_preserves_exact_policy_path(
     tmp_path: Path,
@@ -3092,7 +3121,7 @@ def test_encoded_probe_preserves_exact_policy_path(
 
 
 @pytest.mark.skipif(
-    shutil.which("gitleaks") is None, reason="gitleaks is not installed"
+    not _trusted_gitleaks_available(), reason="gitleaks is not installed"
 )
 def test_runner_preserves_pathless_absolute_anchor_for_derived_output(
     tmp_path: Path,
@@ -3146,7 +3175,7 @@ def test_runner_preserves_pathless_absolute_anchor_for_derived_output(
 
 
 @pytest.mark.skipif(
-    shutil.which("gitleaks") is None, reason="gitleaks is not installed"
+    not _trusted_gitleaks_available(), reason="gitleaks is not installed"
 )
 def test_root_ignore_wide_rule_uses_scanner_safe_generated_git_view(
     tmp_path: Path,
@@ -3179,7 +3208,7 @@ def test_root_ignore_wide_rule_uses_scanner_safe_generated_git_view(
 
 
 @pytest.mark.skipif(
-    shutil.which("gitleaks") is None, reason="gitleaks is not installed"
+    not _trusted_gitleaks_available(), reason="gitleaks is not installed"
 )
 def test_runner_fails_closed_for_root_ignore_anchored_rule(
     tmp_path: Path,
@@ -3251,7 +3280,7 @@ def test_custom_rule_path_association_never_compiles_with_python_re(
 
 
 @pytest.mark.skipif(
-    shutil.which("gitleaks") is None, reason="gitleaks is not installed"
+    not _trusted_gitleaks_available(), reason="gitleaks is not installed"
 )
 def test_runner_allows_root_ignore_rule_when_no_source_excludes_that_path(
     tmp_path: Path,
@@ -3284,7 +3313,7 @@ def test_runner_allows_root_ignore_rule_when_no_source_excludes_that_path(
 
 
 @pytest.mark.skipif(
-    shutil.which("gitleaks") is None, reason="gitleaks is not installed"
+    not _trusted_gitleaks_available(), reason="gitleaks is not installed"
 )
 def test_runner_fails_closed_for_historical_root_ignore_anchored_rule(
     tmp_path: Path,
@@ -3323,7 +3352,7 @@ def test_runner_fails_closed_for_historical_root_ignore_anchored_rule(
 
 
 @pytest.mark.skipif(
-    shutil.which("gitleaks") is None, reason="gitleaks is not installed"
+    not _trusted_gitleaks_available(), reason="gitleaks is not installed"
 )
 def test_archive_member_named_ignore_preserves_full_policy_path(
     tmp_path: Path,
@@ -3361,7 +3390,7 @@ def test_archive_member_named_ignore_preserves_full_policy_path(
 
 
 @pytest.mark.skipif(
-    shutil.which("gitleaks") is None, reason="gitleaks is not installed"
+    not _trusted_gitleaks_available(), reason="gitleaks is not installed"
 )
 def test_runner_fails_closed_for_commit_archive_root_ignore_rule(
     tmp_path: Path,
@@ -3401,7 +3430,7 @@ def test_runner_fails_closed_for_commit_archive_root_ignore_rule(
 
 
 @pytest.mark.skipif(
-    shutil.which("gitleaks") is None, reason="gitleaks is not installed"
+    not _trusted_gitleaks_available(), reason="gitleaks is not installed"
 )
 @pytest.mark.parametrize("archive_suffix", [".tar", ".tar.gz", ".zip"])
 def test_archive_member_wrapper_preserves_full_policy_path(
@@ -3454,7 +3483,7 @@ def test_archive_member_wrapper_preserves_full_policy_path(
 
 
 @pytest.mark.skipif(
-    shutil.which("gitleaks") is None, reason="gitleaks is not installed"
+    not _trusted_gitleaks_available(), reason="gitleaks is not installed"
 )
 @pytest.mark.parametrize(
     "archive_suffix",
@@ -3496,7 +3525,7 @@ def test_concatenated_tar_preserves_second_stream_path_only_rule(
 
 
 @pytest.mark.skipif(
-    shutil.which("gitleaks") is None, reason="gitleaks is not installed"
+    not _trusted_gitleaks_available(), reason="gitleaks is not installed"
 )
 @pytest.mark.parametrize(
     "archive_suffix",
@@ -3547,7 +3576,7 @@ def test_concatenated_tar_preserves_second_stream_member_path(
 
 
 @pytest.mark.skipif(
-    shutil.which("gitleaks") is None, reason="gitleaks is not installed"
+    not _trusted_gitleaks_available(), reason="gitleaks is not installed"
 )
 def test_historical_archive_member_preserves_full_policy_path(
     tmp_path: Path,
@@ -3589,7 +3618,7 @@ def test_historical_archive_member_preserves_full_policy_path(
 
 
 @pytest.mark.skipif(
-    shutil.which("gitleaks") is None, reason="gitleaks is not installed"
+    not _trusted_gitleaks_available(), reason="gitleaks is not installed"
 )
 def test_archive_container_wrapper_preserves_outer_policy_path(
     tmp_path: Path,
@@ -3651,7 +3680,7 @@ def test_memory_bounded_xz_reader_finishes_a_short_read(tmp_path: Path) -> None:
 
 
 @pytest.mark.skipif(
-    shutil.which("gitleaks") is None, reason="gitleaks is not installed"
+    not _trusted_gitleaks_available(), reason="gitleaks is not installed"
 )
 @pytest.mark.parametrize(
     ("suffix", "compress"),
@@ -3752,7 +3781,7 @@ def test_runner_requires_an_explicit_policy_revision(
 
 
 @pytest.mark.skipif(
-    shutil.which("gitleaks") is None, reason="gitleaks is not installed"
+    not _trusted_gitleaks_available(), reason="gitleaks is not installed"
 )
 @pytest.mark.parametrize("policy_position", ["candidate", "intermediate"])
 def test_runner_rejects_candidate_controlled_policy_revision(
@@ -3830,7 +3859,7 @@ def test_runner_rejects_candidate_as_its_own_history_base(
 
 
 @pytest.mark.skipif(
-    shutil.which("gitleaks") is None, reason="gitleaks is not installed"
+    not _trusted_gitleaks_available(), reason="gitleaks is not installed"
 )
 @pytest.mark.parametrize("secret_commit", ["candidate", "intermediate"])
 def test_runner_scans_selected_commit_metadata(
@@ -3862,7 +3891,7 @@ def test_runner_scans_selected_commit_metadata(
 
 
 @pytest.mark.skipif(
-    shutil.which("gitleaks") is None, reason="gitleaks is not installed"
+    not _trusted_gitleaks_available(), reason="gitleaks is not installed"
 )
 def test_runner_scans_binary_commit_metadata(
     tmp_path: Path,
@@ -5448,7 +5477,7 @@ def test_commit_metadata_header_retains_partial_fdict_output(
 
 
 @pytest.mark.skipif(
-    shutil.which("gitleaks") is None, reason="gitleaks is not installed"
+    not _trusted_gitleaks_available(), reason="gitleaks is not installed"
 )
 def test_runner_scans_commit_stream_spanning_message_boundary(
     tmp_path: Path,
@@ -5618,7 +5647,7 @@ def test_recursive_fdict_preserves_encoded_source_offset_and_cache(
 
 
 @pytest.mark.skipif(
-    shutil.which("gitleaks") is None, reason="gitleaks is not installed"
+    not _trusted_gitleaks_available(), reason="gitleaks is not installed"
 )
 def test_runner_scans_offset_encoded_partial_fdict_output(
     tmp_path: Path,
@@ -5654,7 +5683,7 @@ def test_runner_scans_offset_encoded_partial_fdict_output(
 
 
 @pytest.mark.skipif(
-    shutil.which("gitleaks") is None, reason="gitleaks is not installed"
+    not _trusted_gitleaks_available(), reason="gitleaks is not installed"
 )
 def test_runner_scans_offset_encoded_recursive_fdict_output(
     tmp_path: Path,
@@ -5691,7 +5720,7 @@ def test_runner_scans_offset_encoded_recursive_fdict_output(
 
 
 @pytest.mark.skipif(
-    shutil.which("gitleaks") is None, reason="gitleaks is not installed"
+    not _trusted_gitleaks_available(), reason="gitleaks is not installed"
 )
 @pytest.mark.parametrize("prefix", [b"", b"ordinary-prefix\n"])
 def test_runner_scans_dictionary_independent_fdict_output(
@@ -5957,7 +5986,7 @@ def test_tar_probe_rejects_partial_fdict_before_member_attribution(
 
 
 @pytest.mark.skipif(
-    shutil.which("gitleaks") is None, reason="gitleaks is not installed"
+    not _trusted_gitleaks_available(), reason="gitleaks is not installed"
 )
 @pytest.mark.parametrize(
     ("suffix", "logical_path", "wrap"),
@@ -6092,7 +6121,7 @@ def test_embedded_archive_probe_fails_closed_at_candidate_limit(
 
 
 @pytest.mark.skipif(
-    shutil.which("gitleaks") is None, reason="gitleaks is not installed"
+    not _trusted_gitleaks_available(), reason="gitleaks is not installed"
 )
 @pytest.mark.parametrize(
     "compress",
@@ -6159,7 +6188,7 @@ def test_runner_rejects_embedded_archive_in_commit_metadata(
 
 
 @pytest.mark.skipif(
-    shutil.which("gitleaks") is None, reason="gitleaks is not installed"
+    not _trusted_gitleaks_available(), reason="gitleaks is not installed"
 )
 def test_runner_scans_commit_message_secret_across_fragment_boundary(
     tmp_path: Path,
@@ -6222,7 +6251,7 @@ def test_runner_scans_commit_message_secret_across_fragment_boundary(
 
 
 @pytest.mark.skipif(
-    shutil.which("gitleaks") is None, reason="gitleaks is not installed"
+    not _trusted_gitleaks_available(), reason="gitleaks is not installed"
 )
 def test_runner_scans_binary_secret_across_gitleaks_fragment_boundary(
     tmp_path: Path,
@@ -6259,7 +6288,7 @@ def test_runner_scans_binary_secret_across_gitleaks_fragment_boundary(
 
 
 @pytest.mark.skipif(
-    shutil.which("gitleaks") is None, reason="gitleaks is not installed"
+    not _trusted_gitleaks_available(), reason="gitleaks is not installed"
 )
 def test_runner_scans_archive_secret_across_gitleaks_fragment_boundary(
     tmp_path: Path,
@@ -6664,7 +6693,7 @@ def test_embedded_tar_search_covers_python_ascii_strip_whitespace(
 
 
 @pytest.mark.skipif(
-    shutil.which("gitleaks") is None, reason="gitleaks is not installed"
+    not _trusted_gitleaks_available(), reason="gitleaks is not installed"
 )
 def test_complete_tree_runner_rejects_parser_only_tar_checksum_spelling(
     tmp_path: Path,
@@ -7834,7 +7863,7 @@ def test_decode_probe_recursively_retains_encoded_derived_rfc1950(
 
 
 @pytest.mark.skipif(
-    shutil.which("gitleaks") is None, reason="gitleaks is not installed"
+    not _trusted_gitleaks_available(), reason="gitleaks is not installed"
 )
 def test_runner_scans_encoded_derived_recursive_rfc1950_output(
     tmp_path: Path,
@@ -7907,7 +7936,7 @@ def test_decode_probe_rejects_archive_exposed_by_malformed_unicode_projection(
 
 
 @pytest.mark.skipif(
-    shutil.which("gitleaks") is None, reason="gitleaks is not installed"
+    not _trusted_gitleaks_available(), reason="gitleaks is not installed"
 )
 @pytest.mark.parametrize(
     "mutation",
@@ -7948,7 +7977,7 @@ def test_runner_scans_malformed_zlib_output_at_exact_path(
 
 
 @pytest.mark.skipif(
-    shutil.which("gitleaks") is None, reason="gitleaks is not installed"
+    not _trusted_gitleaks_available(), reason="gitleaks is not installed"
 )
 def test_runner_scans_direct_zlib_output_at_exact_path(
     tmp_path: Path,
@@ -7984,7 +8013,7 @@ def test_runner_scans_direct_zlib_output_at_exact_path(
 
 
 @pytest.mark.skipif(
-    shutil.which("gitleaks") is None, reason="gitleaks is not installed"
+    not _trusted_gitleaks_available(), reason="gitleaks is not installed"
 )
 def test_runner_scans_recursive_zlib_child_at_exact_path(
     tmp_path: Path,
@@ -8018,7 +8047,7 @@ def test_runner_scans_recursive_zlib_child_at_exact_path(
 
 
 @pytest.mark.skipif(
-    shutil.which("gitleaks") is None, reason="gitleaks is not installed"
+    not _trusted_gitleaks_available(), reason="gitleaks is not installed"
 )
 def test_runner_scans_derived_utf16_at_exact_path(
     tmp_path: Path,
@@ -8053,7 +8082,7 @@ def test_runner_scans_derived_utf16_at_exact_path(
 
 
 @pytest.mark.skipif(
-    shutil.which("gitleaks") is None, reason="gitleaks is not installed"
+    not _trusted_gitleaks_available(), reason="gitleaks is not installed"
 )
 def test_runner_scans_malformed_derived_utf16_at_exact_path(
     tmp_path: Path,
@@ -8092,7 +8121,7 @@ def test_runner_scans_malformed_derived_utf16_at_exact_path(
 
 
 @pytest.mark.skipif(
-    shutil.which("gitleaks") is None, reason="gitleaks is not installed"
+    not _trusted_gitleaks_available(), reason="gitleaks is not installed"
 )
 def test_runner_rejects_decode_exhaustion_inside_derived_output(
     tmp_path: Path,
@@ -8174,7 +8203,7 @@ def test_decode_probe_groups_candidates_into_complete_scanner_fragments(
 
 
 @pytest.mark.skipif(
-    shutil.which("gitleaks") is None, reason="gitleaks is not installed"
+    not _trusted_gitleaks_available(), reason="gitleaks is not installed"
 )
 def test_decode_probe_never_joins_unrelated_encoded_candidates(
     tmp_path: Path,
@@ -8409,7 +8438,7 @@ def test_decode_probe_skips_oversized_nondecodable_matches(
 
 
 @pytest.mark.skipif(
-    shutil.which("gitleaks") is None, reason="gitleaks is not installed"
+    not _trusted_gitleaks_available(), reason="gitleaks is not installed"
 )
 def test_runner_rejects_binary_secret_deleted_inside_history_range(
     tmp_path: Path,
@@ -8453,7 +8482,7 @@ def test_runner_rejects_binary_secret_deleted_inside_history_range(
 
 
 @pytest.mark.skipif(
-    shutil.which("gitleaks") is None, reason="gitleaks is not installed"
+    not _trusted_gitleaks_available(), reason="gitleaks is not installed"
 )
 def test_runner_preserves_historical_anchored_path_associations(
     tmp_path: Path,
@@ -8603,7 +8632,7 @@ def test_complete_tree_runner_rejects_inconsistent_scanner_results(
 
 
 @pytest.mark.skipif(
-    shutil.which("gitleaks") is None, reason="gitleaks is not installed"
+    not _trusted_gitleaks_available(), reason="gitleaks is not installed"
 )
 def test_complete_tree_runner_accepts_clean_binary_blob(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -8694,7 +8723,7 @@ def test_complete_tree_runner_accepts_clean_binary_blob(
 
 
 @pytest.mark.skipif(
-    shutil.which("gitleaks") is None, reason="gitleaks is not installed"
+    not _trusted_gitleaks_available(), reason="gitleaks is not installed"
 )
 def test_runner_uses_exact_history_and_committed_policy_when_head_is_redirected(
     tmp_path: Path,
@@ -8865,7 +8894,7 @@ def test_isolated_history_source_drops_local_signature_program(
 
 
 @pytest.mark.skipif(
-    shutil.which("gitleaks") is None, reason="gitleaks is not installed"
+    not _trusted_gitleaks_available(), reason="gitleaks is not installed"
 )
 def test_native_history_scan_ignores_dirty_checkout_gitleaksignore(
     tmp_path: Path,
@@ -8931,7 +8960,7 @@ def test_native_history_scan_ignores_dirty_checkout_gitleaksignore(
 
 
 @pytest.mark.skipif(
-    shutil.which("gitleaks") is None, reason="gitleaks is not installed"
+    not _trusted_gitleaks_available(), reason="gitleaks is not installed"
 )
 def test_native_history_scan_never_executes_local_textconv(tmp_path: Path) -> None:
     """Disable external diff and textconv while Gitleaks invokes Git history."""
