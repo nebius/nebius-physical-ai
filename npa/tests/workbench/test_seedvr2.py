@@ -565,15 +565,25 @@ def test_failing_advisory_diagnostics_never_become_quality_acceptance(
         total_hallucinated_dynamic_pixels=1,
         total_augmented_dynamic_pixels=1,
     )
+    diagnostic_calls: list[dict[str, object]] = []
+
+    def _temporal_result(**kwargs):
+        diagnostic_calls.append(kwargs)
+        return SimpleNamespace(to_dict=lambda: temporal)
+
+    def _motion_result(**kwargs):
+        diagnostic_calls.append(kwargs)
+        return SimpleNamespace(to_dict=lambda: motion)
+
     monkeypatch.setattr(
         quality,
         "check_temporal_consistency",
-        lambda **kwargs: SimpleNamespace(to_dict=lambda: temporal),
+        _temporal_result,
     )
     monkeypatch.setattr(
         quality,
         "check_hallucination",
-        lambda **kwargs: SimpleNamespace(to_dict=lambda: motion),
+        _motion_result,
     )
 
     boundary = quality.assess(
@@ -589,6 +599,15 @@ def test_failing_advisory_diagnostics_never_become_quality_acceptance(
     assert boundary["quality_qualified"] is False
     assert boundary["diagnostics"]["temporal_consistency"]["result"]["passed"] is False
     assert boundary["diagnostics"]["motion_hallucination"]["result"]["passed"] is False
+    assert len(diagnostic_calls) == 2
+    for call in diagnostic_calls:
+        assert call["ffmpeg_input_args"] == (
+            "-protocol_whitelist",
+            "file,pipe",
+            "-f",
+            "mov",
+        )
+        assert call["subprocess_env"] == runtime._media_environment()
 
 
 def test_quality_boundary_fails_closed_before_diagnostics_on_incomplete_timing(
@@ -890,6 +909,41 @@ def test_short_clip_is_rejected_before_gpu_or_model_work_and_publication(
     assert storage.objects == {INPUT_URI: short_clip.read_bytes()}
     assert list((tmp_path / "runs").glob("*/failure.json"))
     assert runtime._probe_video(source_video)["frames"] == 3
+
+
+def test_decoded_frame_hashes_exclude_audio_packets(
+    tmp_path: Path, source_video: Path
+) -> None:
+    clip = tmp_path / "video-with-audio.mp4"
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-i",
+            str(source_video),
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=440:sample_rate=8000",
+            "-map",
+            "0:v:0",
+            "-map",
+            "1:a:0",
+            "-c:v",
+            "copy",
+            "-c:a",
+            "aac",
+            "-shortest",
+            str(clip),
+        ],
+        check=True,
+    )
+
+    assert runtime._probe_video(clip)["frames"] == 3
+    assert len(runtime._decoded_frame_hashes(clip)) == 3
 
 
 def test_restore_rejects_source_aspect_ratio_change_before_model_resolution(

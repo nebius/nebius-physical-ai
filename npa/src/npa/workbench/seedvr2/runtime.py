@@ -320,6 +320,8 @@ def _decoded_frame_hashes(path: Path) -> list[str]:
             "mov",
             "-i",
             str(path),
+            "-map",
+            "0:v:0",
             "-f",
             "framemd5",
             "-",

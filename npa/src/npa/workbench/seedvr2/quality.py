@@ -41,6 +41,7 @@ from .runtime import (
     _create_work_directory,
     _decoded_frame_hashes,
     _ensure_artifacts_absent,
+    _media_environment,
     _probe_video,
     _publish_verified,
     _sha256,
@@ -521,6 +522,8 @@ def assess(
         source_uri=source_uri,
         candidate_uri=candidate_uri,
     )
+    media_input_args = ("-protocol_whitelist", "file,pipe", "-f", "mov")
+    media_environment = _media_environment()
     try:
         temporal_result = check_temporal_consistency(
             clip_id=request.run_id,
@@ -530,6 +533,8 @@ def assess(
             regions=_temporal_region_configuration(),
             noise_floor=TEMPORAL_NOISE_FLOOR,
             blur_ksize=TEMPORAL_BLUR_KSIZE,
+            ffmpeg_input_args=media_input_args,
+            subprocess_env=media_environment,
         )
         motion_result = check_hallucination(
             clip_id=request.run_id,
@@ -541,6 +546,8 @@ def assess(
             dist_tol_px=MOTION_DIST_TOL_PX,
             threshold=MOTION_THRESHOLD,
             prefer_upstream=False,
+            ffmpeg_input_args=media_input_args,
+            subprocess_env=media_environment,
         )
     except CosmosEvaluatorError as exc:
         raise SeedVR2Error(
