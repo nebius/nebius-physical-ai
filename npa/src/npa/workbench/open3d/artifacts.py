@@ -21,6 +21,12 @@ RESULT_SCHEMA = "npa.open3d.result.v1"
 PAIRS_JOURNAL = "pairs.jsonl"
 #: Absolute tolerance for "this 3x3 block is a rotation".
 ROTATION_TOLERANCE = 1e-6
+#: Prefix Rerun reserves for itself. Not a guess: `rerun/_log.py` documents that "paths
+#: prefixed with `__` are considered reserved for use by the Rerun SDK", and the SDK
+#: exports `RECORDING_PROPERTIES_PATH = "/__properties"`, which it writes into every
+#: recording whether or not the caller logged anything. A recording holding only these
+#: decodes fine and carries nothing anyone can look at.
+RERUN_INTERNAL = "/__"
 
 
 class Open3dError(RuntimeError):
@@ -43,6 +49,12 @@ def _finite_number(value: Any) -> bool:
         and isinstance(value, (int, float))
         and math.isfinite(value)
     )
+
+
+#: Distinguishes "this record predates the field" from "this record published the
+#: field as nothing". Only the first is exempt from a check; keying a
+#: backward-compatibility exemption on `None` makes it a switch a writer can throw.
+_ABSENT = object()
 
 
 def validate_rigid_transform(value: Any, *, what: str) -> None:
@@ -264,6 +276,142 @@ def validate_pose_graph(graph: Any, *, fragment_count: int) -> None:
                 or not 0 <= value < fragment_count
             ):
                 raise Open3dError(f"pose graph edge {key} is out of range")
+    if "optimization" in graph:
+        _validate_optimization_report(
+            graph["optimization"], nodes=len(nodes), edges=edges
+        )
+
+
+def _validate_optimization_report(report: Any, *, nodes: int, edges: list) -> None:
+    """Hold the optimization summary to the graph it is a summary of.
+
+    Optional, because reports written before this block existed are still valid
+    pose graphs. What it must not be is present and hollow: an empty mapping would
+    otherwise satisfy `"optimization" in graph` while asserting nothing.
+    """
+
+    if not isinstance(report, dict) or not report:
+        raise Open3dError("pose graph optimization summary must be a non-empty mapping")
+    required = (
+        "edges_submitted",
+        "loop_closures_submitted",
+        "edges_that_survived_pruning",
+        "edges_pruned",
+        "max_pose_correction",
+        "max_pose_correction_per_node",
+    )
+    missing = sorted(key for key in required if key not in report)
+    if missing:
+        raise Open3dError(
+            f"pose graph optimization summary is missing {', '.join(missing)}"
+        )
+    counts = {}
+    for key in required[:4]:
+        value = report[key]
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise Open3dError(f"pose graph optimization {key} must be a count")
+        counts[key] = value
+    if counts["edges_that_survived_pruning"] != len(edges):
+        raise Open3dError(
+            "pose graph optimization reports a different surviving edge count than "
+            "the graph serializes"
+        )
+    if (
+        counts["edges_submitted"] - counts["edges_pruned"]
+        != counts["edges_that_survived_pruning"]
+    ):
+        raise Open3dError(
+            "pose graph optimization edge counts do not add up: submitted minus "
+            "pruned must equal the edges that survived"
+        )
+    # Only loop closures are prunable -- consecutive pairs are submitted as certain
+    # odometry -- so more pruned than submitted as closures means the summary is
+    # describing a different graph.
+    if counts["loop_closures_submitted"] > counts["edges_submitted"]:
+        raise Open3dError(
+            "pose graph optimization reports more loop closures than edges"
+        )
+    if counts["edges_pruned"] > counts["loop_closures_submitted"]:
+        raise Open3dError(
+            "pose graph optimization reports more pruned edges than it submitted as "
+            "prunable loop closures"
+        )
+    per_node = report["max_pose_correction_per_node"]
+    if not isinstance(per_node, list) or len(per_node) != nodes:
+        raise Open3dError(
+            "pose graph optimization must report one pose correction per node"
+        )
+    if not all(_finite_number(value) and value >= 0.0 for value in per_node):
+        raise Open3dError("every pose correction must be a finite, non-negative number")
+    largest = report["max_pose_correction"]
+    if not _finite_number(largest) or largest < 0.0:
+        raise Open3dError("the largest pose correction must be finite and non-negative")
+    if per_node and abs(float(largest) - max(float(v) for v in per_node)) > 1e-12:
+        raise Open3dError(
+            "the largest pose correction is not the largest of the per-node "
+            "corrections it summarizes"
+        )
+    _validate_optimization_displacement(report, nodes=nodes)
+
+
+def _validate_optimization_displacement(report: dict, *, nodes: int) -> None:
+    """Hold the displacement figures to each other and to the extent they divide by.
+
+    These are the fields a reader is meant to act on -- a bare correction is only
+    small compared with something -- and they were published outside this validator,
+    so a record could carry a real displacement under a zero share and pass. That is
+    the same failure this block exists to prevent, one field over.
+
+    Optional as a group, for the same reason the block itself is: records written
+    before these fields existed are still valid pose graphs. Present but internally
+    inconsistent is what is rejected.
+    """
+
+    if "max_point_displacement" not in report:
+        return
+    per_node = report.get("max_point_displacement_per_node")
+    if not isinstance(per_node, list) or len(per_node) != nodes:
+        raise Open3dError(
+            "pose graph optimization must report one point displacement per node"
+        )
+    if not all(_finite_number(value) and value >= 0.0 for value in per_node):
+        raise Open3dError(
+            "every point displacement must be a finite, non-negative number"
+        )
+    largest = report["max_point_displacement"]
+    if not _finite_number(largest) or largest < 0.0:
+        raise Open3dError(
+            "the largest point displacement must be finite and non-negative"
+        )
+    if per_node and abs(float(largest) - max(float(v) for v in per_node)) > 1e-12:
+        raise Open3dError(
+            "the largest point displacement is not the largest of the per-node "
+            "displacements it summarizes"
+        )
+    if "scene_extent" not in report:
+        return
+    extent = report["scene_extent"]
+    # A zero or negative extent is a degenerate fused cloud, and the share below is
+    # derived from it. Rejecting it here is cheaper than a division the reader has to
+    # reconstruct to notice.
+    if not _finite_number(extent) or extent <= 0.0:
+        raise Open3dError("the scene extent must be a finite, positive length")
+    share = report.get("max_point_displacement_as_share_of_extent")
+    if share is None:
+        raise Open3dError(
+            "pose graph optimization publishes a scene extent and a displacement but "
+            "no share of the extent, which is the figure a reader acts on"
+        )
+    if not _finite_number(share) or share < 0.0:
+        raise Open3dError(
+            "the displacement share of the scene extent must be finite and non-negative"
+        )
+    expected = float(largest) / float(extent)
+    if abs(float(share) - expected) > max(1e-12, 1e-9 * expected):
+        raise Open3dError(
+            f"the published share {share} is not the displacement {largest} over the "
+            f"scene extent {extent}, which is {expected}"
+        )
 
 
 def validate_mesh(mesh: Any) -> None:
@@ -393,6 +541,313 @@ def validate_overlay_matches_crop(recording: Any, reconstruction: Any) -> None:
             f"recording drew {shown} unsupported triangles but the crop removed "
             f"{full - kept}; the overlay is not showing the crop that ran"
         )
+
+
+#: Sources that mean "the scan did not determine an up axis, so this is the declared
+#: default". Every one of them must publish the default rather than a measured axis.
+_DECLARED_UP_SOURCES = frozenset(
+    {"default", "default-weak-plane", "default-ambiguous-plane"}
+)
+#: The one source that names a measured axis, plus the defaults above. Kept as a
+#: closed set because the semantic checks are keyed to these literals: a source
+#: outside it would reach none of them and be accepted unexamined.
+_MEASURED_UP_SOURCE = "largest-plane-normal-snapped-to-axis"
+_KNOWN_UP_SOURCES = _DECLARED_UP_SOURCES | {_MEASURED_UP_SOURCE}
+#: What the counterexample must say to be one: repeats that agreed, and a tilt large
+#: enough that agreeing on it is visibly not the same as the plane meaning something.
+_COUNTEREXAMPLE_TILT_DEGREES = 10.0
+
+
+def validate_up_axis_inference(recording: Any) -> None:
+    """Stop a coin-flipped camera axis from being published as a measured one.
+
+    The up vector steers the camera, and `segment_plane` is RANSAC: on a scan with
+    two comparable planes the axis differs run to run while every published field
+    stays the same, so a reviewer reading one run cannot tell the next run will roll
+    the view ninety degrees. The runner answers that by repeating the fit and
+    refusing to name an axis when the repeats disagree. This holds the record to
+    that: a report that says it measured an axis must show the repeats agreed, and a
+    report that says the repeats disagreed must publish the declared default rather
+    than one of the branches.
+    """
+
+    if not isinstance(recording, dict):
+        raise Open3dError("up-axis check needs the recording report")
+    inference = recording.get("up_axis_inference", _ABSENT)
+    if inference is _ABSENT:
+        return  # Predates the inference being reported at all.
+    if not isinstance(inference, dict):
+        raise Open3dError("up_axis_inference is not a report")
+    source = inference.get("source")
+    up = inference.get("up")
+    if not isinstance(source, str) or not source:
+        raise Open3dError("up_axis_inference does not say where its axis came from")
+    # Both semantic claims below are keyed to literal source strings, so a source
+    # this function does not recognise reaches neither of them and is accepted with
+    # any number of disagreeing axes. Nothing emits an unrecognised source today, so
+    # this was safe by circumstance rather than by construction -- and the dangerous
+    # shape is not a wild string but a near miss like `largest-plane-normal`, a
+    # truncation of the real one, which would turn both checks off silently instead
+    # of failing loudly.
+    if source not in _KNOWN_UP_SOURCES:
+        raise Open3dError(
+            f"up_axis_inference reports an unrecognised source {source!r}; the "
+            "checks below are keyed to the known sources and would not apply"
+        )
+    if not isinstance(up, list) or len(up) != 3:
+        raise Open3dError("up_axis_inference does not publish a three-vector")
+    if not all(
+        isinstance(value, int | float) and _finite_number(value) for value in up
+    ):
+        raise Open3dError("the published up vector is not made of finite numbers")
+    if source in _DECLARED_UP_SOURCES and tuple(float(v) for v in up) != (
+        0.0,
+        0.0,
+        1.0,
+    ):
+        raise Open3dError(
+            f"source {source!r} means no axis was determined, but the report "
+            f"publishes {up} instead of the declared default"
+        )
+
+    agreement = inference.get("agreement", _ABSENT)
+    if agreement is _ABSENT:
+        if source == "default-ambiguous-plane":
+            raise Open3dError(
+                "the report claims the repeats disagreed but does not say what they "
+                "disagreed about"
+            )
+        return
+    if not isinstance(agreement, dict):
+        raise Open3dError("up_axis_inference.agreement is not a report")
+    distinct = agreement.get("distinct_axes")
+    repeats = agreement.get("repeats")
+    # `isinstance(True, int)` is True, so without the bool exclusions these two
+    # accepted `distinct: True` where `attempted` below deliberately rejects it. One
+    # rule for all three counts.
+    if not isinstance(distinct, int) or isinstance(distinct, bool) or distinct < 1:
+        raise Open3dError("the agreement report does not count the axes it found")
+    if not isinstance(repeats, int) or isinstance(repeats, bool) or repeats < 1:
+        raise Open3dError("the agreement report does not count its repeats")
+    if distinct > repeats:
+        raise Open3dError(
+            f"the agreement report found {distinct} axes in {repeats} repeats"
+        )
+    # Required, not optional. The check below is the only thing standing between a
+    # one-usable-fit sample and the word "measured", and an optional field is a check
+    # the producer can turn off by omission -- which is the dependency on the producer
+    # staying correct that this validator exists to remove.
+    attempted = agreement.get("attempted_fits")
+    if not isinstance(attempted, int) or isinstance(attempted, bool):
+        raise Open3dError(
+            "the agreement report does not say how many fits were attempted, so the "
+            "repeats it counts cannot be read as a majority of anything"
+        )
+    if attempted < repeats:
+        raise Open3dError(
+            f"the agreement report counts {repeats} repeats out of "
+            f"{attempted} attempted fits"
+        )
+    # A majority of attempts was not enough on its own: it is a ratio, and a ratio is
+    # satisfied by 1 of 1. `_up_axis(..., repeats=0)` produces exactly that, and the
+    # resulting report -- a single fit, which is the coin flip this whole change exists
+    # to replace -- passed every guard here and was published as a measured axis. The
+    # product call site uses the default, so there was no live exposure; the point of
+    # this validator is not to depend on that.
+    #
+    # Two, not more: the claim being checked is that repeats agreed, and two repeats
+    # are the fewest that can agree. A higher floor would be this validator deciding
+    # how many fits the producer must perform, which is the producer's parameter.
+    if source == _MEASURED_UP_SOURCE and attempted < 2:
+        raise Open3dError(
+            f"the report names a measured axis from {attempted} attempted fit, and "
+            "one fit cannot agree with anything"
+        )
+    # A majority, so "the repeats agreed" cannot be satisfied by a sample of one out
+    # of nine. Without this, a scan whose fits were weak eight times in nine and
+    # strong on the draw that happened to be first was published as measured.
+    if source == "largest-plane-normal-snapped-to-axis" and 2 * repeats <= attempted:
+        raise Open3dError(
+            f"the report names a measured axis from {repeats} usable fits out of "
+            f"{attempted} attempted, which is not a majority of them"
+        )
+    # The two claims that must not come apart: naming an axis requires the repeats to
+    # have agreed, and reporting disagreement requires not naming one.
+    if source == "largest-plane-normal-snapped-to-axis" and distinct != 1:
+        raise Open3dError(
+            f"the report names a measured axis while its {repeats} repeats found "
+            f"{distinct} different ones"
+        )
+    if source == "default-ambiguous-plane" and distinct < 2:
+        raise Open3dError(
+            "the report falls back to the default for ambiguity while its repeats "
+            "all agreed"
+        )
+    candidates = agreement.get("candidates")
+    if not isinstance(candidates, list) or len(candidates) != distinct:
+        raise Open3dError(
+            f"the agreement report counts {distinct} axes but lists "
+            f"{len(candidates) if isinstance(candidates, list) else 'no'} candidates"
+        )
+    # Checked before `.get` below: a non-dict element raised `AttributeError`, which
+    # is outside the CLI's `(Open3dError, ValueError)` and so broke the
+    # machine-readable failure contract for that one shape.
+    if not all(isinstance(one, dict) for one in candidates):
+        raise Open3dError("the agreement report lists a candidate that is not a report")
+    if sum(one.get("chosen_by_repeats", 0) for one in candidates) != repeats:
+        raise Open3dError(
+            "the candidates' repeat counts do not add up to the repeats performed"
+        )
+    # The direction, not only the counts. Every check above constrains how many axes
+    # were found and how often; none constrained *which* axis got published. A report
+    # naming a measured axis of (0,0,1) whose single agreeing candidate is (1,0,0)
+    # satisfied all of them, so the vector the view cameras consume could differ from
+    # the axis the agreement block attests to and the record still validated. The
+    # ambiguous-source branch is already bound to the declared default; this binds the
+    # measured branch to its own evidence.
+    if source == _MEASURED_UP_SOURCE:
+        agreed = candidates[0].get("up")
+        if not isinstance(agreed, list) or len(agreed) != 3:
+            raise Open3dError(
+                "the agreement report's candidate does not name the axis it agreed on"
+            )
+        try:
+            published = [float(value) for value in up]
+            attested = [float(value) for value in agreed]
+        except (TypeError, ValueError):
+            raise Open3dError(
+                "the agreement report's axis is not three numbers"
+            ) from None
+        if published != attested:
+            raise Open3dError(
+                f"the report publishes {published} as a measured axis while its "
+                f"repeats agreed on {attested}"
+            )
+    _validate_up_counterexample(agreement.get("agreement_is_not_meaningfulness"))
+
+
+def _validate_up_counterexample(limitation: Any) -> None:
+    """Require the published limitation to be a measured case, not a sentence.
+
+    The claim this guards is that repeat agreement does not establish the plane
+    means anything. Carried as prose, that survives being negated; carried as a
+    case where the repeats agreed unanimously on a plane tilted well off the axis
+    it was snapped to, it does not.
+    """
+
+    if not isinstance(limitation, dict):
+        raise Open3dError("the agreement report does not publish its limitation")
+    case = limitation.get("measured_counterexample")
+    if not isinstance(case, dict):
+        raise Open3dError("the limitation is not backed by a measured counterexample")
+    required = (
+        "repeats_that_agreed",
+        "of_repeats",
+        "plane_tilt_to_the_snapped_axis_degrees",
+    )
+    missing = [key for key in required if key not in case]
+    if missing:
+        raise Open3dError(f"the counterexample does not publish {missing}")
+    if not all(_finite_number(case[key]) for key in required):
+        raise Open3dError("the counterexample's measurements must be finite numbers")
+    agreed = float(case["repeats_that_agreed"])
+    total = float(case["of_repeats"])
+    tilt = float(case["plane_tilt_to_the_snapped_axis_degrees"])
+    if total <= 0 or agreed != total:
+        raise Open3dError(
+            f"the counterexample is not one: {agreed} of {total} repeats agreed, so it "
+            "does not show agreement failing to mean anything"
+        )
+    if tilt < _COUNTEREXAMPLE_TILT_DEGREES:
+        raise Open3dError(
+            f"the counterexample's plane is {tilt} degrees off the axis it was snapped "
+            f"to, under the {_COUNTEREXAMPLE_TILT_DEGREES} this claim needs to be "
+            "visible rather than arguable"
+        )
+
+
+def validate_density_crop_contribution(report: Any) -> None:
+    """Hold the density crop's reported contribution to its own removal count.
+
+    `low_density_vertices_removed` reads as surface this filter took out of the
+    delivered mesh. Whenever support cropping is on, it usually is not: the two
+    crops overlap almost entirely, because a vertex the solver extrapolated into
+    empty space is both low-density and far from any observation. The contribution
+    block says how much of the removal was this crop's own, and this keeps that
+    block honest about the count beside it.
+
+    Optional: reports written before the block existed are still valid.
+    """
+
+    if not isinstance(report, dict):
+        raise Open3dError("density-crop check needs the reconstruction report")
+    contribution = report.get("density_crop_contribution", _ABSENT)
+    if contribution is _ABSENT:
+        return
+    # `None` is refused and absence is not, which is the whole reason for the
+    # sentinel above. Collapsing them here would have let a report publish the
+    # measurement as nothing while the less alarming empty mapping was refused.
+    if not isinstance(contribution, dict) or not contribution:
+        raise Open3dError(
+            "density_crop_contribution must be a non-empty mapping when present"
+        )
+    for key in ("vertices_removed", "removed_only_by_this_crop"):
+        value = contribution.get(key)
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise Open3dError(f"density_crop_contribution {key} must be a count")
+    removed = contribution["vertices_removed"]
+    exclusive = contribution["removed_only_by_this_crop"]
+    if exclusive > removed:
+        raise Open3dError(
+            "density_crop_contribution claims more exclusive removals than removals"
+        )
+    disabled = contribution.get("support_crop_was_disabled")
+    if not isinstance(disabled, bool):
+        raise Open3dError(
+            "density_crop_contribution must say whether support cropping was on"
+        )
+    # With no support crop to overlap with, every density removal is this crop's own.
+    # A report claiming otherwise is describing a pipeline that did not run.
+    if disabled and exclusive != removed:
+        raise Open3dError(
+            "support cropping was disabled, so every density removal is this crop's "
+            f"own, but the report credits it with {exclusive} of {removed}"
+        )
+    # And the flag against the field it is derived from, which sits in the same
+    # report. The check above was one-directional: it held the counts to the flag and
+    # never held the flag to the configuration, so a report could declare
+    # `support_crop_was_disabled: false` beside `support_distance_factor: 0.0` and
+    # credit the crop with 0 of 518 -- impossible by the same construction the True
+    # branch enforces -- and validate cleanly. `validate_overlay_matches_crop` already
+    # ties the overlay to this field; this ties the flag to it.
+    factor = report.get("support_distance_factor")
+    if _finite_number(factor):
+        if disabled != (float(factor) <= 0.0):
+            raise Open3dError(
+                f"density_crop_contribution says support cropping was "
+                f"{'disabled' if disabled else 'enabled'} while the report ran at a "
+                f"support distance factor of {factor}"
+            )
+        # The distance it published is that factor times the voxel size, and a
+        # mismatch means the exclusive count was measured against a different
+        # threshold than the one the report names.
+        distance = contribution.get("support_distance")
+        voxel = report.get("voxel_size")
+        if not disabled and _finite_number(distance) and _finite_number(voxel):
+            expected = float(voxel) * float(factor)
+            if abs(float(distance) - expected) > max(1e-12, 1e-9 * abs(expected)):
+                raise Open3dError(
+                    f"density_crop_contribution measured against a support distance "
+                    f"of {distance} where the report's voxel size and factor give "
+                    f"{expected}"
+                )
+    published = report.get("low_density_vertices_removed")
+    if isinstance(published, int) and not isinstance(published, bool):
+        if published != removed:
+            raise Open3dError(
+                "density_crop_contribution counts a different number of removals "
+                f"({removed}) than the report publishes ({published})"
+            )
 
 
 def validate_support(report: Any, *, voxel_size: float) -> None:
@@ -567,3 +1022,55 @@ def verify_rerun_recording(path: Path) -> None:
     )
     if checked.returncode:
         raise Open3dError("Rerun rejected the generated recording")
+    # `rrd verify` alone does not keep the promise in the line above. Measured against
+    # rerun-sdk 0.38.1, it exits 0 for a zero-byte file, for one truncated to its
+    # 40-byte header, and for a recording opened and closed without logging anything.
+    # Decoding rejects the first two. The third decodes cleanly, because Rerun writes a
+    # `/__properties` chunk whether or not the caller logged data, so the only thing
+    # that separates it from a real recording is an entity path the caller put there.
+    #
+    # None of the three subsumes the others, and each rejection below is the only one
+    # that fires on some shape -- a recording truncated to between 75 and 99 percent of
+    # its length still decodes to `/points` through the reader's whole-file fallback,
+    # and only the CLI rejects it. That band widens with recording size rather than
+    # being an artifact of a small one: 50 to 95 percent at 18 MB. The measurements are in
+    # tests/workbench/test_open3d_rrd_verifier.py, which fails if any layer stops being
+    # the sole catcher of its shape, rather than letting one be dropped as redundant.
+    try:
+        # Imported here, after the CLI check, so the usual "no Rerun at all" case still
+        # reports the unavailable CLI above. A machine with the binary but not the SDK
+        # would otherwise raise ImportError, which no caller catches.
+        from npa.viz.recordings import load_recordings
+
+        recordings = load_recordings(path)
+        logged = [
+            str(chunk.entity_path)
+            for recording in recordings
+            for chunk in recording.chunks()
+        ]
+    except ImportError as exc:
+        raise Open3dError(
+            f"the Rerun SDK is unavailable to decode the recording: {exc}"
+        )
+    except (OSError, RuntimeError, ValueError) as exc:
+        # OSError because the decode is a second read of the file, minutes of
+        # subprocess later: the path can be gone, unreadable, or a directory by the
+        # time `RrdReader` opens it, and pyo3 surfaces `std::io::Error` as `OSError`.
+        # Without it the function raised something `_call` does not catch
+        # ((Open3dError, ValueError)), so the CLI died with a traceback instead of the
+        # contracted message and exit 1 -- the one way this change could have made the
+        # failure contract worse rather than better.
+        #
+        # Deliberately not `BaseException`, which is what it would take to also catch
+        # a pyo3 `PanicException`. That would swallow `KeyboardInterrupt` and
+        # `SystemExit`, and a panic is a bug in the decoder rather than a condition
+        # this function can report on; it should keep its traceback. The 26-cut
+        # truncation sweep in the tests is the evidence that real corruption arrives
+        # as `RuntimeError` and not as a panic.
+        raise Open3dError(f"Rerun could not decode the generated recording: {exc}")
+    substantive = [name for name in logged if not name.startswith(RERUN_INTERNAL)]
+    if not substantive:
+        raise Open3dError(
+            "the generated recording carries no logged data: "
+            f"{len(recordings)} recordings, entity paths {sorted(set(logged))}"
+        )

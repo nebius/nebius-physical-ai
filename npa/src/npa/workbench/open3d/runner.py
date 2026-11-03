@@ -16,6 +16,7 @@ import hashlib
 import json
 import time
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any, NamedTuple
 
 from .artifacts import (
@@ -175,7 +176,19 @@ def _fragment_paths(payload: dict[str, Any]) -> dict[str, Path]:
 
 
 def _seeded(o3d, manifest: RegistrationManifest) -> None:
-    """Make RANSAC repeatable; Open3D seeds a global generator, not a call."""
+    """Fix RANSAC's draw; Open3D seeds a global generator, not a call.
+
+    This said "make RANSAC repeatable", which overstated it. With the seed, the
+    inputs and the process held fixed, sixteen repeats return sixteen distinct
+    transformations, so each run's `aligned_sha256` is a digest of that run and
+    never matches the last. The answer is stable to about a trillionth of a voxel
+    on a well-conditioned pair, which is why it went unnoticed.
+
+    The seed is not what is loose: point-to-plane ICP accumulates in parallel, and
+    holding Open3D to one thread makes the whole pipeline bit-reproducible.
+    `OMP_NUM_THREADS` does not reach it. Measured per stage in
+    `docs/evidence/open3d/register-seed-determinism.json`.
+    """
 
     o3d.utility.random.seed(manifest.random_seed)
 
@@ -260,6 +273,31 @@ def run_register(payload: dict[str, Any], output: Path, run_id: str) -> dict[str
     return report
 
 
+def _point_displacement(points, before, after) -> float:
+    """How far a pose change moves the points it applies to, in their own units.
+
+    The alternative, and what this code published first, was the largest absolute
+    change in a pose matrix *entry*. That is not a distance: a 4x4 pose mixes unitless
+    rotation coefficients with a translation in scene units, so dividing it by a scene
+    extent gives a figure that depends on the units the scene is written in. A pure
+    90-degree rotation changes a rotation entry by 1 whether the scene is 10 metres or
+    the same 10000 millimetres across, so the published share read 0.1 or 0.0001 for
+    identical geometry.
+
+    This is a length, so dividing it by the extent -- also a length -- gives the same
+    number for the same geometry at any scale, which is what a reader comparing two
+    runs is relying on.
+    """
+
+    import numpy as np
+
+    if not len(points):
+        return 0.0
+    shift = np.asarray(after, dtype=float) - np.asarray(before, dtype=float)
+    moved_by = np.asarray(points, dtype=float) @ shift[:3, :3].T + shift[:3, 3]
+    return float(np.linalg.norm(moved_by, axis=1).max())
+
+
 def run_multiway(payload: dict[str, Any], output: Path, run_id: str) -> dict[str, Any]:
     """Upstream multiway registration: full pairwise graph, then optimization."""
 
@@ -320,12 +358,27 @@ def run_multiway(payload: dict[str, Any], output: Path, run_id: str) -> dict[str
         edge_prune_threshold=0.25,
         reference_node=0,
     )
+    # Read before optimizing. `global_optimization` mutates the graph in place and
+    # prunes loop closures below the threshold, so neither the correction it applies
+    # nor the edges it rejects can be recovered from the optimized graph afterwards.
+    # Without these two figures a run that corrected real drift and a run that did
+    # nothing serialize the same shape -- and on both the demo fragments and this
+    # pipeline's own synthetic ones, what it does is nothing (4.7e-06 of a
+    # metres-wide scene, and exactly 0.0 respectively; see
+    # docs/evidence/open3d/pose-graph-optimization.json).
+    poses_before = [np.asarray(node.pose, dtype=float).copy() for node in graph.nodes]
+    edges_submitted = len(graph.edges)
+    loop_closures_submitted = sum(1 for edge in graph.edges if edge.uncertain)
     registration.global_optimization(
         graph,
         registration.GlobalOptimizationLevenbergMarquardt(),
         registration.GlobalOptimizationConvergenceCriteria(),
         option,
     )
+    corrections = [
+        float(np.abs(np.asarray(node.pose, dtype=float) - was).max())
+        for node, was in zip(graph.nodes, poses_before, strict=True)
+    ]
     # Serialize the graph Open3D actually optimized. `global_optimization` may
     # prune edges below the threshold, so reusing the pre-optimization list would
     # publish a graph that no longer matches the poses below it.
@@ -343,8 +396,31 @@ def run_multiway(payload: dict[str, Any], output: Path, run_id: str) -> dict[str
     ]
     fused = o3d.geometry.PointCloud()
     nodes: list[dict[str, Any]] = []
+    # How far the optimization actually moved each fragment's points, in scene units.
+    #
+    # `corrections` above is the largest absolute change in a pose *matrix entry*,
+    # which is the diagnostic the earlier records in this directory were measured with
+    # and is kept under that name for them. It is not a distance: a 4x4 pose mixes
+    # unitless rotation coefficients with a translation in scene units, so the largest
+    # entry can come from either. Dividing it by the scene extent -- which this code
+    # did, and published as a share -- gives a figure that changes with the units the
+    # scene happens to be expressed in. A pure 90-degree rotation changes a rotation
+    # entry by 1 whether the scene is 10 metres or the same 10000 millimetres across,
+    # so the share came out 0.1 or 0.0001 for identical geometry.
+    #
+    # This measures the displacement the pose change applies to the fragment's own
+    # points. Both the numerator and the extent are then lengths in whatever units the
+    # cloud uses, so the ratio is the same number for the same geometry at any scale.
+    displacements: list[float] = []
     for index, key in enumerate(ordered):
         pose = np.asarray(graph.nodes[index].pose, dtype=float)
+        displacements.append(
+            _point_displacement(
+                np.asarray(clouds[key].points, dtype=float),
+                poses_before[index],
+                pose,
+            )
+        )
         moved = o3d.geometry.PointCloud(clouds[key])
         moved.transform(pose)
         fused += moved
@@ -361,6 +437,20 @@ def run_multiway(payload: dict[str, Any], output: Path, run_id: str) -> dict[str
     fused_path = output / "fused.ply"
     if not o3d.io.write_point_cloud(str(fused_path), fused_down):
         raise Open3dError("Open3D could not write the fused cloud")
+    extent = float(
+        np.linalg.norm(
+            np.asarray(fused_down.get_axis_aligned_bounding_box().get_extent())
+        )
+    )
+    if not extent > 0.0:
+        # Every fragment collapsed into one voxel. The share below divides by this, and
+        # a zero denominator has no honest numerator: publishing 0.0 would read as "the
+        # optimization moved nothing" when the truth is that the scene has no size to
+        # compare a movement against. The validator rejects such a record, so producing
+        # one would only move the failure later.
+        raise Open3dError("fused cloud has no extent to measure a displacement against")
+    largest = max(corrections) if corrections else 0.0
+    moved_the_most = max(displacements) if displacements else 0.0
     pose_graph = {
         "nodes": nodes,
         "edges": edges,
@@ -369,6 +459,25 @@ def run_multiway(payload: dict[str, Any], output: Path, run_id: str) -> dict[str
         "fused_points": len(fused_down.points),
         "fused_points_before_downsample": len(fused.points),
         "fused_sha256": _digest(fused_path),
+        "optimization": {
+            "edges_submitted": edges_submitted,
+            "loop_closures_submitted": loop_closures_submitted,
+            "edges_that_survived_pruning": len(edges),
+            "edges_pruned": edges_submitted - len(edges),
+            # Largest absolute change in a pose matrix entry. Not a distance -- see
+            # the note above the displacement loop -- and kept under this name because
+            # the records in docs/evidence/open3d were measured with it.
+            "max_pose_correction": largest,
+            "max_pose_correction_per_node": corrections,
+            # How far the pose changes moved the fragments' own points, which is a
+            # distance in the same units as the extent below it.
+            "max_point_displacement": moved_the_most,
+            "max_point_displacement_per_node": displacements,
+            # Relative, because a displacement is only small compared with something.
+            # The scene extent is the fused cloud's bounding-box diagonal.
+            "scene_extent": extent,
+            "max_point_displacement_as_share_of_extent": moved_the_most / extent,
+        },
     }
     (output / "pose_graph.json").write_bytes(canonical(pose_graph))
     (output / PAIRS_JOURNAL).write_text(
@@ -710,6 +819,50 @@ def _mesh_facts(o3d, mesh, path: Path) -> dict[str, Any]:
     }
 
 
+def _density_crop_contribution(
+    o3d, cloud, removed_vertices, voxel: float, request
+) -> dict[str, Any]:
+    """How much of the density crop's removal the support crop would not have made.
+
+    The two crops answer different questions -- Poisson's sample density against
+    distance to an actual observation -- but their answers overlap almost entirely,
+    because a vertex the solver extrapolated into empty space is both low-density and
+    far from any point. So the density count alone does not say whether the filter
+    changed the delivered mesh. This measures the part that is its own.
+    """
+
+    import numpy as np
+
+    count = int(len(removed_vertices))
+    if request.support_distance_factor <= 0.0:
+        return {
+            "vertices_removed": count,
+            "removed_only_by_this_crop": count,
+            "support_crop_was_disabled": True,
+            "note": (
+                "with support cropping off, every density removal is this crop's own "
+                "contribution"
+            ),
+        }
+    limit = voxel * request.support_distance_factor
+    exclusive = 0
+    if count:
+        distances = _sample_distances(o3d, cloud, np.asarray(removed_vertices))
+        exclusive = int((np.asarray(distances) <= limit).sum())
+    return {
+        "vertices_removed": count,
+        "removed_only_by_this_crop": exclusive,
+        "support_crop_was_disabled": False,
+        "support_distance": limit,
+        "note": (
+            "vertices this crop removed that lay within the support distance, so the "
+            "support crop would have kept them. The rest were going to be removed "
+            "either way, which is why the removal count alone does not show that this "
+            "filter changed the delivered surface"
+        ),
+    }
+
+
 def run_reconstruct(
     payload: dict[str, Any], output: Path, run_id: str
 ) -> dict[str, Any]:
@@ -733,10 +886,30 @@ def run_reconstruct(
         raise Open3dError("Poisson reconstruction produced no triangles")
     density = np.asarray(densities)
     removed = 0
+    # Measured unconditionally. `density_quantile` of 0 is schema-legal and
+    # documented -- the skill tells an operator to pass it to keep the raw Poisson
+    # surface -- and publishing the block as `null` in that case made the runtime's own
+    # validator reject the report, after the Poisson solve, both mesh writes and both
+    # support passes, and before anything durable was written. The failure message
+    # described the artifact, so the operator was pointed at an artifact bug rather
+    # than at their flag. Nothing removed is a measurement of nothing removed.
+    density_contribution: dict[str, Any] = _density_crop_contribution(
+        o3d, cloud, [], voxel, request
+    )
     if request.density_quantile > 0.0:
         threshold = float(np.quantile(density, request.density_quantile))
         mask = density < threshold
         removed = int(mask.sum())
+        # What this crop contributes, measured before it runs. `removed` on its own
+        # reads as surface the density filter took out of the delivered mesh, and
+        # whenever the support crop is enabled it is not: on the upstream demo scan
+        # at the shipped defaults, 0 of 518 density-removed vertices lay within the
+        # support distance, so every one of them was going to be removed anyway.
+        # Reporting the count without the overlap invites a reader to credit the
+        # filter with work the next stage did.
+        density_contribution = _density_crop_contribution(
+            o3d, cloud, np.asarray(mesh.vertices)[mask], voxel, request
+        )
         mesh.remove_vertices_by_mask(mask)
         if not mesh.has_triangles():
             raise Open3dError(
@@ -773,8 +946,14 @@ def run_reconstruct(
         "poisson_depth": request.poisson_depth,
         "density_quantile": request.density_quantile,
         "support_distance_factor": request.support_distance_factor,
+        # The length the factor above multiplies. Without it the report names a
+        # support *factor* and a support *distance* with nothing connecting them, so
+        # the distance the exclusive count was measured against could not be checked
+        # against the configuration the report claims to have run at.
+        "voxel_size": voxel,
         "input_points": len(cloud.points),
         "low_density_vertices_removed": removed,
+        "density_crop_contribution": density_contribution,
         "unsupported_vertices_removed": unsupported_removed,
         "mesh": _mesh_facts(o3d, mesh, mesh_path),
         "mesh_uncropped": _mesh_facts(o3d, mesh, full_path)
@@ -808,15 +987,132 @@ def _uncropped_facts(o3d, path: Path) -> dict[str, Any]:
     return _mesh_facts(o3d, mesh, path)
 
 
-def _up_axis(o3d, cloud, voxel: float) -> dict[str, Any]:
-    """Infer which way is up from the scan's largest plane, and say so.
+#: The up vector published when the scan does not determine one. A convention, and
+#: labelled as a convention wherever it is used, because these scans carry none.
+DECLARED_UP = (0.0, 0.0, 1.0)
 
-    A 3D view whose camera rolls the room onto its side is unreadable, and these
-    scans carry no axis convention we are entitled to assume. The largest planar
-    segment in an indoor capture is the floor or a wall, so its normal is a
-    measured basis for the camera's up vector. The inlier count and normal are
-    returned and published, because this is an inference and a reviewer should be
-    able to see it was one — and see when it was weak.
+#: What the detection sweep must show, as a floor rather than the counts observed.
+#: Exact counts were pinned here first and went stale on the next regeneration:
+#: across seven sweeps the shipped count returned 25, 26, 27, 25, 27, 28 and 26 of
+#: 30. The rate is not reproducible at thirty runs, which is this record's own
+#: subject, so the claim is the part that survives a rerun -- a floor every
+#: observation clears. See `docs/evidence/open3d/up-axis-ambiguity.json`.
+UP_AXIS_DETECTION_FLOOR_OF_THIRTY = 20
+
+#: Detection rises with the fit count. This was asserted from the thirty-run sweep
+#: until a regeneration returned 27 detections at five fits against 26 at nine and
+#: inverted it; at thirty runs a count's standard deviation is about one and a half,
+#: so neither that ordering nor its inversion was ever measurable there. Pooling 300
+#: runs per configuration across twelve fresh interpreters puts detection near 78, 94
+#: and 99.7 percent at five, nine and seventeen fits, with every step rising. An
+#: independent lane ran the same harness on its own host and got the same ordering
+#: and rates within about a sigma.
+#:
+#: The two steps are not equally firm, and a figure stated here as a floor was
+#: crossed by that reproduction. The step containing the shipped count is the strong
+#: one -- above five sigma in both runs -- while nine fits to seventeen is the soft
+#: end of the curve, above four sigma here and below three there. The shipped repeat
+#: count rests on the lower step, so no claim in this module depends on the upper
+#: one. See `does_detection_rise_with_the_fit_count` in the record for both runs.
+UP_AXIS_DETECTION_RISES_WITH_FITS = True
+
+#: Extra plane fits used to decide whether the scan determines an up axis at all.
+#: Eight, from measurement rather than taste: see `UP_AXIS_DETECTION_FLOOR_OF_THIRTY`
+#: for the floor it clears at this and two other counts, and the record for the
+#: sweep itself.
+#:
+#: Why the misses happen is measured in the record, and the answer is two answers.
+#: A fixed per-fit minority rate across processes survives: 3600 checks across twelve
+#: fresh interpreters give chi-square near one per degree of freedom, where the
+#: earlier four-process probe's 0.2-to-0.375 spread would be eight sigma. That probe
+#: is marked superseded rather than deleted. The quantitative claim built on top of it
+#: -- that treating the fits as independent predicts the miss count -- is the one that
+#: does not settle. Its pooled statistic sits close to the line the record rejects at
+#: and has landed on both sides of it across consecutive regenerations, so no figure
+#: from it is quoted here: the record computes the comparison and its own verdict, and
+#: a reader should take them from there rather than from a constant's docstring.
+#: What has been stable is the direction. The observed misses come in at or below what
+#: independent fits would produce, meaning the fits agree with each other no more
+#: often than chance alone would make them, so the check fires at least as often as
+#: the model predicts and the error is not in the optimistic direction. The shipped
+#: count is justified by the measured detection rate and not by a mechanism. Nine fits
+#: cost about 0.7 s on a 200k-point scan against a multi-second reconstruction.
+UP_AXIS_REPEATS = 8
+
+#: The case where agreement across repeats proves nothing, measured rather than
+#: imagined. The Armadillo mesh sampled as a cloud has no floor and no wall, yet all
+#: repeats return the same axis from a plane tilted past the bound below off it,
+#: holding no more than the inlier fraction below -- a fraction that sits just above
+#: the one-tenth floor the weak-plane guard enforces. So repeat agreement separates an
+#: ambiguous scan from a determined one, and says nothing about whether the plane it
+#: agreed on means anything.
+#:
+#: The figures are the two in the mapping and nothing else. Quoting 19 degrees and 13
+#: percent in this sentence was the same stale-extreme defect the bounds exist to
+#: avoid, one block below their removal: no 19-degree armadillo measurement exists in
+#: the record this cites, and the published bound had been lowered twice while that
+#: sentence stood.
+#:
+#: The floor sits exactly on the ten-degree line below which "badly tilted" would
+#: stop meaning anything, and that is a decision rather than a coincidence. The
+#: record's rule also requires a bound to clear the smallest measured tilt by the
+#: largest margin its sweep justifies -- otherwise the bound is pinned to one draw,
+#: which is how the earlier 14.0 cleared a measured 14.11 and was crossed two
+#: regenerations later. Those two requirements leave a band whose width is the
+#: distance between two steps of that sweep, under a quarter of a degree, sitting just
+#: above the ten-degree line. Picking a value inside it reproduces the original defect
+#: one level up: 14.0, then 12.0, then 10.5, then 10.2, each satisfying the rule
+#: against the fits that were in front of it and failing against the next ones. The
+#: ten-degree line is the one point that cannot be invalidated by a regeneration, so
+#: the published claim stops there and the rule's teeth move to where they bite -- if
+#: the measured minimum ever comes closer to this line than the sweep's level allows,
+#: no level is affordable and the record refuses to build.
+#:
+#: The figures are bounds the evidence clears, not the extremes it happened to
+#: record. Quoting the exact minimum went stale on the first regeneration, because
+#: these fits are not reproducible -- which is the finding this whole block is
+#: about. A bound claims less than was measured and stays true across runs, and the
+#: test asserts the direction rather than equality.
+#:
+#: The tilt bound was 14.0 and that was not enough margin. Four regenerations put the
+#: smallest tilt at 14.11, 14.32, 13.74 and 13.41 degrees, so the bound sat inside the
+#: scatter and held twice before a run crossed it. Changing equality to a direction
+#: fixed the wrong half of the problem: a direction with no margin is still pinned to
+#: one draw. So the test requires a bound to clear the nearest measurement by a
+#: fraction of the range the record's own fits cover, which the 14.0 did not.
+#:
+#: It was then 12.0 against a tenth of that range, and a second lane's sweep over 24
+#: regenerations showed a tenth is too lax to be the rule: a bound sitting exactly
+#: there is later crossed 26.3% of the time. 12.0 survived 24 of 24 because it happened
+#: to carry 0.149 of the range rather than the 0.10 it had to. A floor that permits
+#: bounds failing a quarter of the time is not doing the job, so the requirement is
+#: 0.30 -- where that sweep puts the crossing rate at 2.9% -- and this bound moves down
+#: to 10.5 to carry it. Weaker as a claim and sound as one, which is the trade the rule
+#: exists to force.
+#:
+#: 10.5 rather than lower because the fits span 9.51 degrees from a smallest 13.41, so
+#: 0.30 of that range is the most margin available while the floor stays above the 10
+#: degrees that keep this a statement about a badly tilted plane. Half the range would
+#: put it at 8.66 and quietly cost the claim its content; the two requirements cap the
+#: fraction at 0.359 between them.
+UP_AXIS_AGREEMENT_COUNTEREXAMPLE = MappingProxyType(
+    {
+        "construction": "the Armadillo mesh sampled to 40000 points: no floor, no wall",
+        "repeats_that_agreed": 40,
+        "of_repeats": 40,
+        "plane_tilt_to_the_snapped_axis_degrees": 10.0,
+        "this_tilt_is_a_floor_the_measurement_cleared": True,
+        "plane_inlier_fraction_was_at_most": 0.14,
+        "evidence": "docs/evidence/open3d/up-axis-ambiguity.json",
+    }
+)
+
+
+def _plane_up_reading(o3d, cloud, voxel: float) -> dict[str, Any] | None:
+    """One RANSAC plane fit, reduced to the axis it implies.
+
+    Returns None when the fit does not support an inference at all, which the
+    caller distinguishes from a fit that does.
     """
 
     import numpy as np
@@ -826,7 +1122,7 @@ def _up_axis(o3d, cloud, voxel: float) -> dict[str, Any]:
             distance_threshold=voxel, ransac_n=3, num_iterations=1000
         )
     except RuntimeError:
-        return {"source": "default", "up": [0.0, 0.0, 1.0], "plane_inliers": 0}
+        return None
     normal = np.asarray(model[:3], dtype=float)
     norm = float(np.linalg.norm(normal))
     total = len(cloud.points)
@@ -834,8 +1130,7 @@ def _up_axis(o3d, cloud, voxel: float) -> dict[str, Any]:
     # camera by it.
     if norm == 0.0 or total == 0 or len(inliers) < 0.1 * total:
         return {
-            "source": "default-weak-plane",
-            "up": [0.0, 0.0, 1.0],
+            "weak": True,
             "plane_inliers": int(len(inliers)),
             "plane_inlier_fraction": (len(inliers) / total) if total else 0.0,
         }
@@ -854,7 +1149,7 @@ def _up_axis(o3d, cloud, voxel: float) -> dict[str, Any]:
     snapped = np.zeros(3)
     snapped[axis] = 1.0 if normal[axis] > 0 else -1.0
     return {
-        "source": "largest-plane-normal-snapped-to-axis",
+        "weak": False,
         "up": [float(value) for value in snapped],
         "measured_plane_normal": [float(value) for value in normal],
         "angle_to_snapped_axis_degrees": float(
@@ -862,6 +1157,171 @@ def _up_axis(o3d, cloud, voxel: float) -> dict[str, Any]:
         ),
         "plane_inliers": int(len(inliers)),
         "plane_inlier_fraction": len(inliers) / total,
+        # Kept for the runner-up fit and deliberately not published: on a large scan
+        # this is a six-figure index list.
+        "inlier_indices": inliers,
+    }
+
+
+def _runner_up_plane(
+    o3d, cloud, voxel: float, winner: dict[str, Any]
+) -> dict[str, Any]:
+    """How close the second-best plane came, published without a pass/fail line.
+
+    The repeat check catches an ambiguous scan when the fits happen to disagree, and
+    its detection rate falls as one branch gets rarer. This is the measurement that
+    lets a reviewer see a miss: drop the winning plane's inliers, fit the remainder,
+    and report how large the runner-up was relative to the winner.
+
+    No threshold is attached, and the reason is stronger than caution. Over six
+    clouds the ambiguous constructions have ranked above the determined ones in every
+    regeneration, but the gap between the two groups has been as narrow as 0.05 while
+    the determined side's own top moved 0.866, 0.878, 0.904 across regenerations --
+    movement of the same size as the separation. An earlier version of this docstring
+    claimed every determined cloud came in below 0.90 and called that a real
+    separation; the next regeneration returned 0.904 and it was not.
+
+    The cloud that pushes the determined side up is the armadillo mesh, which has no
+    floor and no wall, so its second-best plane is nearly as good as its best. That is
+    the correct reading of a cloud with no dominant plane, which is exactly why this
+    ratio cannot carry a line on its own. The number is published so a reader can
+    judge how close the competition was.
+    """
+
+    kept = cloud.select_by_index(winner["inlier_indices"], invert=True)
+    if len(kept.points) < 3:
+        return {"measured": False, "why": "nothing left after removing the winner"}
+    second = _plane_up_reading(o3d, kept, voxel)
+    if second is None:
+        return {"measured": False, "why": "no plane fit the remainder"}
+    winner_inliers = max(winner["plane_inliers"], 1)
+    return {
+        "measured": True,
+        "inliers": second["plane_inliers"],
+        "inliers_relative_to_the_winner": second["plane_inliers"] / winner_inliers,
+        "up_it_would_imply": None if second["weak"] else second["up"],
+        "implies_a_different_axis": (
+            None if second["weak"] else second["up"] != winner["up"]
+        ),
+        "no_threshold_is_applied_to_this": (
+            "Over six clouds the ambiguous constructions have ranked above the "
+            "determined ones every time, but by as little as 0.05, while the "
+            "determined side's top moved by about that much between regenerations. "
+            "A cloud with no dominant plane has a second-best plane nearly as good "
+            "as its best, which is correct and which puts it close to the ambiguous "
+            "band. So this is evidence for a reader, not a gate."
+        ),
+    }
+
+
+def _up_axis(
+    o3d, cloud, voxel: float, repeats: int = UP_AXIS_REPEATS
+) -> dict[str, Any]:
+    """Infer which way is up from the scan's largest plane, or refuse to.
+
+    A 3D view whose camera rolls the room onto its side is unreadable, and these
+    scans carry no axis convention we are entitled to assume. The largest planar
+    segment in an indoor capture is the floor or a wall, so its normal is a
+    measured basis for the camera's up vector. The inlier count and normal are
+    returned and published, because this is an inference and a reviewer should be
+    able to see it was one — and see when it was weak.
+
+    `segment_plane` is RANSAC, so on a scan holding two comparable planes the fit
+    lands on either of them and the axis it implies differs run to run. Seeding is
+    not a remedy: ten repeats with `o3d.utility.random.seed` re-set to the same
+    value before each call returned both answers, in a split that itself varied
+    across processes. Every field this function publishes to make the inference
+    visible -- the source string, the inlier fraction, the tilt -- took overlapping
+    values on both branches, so a reviewer reading one run could not tell that the
+    camera's up vector was a coin flip and that the next run would roll the view by
+    ninety degrees.
+
+    So the fit is repeated and the axis is published only when the repeats agree.
+    When they do not, the declared default is published as the default, which is
+    the honest answer for a scan that does not determine one, with the candidates
+    and their counts recorded so the ambiguity is visible rather than averaged
+    away. Agreement is not a quality score; see
+    `UP_AXIS_AGREEMENT_COUNTEREXAMPLE` for the measured case it does not catch.
+    """
+
+    readings = [
+        _plane_up_reading(o3d, cloud, voxel) for _ in range(1 + max(repeats, 0))
+    ]
+    first = readings[0]
+    if first is None:
+        return {"source": "default", "up": list(DECLARED_UP), "plane_inliers": 0}
+    if first["weak"]:
+        return {
+            "source": "default-weak-plane",
+            "up": list(DECLARED_UP),
+            "plane_inliers": first["plane_inliers"],
+            "plane_inlier_fraction": first["plane_inlier_fraction"],
+        }
+
+    usable = [one for one in readings if one is not None and not one["weak"]]
+    # A majority of the fits attempted must be usable, not merely the first one.
+    # Weakness of the first reading disqualified the scan above, while the others
+    # were filtered out silently, so their weakness only shrank the sample -- and a
+    # scan that fit weakly eight times in nine, strongly on the draw that happened
+    # to be first, was published as a measured axis with `repeats: 1`. "The repeats
+    # agreed" is true vacuously when there is one repeat. This is reachable from the
+    # evidence rather than hypothetical: the Armadillo case records inlier fractions
+    # of 0.122 to 0.134 against a weak threshold of 0.1, so ordinary RANSAC variance
+    # puts some of its fits either side of the line.
+    if 2 * len(usable) <= len(readings):
+        return {
+            "source": "default-weak-plane",
+            "up": list(DECLARED_UP),
+            "plane_inliers": first["plane_inliers"],
+            "plane_inlier_fraction": first["plane_inlier_fraction"],
+            "usable_fits": len(usable),
+            "attempted_fits": len(readings),
+            "why": (
+                "most fits found no plane holding a tenth of the points, so the "
+                "sample behind any agreement would be a minority of the attempts"
+            ),
+        }
+
+    counts: dict[tuple[float, ...], int] = {}
+    for one in usable:
+        key = tuple(one["up"])
+        counts[key] = counts.get(key, 0) + 1
+    agreement = {
+        "repeats": len(usable),
+        # Published so a consumer, and the validator, can see how much of the
+        # sample was thrown away before the repeats were counted.
+        "attempted_fits": len(readings),
+        "distinct_axes": len(counts),
+        "candidates": [
+            {"up": list(axis), "chosen_by_repeats": count}
+            for axis, count in sorted(counts.items(), key=lambda item: -item[1])
+        ],
+        "runner_up_plane": _runner_up_plane(o3d, cloud, voxel, first),
+        "agreement_is_not_meaningfulness": {
+            "measured_counterexample": dict(UP_AXIS_AGREEMENT_COUNTEREXAMPLE),
+            "so": (
+                "Disagreement here proves the scan does not determine an up axis. "
+                "Agreement proves only that one plane dominates, not that the plane "
+                "is a floor or that the axis means anything."
+            ),
+        },
+    }
+    if len(counts) > 1:
+        return {
+            "source": "default-ambiguous-plane",
+            "up": list(DECLARED_UP),
+            "plane_inliers": first["plane_inliers"],
+            "plane_inlier_fraction": first["plane_inlier_fraction"],
+            "agreement": agreement,
+        }
+    return {
+        "source": "largest-plane-normal-snapped-to-axis",
+        "up": first["up"],
+        "measured_plane_normal": first["measured_plane_normal"],
+        "angle_to_snapped_axis_degrees": first["angle_to_snapped_axis_degrees"],
+        "plane_inliers": first["plane_inliers"],
+        "plane_inlier_fraction": first["plane_inlier_fraction"],
+        "agreement": agreement,
     }
 
 
