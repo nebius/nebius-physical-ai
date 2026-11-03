@@ -97,7 +97,12 @@ be able to open the thing being asserted.
   completeness.
 - `reconstruct` crops the lowest-density Poisson vertices (the upstream tutorial's
   density quantile). Low density is a sampling property, not proof that geometry
-  is false; the removed count is recorded.
+  is false; the removed count is recorded. Read `density_crop_contribution`, not the
+  count on its own: `removed_only_by_this_crop` is how many of those vertices the
+  support crop would have kept, so it is the part the density filter changed in the
+  delivered mesh. On the upstream demo scan at the shipped defaults it is 0 of 518 —
+  the two filters overlap almost entirely, and the bare count invites crediting this
+  filter with the next stage's work.
 - The density quantile alone is nowhere near enough on a partial scan. Poisson
   returns a *closed* surface, so an open capture comes back wrapped in an
   extrapolated shell that renders as smooth opaque geometry indistinguishable

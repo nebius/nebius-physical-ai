@@ -110,6 +110,41 @@ grow with the capture. The no-flip counts and the per-case
 cut-to-displacement ratios are unaffected: at 2.187e-03 m the tail observation still
 dominates both cuts.
 
+### The density crop's removal count described work the next stage was going to do
+
+`density-crop-contribution.json`. Reconstruction applies two filters in sequence: the density
+crop removes vertices in the lowest quantile of Poisson's sample density, and the support crop
+then removes vertices farther than `support_distance_factor` voxels from any observed point. The
+report published the density crop's removal count, which reads as surface that filter took out of
+the delivered mesh.
+
+At the shipped defaults on the upstream demo scan, **zero** of the 518 density-removed vertices lay
+within the support distance, and the delivered mesh is identical with the density crop disabled —
+to the triangle and to six decimal places of surface area. The count was never wrong; reading it as
+this filter's effect on the delivered surface was, and nothing in the report separated the two. The
+run now publishes how much of the removal was the density crop's own.
+
+The control carries the weight: with support cropping off the density crop is the only filter and
+removes about 1025 triangles and 6.72 m² of surface, so "it changed nothing" at the defaults is
+overlap with the next filter rather than a measurement that cannot see a crop. Two further
+readings are recorded against the obvious misreadings. The crop is strongly selective — Spearman
+−0.70 of density against distance to the cloud, and at the shipped quantile the vertices it
+removes sit 51× farther from any observed point than the ones it keeps — so this is not a filter
+trimming at random. And pushed to the 0.20 quantile it removes roughly 780 triangles and 0.34 m²
+of *supported* surface, about 1.9% of the delivered mesh, so raising the quantile buys a
+contribution by deleting surface the scan does support. The sweep's widest support distance loses
+about 8980 triangles the same way, which is the worst case rather than the shipped one.
+
+Triangle counts and surface areas here are approximate because the Poisson solve is not
+deterministic and nothing seeds it. An independent lane reproduced every structural result and
+found 31 figures differing in the fourth significant digit, including between its own two runs,
+so the record now measures its own stability: over six repeats the vertex counts, the removal
+counts and every yes/no result are identical, while triangle counts and areas move by under half
+a percent. The one figure a test applies a threshold to sits 783 from that threshold with a
+spread of 3 — 4 distinct values across the six repeats, 783 through 786 — so no conclusion
+here turns on a digit that moves. A regeneration should expect differences at that scale and
+nothing larger.
+
 ## Reproducing
 
 ```bash

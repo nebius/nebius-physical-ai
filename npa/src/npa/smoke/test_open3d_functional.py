@@ -19,6 +19,7 @@ from typing import Any
 from npa.workbench.open3d.artifacts import (
     read_journal,
     validate_mesh,
+    validate_density_crop_contribution,
     validate_support,
     validate_pose_graph,
     validate_up_axis_inference,
@@ -565,6 +566,32 @@ def pytest_approx(expected: float, tolerance: float = 1e-6):
     return _Close()
 
 
+def _assert_the_density_crop_reports_its_own_contribution(report: dict) -> None:
+    """The crop runs, removes vertices, and changes nothing the next crop wouldn't.
+
+    Asserting only that the block exists would pass on a block that always claims
+    the whole removal as its own. So this checks the measured relationship: with
+    support cropping on at the shipped factor, the density crop's exclusive share
+    is a strict minority of its removals -- on the demo scan it is zero of 518 --
+    and the counts agree with the figure published beside them.
+    """
+
+    contribution = report["density_crop_contribution"]
+    removed = report["low_density_vertices_removed"]
+    assert contribution["vertices_removed"] == removed, contribution
+    assert contribution["support_crop_was_disabled"] is False, (
+        "this smoke runs with support cropping on; the contribution claim below is "
+        f"about that case: {contribution}"
+    )
+    exclusive = contribution["removed_only_by_this_crop"]
+    assert 0 <= exclusive <= removed, contribution
+    assert exclusive * 2 < removed or removed == 0, (
+        "the density crop now accounts for most of its own removals, so the overlap "
+        "this measurement exists to expose has gone; recheck whether the published "
+        f"removal count still overstates the crop's effect: {contribution}"
+    )
+
+
 def main() -> None:
     import open3d as o3d
 
@@ -628,6 +655,8 @@ def main() -> None:
         validate_mesh(mesh_report["mesh"])
         validate_mesh(mesh_report["mesh_uncropped"])
         validate_support(mesh_report, voxel_size=VOXEL_SIZE)
+        validate_density_crop_contribution(mesh_report)
+        _assert_the_density_crop_reports_its_own_contribution(mesh_report)
         _assert_support_crop_kept_the_observations(mesh_report)
 
         recording = root / "visualize"
