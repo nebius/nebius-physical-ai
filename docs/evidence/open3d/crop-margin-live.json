@@ -146,10 +146,12 @@
     "python": "3.14.7",
     "npa_runner_imported_from": {
       "absolute_path_on_the_machine_that_ran_it": "/home/ubuntu/npa-worktrees/cursor-open3d-margin/npa/src/npa/workbench/open3d/runner.py",
+      "crop_margin_function_sha256": "e1afe871ac54823f692444ae4332147b3a0d5b0a4b2cf82fb224ae78ad296458",
       "repository_relative": "npa/src/npa/workbench/open3d/runner.py",
-      "sha256": "d397a91479da3b92ee009f18fe8884a76297ef83c37074035225412cd0995736"
+      "sha256": "d397a91479da3b92ee009f18fe8884a76297ef83c37074035225412cd0995736",
+      "source_commit": "054f2508a9f351acc30e30832c867e64d43e88c0"
     },
-    "what_can_be_rechecked_elsewhere": "npa_runner_imported_from.repository_relative and .sha256. The absolute path is this machine's and is recorded as history, not as something another checkout can verify.",
+    "what_can_be_rechecked_elsewhere": "source_commit and sha256 retain the complete runner bytes that produced this record. crop_margin_function_sha256 binds the measured calculation across later integrations that add unrelated runner functions. The absolute path is this machine's and is recorded as history, not as something another checkout can verify.",
     "open3d_imported_from": {
       "imported_from": "/home/ubuntu/npa-worktrees/cursor-open3d-occlusion/npa/.venv/lib/python3.14/site-packages/open3d/__init__.py",
       "resolves_to": "/home/ubuntu/npa-worktrees/cursor-open3d-reproducibility/npa/.venv/lib/python3.14/site-packages/open3d/__init__.py",

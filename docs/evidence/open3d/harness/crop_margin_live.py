@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Run the product's own reconstruct stage and record the crop margin it now reports.
 
 Not a mirror of the stage: this calls `run_multiway` and `run_reconstruct`, the same two

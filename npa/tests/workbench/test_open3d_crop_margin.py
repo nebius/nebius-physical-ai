@@ -15,11 +15,13 @@ Needs no Open3D: `_crop_margin` takes the distance array the crop already thresh
 
 from __future__ import annotations
 
+import ast
 import copy
 import hashlib
 import importlib.util
 import json
 import re
+import subprocess
 import tempfile
 from collections.abc import Mapping
 from pathlib import Path
@@ -201,11 +203,39 @@ def _assert_the_record_binds_this_checkout(record: dict, root: Path) -> None:
         RUNNER_RELATIVE
     ), "the recorded absolute path is not a path to this stage at all"
 
+    measured = subprocess.run(
+        [
+            "git",
+            "-C",
+            str(_repository_root()),
+            "show",
+            f"{origin['source_commit']}:{RUNNER_RELATIVE}",
+        ],
+        check=True,
+        capture_output=True,
+    ).stdout
+    assert hashlib.sha256(measured).hexdigest() == origin["sha256"]
+
     source = root / RUNNER_RELATIVE
     assert source.exists(), f"this checkout has no {RUNNER_RELATIVE}"
-    assert hashlib.sha256(source.read_bytes()).hexdigest() == origin["sha256"], (
-        "the record was produced from different bytes of the stage than this checkout "
-        "has, so its figures do not describe this revision"
+
+    def function_digest(raw: bytes) -> str:
+        text = raw.decode("utf-8")
+        tree = ast.parse(text)
+        node = next(
+            item
+            for item in tree.body
+            if isinstance(item, ast.FunctionDef) and item.name == "_crop_margin"
+        )
+        segment = ast.get_source_segment(text, node)
+        assert segment is not None
+        return hashlib.sha256(segment.encode("utf-8")).hexdigest()
+
+    expected = origin["crop_margin_function_sha256"]
+    assert function_digest(measured) == expected
+    assert function_digest(source.read_bytes()) == expected, (
+        "the crop-margin calculation changed after the retained measurement; regenerate "
+        "the record before treating its figures as evidence for this revision"
     )
 
 
@@ -727,8 +757,8 @@ def test_the_binding_checks_the_bytes_and_not_the_path() -> None:
       where the author's files happen to sit;
     * a record whose recorded absolute path does not exist anywhere must still pass,
       which is the CI runner's situation and the one that failed;
-    * one byte of difference must fail, or the check has no teeth and deleting it
-      would look like a fix.
+    * a change inside the measured calculation must fail, or the check has no teeth
+      and deleting it would look like a fix.
     """
 
     record = _live_record()
@@ -747,10 +777,15 @@ def test_the_binding_checks_the_bytes_and_not_the_path() -> None:
             absent, _checkout_holding(source, Path(into) / "absent-origin")
         )
 
-        with pytest.raises(AssertionError, match="different bytes of the stage"):
+        changed = source.replace(
+            b"gap = np.abs(np.asarray(distances, dtype=float) - limit)",
+            b"gap = np.abs(np.asarray(distances, dtype=float) - limit) + 1",
+        )
+        assert changed != source
+        with pytest.raises(AssertionError, match="crop-margin calculation changed"):
             _assert_the_record_binds_this_checkout(
                 record,
                 _checkout_holding(
-                    source + b"\n# not the stage\n", Path(into) / "one-byte-different"
+                    changed, Path(into) / "changed-calculation"
                 ),
             )
