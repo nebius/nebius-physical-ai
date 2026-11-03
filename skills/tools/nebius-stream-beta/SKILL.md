@@ -68,6 +68,25 @@ separately when it uses another connection or credential. The helper reads the
 current S3 credential file for each registration. Media must already exist in
 the registered input bucket; the helper does not upload local media.
 
+## Submission, polling and waiting
+
+Generation is asynchronous. HTTP 202 acknowledges admission and returns a
+durable `job_id` plus `status_url`; it does not mean the output is ready.
+`submit` retains that identity and exits. Use `status` for one status read or
+`resume` to wait through repeated status GETs and retrieve verified artifacts.
+`resume` polls every three seconds between active-state reads, has no overall
+waiting deadline, and exits unsuccessfully if a job fails, is cancelled or
+requires recovery. Each HTTPS request has a separate 60-second timeout.
+
+Stopping local waiting does not cancel the remote job. Keep the same state
+and rerun `resume` after an interruption or download error; reconcile an
+ambiguous submission with the same request/state first. Read the
+[job lifecycle guide](references/requests.md#submission-polling-and-completion)
+for acknowledgement examples, status/artifact routes, batch polling and the
+optional separately supplied SDK's wait methods. The current HTTP contract
+has no server-side `wait=true` mode; do not invent a wait field or require the
+private SDK to use the portable client.
+
 ## Discover before generating
 
 Inspect the saved authenticated `/v1/models` and `/v1/openapi.json` contract.
