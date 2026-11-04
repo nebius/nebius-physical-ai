@@ -1731,7 +1731,8 @@ def _provider_vlm_report(
 
 
 _GRADE_GATE_EVIDENCE_DISCLOSURE = {
-    "evidence_scope": "report_internal_consistency_checks_only",
+    "report_producer": None,
+    "evidence_scope": "no_report_selected",
     "provider_authentication_established": False,
     "captured_request_authenticity_established": False,
     "visual_correctness_established": False,
@@ -1739,12 +1740,16 @@ _GRADE_GATE_EVIDENCE_DISCLOSURE = {
 }
 
 
-def _assert_grade_gate_evidence_disclosure(payload: dict) -> None:
+def _assert_grade_gate_evidence_disclosure(payload: dict, producer: str | None) -> None:
     """Require the exact scope ceiling and literal false authenticity claims."""
 
-    assert (
-        payload["evidence_scope"] == _GRADE_GATE_EVIDENCE_DISCLOSURE["evidence_scope"]
-    )
+    scopes = {
+        "vlm": "vlm_report_internal_consistency_checks_only",
+        "cosmos": "cosmos_report_status_pass_score_checks_only",
+        None: "no_report_selected",
+    }
+    assert payload["report_producer"] == producer
+    assert payload["evidence_scope"] == scopes[producer]
     for field in (
         "provider_authentication_established",
         "captured_request_authenticity_established",
@@ -2175,7 +2180,7 @@ def test_grade_gate_frame_digest_check_does_not_claim_payload_verification(
     # A valid digest bound into the manifest cannot prove image bytes that the
     # gate never receives. Payload validation belongs to the media-owning caller.
     assert dfs.grade_gate(str(tmp_path), str(decision_path)) == "promote_checkpoint"
-    _assert_grade_gate_evidence_disclosure(json.loads(decision_path.read_text()))
+    _assert_grade_gate_evidence_disclosure(json.loads(decision_path.read_text()), "vlm")
 
 
 def test_grade_gate_discloses_scope_on_report_backed_loop_back(
@@ -2188,14 +2193,14 @@ def test_grade_gate_discloses_scope_on_report_backed_loop_back(
     assert (
         dfs.grade_gate(str(tmp_path), str(decision_path), threshold=0.95) == "loop_back"
     )
-    _assert_grade_gate_evidence_disclosure(json.loads(decision_path.read_text()))
+    _assert_grade_gate_evidence_disclosure(json.loads(decision_path.read_text()), "vlm")
 
 
 def test_grade_gate_discloses_scope_when_report_is_missing(tmp_path: Path) -> None:
     decision_path = tmp_path / "decision.json"
 
     assert dfs.grade_gate(str(tmp_path), str(decision_path)) == "loop_back"
-    _assert_grade_gate_evidence_disclosure(json.loads(decision_path.read_text()))
+    _assert_grade_gate_evidence_disclosure(json.loads(decision_path.read_text()), None)
 
 
 def test_grade_gate_cosmos_promotion_keeps_legacy_gate_id_basis(
@@ -2207,7 +2212,7 @@ def test_grade_gate_cosmos_promotion_keeps_legacy_gate_id_basis(
 
     assert dfs.grade_gate(str(scores), str(decision_path), 0.5) == "promote_checkpoint"
     payload = json.loads(decision_path.read_text())
-    _assert_grade_gate_evidence_disclosure(payload)
+    _assert_grade_gate_evidence_disclosure(payload, "cosmos")
     legacy_basis = {
         key: payload.get(key)
         for key in (
