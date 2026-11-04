@@ -55,6 +55,22 @@ tests explicitly support it.
 
 ## Upstream Post-Training Map
 
+For a short Cosmos3-DROID execution check on eight H200s, use the standalone
+application at `npa/workflows/workbench/cosmos3-droid-h200/`. It supplies a
+manifest-constrained native S3 video reader and eager 32/rank, accumulation-32
+settings with four loader workers per rank. Local metadata/actions and pinned
+upstream sampling, filtering and augmentation remain unchanged. Prepared model,
+tokenizer, VAE, materialized sound-tokenizer cache, converted DCP and separately
+fetched window filter are explicit prerequisites. The window filter is not
+redistributed. Every checkpoint save and evaluation is disabled, so this path
+does not produce a resumable or quality-qualified policy. Read the recipe's
+validation boundary before running it. The original instrumented eight-H200
+measurement completed five global-8,192 updates with 88.71 GiB allocated peak;
+four post-first durations averaged 1,571.56 seconds with population CV 1.51%.
+Numeric extracts and the reducer are in `docs/workbench/evidence/cosmos3-droid-h200/`.
+That short-window historical result does not measure the subsequent portable
+refactor, maximum batch size, multi-node scaling or model quality.
+
 For reserved B200 Slurm scaling, use the standalone application recipe at
 `npa/workflows/workbench/cosmos3-wam-slurm/` and
 `docs/workbench/cookbooks/cosmos3-wam-slurm.md`. It plans native LIBERO WAM runs

@@ -1,0 +1,51 @@
+{
+  "timestamp": "20261024T000000Z",
+  "verification_scope": "Fresh public snapshot downloads recorded the immutable timestamped InRelease and Packages.xz hashes and byte counts below. Package floors use real dpkg ordering. Docker builds validate the same archives with the image Debian keyring at apt-get update time. This is package-index evidence, not a fresh signature-verification execution, built-image scan, bootstrap, or runtime acceptance.",
+  "inrelease": {
+    "debian": {
+      "sha256": "0584fba32e13e0ab8285fb16c27adea1ec03a73669c18702821094fd6ca86675",
+      "bytes": 140421
+    },
+    "debian-security": {
+      "sha256": "f244a867a18dc1d246cc8712675f1592849f68c6c07be6914283e534b9418d3e",
+      "bytes": 43409
+    }
+  },
+  "indexes": {
+    "debian": {
+      "sha256": "7778d3e3f303b7ddb8ce0fe7c8d57473a076c6bf2e8f241f75421d2396352498",
+      "bytes": 9678380
+    },
+    "debian-security": {
+      "sha256": "80abc7ace801ccb58732fe448148850e3078f925942b034fe532c371f804c2a0",
+      "bytes": 269860
+    }
+  },
+  "packages": {
+    "perl-base": {
+      "archive": "debian",
+      "version": "5.40.1-6+deb13u1",
+      "fixed_floor": "5.40.1-6+deb13u1",
+      "sha256": "b795464137a0f4d443fc9284f4b93e883fb83883cb533adf300ac660807a352a"
+    },
+    "libbrotli1": {
+      "archive": "debian-security",
+      "version": "1.1.0-2+deb13u1",
+      "fixed_floor": "1.1.0-2+deb13u1",
+      "sha256": "db46824c60fee46aff3cc0be3e5f736bc606cae669b1fb17516a41e8073251a9"
+    },
+    "libglib2.0-0t64": {
+      "archive": "debian",
+      "version": "2.84.4-3~deb13u5",
+      "fixed_floor": "2.84.4-3~deb13u4",
+      "sha256": "e2baf92c57d1db1753e5781a61450d9a01e7833c7bd2dfe87776a6811c11ecc2"
+    },
+    "libmbedcrypto16": {
+      "archive": "debian",
+      "version": "3.6.6-0.1~deb13u1",
+      "fixed_floor": "3.6.6-0.1~deb13u1",
+      "sha256": "b38baf2ecaca7b28b3005d34b8108ee9b17681426b20662813995e939aea6dfa"
+    }
+  },
+  "image_scope": "Controller requires the Perl and Brotli floors; viewer requires all four floors. Both recipes install the fixed package versions from the immutable Debian and Debian security snapshot sources, then reject unreadable or below-floor installed versions. Replacement image security, bootstrap, byte confidentiality and capability evidence remain separate required gates."
+}
