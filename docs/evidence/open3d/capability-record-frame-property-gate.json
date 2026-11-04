@@ -9,8 +9,7 @@
     "min_subject_spread": 0.06,
     "not_gated": [
       "content_fraction",
-      "extent_span_narrower_axis",
-      "clipping_headroom_zoom"
+      "extent_span_narrower_axis"
     ],
     "scale_label_rect_top_bottom_left_right": [
       648,
@@ -18,7 +17,11 @@
       20,
       240
     ],
-    "scale_label_sha256": "1bc310158d2020172cce6bda0d1214668f1a6b3eadc9ea6fd4d55a4440ed99e3"
+    "scale_label_sha256": "1bc310158d2020172cce6bda0d1214668f1a6b3eadc9ea6fd4d55a4440ed99e3",
+    "subject_spread_overlay_rects_top_bottom_left_right": [
+      [648, 670, 20, 240],
+      [655, 720, 27, 317]
+    ]
   },
   "result_on_the_delivered_frames": {
     "frames": 9,
@@ -29,7 +32,7 @@
         "low_contrast_content_fraction": 0.007347174639864614,
         "median_contrast_vs_background": 137.2126,
         "scale_label_intact": true,
-        "subject_spread_narrower_axis": 0.17604166666666668
+        "subject_spread_narrower_axis": 0.175
       },
       "baseline_scan_and_surface__overview.png": {
         "border_content_pixels": 0,
@@ -43,49 +46,49 @@
         "low_contrast_content_fraction": 0.011299128488588965,
         "median_contrast_vs_background": 162.2848,
         "scale_label_intact": true,
-        "subject_spread_narrower_axis": 0.14895833333333333
+        "subject_spread_narrower_axis": 0.14791666666666667
       },
       "baseline_surface_only__overview.png": {
         "border_content_pixels": 0,
         "low_contrast_content_fraction": 0.00021377541169006703,
         "median_contrast_vs_background": 159.28480000000002,
         "scale_label_intact": true,
-        "subject_spread_narrower_axis": 0.190625
+        "subject_spread_narrower_axis": 0.18958333333333333
       },
       "candidate_scan_and_surface__opposite.png": {
         "border_content_pixels": 0,
         "low_contrast_content_fraction": 0.03651696063410866,
         "median_contrast_vs_background": 156.28480000000002,
         "scale_label_intact": true,
-        "subject_spread_narrower_axis": 0.13125
+        "subject_spread_narrower_axis": 0.13020833333333334
       },
       "candidate_scan_and_surface__overview.png": {
         "border_content_pixels": 0,
         "low_contrast_content_fraction": 0.036706563265513345,
         "median_contrast_vs_background": 152.28480000000002,
         "scale_label_intact": true,
-        "subject_spread_narrower_axis": 0.12916666666666668
+        "subject_spread_narrower_axis": 0.128125
       },
       "candidate_scan_and_surface__topdown.png": {
         "border_content_pixels": 0,
         "low_contrast_content_fraction": 0.03252237200466894,
         "median_contrast_vs_background": 169.357,
         "scale_label_intact": true,
-        "subject_spread_narrower_axis": 0.10625
+        "subject_spread_narrower_axis": 0.10416666666666667
       },
       "candidate_surface_only__overview.png": {
         "border_content_pixels": 0,
         "low_contrast_content_fraction": 0.0004033097418817652,
         "median_contrast_vs_background": 155.2848,
         "scale_label_intact": true,
-        "subject_spread_narrower_axis": 0.12708333333333333
+        "subject_spread_narrower_axis": 0.12604166666666666
       },
       "observed_scan_only__overview.png": {
         "border_content_pixels": 0,
         "low_contrast_content_fraction": 0.07841950131442683,
         "median_contrast_vs_background": 139.2848,
         "scale_label_intact": true,
-        "subject_spread_narrower_axis": 0.13125
+        "subject_spread_narrower_axis": 0.12916666666666668
       }
     }
   },
@@ -93,7 +96,7 @@
     "1_a_fixed_annotation_contaminates_the_obvious_measure": {
       "what": "Every one of the nine frames carries a scale bar reading '1.0 m (scan units)' drawn at a fixed bottom-left position. It is content, so it pins the content bounding box.",
       "the_tell": "All nine report a left margin of 27px, a bottom margin of 28px and a clipping headroom of 1.056 -- identical across nine different views of different geometry. Nine independent 3D projections cannot coincide like that; the number was describing the annotation.",
-      "magnitude": "Removing the annotation moves the extent reading by up to 0.335: the content box spans 0.550-0.713 of the narrower axis across the nine frames, and the subject alone spans 0.264-0.510. The largest single-frame shift is candidate_scan_and_surface__opposite, 0.656 to 0.321. The quartile spread moves by at most 0.0021 over the same removal -- 1.96% against the extent's 52.3%, so the extent is 26.7x the more mask-sensitive of the two, which is why stranding is gated on the spread and extent is recorded and not gated.",
+      "magnitude": "At the matched-pair-certified overlay boundary, exclusion changes the extent by as much as 52.26% and the spread by at most 0.0021 (1.96%), so the extent is 26.7x more mask-sensitive. The gate therefore acts on the masked spread; extent is recorded and not gated.",
       "consequence": "A 0.40 floor on extent -- which is what gating the recorded number would have meant -- passes a frame whose geometry has collapsed to a 16x16 speck, at every placement tried, because the annotation still anchors a corner of the box.",
       "so": "Stranding is gated on an interquartile spread, and extent is recorded and not gated.",
       "this_also_corrects_a_review_statement": "The review's 'the subject spans 55-71% of each frame's narrower axis' is a reading of the content bounding box, not of the subject. The arithmetic was right; the annotation was in the frame. The review measured it independently, confirmed the 27px/28px margins on all nine, and struck the claim in their own report rather than quietly amending it.",
@@ -104,13 +107,9 @@
         "control_2_a_plateau_sweep": "Growing the exclusion rectangle from the overlay's own origin (row 655, col 27) gives 0.332-0.596 at 81px wide, 0.321-0.510 at 120px, and then 0.264-0.510 from 160px all the way out to 440px -- flat to three decimals over a 280px growth. If the box were eating geometry the value would keep drifting. It does not, so there is nothing in those rows left to remove, and the box is minimal sufficient rather than generous.",
         "why_this_is_better_than_either_mask_argument": "Neither control requires agreeing where the glyphs end. One asks whether the band responds to a change of reconstruction; the other asks where the answer stops changing. That is the figure to show if the boundary is ever questioned again."
       },
-      "i_published_a_correction_that_was_wrong_and_have_reverted_it": {
-        "what_i_published_first": "Extent shift up to 0.335, subject extent 0.264-0.510.",
-        "what_i_then_corrected_it_to": "0.051 and 0.332-0.596, on a reviewer's mask of the 693 pixels that are identical across all nine frames and non-background, with the conclusion that my first figure was inflated by a mask that removed real geometry.",
-        "what_is_actually_true": "The first figure. 0.335 and 0.264-0.510 are reproduced above by two controls that need no mask at all, and the reviewer has retracted their number with a proof rather than a concession.",
-        "why_i_got_it_wrong": "The reviewer's mask was derived from a defensible-sounding rule -- pixels identical in all nine frames -- and I accepted the number it produced as a correction. The rule is the wrong invariance class: the overlay is view-dependent, 729 pixels in the overview frames, 1,049 opposite and 1,481 topdown, so intersecting all nine keeps only the view-invariant remnant of 693 and leaves the rest of the label in the image, still pinning the bounding box. Within a view the band is identical across reconstructions, which is the invariance that isolates it.",
-        "the_mistake_was_mine_and_it_was_not_deference": "I had already written that the figure was mask-dependent, which was true and was the wrong place to stop. The right move was the plateau test -- find where the answer stops changing -- and it costs one sweep. I ran it only after the reviewer retracted. Taking a second mask-dependent number as a correction to a first one is not a correction.",
-        "verified_before_reverting": "I did not revert on the reviewer's word. I reproduced the pair diff (4 pairs, 0 band pixels, 82,788-97,765 elsewhere), the plateau (flat 0.264-0.510 from 160px to 440px), the per-view overlay sizes (729/1,049/1,481) and the 693-pixel remnant, independently. The reviewer's stated sweep parameters are anchored at their mask origin, not at the frame's bottom edge; anchored their way their figures reproduce exactly, and my first attempt to reproduce them bottom-anchored did not. Anchoring convention has now caused two disagreements about these frames and neither was about the data."
+      "retired_exploratory_mask_figures": {
+        "why_they_are_not_current_claims": "Earlier absolute shifts came from rectangles or an all-frame pixel intersection that did not define the production mask. They remain reproducible history but are not used to characterize or execute the gate.",
+        "current_bound": "The matched-pair-certified 290px band is the operative exclusion. Its measured changes are reported as 52.26% for extent and 0.0021 (1.96%) for spread."
       }
     },
     "2_the_framing_pair_had_a_hole_and_the_sweep_found_it": {
@@ -135,15 +134,15 @@
   "what_the_floor_margin_actually_measures": {
     "the_question": "Is 0.06 too generous, and is its exact value doing work?",
     "both_bounds": {
-      "weakest_delivered_frame": "0.1062 (candidate_scan_and_surface__topdown), 1.77x the floor",
+      "weakest_delivered_frame": "0.1042 (candidate_scan_and_surface__topdown), 1.74x the floor after the certified overlay is excluded",
       "healthiest_delivered_frame": "0.1906, 3.18x the floor",
-      "hardest_stranded_control": "0.0472, with the floor 1.27x above it",
-      "so": "The floor separates the two, but not symmetrically: it sits nearer the control it must catch than the frame it must admit."
+      "hardest_stranded_control": "0.0078, with the floor 7.69x above it",
+      "so": "The masked floor separates the overlay-plus-speck control from the weakest delivered subject."
     },
-    "the_blind_spot_stated_as_a_number": "A subject may shrink to 0.60 of its delivered linear size and still pass. That is the gate's admissible degradation on this axis, and it is larger than the phrase 'catches stranding' suggests.",
+    "the_blind_spot_stated_as_a_number": "In the worst delivered frame a subject may shrink to 0.34 of its delivered linear size and still pass. The summary uses the minimum crossing across frames, because that is the largest admissible degradation.",
     "whether_to_tighten_is_also_measured": {
-      "what_the_data_would_carry": "0.065 or 0.07 balances the two margins and tightens the admissible shrink to 0.65 or 0.70.",
-      "what_it_rules_out": "0.08, because its headroom above the weakest frame (1.33x) falls below the movement the statistic already shows between two reconstructions of the same view (up to 1.50x across four matched pairs). A gate that fails a frame which is fine gets deleted, and then it protects nothing.",
+      "what_the_data_would_carry": "0.065 tightens the worst-case admissible shrink to 0.38 while retaining 1.60x headroom over the weakest delivered frame.",
+      "what_it_rules_out": "0.07 and 0.08, because their headroom above the weakest masked frame (1.49x and 1.30x) does not exceed the 1.50x movement observed between matched reconstructions.",
       "why_the_floor_is_not_moving": "The movement estimate rests on four pairs, and the reason this report exists is that a threshold cannot be validated against the same nine frames it was chosen from. Tightening on that evidence repeats the error with a smaller number. The floor stays, the asymmetry is recorded, and a reviewer who wants 0.065 now has the figures to ask for it."
     },
     "what_this_does_not_do": "It does not make the threshold pre-registered and does not show the floor catches every bad frame. It bounds one failure mode -- a subject that shrank away from the camera -- and says how much room there is on that axis."
@@ -206,11 +205,11 @@
       },
       {
         "path": "harness/frame_property_gate.py",
-        "sha256": "e5dc7411c3619f96fade9ee96500bd9a48daabff3c1652d3ac9f51b5b66ced1e"
+        "sha256": "9bd3de75d8e7fbb53fe30e3eda8a860ee49875335cf062dd6aebebd999afc412"
       },
       {
         "path": "harness/gate_zoom_sweep.py",
-        "sha256": "305ddc353f63c06b55a94c875d38013b34a5d7c3142c5cf0d6cb89f19b5d173d"
+        "sha256": "2dd9aa7aff8f74948d329ad4e49097caeb34769dad5aefb777b0f3cba57d9ef6"
       },
       {
         "path": "harness/overlay_isolation_controls.py",
@@ -218,15 +217,15 @@
       },
       {
         "path": "harness/spread_floor_margin.py",
-        "sha256": "82c887ea35489d098cac2596bc708d8479ad26cfd7582543034094b1bcccc4bb"
+        "sha256": "a4a7c09ba8bf8e01ce11baec5a57a56461bb8c19b09a8bfd820532d440078912"
       },
       {
         "path": "harness/statistic_mask_sensitivity.py",
-        "sha256": "e7f5ea5458677deeda1e5eb14b0d778febb5d2e3dec866a581a37e0eecc11fc6"
+        "sha256": "3176bb3c0acc57ce9f5d1833a662e86650360000351fd0d4265d247f2f23609c"
       },
       {
         "path": "statistic-mask-sensitivity.json",
-        "sha256": "4e130d7c1e2ec5e518f9bf53d82e258d3d6c9ef25a840d9e62fc49dd9d288342"
+        "sha256": "0232e31343124386d0716d83769f7ab1f488e97f05d5f20b11efbb2f4e68b37e"
       }
     ],
     "one_of_these_pins_goes_stale_when_a_sibling_lands": "harness/frame_edge_audit.py is edited by the evidence-binding branch (PR 982), which makes it record the sha256 of each file it measures. That digest is correct for the bytes on this branch and stops being correct the moment 982 merges. Whichever of the two lands second must re-read it. Written down rather than left for a reader to discover, because a stale pin and a tampered one look the same.",
@@ -282,7 +281,7 @@
         "who_found_it": "The reviewer, by sweeping their own harness after two of their own explanations had failed, and against their own published figure. Each of their three hypotheses was tested and discarded by them, including the pairing asymmetry they had raised an hour earlier.",
         "what_it_cost": "Four exchanges and three dead hypotheses -- one of mine about rows, two of theirs about axes and pairing -- over a quantity neither of us had swept.",
         "what_i_did_beyond_confirming_it": "They asked for a one-line stability note. The sweep showed five of the nine frames swing by 2x to 3x and two pass through undefined, so it is a property of the ratio rather than a quirk of the disputed frame, and a note would have understated it. Every entry is now published with the interval it occupies over the sweep.",
-        "the_gate_is_unaffected_and_that_is_measured_not_asserted": "Every frame clears the 0.06 spread floor at every tolerance from 0 to 30, worst reading 0.1042, 1.74x the floor. The gate reads the spread itself; only the diagnostic reads the ratio of two small differences."
+        "diagnostic_only": "Every diagnostic spread clears the nominal 0.06 floor across this median-background tolerance sweep. This is not a production-gate measurement: the gate uses a modal corner background and a fixed tolerance, and is tested directly."
       }
     }
   },

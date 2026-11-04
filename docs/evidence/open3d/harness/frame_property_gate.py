@@ -29,8 +29,9 @@ stranded**. That case is constructed and asserted in
 gate at 0.40 and fails this one.
 
 So stranding is gated on an interquartile spread instead -- the middle half of
-the content's row and column positions. An annotation of around 1% of content
-pixels cannot move a quartile.
+the subject's row and column positions after the certified overlay band and the
+exact scale-label rectangle have been excluded. Masking is load-bearing here:
+an overlay plus a small subject can otherwise move a quartile enough to pass.
 
 The sharpest way to see why extent is the wrong reading is not the size of that
 shift. Because the annotation anchors one corner of the bounding box, moving a
@@ -39,16 +40,13 @@ shift. Because the annotation anchors one corner of the bounding box, moving a
 extent floor is weakest exactly where the framing is worst. The spread reads
 0.036 at every placement and fails all three.
 
-How far the extent moves when the annotation is removed is worth stating
-carefully, because it depends on what you remove and I got this wrong once.
-"The annotation" has no edge the pixels define, so the shift is 0.051 under a
-mask that provably contains no geometry -- pixels identical in all nine frames,
-which nine different projections cannot agree on by chance -- and 0.335 under a
-generous rectangle that also deletes real scan. I first published the 0.335 and
-called it an 80x sensitivity ratio; on the provable mask it is 25x. The spread
-moves by at most 0.0042 under every mask tried, which is the half of this that
-does not depend on the judgement call. Extent is still recorded, because it is
-the intuitive reading and a reviewer will want to see it.
+The exclusion boundary is not guessed from a convenient rectangle. Matched
+reconstructions certify the band from row 655, column 27 through the bottom of
+the frame and 290 columns wide: the pairs differ elsewhere but have zero
+differing pixels inside it. At that certified boundary the extent changes by as
+much as 52.26% and the spread by at most 0.0021 (1.96%). Extent is still
+recorded, because it is the intuitive reading and a reviewer will want to see
+it, but neither it nor an unmasked spread controls the verdict.
 
 Why not gate fill
 -----------------
@@ -146,21 +144,29 @@ MAX_LOW_CONTRAST_CONTENT_FRACTION = 0.30
 LABEL_RECT = (648, 670, 20, 240)
 LABEL_SHA256 = "1bc310158d2020172cce6bda0d1214668f1a6b3eadc9ea6fd4d55a4440ed99e3"
 
+#: Regions excluded from the subject-spread measurement. The first is the
+#: exact label rectangle above. The second is the widest band certified as
+#: overlay-only by matched-reconstruction pair differences: row 655 through
+#: the bottom of the 720px frame, column 27 through 317. Keeping these as two
+#: rectangles avoids pretending the unmeasured top-right strip is certified.
+SPREAD_OVERLAY_RECTS = (LABEL_RECT, (655, 720, 27, 317))
+
 #: Recorded and deliberately not gated, with the reasoning in the docstring.
 #: Named here so a future reader can see each omission is a decision.
 NOT_GATED = (
     "content_fraction",
     "extent_span_narrower_axis",
-    "clipping_headroom_zoom",
 )
 
 
 def subject_spread(path: Path) -> dict:
-    """Interquartile spread of content positions, which a small annotation cannot move.
+    """Interquartile spread of subject positions after certified overlays are masked.
 
     The extent of a point cloud is set by its most distant pixel, so any fixed
-    overlay in a corner becomes part of the reading. A quartile is set by the
-    bulk, so it measures the subject whether or not the frame is annotated.
+    overlay in a corner becomes part of the reading. A quartile is more robust
+    than an extent, but an overlay plus a small subject can still move it enough
+    to pass. The verdict therefore reads only the pixels outside the certified
+    overlay regions.
     """
     rgb = np.asarray(Image.open(path).convert("RGB")).astype(np.int16)
     height, width, _ = rgb.shape
@@ -169,6 +175,10 @@ def subject_spread(path: Path) -> dict:
     values, counts = np.unique(corners, axis=0, return_counts=True)
     background = values[int(np.argmax(counts))]
     content = np.abs(rgb - background).max(axis=2) > CONTENT_TOLERANCE
+    for top, bottom, left, right in SPREAD_OVERLAY_RECTS:
+        content[max(0, top) : min(height, bottom), max(0, left) : min(width, right)] = (
+            False
+        )
 
     rows, cols = np.where(content)
     if not rows.size:
@@ -188,23 +198,6 @@ def label_digest(path: Path) -> str:
     top, bottom, left, right = LABEL_RECT
     patch = np.asarray(Image.open(path).convert("RGB"))[top:bottom, left:right]
     return hashlib.sha256(patch.tobytes()).hexdigest()
-
-
-def clipping_headroom(row: dict) -> float:
-    """How far the frame could zoom in before content reaches a border band.
-
-    Recorded, not gated. On the delivered frames this is pinned by the scale bar
-    rather than the scan, which is precisely why it is not a gate.
-    """
-    width, height = row["resolution"]
-    span = row["content_span_fraction"]
-    # Reconstructing the half-extents from the span is exact only for centred
-    # content, so this is reported as the symmetric-case estimate it is.
-    dx = span["horizontal"] * width / 2
-    dy = span["vertical"] * height / 2
-    if dx <= 0 or dy <= 0:
-        return 0.0
-    return min((width / 2 - 2) / dx, (height / 2 - 2) / dy)
 
 
 def failures(row: dict, spread: dict, label: str | None = None) -> list[str]:
@@ -293,7 +286,6 @@ def check(frames: list[Path]) -> dict:
                 "recorded_not_gated": {
                     "content_fraction": row["content_fraction"],
                     "extent_span_narrower_axis": extent,
-                    "clipping_headroom_zoom": clipping_headroom(row),
                 },
             }
         )
@@ -306,8 +298,9 @@ def check(frames: list[Path]) -> dict:
         "stranding_is_gated_on_spread_not_extent_because": (
             "every frame carries a fixed bottom-left scale bar, which pins the "
             "content bounding box and makes the extent reading partly a "
-            "measurement of the annotation. Removing the annotation block shifts "
-            "the extent by up to 0.335 and the spread by at most 0.0042."
+            "measurement of the annotation. At the matched-pair-certified overlay "
+            "boundary, exclusion changes the extent by as much as 52.26% and the "
+            "spread by at most 0.0021 (1.96%). The gate reads that masked spread."
         ),
         "thresholds": {
             "max_border_content_pixels": MAX_BORDER_CONTENT_PIXELS,
@@ -316,6 +309,9 @@ def check(frames: list[Path]) -> dict:
             "max_low_contrast_content_fraction": MAX_LOW_CONTRAST_CONTENT_FRACTION,
             "scale_label_sha256": LABEL_SHA256,
             "scale_label_rect_top_bottom_left_right": list(LABEL_RECT),
+            "subject_spread_overlay_rects_top_bottom_left_right": [
+                list(rect) for rect in SPREAD_OVERLAY_RECTS
+            ],
             "not_gated": list(NOT_GATED),
         },
         "frames": rows,

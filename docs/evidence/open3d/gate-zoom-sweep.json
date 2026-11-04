@@ -180,7 +180,7 @@
           "framing_passes": true,
           "passes_both": true,
           "scale_label_intact": true,
-          "subject_spread_narrower_axis": 0.17604166666666668,
+          "subject_spread_narrower_axis": 0.175,
           "why_framing_failed": []
         },
         {
@@ -190,7 +190,7 @@
           "framing_passes": false,
           "passes_both": false,
           "scale_label_intact": false,
-          "subject_spread_narrower_axis": 0.19270833333333334,
+          "subject_spread_narrower_axis": 0.190625,
           "why_framing_failed": [
             "clipped"
           ]
@@ -202,7 +202,7 @@
           "framing_passes": false,
           "passes_both": false,
           "scale_label_intact": false,
-          "subject_spread_narrower_axis": 0.209375,
+          "subject_spread_narrower_axis": 0.20625,
           "why_framing_failed": [
             "clipped"
           ]
@@ -214,7 +214,7 @@
           "framing_passes": false,
           "passes_both": false,
           "scale_label_intact": false,
-          "subject_spread_narrower_axis": 0.225,
+          "subject_spread_narrower_axis": 0.21875,
           "why_framing_failed": [
             "clipped"
           ]
@@ -226,7 +226,7 @@
           "framing_passes": false,
           "passes_both": false,
           "scale_label_intact": false,
-          "subject_spread_narrower_axis": 0.240625,
+          "subject_spread_narrower_axis": 0.23333333333333334,
           "why_framing_failed": [
             "clipped"
           ]
@@ -238,7 +238,7 @@
           "framing_passes": false,
           "passes_both": false,
           "scale_label_intact": false,
-          "subject_spread_narrower_axis": 0.2552083333333333,
+          "subject_spread_narrower_axis": 0.24791666666666667,
           "why_framing_failed": [
             "clipped"
           ]
@@ -250,7 +250,7 @@
           "framing_passes": false,
           "passes_both": false,
           "scale_label_intact": false,
-          "subject_spread_narrower_axis": 0.29583333333333334,
+          "subject_spread_narrower_axis": 0.28541666666666665,
           "why_framing_failed": [
             "clipped"
           ]
@@ -262,7 +262,7 @@
           "framing_passes": false,
           "passes_both": false,
           "scale_label_intact": false,
-          "subject_spread_narrower_axis": 0.33645833333333336,
+          "subject_spread_narrower_axis": 0.325,
           "why_framing_failed": [
             "clipped"
           ]
@@ -447,7 +447,7 @@
           "framing_passes": false,
           "passes_both": false,
           "scale_label_intact": false,
-          "subject_spread_narrower_axis": 0.21041666666666667,
+          "subject_spread_narrower_axis": 0.20833333333333334,
           "why_framing_failed": [
             "clipped"
           ]
@@ -459,7 +459,7 @@
           "framing_passes": false,
           "passes_both": false,
           "scale_label_intact": false,
-          "subject_spread_narrower_axis": 0.22604166666666667,
+          "subject_spread_narrower_axis": 0.225,
           "why_framing_failed": [
             "clipped"
           ]
@@ -471,7 +471,7 @@
           "framing_passes": false,
           "passes_both": false,
           "scale_label_intact": false,
-          "subject_spread_narrower_axis": 0.24375,
+          "subject_spread_narrower_axis": 0.23958333333333334,
           "why_framing_failed": [
             "clipped"
           ]
@@ -483,7 +483,7 @@
           "framing_passes": false,
           "passes_both": false,
           "scale_label_intact": false,
-          "subject_spread_narrower_axis": 0.25729166666666664,
+          "subject_spread_narrower_axis": 0.2552083333333333,
           "why_framing_failed": [
             "clipped"
           ]
@@ -495,7 +495,7 @@
           "framing_passes": false,
           "passes_both": false,
           "scale_label_intact": false,
-          "subject_spread_narrower_axis": 0.271875,
+          "subject_spread_narrower_axis": 0.2708333333333333,
           "why_framing_failed": [
             "clipped"
           ]
@@ -507,7 +507,7 @@
           "framing_passes": false,
           "passes_both": false,
           "scale_label_intact": false,
-          "subject_spread_narrower_axis": 0.30833333333333335,
+          "subject_spread_narrower_axis": 0.30625,
           "why_framing_failed": [
             "clipped"
           ]
@@ -519,7 +519,7 @@
           "framing_passes": false,
           "passes_both": false,
           "scale_label_intact": false,
-          "subject_spread_narrower_axis": 0.33958333333333335,
+          "subject_spread_narrower_axis": 0.33055555555555555,
           "why_framing_failed": [
             "clipped"
           ]
@@ -688,7 +688,7 @@
           "framing_passes": true,
           "passes_both": false,
           "scale_label_intact": false,
-          "subject_spread_narrower_axis": 0.134375,
+          "subject_spread_narrower_axis": 0.13333333333333333,
           "why_framing_failed": []
         },
         {
@@ -698,7 +698,7 @@
           "framing_passes": true,
           "passes_both": true,
           "scale_label_intact": true,
-          "subject_spread_narrower_axis": 0.14895833333333333,
+          "subject_spread_narrower_axis": 0.14791666666666667,
           "why_framing_failed": []
         },
         {
@@ -756,7 +756,7 @@
           "framing_passes": false,
           "passes_both": false,
           "scale_label_intact": false,
-          "subject_spread_narrower_axis": 0.22708333333333333,
+          "subject_spread_narrower_axis": 0.22604166666666667,
           "why_framing_failed": [
             "clipped"
           ]
@@ -768,7 +768,7 @@
           "framing_passes": false,
           "passes_both": false,
           "scale_label_intact": false,
-          "subject_spread_narrower_axis": 0.26979166666666665,
+          "subject_spread_narrower_axis": 0.265625,
           "why_framing_failed": [
             "clipped"
           ]
@@ -780,7 +780,7 @@
           "framing_passes": false,
           "passes_both": false,
           "scale_label_intact": false,
-          "subject_spread_narrower_axis": 0.31145833333333334,
+          "subject_spread_narrower_axis": 0.30416666666666664,
           "why_framing_failed": [
             "clipped"
           ]
@@ -955,7 +955,7 @@
           "framing_passes": true,
           "passes_both": true,
           "scale_label_intact": true,
-          "subject_spread_narrower_axis": 0.190625,
+          "subject_spread_narrower_axis": 0.18958333333333333,
           "why_framing_failed": []
         },
         {
@@ -965,7 +965,7 @@
           "framing_passes": false,
           "passes_both": false,
           "scale_label_intact": false,
-          "subject_spread_narrower_axis": 0.209375,
+          "subject_spread_narrower_axis": 0.20833333333333334,
           "why_framing_failed": [
             "clipped"
           ]
@@ -977,7 +977,7 @@
           "framing_passes": false,
           "passes_both": false,
           "scale_label_intact": false,
-          "subject_spread_narrower_axis": 0.22604166666666667,
+          "subject_spread_narrower_axis": 0.22395833333333334,
           "why_framing_failed": [
             "clipped"
           ]
@@ -989,7 +989,7 @@
           "framing_passes": false,
           "passes_both": false,
           "scale_label_intact": false,
-          "subject_spread_narrower_axis": 0.24270833333333333,
+          "subject_spread_narrower_axis": 0.23854166666666668,
           "why_framing_failed": [
             "clipped"
           ]
@@ -1001,7 +1001,7 @@
           "framing_passes": false,
           "passes_both": false,
           "scale_label_intact": false,
-          "subject_spread_narrower_axis": 0.25729166666666664,
+          "subject_spread_narrower_axis": 0.25416666666666665,
           "why_framing_failed": [
             "clipped"
           ]
@@ -1013,7 +1013,7 @@
           "framing_passes": false,
           "passes_both": false,
           "scale_label_intact": false,
-          "subject_spread_narrower_axis": 0.271875,
+          "subject_spread_narrower_axis": 0.26979166666666665,
           "why_framing_failed": [
             "clipped"
           ]
@@ -1025,7 +1025,7 @@
           "framing_passes": false,
           "passes_both": false,
           "scale_label_intact": false,
-          "subject_spread_narrower_axis": 0.30625,
+          "subject_spread_narrower_axis": 0.30416666666666664,
           "why_framing_failed": [
             "clipped"
           ]
@@ -1037,7 +1037,7 @@
           "framing_passes": false,
           "passes_both": false,
           "scale_label_intact": false,
-          "subject_spread_narrower_axis": 0.3375,
+          "subject_spread_narrower_axis": 0.33055555555555555,
           "why_framing_failed": [
             "clipped"
           ]
@@ -1218,7 +1218,7 @@
           "framing_passes": true,
           "passes_both": true,
           "scale_label_intact": true,
-          "subject_spread_narrower_axis": 0.13125,
+          "subject_spread_narrower_axis": 0.13020833333333334,
           "why_framing_failed": []
         },
         {
@@ -1228,7 +1228,7 @@
           "framing_passes": false,
           "passes_both": false,
           "scale_label_intact": false,
-          "subject_spread_narrower_axis": 0.14479166666666668,
+          "subject_spread_narrower_axis": 0.14375,
           "why_framing_failed": [
             "clipped"
           ]
@@ -1288,7 +1288,7 @@
           "framing_passes": false,
           "passes_both": false,
           "scale_label_intact": false,
-          "subject_spread_narrower_axis": 0.21770833333333334,
+          "subject_spread_narrower_axis": 0.21875,
           "why_framing_failed": [
             "clipped"
           ]
@@ -1300,7 +1300,7 @@
           "framing_passes": false,
           "passes_both": false,
           "scale_label_intact": false,
-          "subject_spread_narrower_axis": 0.24791666666666667,
+          "subject_spread_narrower_axis": 0.246875,
           "why_framing_failed": [
             "clipped"
           ]
@@ -1481,7 +1481,7 @@
           "framing_passes": true,
           "passes_both": true,
           "scale_label_intact": true,
-          "subject_spread_narrower_axis": 0.12916666666666668,
+          "subject_spread_narrower_axis": 0.128125,
           "why_framing_failed": []
         },
         {
@@ -1491,7 +1491,7 @@
           "framing_passes": false,
           "passes_both": false,
           "scale_label_intact": false,
-          "subject_spread_narrower_axis": 0.14166666666666666,
+          "subject_spread_narrower_axis": 0.140625,
           "why_framing_failed": [
             "clipped"
           ]
@@ -1515,7 +1515,7 @@
           "framing_passes": false,
           "passes_both": false,
           "scale_label_intact": false,
-          "subject_spread_narrower_axis": 0.16979166666666667,
+          "subject_spread_narrower_axis": 0.17083333333333334,
           "why_framing_failed": [
             "clipped"
           ]
@@ -1527,7 +1527,7 @@
           "framing_passes": false,
           "passes_both": false,
           "scale_label_intact": false,
-          "subject_spread_narrower_axis": 0.18645833333333334,
+          "subject_spread_narrower_axis": 0.18958333333333333,
           "why_framing_failed": [
             "clipped"
           ]
@@ -1539,7 +1539,7 @@
           "framing_passes": false,
           "passes_both": false,
           "scale_label_intact": false,
-          "subject_spread_narrower_axis": 0.20208333333333334,
+          "subject_spread_narrower_axis": 0.20625,
           "why_framing_failed": [
             "clipped"
           ]
@@ -1551,7 +1551,7 @@
           "framing_passes": false,
           "passes_both": false,
           "scale_label_intact": false,
-          "subject_spread_narrower_axis": 0.24270833333333333,
+          "subject_spread_narrower_axis": 0.24583333333333332,
           "why_framing_failed": [
             "clipped"
           ]
@@ -1563,7 +1563,7 @@
           "framing_passes": false,
           "passes_both": false,
           "scale_label_intact": false,
-          "subject_spread_narrower_axis": 0.275,
+          "subject_spread_narrower_axis": 0.25416666666666665,
           "why_framing_failed": [
             "clipped"
           ]
@@ -1751,7 +1751,7 @@
           "framing_passes": true,
           "passes_both": true,
           "scale_label_intact": true,
-          "subject_spread_narrower_axis": 0.10625,
+          "subject_spread_narrower_axis": 0.10416666666666667,
           "why_framing_failed": []
         },
         {
@@ -1761,7 +1761,7 @@
           "framing_passes": false,
           "passes_both": false,
           "scale_label_intact": false,
-          "subject_spread_narrower_axis": 0.11770833333333333,
+          "subject_spread_narrower_axis": 0.115625,
           "why_framing_failed": [
             "clipped"
           ]
@@ -1819,7 +1819,7 @@
           "framing_passes": false,
           "passes_both": false,
           "scale_label_intact": false,
-          "subject_spread_narrower_axis": 0.18541666666666667,
+          "subject_spread_narrower_axis": 0.18333333333333332,
           "why_framing_failed": [
             "clipped"
           ]
@@ -1831,7 +1831,7 @@
           "framing_passes": false,
           "passes_both": false,
           "scale_label_intact": false,
-          "subject_spread_narrower_axis": 0.21458333333333332,
+          "subject_spread_narrower_axis": 0.2125,
           "why_framing_failed": [
             "clipped"
           ]
@@ -2012,7 +2012,7 @@
           "framing_passes": true,
           "passes_both": true,
           "scale_label_intact": true,
-          "subject_spread_narrower_axis": 0.12708333333333333,
+          "subject_spread_narrower_axis": 0.12604166666666666,
           "why_framing_failed": []
         },
         {
@@ -2022,7 +2022,7 @@
           "framing_passes": false,
           "passes_both": false,
           "scale_label_intact": false,
-          "subject_spread_narrower_axis": 0.13958333333333334,
+          "subject_spread_narrower_axis": 0.13854166666666667,
           "why_framing_failed": [
             "clipped"
           ]
@@ -2046,7 +2046,7 @@
           "framing_passes": false,
           "passes_both": false,
           "scale_label_intact": false,
-          "subject_spread_narrower_axis": 0.16666666666666666,
+          "subject_spread_narrower_axis": 0.16770833333333332,
           "why_framing_failed": [
             "clipped"
           ]
@@ -2058,7 +2058,7 @@
           "framing_passes": false,
           "passes_both": false,
           "scale_label_intact": false,
-          "subject_spread_narrower_axis": 0.18229166666666666,
+          "subject_spread_narrower_axis": 0.18541666666666667,
           "why_framing_failed": [
             "clipped"
           ]
@@ -2070,7 +2070,7 @@
           "framing_passes": false,
           "passes_both": false,
           "scale_label_intact": false,
-          "subject_spread_narrower_axis": 0.19895833333333332,
+          "subject_spread_narrower_axis": 0.203125,
           "why_framing_failed": [
             "clipped"
           ]
@@ -2082,7 +2082,7 @@
           "framing_passes": false,
           "passes_both": false,
           "scale_label_intact": false,
-          "subject_spread_narrower_axis": 0.23854166666666668,
+          "subject_spread_narrower_axis": 0.24270833333333333,
           "why_framing_failed": [
             "clipped"
           ]
@@ -2094,7 +2094,7 @@
           "framing_passes": false,
           "passes_both": false,
           "scale_label_intact": false,
-          "subject_spread_narrower_axis": 0.2722222222222222,
+          "subject_spread_narrower_axis": 0.25,
           "why_framing_failed": [
             "clipped"
           ]
@@ -2275,7 +2275,7 @@
           "framing_passes": true,
           "passes_both": true,
           "scale_label_intact": true,
-          "subject_spread_narrower_axis": 0.13125,
+          "subject_spread_narrower_axis": 0.12916666666666668,
           "why_framing_failed": []
         },
         {
@@ -2321,7 +2321,7 @@
           "framing_passes": false,
           "passes_both": false,
           "scale_label_intact": false,
-          "subject_spread_narrower_axis": 0.184375,
+          "subject_spread_narrower_axis": 0.18645833333333334,
           "why_framing_failed": [
             "clipped"
           ]
@@ -2333,7 +2333,7 @@
           "framing_passes": false,
           "passes_both": false,
           "scale_label_intact": false,
-          "subject_spread_narrower_axis": 0.19895833333333332,
+          "subject_spread_narrower_axis": 0.20104166666666667,
           "why_framing_failed": [
             "clipped"
           ]
@@ -2345,7 +2345,7 @@
           "framing_passes": false,
           "passes_both": false,
           "scale_label_intact": false,
-          "subject_spread_narrower_axis": 0.23645833333333333,
+          "subject_spread_narrower_axis": 0.23472222222222222,
           "why_framing_failed": [
             "clipped"
           ]
@@ -2357,7 +2357,7 @@
           "framing_passes": false,
           "passes_both": false,
           "scale_label_intact": false,
-          "subject_spread_narrower_axis": 0.2611111111111111,
+          "subject_spread_narrower_axis": 0.24305555555555555,
           "why_framing_failed": [
             "clipped"
           ]

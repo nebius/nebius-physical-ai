@@ -85,6 +85,14 @@ def keep_label(pixels: np.ndarray, original: np.ndarray) -> np.ndarray:
     return pixels
 
 
+def overlay_only(original: np.ndarray) -> np.ndarray:
+    """Return the certified overlay on the frame background, with no subject pixels."""
+    pixels = np.broadcast_to(background(), original.shape).copy().astype(original.dtype)
+    for top, bottom, left, right in gate.SPREAD_OVERLAY_RECTS:
+        pixels[top:bottom, left:right] = original[top:bottom, left:right]
+    return pixels
+
+
 def verdict(path: Path) -> list[str]:
     row = edge.audit(path)
     spread = gate.subject_spread(path)
@@ -148,10 +156,7 @@ def test_a_stranded_subject_passes_the_naive_extent_reading_and_fails_this_gate(
     the extent reading stays comfortably above a floor that looks reasonable --
     while the frame is plainly useless.
     """
-    pixels = original.copy()
-    keep = np.zeros(pixels.shape[:2], bool)
-    keep[640:700, 0:440] = True
-    pixels[~keep] = background().astype(pixels.dtype)
+    pixels = overlay_only(original)
     pixels[352:368, 472:488] = np.array([220, 220, 224], dtype=pixels.dtype)
 
     path = write(tmp_path, "stranded", pixels)
@@ -160,6 +165,27 @@ def test_a_stranded_subject_passes_the_naive_extent_reading_and_fails_this_gate(
         "the control is only interesting if the naive extent gate would have "
         "passed this frame"
     )
+    assert gate.subject_spread(path)["narrower_axis"] < gate.MIN_SUBJECT_SPREAD
+    assert verdict(path) == ["stranded"]
+
+
+@pytest.mark.parametrize("top,left", [(340, 460), (80, 850)])
+def test_the_overlay_cannot_rescue_a_small_subject(
+    tmp_path: Path, original: np.ndarray, top: int, left: int
+) -> None:
+    """The spread gate must measure the subject, not an overlay-plus-subject mixture.
+
+    Forty pixels is deliberately close to the 0.06 floor on a 720px frame. With
+    the scale overlay left in the quartile population this control can clear the
+    floor; after the certified overlay band is excluded it fails regardless of
+    whether the subject is centred or stranded near a corner.
+    """
+    pixels = overlay_only(original)
+    pixels[top : top + 40, left : left + 40] = np.array(
+        [220, 220, 224], dtype=pixels.dtype
+    )
+
+    path = write(tmp_path, f"overlay_and_small_subject_{top}_{left}", pixels)
     assert gate.subject_spread(path)["narrower_axis"] < gate.MIN_SUBJECT_SPREAD
     assert verdict(path) == ["stranded"]
 
@@ -386,14 +412,12 @@ def test_the_spread_is_insensitive_to_the_annotation_under_every_mask_tried() ->
 
 
 def test_how_much_the_extent_moves_depends_on_where_you_draw_the_annotation() -> None:
-    """Why no single number here is quotable, including the one I first published.
+    """Why exploratory rectangles are not the production mask.
 
-    I reported the extent as shifting by up to 0.335 on the strength of a
-    rectangle that also removed real geometry. Removing only pixels that provably
-    contain none moves it by about a fifth of that. Both are measurements of the
-    same frames; they differ because "the annotation" has no edge the pixels
-    define. A reading whose value is set by that choice is not a reading of the
-    subject, which is the actual argument -- not any one of the numbers.
+    A generous rectangle that removes real geometry and an all-frame pixel
+    intersection produce different extent shifts. This historical sensitivity
+    check does not choose either mask: the production gate uses the separately
+    matched-pair-certified overlay region.
     """
     annotation = provable_annotation()
     provable_shifts, rectangle_shifts = [], []
@@ -437,10 +461,7 @@ def test_the_extent_reading_rewards_worse_placement_and_the_spread_does_not(
     extents, spreads = [], []
 
     for name, (top, left) in placements.items():
-        pixels = original.copy()
-        keep = np.zeros(pixels.shape[:2], bool)
-        keep[640:700, 0:440] = True
-        pixels[~keep] = background().astype(pixels.dtype)
+        pixels = overlay_only(original)
         pixels[top : top + 16, left : left + 16] = np.array(
             [220, 220, 224], dtype=pixels.dtype
         )
@@ -563,9 +584,10 @@ def test_the_spread_floor_has_measured_margin_on_both_sides() -> None:
     assert max(stranded) < floor, max(stranded)
     assert min(naive) >= NAIVE_EXTENT_FLOOR, min(naive)
 
-    # Recorded as asymmetric on purpose: the control side is the tighter one, and the record says
-    # so rather than presenting the floor as comfortably placed.
-    assert floor / max(stranded) < min(delivered) / floor
+    # Once the overlay is excluded from the gated population, the negative control
+    # has the larger margin. Pin that asymmetry so a future unmasked implementation
+    # cannot silently restore the overlay's contribution.
+    assert floor / max(stranded) > min(delivered) / floor
 
 
 def test_the_gated_statistic_is_the_one_the_mask_cannot_move() -> None:
@@ -636,12 +658,12 @@ def test_the_floors_fragility_is_stated_from_observed_movement_not_from_the_nine
     report = json.loads((EVIDENCE / "statistic-mask-sensitivity.json").read_text())
     fragility = report["the_floors_fragility_without_proposing_a_new_floor"]
 
-    assert fragility["weakest_delivered_frame_over_floor"] == 1.77
+    assert fragility["weakest_delivered_frame_over_floor"] == 1.74
     assert (
         fragility["largest_movement_observed_between_matched_reconstructions"] == 1.50
     )
-    # 1.77 / 1.50: the weakest frame survives one more worst-case movement by about 18%.
-    assert fragility["headroom_beyond_already_observed_movement"] == 1.18
+    # 1.74 / 1.50: the masked weakest frame has about 16% beyond observed movement.
+    assert fragility["headroom_beyond_already_observed_movement"] == 1.16
 
 
 def test_the_certification_covered_the_annotations_full_height_not_a_strip() -> None:
@@ -840,16 +862,16 @@ def test_the_published_reading_sits_on_a_plateau_rather_than_on_the_hinge() -> N
     assert max(moved) - min(moved) == 1.0, moved
 
 
-def test_the_gate_survives_every_tolerance_in_the_sweep() -> None:
-    """The reviewer asserted the gated statistic was unaffected; this is the measurement.
+def test_the_diagnostic_spread_survives_every_tolerance_in_its_own_sweep() -> None:
+    """The diagnostic's spread is stable; this is not a production-gate measurement.
 
-    The distinction is the whole reason the dispute was harmless: the gate reads the spread, while
-    the fragile diagnostic reads the relative movement of the spread. A pixel moves an absolute
-    quartile by a pixel and a ratio of two small differences by a factor of two.
+    This harness uses a median background and varies its tolerance. The production
+    gate uses a modal corner background and a fixed tolerance, so its behavior is
+    covered by direct gate tests rather than inferred from this table.
     """
     report = json.loads((EVIDENCE / "statistic-mask-sensitivity.json").read_text())
     measured = report["why_that_ratio_could_sustain_four_exchanges"][
-        "the_gate_is_unaffected_and_this_is_the_measurement_not_the_assertion"
+        "diagnostic_spread_sensitivity_not_the_production_gate"
     ]
 
     floor = json.loads(
@@ -876,7 +898,12 @@ def test_the_gate_survives_every_tolerance_in_the_sweep() -> None:
     failing = sorted(
         name for name, row in table.items() if any(v < floor for v in row.values())
     )
-    assert failing == measured["frames_whose_verdict_changes_anywhere_in_the_sweep"]
+    assert (
+        failing
+        == measured[
+            "frames_crossing_the_nominal_floor_anywhere_in_the_diagnostic_sweep"
+        ]
+    )
     assert failing == [], failing
 
 

@@ -68,7 +68,7 @@ HEADLINE_FRAME = "candidate_scan_and_surface__topdown.png"
 
 # The spread floor the gate enforces, and the two figures the margin analysis produced.
 SPREAD_FLOOR = 0.06
-WEAKEST_DELIVERED_SPREAD = 0.1062
+WEAKEST_DELIVERED_SPREAD = 0.1042
 LARGEST_OBSERVED_MOVEMENT = 1.50
 
 
@@ -227,8 +227,9 @@ def masked_and_unmasked_margin(width: int) -> dict[str, object]:
         "weakest_unmasked_over_floor": round(unmasked / SPREAD_FLOOR, 2),
         "weakest_masked_spread": round(masked, 4),
         "weakest_masked_over_floor": round(masked / SPREAD_FLOOR, 2),
-        "the_difference_is_the_mask_not_a_disagreement": "The gate reads the masked frame, so "
-        "1.74x is the operative margin and 1.77x is the unmasked view of the same thing.",
+        "the_difference_is_the_mask_not_a_disagreement": "The production gate excludes the "
+        "same certified overlay region, so 1.74x is the operative margin and 1.77x is the "
+        "unmasked view of the same thing.",
     }
 
 
@@ -389,8 +390,11 @@ def tolerance_hinge(width: int, height: int = BAND_HEIGHT) -> dict[str, object]:
     stability note too weak a response: a ratio with a one-pixel denominator cannot honestly be
     quoted as a bare number, so each one is published here with the interval it occupies.
 
-    The gate is a separate question, and asserting it is unaffected is not the same as measuring
-    it. The sweep therefore carries the gated statistic too.
+    The production gate is a separate question. This diagnostic deliberately
+    recomputes its own median background at each tolerance, whereas the gate uses
+    the modal corner background and a fixed tolerance. Its spread table therefore
+    demonstrates sensitivity of this diagnostic only; it must not be presented as
+    a measurement of the production gate.
     """
     row, col = ORIGIN
     frames = {path.name: controls.rgb(path) for path in sorted(FRAMES.glob("*.png"))}
@@ -609,8 +613,8 @@ def tolerance_hinge(width: int, height: int = BAND_HEIGHT) -> dict[str, object]:
             "published with its interval instead.",
         },
         "per_frame_interval": per_frame,
-        "the_gate_is_unaffected_and_this_is_the_measurement_not_the_assertion": {
-            "frames_whose_verdict_changes_anywhere_in_the_sweep": gate_verdict_changes,
+        "diagnostic_spread_sensitivity_not_the_production_gate": {
+            "frames_crossing_the_nominal_floor_anywhere_in_the_diagnostic_sweep": gate_verdict_changes,
             "worst_delivered_spread_over_the_whole_sweep": round(worst_gated, 4),
             "worst_as_multiple_of_floor": round(worst_gated / SPREAD_FLOOR, 2),
             "gated_spread_by_frame_and_tolerance": {
@@ -625,11 +629,12 @@ def tolerance_hinge(width: int, height: int = BAND_HEIGHT) -> dict[str, object]:
             "broke no test, because the test was reading the claim rather than the readings. "
             "That is the same defect a reviewer found in another gate of mine, where the report "
             "asserted its own validity. The table lets the test recompute both figures.",
-            "why_the_gated_statistic_has_no_hinge": "The gate reads the spread itself, not the "
+            "why_the_spread_statistic_has_no_hinge": "This diagnostic reads the spread itself, not the "
             "relative movement of the spread. An absolute quartile position shifts by a pixel "
             "when a pixel crosses the threshold; a ratio whose denominator is that shift moves "
             "by a factor of two. The fragile quantity is the diagnostic, and it is fragile "
-            "because it is a ratio of two small differences.",
+            "because it is a ratio of two small differences. The production gate uses a "
+            "different background estimator and fixed tolerance and is tested directly elsewhere.",
         },
         "the_dispute_is_now_explained_rather_than_adjudicated": {
             "what_the_reviewer_published": "48.5 for the disputed frame and undefined for "

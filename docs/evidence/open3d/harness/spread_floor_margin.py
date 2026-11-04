@@ -96,7 +96,6 @@ def spread_at(path: Path, factor: float, scratch: Path) -> float:
 #: 16x16 speck at the centre -- a frame that is plainly useless and that a floor on the subject's
 #: *extent* passes comfortably, because the scale bar still anchors a corner of the content box.
 STRANDED_BACKGROUND = (16, 17, 20)
-STRANDED_KEEP = (640, 700, 0, 440)
 STRANDED_SPECK = (352, 368, 472, 488)
 STRANDED_SPECK_RGB = (220, 220, 224)
 
@@ -104,11 +103,11 @@ STRANDED_SPECK_RGB = (220, 220, 224)
 def stranded_control(source: Path, scratch: Path) -> float:
     """What the gated statistic reads for a deliberately degraded frame."""
     original = np.asarray(Image.open(source).convert("RGB"))
-    pixels = original.copy()
-    top, bottom, left, right = STRANDED_KEEP
-    keep = np.zeros(pixels.shape[:2], bool)
-    keep[top:bottom, left:right] = True
-    pixels[~keep] = np.array(STRANDED_BACKGROUND, dtype=pixels.dtype)
+    pixels = np.broadcast_to(
+        np.array(STRANDED_BACKGROUND, dtype=original.dtype), original.shape
+    ).copy()
+    for top, bottom, left, right in GATE.SPREAD_OVERLAY_RECTS:
+        pixels[top:bottom, left:right] = original[top:bottom, left:right]
     r0, r1, c0, c1 = STRANDED_SPECK
     pixels[r0:r1, c0:c1] = np.array(STRANDED_SPECK_RGB, dtype=pixels.dtype)
 
@@ -175,7 +174,7 @@ def floor_options(
     out = []
     for candidate in (0.06, 0.065, 0.07, 0.08):
         headroom = weakest / candidate
-        worst_shrink = 0.0
+        worst_shrink: float | None = None
         for row in per_frame:
             passing = [
                 float(f)
@@ -183,14 +182,19 @@ def floor_options(
                 if s >= candidate
             ]
             if passing:
-                worst_shrink = max(worst_shrink, min(passing))
+                crossing = min(passing)
+                worst_shrink = (
+                    crossing if worst_shrink is None else min(worst_shrink, crossing)
+                )
         out.append(
             {
                 "floor": candidate,
                 "times_above_the_hardest_control": round(candidate / hardest, 2),
                 "times_below_the_weakest_frame": round(headroom, 2),
                 "headroom_exceeds_observed_movement": headroom > movement,
-                "subject_may_shrink_to": round(worst_shrink, 2),
+                "worst_case_subject_may_shrink_to": (
+                    round(worst_shrink, 2) if worst_shrink is not None else None
+                ),
             }
         )
     return out
@@ -262,7 +266,7 @@ def build() -> dict[str, object]:
             "closest_frame_to_the_floor": min(delivered),
             "that_frame_is_this_many_times_the_floor": round(min(delivered) / floor, 2),
             "subject_must_shrink_below_this_fraction_before_the_floor_fires": (
-                max(passes_to) if passes_to else None
+                min(passes_to) if passes_to else None
             ),
             "the_floor_sits_between_the_two_bounds": {
                 "control_it_must_catch": max(stranded.values()),
@@ -287,13 +291,13 @@ def build() -> dict[str, object]:
             "would be a real objection."
         ),
         "why_the_floor_is_not_being_moved": (
-            "The options table shows the data would carry a floor around 0.065 to 0.07: it "
-            "balances the two margins and tightens the admissible shrink. It also shows 0.08 is "
-            "unsafe, because its headroom falls below the movement the statistic already shows "
+            "The options table shows the data would carry a floor of 0.065: it tightens the "
+            "worst-case admissible shrink while preserving measured headroom. It also shows "
+            "0.07 and 0.08 are unsafe, because their headroom does not exceed movement already shown "
             "between reconstructions. But the movement estimate rests on four pairs, and the "
             "whole reason this report exists is that a threshold cannot be validated against the "
             "same nine frames it was chosen from. Tightening on that evidence would repeat the "
-            "error with a smaller number, so the floor stays where it is and the asymmetry is "
+            "error with a smaller number, so the floor stays where it is and the margin is "
             "recorded instead. A reviewer who wants 0.065 has the figures to ask for it."
         ),
         "what_this_does_not_do": (

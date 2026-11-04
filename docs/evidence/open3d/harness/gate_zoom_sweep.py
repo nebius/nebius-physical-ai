@@ -45,6 +45,7 @@ from __future__ import annotations
 import itertools
 import json
 import sys
+import tempfile
 from pathlib import Path
 
 import numpy as np
@@ -261,7 +262,8 @@ def main() -> int:
         print("usage: gate_zoom_sweep.py [--out REPORT.json] FRAME.png ...")
         return 2
 
-    report = sweep(frames, Path(out.parent if out else ".") / ".zoom-scratch")
+    with tempfile.TemporaryDirectory(prefix="open3d-gate-zoom-") as temporary:
+        report = sweep(frames, Path(temporary))
     if out is not None:
         out.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
 
