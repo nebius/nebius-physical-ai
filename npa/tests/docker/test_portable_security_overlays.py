@@ -54,6 +54,37 @@ def test_portable_overlay_hashes_and_application_order(image: str) -> None:
         assert "uv==0.13.4" in lock
 
 
+def test_pyasn1_security_floor_covers_all_affected_runtime_closures() -> None:
+    """Keep schemaless ASN.1 decoder runtime closures above the CPU-exhaustion fix."""
+
+    manifests = (
+        ROOT / "common" / "sim2real-control-requirements.txt",
+        ROOT / "cosmos3-ray-serve" / "security-upgrades-requirements.in",
+        ROOT / "cosmos3-ray-serve" / "security-upgrades-requirements.txt",
+        ROOT / "openpi" / "gcs-requirements.txt",
+        ROOT / "openpi" / "security-upgrades-requirements.in",
+        ROOT / "openpi" / "security-upgrades-requirements.txt",
+    )
+    expected_hashes = {
+        "4017b0fce125096b8573b39c989fdb1a4b19cf761e683398184550fea0e66587",
+        "6b11616a6bcf3a40e635f082bb232fa57b5e0dd7f517bd7ddd69ec3794508a47",
+    }
+    for manifest in manifests:
+        content = manifest.read_text(encoding="utf-8")
+        assert "pyasn1==0.6.5" in content
+        assert "pyasn1==0.6.4" not in content
+        if manifest.suffix == ".txt" and "requirements" in manifest.name:
+            if "sim2real-control" not in manifest.name:
+                entry = re.search(
+                    r"^pyasn1==0.6.5(?P<hashes>.*?)(?=^[\w.-]+==|\Z)",
+                    content,
+                    re.M | re.S,
+                )
+                assert entry
+                hashes = set(re.findall(r"sha256:([0-9a-f]{64})", entry.group()))
+                assert expected_hashes <= hashes
+
+
 def test_hardened_nltk_source_install_contract() -> None:
     installer = (ROOT / "common" / "install_hardened_nltk.sh").read_text()
     verifier = (ROOT / "common" / "verify_hardened_nltk.py").read_text()
