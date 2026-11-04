@@ -32,7 +32,8 @@ def test_groot_uses_vendor_python312_separate_from_python311_npa_control() -> No
 
     assert "uv sync --python 3.12" in text
     assert "NPA_BAKED_PYTHON=/opt/isaac-lab/venv/bin/python" in text
-    assert '"pillow>=13.0.0,<14.0"' in text
+    assert text.count('"pillow==13.0.0"') == 1
+    assert '"pillow>=13.0.0,<14.0"' not in text
     assert 'uv pip install --python "${NPA_BAKED_PYTHON}" --no-deps -e /opt/npa' in text
     assert (
         'uv pip install --python "${GROOT_VENV}/bin/python" --no-deps -e /opt/npa'

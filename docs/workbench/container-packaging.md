@@ -171,10 +171,19 @@ Shared Isaac builds apply the upstream Setuptools Unicode manifest fix to exact
 81.0.0 source hashes when Torch's `<82` constraint prevents a version upgrade.
 Cosmos3 serving uses the same verifier for its constrained 80.10.2 runtime.
 Both reject unknown source bytes and update installed `RECORD` hashes.
-Isaac's Python 3.11 closure installs Pillow 12.3 and applies the upstream
-MoviePy Pillow compatibility bound to exact 2.2.1 metadata; the released
-MoviePy code and package versions stay intact. The compatibility patch rejects
-unknown metadata or an unpatched Pillow installation. A successful source or
+Isaac's Python 3.11 closure installs security-fixed Pillow 13.0.0. NPA's
+compatibility policy permits only unchanged MoviePy 2.2.1 release bytes with
+that exact Pillow release; the image build does not run or claim MoviePy's
+upstream suite. Their reviewed Python 3.11 linux/amd64 wheels are
+force-reinstalled through an exact `--require-hashes --only-binary` lock, so a
+same-version distribution inherited from a reused environment cannot bypass
+wheel authentication. A strict canonical-name selector rejects direct
+references, nested includes, constraints, markers, alternate comparison forms,
+and duplicate requirements before it separates that lock from the ordinary
+closure. The build then repairs the stale `<12` requirement in exact installed
+metadata and updates its `RECORD`; released code and package versions stay
+intact. The repair rejects unknown metadata, any other MoviePy version, or any
+Pillow version string other than literal `13.0.0`. A successful source or
 dependency check does not qualify an existing or replacement image digest.
 The shared Jammy bootstrap builds CPython 3.11.18 from the exact hash-checked
 python.org security-release archive. It does not depend on Deadsnakes PPA

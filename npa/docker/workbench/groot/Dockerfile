@@ -247,7 +247,7 @@ RUN cd "${GROOT_REPO}" \
       "jaraco.context>=6.1.0" \
       "msgpack>=1.2.1" \
       "onnx>=1.21.0" \
-      "pillow>=13.0.0,<14.0" \
+      "pillow==13.0.0" \
       "python-multipart>=0.0.30" \
       "starlette>=1.3.1" \
       "tornado>=6.5.6" \
@@ -295,14 +295,15 @@ RUN /opt/isaac-lab/venv/bin/python -m pip install --no-deps --upgrade \
       "mcap==1.5.0" \
       "msgpack>=1.2.1" \
       "onnx>=1.21.0" \
-      "pillow>=13.0.0,<14.0" \
       "python-multipart>=0.0.30" \
       "starlette>=1.3.1" \
       "tornado>=6.5.6" \
       "transformers>=5.3.0" \
       "urllib3>=2.7.0" \
       "wheel>=0.46.2" \
-    && (/opt/isaac-lab/venv/bin/python -m pip uninstall -y wandb lxml || true)
+    && (/opt/isaac-lab/venv/bin/python -m pip uninstall -y wandb lxml || true) \
+    && /opt/isaac-lab/venv/bin/python \
+      /opt/npa/docker/workbench/common/moviepy_pillow_compat.py
 
 COPY --chown=ubuntu:ubuntu pyproject.toml /opt/npa/pyproject.toml
 COPY --chown=ubuntu:ubuntu src/npa /opt/npa/src/npa

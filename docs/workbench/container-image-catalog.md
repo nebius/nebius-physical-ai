@@ -146,12 +146,13 @@ closures, uses the verified upstream NLTK sandbox fix for Cosmos Transfer, and
 updates Wan's Accelerate and Transformers dependencies. Isaac's constrained
 Setuptools 81 receives the same hash-bound Unicode manifest backport used by
 Cosmos3 serving. MoviePy 2.2.1 retains its released code while its exact,
-hash-checked metadata adopts upstream Pillow 12 compatibility and requires the
-actual patched Pillow 12.3 installation. Wan's dependency union, real MoviePy
-resize/MP4 encode/decode, NLTK sandbox, and source-distribution regression checks
-pass. Isaac's vendor version constraints still need reconciliation and GPU
-qualification. These source repairs require fresh image builds and complete
-artifact scans; they do not repair existing release digests.
+hash-locked Python 3.11 wheel and metadata are rebound only to the hash-locked,
+security-fixed Pillow 13.0.0 wheel under the bounded NPA compatibility policy;
+the image build does not run or claim MoviePy's upstream suite. Wan's dependency union,
+real MoviePy resize/MP4 encode/decode, NLTK sandbox, and source-distribution
+regression checks pass. Isaac's vendor version constraints still need
+reconciliation and GPU qualification. These source repairs require fresh image
+builds and complete artifact scans; they do not repair existing release digests.
 
 The shared Jammy Isaac source candidate removes its superseded Deadsnakes PPA
 dependency and builds the expedited security release CPython 3.11.18 from the

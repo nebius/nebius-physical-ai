@@ -349,11 +349,27 @@ else
 fi
 
 log "OSS dependency closure for Isaac Sim / Isaac Lab"
-sed -E '/^imageio-ffmpeg==/d' "${OSS_DEPS_FILE}" \
-  > /tmp/npa-isaac-oss-deps.txt
+MOVIEPY_PILLOW_QUALIFIED=0
+QUALIFIED_MARKER=/tmp/npa-moviepy-pillow-qualified
+"$ISAAC_VENV/bin/python" "${COMMON_DIR}/select_moviepy_pillow_closure.py" \
+  --requirements "$OSS_DEPS_FILE" \
+  --output /tmp/npa-isaac-oss-deps.txt \
+  --qualified-marker "$QUALIFIED_MARKER" \
+  --python-minor "$ISAAC_PYTHON_MINOR"
+if [ -f "$QUALIFIED_MARKER" ]; then
+  MOVIEPY_PILLOW_QUALIFIED=1
+fi
 "$ISAAC_VENV/bin/python" -m pip install --no-cache-dir \
   --no-deps \
   -r /tmp/npa-isaac-oss-deps.txt
+if [ "$MOVIEPY_PILLOW_QUALIFIED" = 1 ]; then
+  "$ISAAC_VENV/bin/python" -m pip install --no-cache-dir \
+    --no-deps \
+    --force-reinstall \
+    --only-binary=:all: \
+    --require-hashes \
+    -r "${COMMON_DIR}/moviepy-pillow311-requirements.lock"
+fi
 # PyPI's ordinary imageio-ffmpeg wheel embeds a static FFmpeg executable. The
 # package itself is BSD-2-Clause, but that bundled executable is not admissible
 # in NPA's public image contract. Build its pure-Python wheel from the sdist and
@@ -361,7 +377,7 @@ sed -E '/^imageio-ffmpeg==/d' "${OSS_DEPS_FILE}" \
 "$ISAAC_VENV/bin/python" -m pip install --no-cache-dir --no-deps \
   --no-binary imageio-ffmpeg \
   "imageio-ffmpeg==0.6.0"
-rm -f /tmp/npa-isaac-oss-deps.txt
+rm -f /tmp/npa-isaac-oss-deps.txt "$QUALIFIED_MARKER"
 IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg "$ISAAC_VENV/bin/python" - <<'PY'
 import imageio_ffmpeg
 
@@ -374,10 +390,10 @@ test -z "$(find "$ISAAC_VENV" -type f -path '*/imageio_ffmpeg/binaries/ffmpeg*' 
 # otherwise impossible wheel>=24 / Isaac-Lab<24 packaging constraint without
 # weakening Isaac Lab's declared runtime contract.
 "$ISAAC_VENV/bin/python" -m pip uninstall --yes wheel
-if [ "$ISAAC_PYTHON_MINOR" = 3.11 ] && grep -qiE '^moviepy==' "$OSS_DEPS_FILE"; then
-  # MoviePy's upstream source supports Pillow 12; its released metadata still
-  # caps Pillow below the security fix. Bind the compatibility patch to exact
-  # metadata bytes and retain the real Pillow 12.3 installation and RECORD.
+if [ "$MOVIEPY_PILLOW_QUALIFIED" = 1 ]; then
+  # MoviePy 2.2.1's released metadata caps Pillow below 12. Apply NPA's bounded
+  # compatibility policy only to exact reviewed metadata bytes and retain the
+  # real Pillow 13 installation and RECORD. This is not a build-time suite run.
   # LeIsaac's selected closure deliberately excludes MoviePy. Other versions
   # still invoke the repair so its exact-version check rejects unknown bytes.
   "$ISAAC_VENV/bin/python" "${COMMON_DIR}/moviepy_pillow_compat.py"
