@@ -785,7 +785,5 @@ def test_the_binding_checks_the_bytes_and_not_the_path() -> None:
         with pytest.raises(AssertionError, match="crop-margin calculation changed"):
             _assert_the_record_binds_this_checkout(
                 record,
-                _checkout_holding(
-                    changed, Path(into) / "changed-calculation"
-                ),
+                _checkout_holding(changed, Path(into) / "changed-calculation"),
             )
