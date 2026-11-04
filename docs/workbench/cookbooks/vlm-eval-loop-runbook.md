@@ -150,6 +150,13 @@ report if promotion is required; never edit an old response or parser tag to
 claim new execution. Malformed numeric, type, success, rationale, or support
 fields also abort the whole loop or sweep without manufacturing a score.
 
+Requiring `provider_observable_support` also changes the judge prompt and its
+hash, not only the parser. Treat rubric thresholds, benchmark model choices,
+and terminal-evidence acceptance calibrated with the earlier three-field
+prompt as stale. Re-run the relevant positive and negative calibration set with
+the new prompt before reusing those decisions; parser migration alone is not a
+recalibration.
+
 For a consequential or disputed review, `compare-judges` preserves two hosted
 outcomes without averaging:
 

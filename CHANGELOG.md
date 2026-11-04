@@ -16,6 +16,10 @@ a versioned heading when a release is cut.
 - Treat the field as provider-authored text, not verified pixel grounding.
   Superseded three-field parser evidence now requires reevaluation and receives
   the stable `provider_parser_obsolete` promotion diagnostic.
+- The additional required judge output changes every real judge prompt and its
+  hash. Rubric thresholds, benchmark choices, and terminal-evidence acceptance
+  calibrated with the earlier three-field prompt are stale and must be
+  recalibrated before they are reused.
 
 ### cuRobo image dependency closure
 
