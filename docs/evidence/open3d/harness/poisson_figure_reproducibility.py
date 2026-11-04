@@ -39,9 +39,11 @@ Needs Open3D. Writes `docs/evidence/open3d/poisson-figure-reproducibility.json`.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import platform
 import subprocess
+import time
 from pathlib import Path
 
 import numpy as np
@@ -78,16 +80,18 @@ def surface_area(mesh) -> float:
     return float((0.5 * np.linalg.norm(np.cross(b - a, c - a), axis=1)).sum())
 
 
-def reconstruct(o3d, cloud, seed: int | None) -> dict:
+def reconstruct(o3d, cloud, seed: int | None, *, n_threads: int = -1) -> dict:
     if seed is not None:
         o3d.utility.random.seed(seed)
+    started = time.perf_counter()
     mesh, _density = o3d.geometry.TriangleMesh.create_from_point_cloud_poisson(
-        cloud, depth=DEPTH
+        cloud, depth=DEPTH, n_threads=n_threads
     )
     return {
         "vertices": len(mesh.vertices),
         "triangles": len(mesh.triangles),
         "surface_area": surface_area(mesh),
+        "wall_seconds": time.perf_counter() - started,
     }
 
 
@@ -101,16 +105,20 @@ def spread(values: list[float]) -> dict:
     }
 
 
-def condition(o3d, cloud, label: str, seed: int | None) -> dict:
-    runs = [reconstruct(o3d, cloud, seed) for _ in range(REPEATS)]
+def condition(o3d, cloud, label: str, seed: int | None, *, n_threads: int = -1) -> dict:
+    runs = [reconstruct(o3d, cloud, seed, n_threads=n_threads) for _ in range(REPEATS)]
     areas = [run["surface_area"] for run in runs]
     return {
         "repeats": REPEATS,
         "seeded_before_each_call": seed is not None,
-        "topology_is_stable": len({(r["vertices"], r["triangles"]) for r in runs}) == 1,
+        "vertex_and_triangle_counts_are_stable": (
+            len({(r["vertices"], r["triangles"]) for r in runs}) == 1
+        ),
         "vertices": runs[0]["vertices"],
         "triangles": runs[0]["triangles"],
         "surface_area": spread(areas),
+        "wall_seconds": [run["wall_seconds"] for run in runs],
+        "poisson_n_threads": n_threads,
         "label": label,
     }
 
@@ -133,45 +141,65 @@ def openmp_is_not_linked() -> dict:
     base = Path(o3d.__file__).parent
     binaries = [path for path in base.rglob("*.so") if "pybind" in path.name]
     linked, symbols = None, None
+    ldd_returncode, nm_returncode = None, None
     if binaries:
         target = str(binaries[0])
-        linked = subprocess.run(
+        ldd = subprocess.run(
             ["ldd", target], capture_output=True, text=True, check=False
-        ).stdout
-        symbols = subprocess.run(
+        )
+        nm = subprocess.run(
             ["nm", "-D", target], capture_output=True, text=True, check=False
-        ).stdout
+        )
+        linked, symbols = ldd.stdout, nm.stdout
+        ldd_returncode, nm_returncode = ldd.returncode, nm.returncode
+    checks_succeeded = ldd_returncode == 0 and nm_returncode == 0
     return {
         "binary": binaries[0].name if binaries else None,
-        "openmp_runtime_linked": bool(
+        "ldd_returncode": ldd_returncode,
+        "nm_returncode": nm_returncode,
+        "openmp_runtime_linked": None
+        if not checks_succeeded
+        else bool(
             linked and any(lib in linked for lib in ("libgomp", "libomp", "libiomp"))
         ),
-        "openmp_symbols_present": bool(
-            symbols and ("GOMP_" in symbols or "omp_get_max_threads" in symbols)
+        "openmp_symbols_present": None
+        if not checks_succeeded
+        else bool(symbols and ("GOMP_" in symbols or "omp_get_max_threads" in symbols)),
+        "omp_num_threads_was_inert_in_this_build": (
+            checks_succeeded
+            and not any(lib in linked for lib in ("libgomp", "libomp", "libiomp"))
+            and "GOMP_" not in symbols
+            and "omp_get_max_threads" not in symbols
         ),
-        "so_omp_num_threads_is_not_a_knob_here": True,
     }
 
 
 def thread_limited_condition(o3d, cloud) -> dict:
-    """Repeat under Open3D's own thread control, with the reading recorded beside it.
+    """Pass the Poisson solver's documented per-call thread argument."""
 
-    `o3d.utility.set_max_threads` is the control this build actually exposes, and
-    `get_max_threads()` is observable, so the record can show the knob turned instead of
-    asserting that it did.
-    """
-    before = o3d.utility.get_max_threads()
-    o3d.utility.set_max_threads(1)
-    observed = o3d.utility.get_max_threads()
-    try:
-        row = condition(o3d, cloud, "thread_limited", None)
-    finally:
-        o3d.utility.set_max_threads(before)
+    return condition(o3d, cloud, "poisson_n_threads_1", None, n_threads=1)
+
+
+def source_provenance() -> dict:
+    """Bind the generated record to the exact committed producer bytes."""
+
+    harness_sha = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
+    head = subprocess.run(
+        ["git", "-C", str(REPO), "rev-parse", "HEAD"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    clean = (
+        subprocess.run(
+            ["git", "-C", str(REPO), "diff", "--quiet"], check=False
+        ).returncode
+        == 0
+    )
     return {
-        **row,
-        "max_threads_before": before,
-        "max_threads_observed_during": observed,
-        "the_knob_engaged": observed == 1 and before != 1,
+        "source_commit": head,
+        "clean_tree_before_write": clean,
+        "harness_sha256": harness_sha,
     }
 
 
@@ -198,22 +226,16 @@ def main() -> int:
         for name, row in (
             ("default", default),
             ("seeded_before_each_call", seeded),
-            ("thread_limited", single),
+            ("poisson_n_threads_1", single),
         )
     }
     direction = "smaller" if single_spread < default_spread else "larger"
+    factor = f"a factor of {improvement:.1f}; " if improvement is not None else ""
     single_threading_verdict = (
-        f"Does not fix it. The spread goes from {default_spread:.2e} to "
-        f"{single_spread:.2e}, a factor of {improvement:.1f} -- {direction} with threads "
-        f"limited, and a reviewer saw it come out larger in one of their pairings too, "
-        f"which is what two runs cannot tell you. And -- the part that "
-        f"decides it -- every condition still produced "
-        f"{distinct['thread_limited']} distinct areas out of {REPEATS}. A setting that "
-        f"made this deterministic would produce one. The knob is recorded as engaged "
-        f"({single['max_threads_before']} threads to "
-        f"{single['max_threads_observed_during']}), because the experiment this replaces "
-        f"set `OMP_NUM_THREADS=1` in a build with no OpenMP linked and therefore measured "
-        f"nothing."
+        f"Does not make this exact. The spread goes from {default_spread:.2e} to "
+        f"{single_spread:.2e}, {factor}{direction} with the Poisson call's documented "
+        f"n_threads=1. It still produced {distinct['poisson_n_threads_1']} distinct "
+        f"areas out of {REPEATS}; the per-call value and wall times are recorded."
     )
     published_spread = abs(
         PUBLISHED["visible_with_only_its_own_self_occlusion"] - 0.7848528993182663
@@ -223,6 +245,8 @@ def main() -> int:
     )
 
     report = {
+        "schema": "npa.evidence.open3d.poisson-figure-reproducibility/v0.0.1",
+        "provenance": source_provenance(),
         "what_this_measures": (
             "Whether the ray-cast occlusion figures in `audit-view-occlusion.json` are "
             "reproducible, and if not, to what precision they are."
@@ -232,6 +256,11 @@ def main() -> int:
             "share the one-pixel environment dependence they measured in the z-buffer "
             "footprint path. It does not. The z-buffer path reproduced exactly on this "
             "host; this one does not reproduce against itself."
+        ),
+        "subject_availability": (
+            "The audit-view record and harness are supplied by PR 1014 and are not in "
+            "this merge target. Values are pinned to commit 04aacfcf89; the causal "
+            "attribution here is inferred from a different fixed Eagle input."
         ),
         "environment": {
             "open3d": o3d.__version__,
@@ -257,14 +286,14 @@ def main() -> int:
             ),
             "how_it_was_established": (
                 "Identical input, one process, same depth, repeated. Vertex and triangle "
-                "counts repeat exactly while the total surface area does not, so the "
-                "topology is stable and the vertex positions are not."
+                "counts repeat exactly while total surface area does not. Counts alone "
+                "do not establish identical mesh connectivity."
             ),
             "why_an_earlier_experiment_here_was_void": openmp,
             "conditions": {
                 "default": default,
                 "seeded_before_each_call": seeded,
-                "thread_limited": single,
+                "poisson_n_threads_1": single,
             },
         },
         "what_the_remedies_do": {
@@ -282,7 +311,8 @@ def main() -> int:
             ),
         },
         "does_this_change_any_conclusion": {
-            "no": (
+            "conclusion_changed": False,
+            "explanation": (
                 "The record's conclusion is that the removed surface is visible from the "
                 "shipped camera well above the 50% criterion. The margin is "
                 f"{margin:.4f} and the observed run-to-run difference is "
@@ -292,111 +322,21 @@ def main() -> int:
             "observed_difference": published_spread,
             "ratio": margin / published_spread if published_spread else None,
         },
-        "the_guard_was_attacked_and_every_hole_found_is_now_closed": {
-            "raised_by": (
-                "review lane, who called the guard the longest-lived thing in this PR "
-                "and then probed it rather than leaving the compliment, across three "
-                "messages"
-            ),
-            "why_this_field_was_renamed": (
-                "It was headed `..._six_holes_found` and ended 'All six caught', while "
-                "the field below it listed an open hole. The sentence was true of what "
-                "it counted -- six probes I ran, all six caught -- and false against the "
-                "heading's noun, because one of the reviewer's six was not among them. "
-                "Three artifacts then carried three different counts. The reviewer was "
-                "right that this needed reconciling, and the honest fix was to close the "
-                "last hole so there is one number."
-            ),
-            "it_already_caught_without_changes": [
-                (
-                    "a pin split across lines by the formatter, which the reviewer "
-                    "predicted would evade and did not"
-                ),
-                "a string comparison against the figure",
+        "guard_scope": {
+            "files": "tracked Python files from git ls-files",
+            "covered": [
+                "exact comparisons and membership",
+                "pytest.approx including its default tolerance",
+                "math.isclose and assert_allclose",
             ],
-            "the_six_holes_they_found_all_closed": [
-                (
-                    "a literal extracted to a named constant, then compared. The most "
-                    "ordinary refactor there is, and it defeated a line-based scan "
-                    "without touching its logic. An AST pass now resolves bound names "
-                    "before examining comparisons."
-                ),
-                (
-                    "`approx(figure, abs=0)`, exact equality wearing the word that "
-                    "bought the exemption"
-                ),
-                "`assert x in (figure,)`, exact equality spelled differently",
-                (
-                    "a pin in a test module outside `npa/tests`, of which they counted "
-                    "36, including the golden-eval modules in `npa/src/npa/smoke/` that "
-                    "run in containers"
-                ),
-                (
-                    "a pin in a file named neither `test_*.py` nor anything else the "
-                    "scan reached. This is the one that was still open at the previous "
-                    "head: the scope is now every `.py` file in the repository, which is "
-                    "the only scope with no boundary left to evade. It costs about a "
-                    "second -- 3700 paths discovered, and a file parsed only if it holds "
-                    "one of the figures, which two do."
-                ),
-                "a pin in the Open3D harness directory",
-            ],
-            "two_further_classes_they_raised_after_that": [
-                (
-                    "a name bound to a *container* holding the figure, which is the "
-                    "nearest neighbour of the refactor already closed. They supplied "
-                    "this with both halves of the fix after reporting that their first "
-                    "attempt at it did not work: binding the name is not enough unless "
-                    "the membership branch also looks at bare names and not only at "
-                    "literal containers."
-                ),
-                (
-                    "a tolerance that is tiny rather than zero. The check asked whether "
-                    "the tolerance *is* zero, so `abs=1e-300` walked straight back "
-                    "through it. It now compares the tolerance against the movement "
-                    "these figures actually have. The reviewer pointed at the default "
-                    "condition's `absolute_spread` for that number, which is a spread of "
-                    "surface area around 157 units, while these figures are fractions "
-                    "near 0.78; the quantity used is the observed difference in the "
-                    "published figures themselves, which keeps their disclosed honest "
-                    "example on the correct side of it."
-                ),
-            ],
-            "verified_by": (
-                "Each case written to a probe file at the path it belongs to, the guard "
-                "run against it, and the probe deleted. Fourteen pins caught, including "
-                "the one that evaded at the previous head. Four honest patterns left "
-                "unflagged: `approx(..., abs=1e-4)`, a tuple that merely holds a figure, "
-                "an unrelated container, and membership in a container of other numbers. "
-                "Those matter as much as the pins -- a guard that fires on a figure's "
-                "mere presence is one annoyed person away from deletion."
-            ),
-            "a_third_round_closed_two_more": (
-                "After accepting the head above, the reviewer named one more concrete "
-                "evasion: a *nested* container, `N = [[figure]]` with `assert x in "
-                "N[0]`. It was consistent with what the record claimed -- containers of "
-                "figures, not containers of containers -- so the choice was to document "
-                "the limit or close it. Closing it needed the read side too: the "
-                "comparator there is a subscript, not a name, so recognising the "
-                "container without recognising `N[0]` leaves the two halves not "
-                "meeting. Resolving subscripts closed the dict-value case in the same "
-                "stroke, since `D[\"headline\"]` is the same shape. Nested containers, "
-                "dicts, and a dict inside a list are all caught now; both honest "
-                "patterns retested and still unflagged."
-            ),
-            "what_is_still_not_reached": (
-                "A figure reached through an attribute or a function return. Resolved: "
-                "direct literals, names bound to them, names bound to containers of "
-                "them at any depth including dicts, and subscript reads from those "
-                "names. A figure passed into a call is deliberately not followed -- "
-                "what a function receives says nothing about what it returns."
+            "known_limit": (
+                "Values obtained through arbitrary function returns are not followed."
             ),
         },
         "what_this_does_not_claim": [
             (
-                "That the figures are wrong. They are reproducible to about five "
-                "significant figures, which is far more precision than any conclusion "
-                "here uses."
+                "That the figures are wrong. One rerun agreed to four significant "
+                "figures; that single pair is not a general precision bound."
             ),
             (
                 "That Poisson is wrong. A non-deterministic surface reconstruction is a "
@@ -418,7 +358,8 @@ def main() -> int:
     for name, row in report["cause"]["conditions"].items():
         area = row["surface_area"]
         print(
-            f"  {name:26} topology_stable={row['topology_is_stable']} "
+            f"  {name:26} counts_stable="
+            f"{row['vertex_and_triangle_counts_are_stable']} "
             f"identical={area['identical']} relative_spread={area['relative_spread']:.2e}"
         )
     print(f"margin against the 50% criterion: {margin:.4f}")

@@ -12,7 +12,9 @@ Reads the record only. No Open3D, so this runs wherever the suite runs.
 from __future__ import annotations
 
 import ast
+import hashlib
 import json
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -40,7 +42,11 @@ def record() -> dict:
 def test_the_finding_is_that_no_condition_reproduces(record) -> None:
     """The negative result, stated for every condition rather than in general."""
     conditions = record["cause"]["conditions"]
-    assert set(conditions) == {"default", "seeded_before_each_call", "thread_limited"}
+    assert set(conditions) == {
+        "default",
+        "seeded_before_each_call",
+        "poisson_n_threads_1",
+    }
     for name, row in conditions.items():
         assert row["repeats"] >= 4, f"{name} has too few repeats to say anything"
         assert row["surface_area"]["identical"] is False, (
@@ -50,14 +56,10 @@ def test_the_finding_is_that_no_condition_reproduces(record) -> None:
         assert row["surface_area"]["relative_spread"] > 0.0
 
 
-def test_the_cause_is_positions_and_not_a_different_mesh(record) -> None:
-    """Stable topology is what makes "same mesh, moved vertices" a measurement.
-
-    Without it the finding would be consistent with Poisson producing a genuinely
-    different reconstruction each time, which would be a far larger claim.
-    """
+def test_the_mesh_counts_are_stable_without_claiming_connectivity(record) -> None:
+    """Counts are measured; identical connectivity is not inferred from them."""
     for name, row in record["cause"]["conditions"].items():
-        assert row["topology_is_stable"] is True, name
+        assert row["vertex_and_triangle_counts_are_stable"] is True, name
         assert row["vertices"] > 0 and row["triangles"] > 0, name
 
 
@@ -93,25 +95,22 @@ def test_the_thread_limiting_verdict_agrees_with_its_own_numbers(record) -> None
     """
     conditions = record["cause"]["conditions"]
     default = conditions["default"]["surface_area"]["relative_spread"]
-    single = conditions["thread_limited"]["surface_area"]["relative_spread"]
+    single = conditions["poisson_n_threads_1"]["surface_area"]["relative_spread"]
     verdict = record["what_the_remedies_do"]["limiting_threads"]
 
     assert "Does not fix it" in verdict
     assert f"{default:.2e}" in verdict, verdict
     assert f"{single:.2e}" in verdict, verdict
-    assert f"factor of {default / single:.1f}" in verdict, verdict
+    if single:
+        assert f"factor of {default / single:.1f}" in verdict, verdict
     # The direction has to match the numbers, because a factor below one reads as an
     # improvement to anyone skimming.
     assert ("smaller" if single < default else "larger") in verdict, verdict
 
-    engaged = conditions["thread_limited"]
-    assert engaged["the_knob_engaged"] is True, (
-        "the thread limit did not take, so this condition measures nothing -- which is "
-        "exactly the defect that made the previous OMP_NUM_THREADS experiment void"
-    )
-    assert engaged["max_threads_observed_during"] == 1
-    assert engaged["max_threads_before"] != 1
-    assert f"({engaged['max_threads_before']} threads to 1)" in verdict, verdict
+    engaged = conditions["poisson_n_threads_1"]
+    assert engaged["poisson_n_threads"] == 1
+    assert len(engaged["wall_seconds"]) == engaged["repeats"]
+    assert all(value > 0 for value in engaged["wall_seconds"])
 
 
 def test_the_void_experiment_is_recorded_as_void(record) -> None:
@@ -124,7 +123,9 @@ def test_the_void_experiment_is_recorded_as_void(record) -> None:
     void = record["cause"]["why_an_earlier_experiment_here_was_void"]
     assert void["openmp_runtime_linked"] is False
     assert void["openmp_symbols_present"] is False
-    assert void["so_omp_num_threads_is_not_a_knob_here"] is True
+    assert void["ldd_returncode"] == 0
+    assert void["nm_returncode"] == 0
+    assert void["omp_num_threads_was_inert_in_this_build"] is True
     assert void["binary"], void
 
 
@@ -156,7 +157,7 @@ NON_REPRODUCIBLE_LITERALS = ("0.7848810005123376", "0.3521503113541809")
 
 
 def _scanned_files() -> list[Path]:
-    """Every Python file in the repository.
+    """Every tracked Python file in the repository.
 
     This went through three scopes, each widened by a reviewer finding a pin outside it.
     `npa/tests` missed the 36 `test_*.py` files elsewhere, including `npa/src/npa/smoke/`,
@@ -168,14 +169,12 @@ def _scanned_files() -> list[Path]:
     evade. It costs about a second: discovery is 3700 paths, and a file is parsed only if
     it contains one of the figures, which two do.
     """
-    return [
-        path
-        for path in REPO.rglob("*.py")
-        if not any(
-            part in {".venv", "node_modules", ".git", "__pycache__"}
-            for part in path.parts
-        )
-    ]
+    tracked = subprocess.run(
+        ["git", "-C", str(REPO), "ls-files", "-z", "--", "*.py"],
+        check=True,
+        capture_output=True,
+    ).stdout
+    return [REPO / item.decode() for item in tracked.split(b"\0") if item]
 
 
 def _tolerance_floor() -> float:
@@ -238,6 +237,10 @@ def _exact_pins(tree: ast.AST, literals: tuple[str, ...]) -> list[tuple[int, str
     floor = _tolerance_floor()
     bound: set[str] = set()
     for node in ast.walk(tree):
+        if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            if node.value is not None and _figure_inside(node.value, values):
+                bound.add(node.target.id)
+            continue
         if not isinstance(node, ast.Assign):
             continue
         holds_a_figure = False
@@ -300,7 +303,14 @@ def _exact_pins(tree: ast.AST, literals: tuple[str, ...]) -> list[tuple[int, str
                 if isinstance(callee, ast.Attribute)
                 else getattr(callee, "id", "")
             )
-            if name != "approx" or not any(names_a_figure(arg) for arg in node.args):
+            if name not in {"approx", "isclose", "assert_allclose"} or not any(
+                names_a_figure(arg) for arg in node.args
+            ):
+                continue
+            if name == "approx" and not node.keywords:
+                found.append(
+                    (node.lineno, "approx with its too-tight default tolerance")
+                )
                 continue
             for keyword in node.keywords:
                 if keyword.arg not in {"abs", "rel"} or not isinstance(
@@ -371,3 +381,10 @@ def test_the_harness_and_record_are_committed_together(record) -> None:
     assert record["environment"]["open3d"].startswith("0.20")
     assert record["environment"]["input_points"] > 0
     assert record["environment"]["poisson_depth"] >= 8
+    assert record["schema"].startswith("npa.evidence.open3d.")
+    provenance = record["provenance"]
+    assert provenance["clean_tree_before_write"] is True
+    assert len(provenance["source_commit"]) == 40
+    assert (
+        provenance["harness_sha256"] == hashlib.sha256(HARNESS.read_bytes()).hexdigest()
+    )
