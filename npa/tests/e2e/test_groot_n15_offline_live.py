@@ -61,7 +61,9 @@ def test_groot_n15_offline_native_training(tmp_path):
     assert math.isfinite(receipt["training_loss"])
     assert receipt["optimizer_loss_trace"]
     assert receipt["optimizer_loss_trace"][-1]["step"] == config["max_steps"]
-    assert all(math.isfinite(point["loss"]) for point in receipt["optimizer_loss_trace"])
+    assert all(
+        math.isfinite(point["loss"]) for point in receipt["optimizer_loss_trace"]
+    )
     assert math.isfinite(receipt["held_out_eval_loss"])
     assert receipt["visible_cuda_devices"] == 1
     assert receipt["checkpoint_reload"]["verified"] is True

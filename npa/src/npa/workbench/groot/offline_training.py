@@ -517,7 +517,9 @@ def _write_training_receipt(
     if result.global_step != training_config["max_steps"]:
         raise ValueError("training did not complete the requested optimizer steps")
     if training_trace[-1]["step"] != result.global_step:
-        raise ValueError("optimizer-loss trace does not reach the completed training step")
+        raise ValueError(
+            "optimizer-loss trace does not reach the completed training step"
+        )
     eval_loss = evaluation.get("eval_loss")
     if not isinstance(eval_loss, (float, int)) or not math.isfinite(eval_loss):
         raise ValueError("held-out evaluation produced a nonfinite loss")
