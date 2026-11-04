@@ -423,6 +423,32 @@ def test_visual_review_schema_enums_match_pinned_vocabularies() -> None:
     assert _enum_sites(paired) == _ARM_ENUM_SITES | _COMPARISON_ENUM_SITES
 
 
+def test_visual_review_prompt_vocabularies_match_pinned_owners() -> None:
+    expected_arm_text = (
+        f"visible_status: {'|'.join(visual_review_schema.TASK_STATUSES)}. Fidelity "
+        f"status: {'|'.join(visual_review_schema.FIDELITY_STATUSES)}. Issue category: "
+        f"{'|'.join(visual_review_schema.FIDELITY_CATEGORIES)}; severity: "
+        f"{'|'.join(visual_review_schema.ISSUE_SEVERITIES)}. Reviewability: "
+        f"{'|'.join(visual_review_schema.REVIEWABILITY_STATUSES)}. Impressiveness: "
+        f"{'|'.join(visual_review_schema.IMPRESSIVENESS_STATUSES)}. Usefulness: "
+        f"{'|'.join(visual_review_schema.USEFULNESS_STATUSES)}."
+    )
+    assert visual_review._enum_contract_text() == expected_arm_text
+
+    preferences = visual_review_schema.COMPARISON_PREFERENCES
+    differences = visual_review_schema.COMPARISON_DIFFERENCES
+    expected_comparison_text = (
+        f"preferred_set {preferences[0]} or {preferences[1]} requires "
+        f"{differences[0]}; {preferences[2]} requires {differences[1]}; "
+        f"{preferences[3]} requires {differences[2]}. confidence is "
+        f"{'|'.join(visual_review_schema.CONFIDENCES)}."
+    )
+    prompt = visual_review._review_prompt(
+        "Inspect visible pixels.", "Stay bounded.", "paired"
+    )
+    assert expected_comparison_text in prompt
+
+
 @pytest.mark.parametrize("status", visual_review._TASK_STATUSES)
 def test_parser_accepts_every_task_status(status: str) -> None:
     payload = _single_payload()
