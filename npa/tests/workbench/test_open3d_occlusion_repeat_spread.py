@@ -142,8 +142,14 @@ def test_the_verdict_still_clears_the_gate_by_orders_of_magnitude(spread) -> Non
     assert observed == pytest.approx(
         spread["observed_deviation"]["largest_either_way"], abs=1e-15
     )
-    # The smallest measured margin is the armadillo at 0.818 against the 0.5 gate.
-    assert (0.818 - GATE) / observed > 1000.0
+    audit = json.loads(AUDIT.read_text())
+    measured = [
+        row["visible_area_fraction"]
+        for row in audit["scenes"]
+        if row.get("verdict") != "no_removed_surface"
+    ]
+    assert measured
+    assert (min(measured) - GATE) / observed > 1000.0
 
 
 def test_the_audit_record_no_longer_declares_the_falsified_figure(audit) -> None:

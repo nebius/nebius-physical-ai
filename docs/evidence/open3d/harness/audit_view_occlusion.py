@@ -70,6 +70,34 @@ SAMPLES_PER_TRIANGLE = 6
 SELF_HIT_VOXELS = 0.25
 
 
+def camera_binding_disclosure() -> dict:
+    """Limits of the camera binding that regeneration must preserve."""
+
+    return {
+        "what_is_bound": (
+            "Each recorded elevation, eye direction, look target, and up vector is "
+            "checked against the product camera fit by the offline tests."
+        ),
+        "what_is_still_not_bound": {
+            "camera_distance": (
+                "The tests do not bind the fitted distance along the checked direction; "
+                "that requires the source point geometry."
+            ),
+            "up_axis": (
+                "This harness supplies declared +Z to _view_cameras. The product normally "
+                "uses its inferred up axis. Separate evidence measured +Z for an Armadillo "
+                "cloud, but the Eagle cloud used here has not been measured through that "
+                "inference, so these visibility figures are conditional on +Z."
+            ),
+            "point_occlusion": (
+                "The fused cloud is rendered as discs but the ray instrument treats points "
+                "as non-occluding. The reported visibility fractions are therefore upper "
+                "bounds on pixels a reviewer may see, not rendered-view measurements."
+            ),
+        },
+    }
+
+
 def barycentric_samples(
     vertices: np.ndarray, triangles: np.ndarray
 ) -> tuple[np.ndarray, np.ndarray]:
@@ -486,6 +514,7 @@ def main() -> int:
 
         if not sweep:
             sweep = azimuth_sweep(o3d, removed, kept, samples, camera, voxel)
+            sweep["scene"] = name
             print(
                 f"  no camera fixes it: best of {sweep['azimuths_measured']} azimuths is "
                 f"{sweep['best_visible_area_fraction']:.1%} at "
@@ -520,6 +549,9 @@ def main() -> int:
                     "against the observations it is judged against."
                 ),
                 "why_the_camera_is_not_the_fix": sweep,
+                "the_recorded_camera_is_bound_to_the_product_fit": (
+                    camera_binding_disclosure()
+                ),
                 "the_residual_this_does_not_fix": (
                     "The removed surface occludes itself. It is an extrapolated shell, so "
                     "from any single eye the far side of it sits behind the near side, "
@@ -543,10 +575,10 @@ def main() -> int:
                         "2e-5 and called it agreement: that came from two runs, and a reviewer's "
                         "own two runs exceeded it before their numbers were compared against this "
                         "record at all. Two observations give a sample minimum, not a bound. "
-                        "Triangle counts move by a few of 1.09M on the eagle and a few tens of "
-                        "1.04M on the armadillo, with the kept and removed counts moving by the "
-                        "same amount in opposite directions: triangles sitting within "
-                        "floating-point reach of the crop limit changing which side they land on. "
+                        "Total reconstructed triangle counts vary by a few triangles as well as "
+                        "the crop assignment, and kept and removed counts can move in the same "
+                        "direction. The nondeterminism is therefore in reconstruction, not only "
+                        "triangles sitting near the crop boundary. "
                         "orient_normals_consistent_tangent_plane is multithreaded and its "
                         "tie-breaking is not seeded, so a seed cannot remove this. The "
                         "barycentric sample count moves with them and is not evidence of anything "

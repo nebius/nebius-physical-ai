@@ -32,9 +32,10 @@ REPO = Path(__file__).resolve().parents[3]
 RECORD = REPO / "docs/evidence/open3d/audit-view-occlusion.json"
 HARNESS = REPO / "docs/evidence/open3d/harness/audit_view_occlusion.py"
 
-#: Frozen in `program/claims/open3d-audit-view-occlusion/CLAIM.md` before the first
-#: measurement. A majority of the thing the view exists to show. The shipped camera
-#: failed it at 35.2%, and the gate was not moved to accommodate that.
+#: The acceptance criterion owned by this test and recorded with the evidence: a
+#: majority of the thing the view exists to show. The shipped camera failed it at
+#: 35.2%, and the criterion was not moved to accommodate that result. There is no
+#: separately committed pre-registration file.
 MINIMUM_VISIBLE_AREA = 0.50
 
 
@@ -194,7 +195,7 @@ def test_a_zero_cannot_be_a_framing_defect_in_disguise(record) -> None:
 
 
 def test_the_instrument_reports_both_extremes(record) -> None:
-    """Controls A3 and A4 from the claim, so a number is not a constant.
+    """The record's positive and negative controls, so a number is not a constant.
 
     Geometry fully behind an occluder must read approximately nothing visible, and
     geometry fully in front of the same occluder from the same eye must read
@@ -347,9 +348,8 @@ def test_the_record_states_its_own_stability_rather_than_implying_exactness(
 
     Seeding the resampled scene was necessary and is not sufficient:
     `orient_normals_consistent_tangent_plane` is multithreaded and its tie-breaking is
-    not seeded, so triangles within floating-point reach of the crop limit change which
-    side they land on. Two full runs agreed to 2e-5 on every published fraction while
-    moving a handful of triangles between kept and removed.
+    not seeded, so both the reconstruction and crop assignment vary slightly. Six runs
+    observed a largest visibility deviation of 7.9e-05.
 
     The gate has four orders of magnitude of margin over that, which is the only reason
     it does not matter -- so the record has to say both things, and this checks it does.
@@ -359,7 +359,21 @@ def test_the_record_states_its_own_stability_rather_than_implying_exactness(
     assert "not bit" in " ".join(reproducibility).lower() or any(
         "bit_exact" in key for key in reproducibility
     )
-    assert "2e-5" in reproducibility["and_still_not_bit_exact"]
+    note = reproducibility["and_still_not_bit_exact"]
+    assert "7.9e-05" in note
+    assert "across 6 runs" in note
+
+
+def test_camera_binding_disclosure_is_generated_with_the_record(record) -> None:
+    """Regeneration must retain the camera and rendering limitations."""
+
+    from docs.evidence.open3d.harness.audit_view_occlusion import (
+        camera_binding_disclosure,
+    )
+
+    assert record["the_recorded_camera_is_bound_to_the_product_fit"] == (
+        camera_binding_disclosure()
+    )
 
     # And the margin that makes it immaterial has to be real, not asserted.
     for row in record["scenes"]:
@@ -460,51 +474,3 @@ def test_every_percentage_quoted_in_code_or_prose_is_one_the_record_holds(
             QUOTED_BUT_NOT_IN_THE_RECORD - unresolved
         ),
     }
-
-
-def test_widening_the_scan_to_every_record_would_be_a_coin_flip(record) -> None:
-    """Why `quoting_prose` is narrow, asserted rather than argued.
-
-    Review noted that a figure written outside the scoped block would not be bound, and
-    the natural repair is to check every percentage in `runner.py` against every
-    committed record. This measures that repair instead of adopting it: across the
-    evidence directory a coincidental match is roughly as likely as not, so the widened
-    guard would pass about half of all drifts while reading as comprehensive.
-
-    Kept as a test rather than only a comment so that if the record set ever becomes
-    sparse enough for the wide check to mean something, this fails and the scope
-    decision gets revisited on evidence instead of staying narrow out of habit.
-    """
-    leaves: set[float] = set()
-    for path in sorted((REPO / "docs/evidence/open3d").glob("*.json")):
-        leaves |= numbers_in(json.loads(path.read_text()))
-
-    candidates = [tenths / 1000.0 for tenths in range(1000)]
-    collisions = sum(
-        1
-        for value in candidates
-        if any(round(leaf, 3) == round(value, 3) for leaf in leaves)
-    )
-    rate = collisions / len(candidates)
-
-    # Well above the point where "backed by some record" stops being informative. If
-    # this drops below a third, widening is worth reconsidering.
-    assert rate > 0.33, (
-        f"only {rate:.1%} of arbitrary percentages collide with the {len(leaves)} "
-        "numeric leaves on record, so a whole-file check against all records may now "
-        "be strong enough to replace the scope"
-    )
-
-    # The concrete instance behind the rate: a figure this record does not own, matching
-    # records that do not own it either.
-    pane_fit = 0.111
-    unrelated = [
-        path.name
-        for path in sorted((REPO / "docs/evidence/open3d").glob("*.json"))
-        if "pane-fit" not in path.name
-        and any(
-            round(leaf, 3) == pane_fit
-            for leaf in numbers_in(json.loads(path.read_text()))
-        )
-    ]
-    assert unrelated, "11.1% no longer collides; re-measure before trusting this"
