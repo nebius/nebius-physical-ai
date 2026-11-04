@@ -44,6 +44,51 @@ def test_feedback_requires_success_despite_optional_boolean_defaults() -> None:
         parse_feedback_batch({"score": 0.9, "rationale": "missing verdict"})
 
 
+@pytest.mark.parametrize(
+    ("score", "expected"),
+    [(0, 0.0), (0.7, 0.7), (1, 1.0)],
+)
+def test_feedback_score_preserves_numbers_as_floats(
+    score: int | float, expected: float
+) -> None:
+    feedback = parse_feedback_batch(
+        {"success": True, "score": score, "rationale": "reviewed"}
+    )[0]
+
+    assert feedback.score == expected
+    assert type(feedback.score) is float
+
+
+@pytest.mark.parametrize(
+    "score",
+    [True, False, "0.7", "not-a-score", None, [], {}],
+)
+def test_feedback_rejects_non_numeric_score(score: Any) -> None:
+    with pytest.raises(PolicyContainerError, match=r"^score must be a literal number$"):
+        parse_feedback_batch(
+            {"success": True, "score": score, "rationale": "malformed"}
+        )
+
+
+@pytest.mark.parametrize(
+    ("score", "detail"),
+    [
+        (-0.1, "score must be at least 0.0"),
+        (1.1, "score must be at most 1.0"),
+        (float("nan"), "score must be finite"),
+        (float("inf"), "score must be finite"),
+        (float("-inf"), "score must be finite"),
+    ],
+)
+def test_feedback_rejects_non_finite_or_out_of_range_score(
+    score: float, detail: str
+) -> None:
+    with pytest.raises(PolicyContainerError, match=rf"^{detail}$"):
+        parse_feedback_batch(
+            {"success": True, "score": score, "rationale": "malformed"}
+        )
+
+
 @pytest.mark.parametrize("default", [False, True])
 def test_boolean_field_preserves_omitted_default_and_rejects_null(
     default: bool,
@@ -85,4 +130,57 @@ def test_feedback_endpoint_rejects_non_boolean_success_before_update(
 
     assert response.status_code == 400
     assert response.json() == {"detail": "success must be a boolean"}
+    assert not output_root.exists()
+
+
+@pytest.mark.parametrize(
+    ("score", "detail"),
+    [
+        (True, "score must be a literal number"),
+        ("0.7", "score must be a literal number"),
+        ("not-a-score", "score must be a literal number"),
+        (None, "score must be a literal number"),
+        ([], "score must be a literal number"),
+        ({}, "score must be a literal number"),
+        (-0.1, "score must be at least 0.0"),
+        (1.1, "score must be at most 1.0"),
+    ],
+)
+@pytest.mark.parametrize("valid_prefix", [False, True])
+def test_feedback_endpoint_rejects_malformed_score_before_update(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    score: Any,
+    detail: str,
+    valid_prefix: bool,
+) -> None:
+    fastapi_testclient = pytest.importorskip("fastapi.testclient")
+    output_root = tmp_path / "jail"
+    monkeypatch.setenv("NPA_POLICY_OUTPUT_ROOT", str(output_root))
+    monkeypatch.delenv("NPA_POLICY_CHECKPOINT", raising=False)
+
+    import npa.workbench.lerobot.policy_container as policy_container
+
+    def unexpected_update(*_args: Any, **_kwargs: Any) -> None:
+        pytest.fail("malformed score reached the policy update")
+
+    monkeypatch.setattr(
+        policy_container, "run_feedback_training_step", unexpected_update
+    )
+    client = fastapi_testclient.TestClient(policy_container.create_app())
+    malformed = {"success": True, "score": score, "rationale": "malformed"}
+    payload = (
+        {
+            "feedback": [
+                {"success": False, "score": 0.2, "rationale": "valid"},
+                malformed,
+            ]
+        }
+        if valid_prefix
+        else malformed
+    )
+    response = client.post("/feedback/train-step", json=payload)
+
+    assert response.status_code == 400
+    assert response.json() == {"detail": detail}
     assert not output_root.exists()

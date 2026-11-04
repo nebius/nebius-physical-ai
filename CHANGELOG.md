@@ -222,6 +222,14 @@ a versioned heading when a release is cut.
   directory creation. External clients must send a JSON boolean. Update-result
   decoding enforces the same contract instead of coercing truthy values.
 
+### LeRobot feedback scores require JSON numbers
+
+- `POST /feedback/train-step`, `lerobot policy_container feedback-step`, and
+  in-process Sim2Real feedback now share the same literal score contract.
+  Scores must be finite JSON numbers from 0 through 1; booleans, numeric strings,
+  null, containers, and out-of-range values fail before policy-update artifacts
+  are created. External clients that sent values such as `"0.7"` must send `0.7`.
+
 ### Token Factory captions expose thinking control
 
 - `token-factory caption` accepts `--thinking/--no-thinking` and the SDK accepts
