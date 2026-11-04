@@ -67,6 +67,7 @@ def test_real_gitleaks_gate_rejects_an_untrusted_path(
     finally:
         _trusted_gitleaks_available.cache_clear()
 
+
 _CONTROLLED_DECODE_PROBE = (
     "assert '--ignore-gitleaks-allow' in sys.argv\n"
     "assert sys.argv[sys.argv.index('--max-archive-depth') + 1] in {'0', '3'}\n"
