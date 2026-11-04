@@ -1,0 +1,108 @@
+{
+  "question": "does global_optimization change anything on the pipeline's own data, and could a reader of the record tell either way?",
+  "open3d_version": "0.20.0",
+  "probe_control": {
+    "construction": "two nodes, the second deliberately 0.5 off in x, with an edge asserting the relative transform is identity",
+    "node_offset_before": 0.5,
+    "node_offset_after": 0.0,
+    "edges_submitted": 1,
+    "edges_that_survived_pruning": 1,
+    "edges_pruned": 0,
+    "edges_submitted_as_loop_closures": 0,
+    "max_pose_correction_per_node": [
+      0.0,
+      0.5
+    ],
+    "max_pose_correction": 0.5,
+    "so": "the optimizer moves a pose when the graph disagrees with its edges, and this probe sees it, so a zero correction measured below is the optimizer's answer rather than a probe that cannot read poses"
+  },
+  "demo_fragments": {
+    "source": "o3d.data.DemoICPPointClouds, the pipeline's own demo fragments",
+    "nodes": 3,
+    "repeats": 5,
+    "scene_extent": 4.9239,
+    "max_pose_correction_over_repeats": [
+      4.7e-06,
+      4.7e-06
+    ],
+    "largest_matrix_entry_change_over_scene_extent": 9.54533e-07,
+    "why_that_is_not_a_share_of_the_scene": "max_pose_correction is the largest absolute change in a 4x4 pose entry, and a pose matrix mixes unitless rotation coefficients with a translation in scene units, so the largest entry can come from either. Dividing it by a length therefore gives a number that depends on the units the scene happens to be expressed in: a pure 90-degree rotation changes a rotation entry by 1 whether the scene is 10 metres or the same 10000 millimetres across, so this ratio would read 0.1 or 0.0001 for identical geometry. It was published here as a share of the extent, which it is not. The number is kept because it is what was measured, under a name that says what it measures. run_multiway now publishes a coordinate-consistent point displacement beside the entry delta; these cases predate it and are not relabelled as distances.",
+    "edges_submitted": 3,
+    "edges_that_survived_pruning": 2,
+    "edges_pruned": 1,
+    "why": "the pairwise estimates are mutually consistent, so the odometry chain already is the optimum and there is nothing for the optimizer to distribute. This is correct behaviour and it is also why the capability was never exercised by a case where it could fail"
+  },
+  "through_the_product_pipeline": {
+    "entry_point": "npa.workbench.open3d.runner.run_multiway",
+    "fragments": "the three synthetic clouds the functional smoke writes",
+    "max_pose_correction": 0.0,
+    "correction_is_exactly_zero": true,
+    "max_point_displacement": 0.0,
+    "scene_extent": 2.4345161653135796,
+    "max_point_displacement_as_share_of_extent": 0.0,
+    "edges_submitted": 3,
+    "edges_that_survived_pruning": 3,
+    "edges_pruned": 0,
+    "edges_the_record_serialized": 3,
+    "so": "the optimizer provably moved nothing, the smoke passed, and its success line still read that it had optimized a three-node pose graph"
+  },
+  "loop_with_overlap": {
+    "construction": "four 140-degree views of a cylindrical room at 80-degree spacing, so consecutive views overlap and the last closes back toward the first",
+    "nodes": 4,
+    "repeats": 5,
+    "edges_submitted": 6,
+    "edges_that_survived_pruning": 5,
+    "edges_pruned": 1,
+    "edges_pruned_over_repeats": [
+      1,
+      1
+    ],
+    "at_least_one_edge_was_pruned": true,
+    "max_pose_correction_over_repeats": [
+      1.8e-07,
+      6.5e-07
+    ],
+    "so": "an edge the optimizer rejected leaves no trace in a record that serializes only the survivors, and the correction is 1.8e-07 to 6.5e-07 -- not zero, and far too small to read as the optimizer having distributed anything -- so neither of the two things the optimization does is readable afterwards. This sentence said 'still zero' while the field above it recorded these numbers, which is the defect this record exists to make visible."
+  },
+  "through_the_product_on_a_loop": {
+    "entry_point": "npa.workbench.open3d.runner.run_multiway",
+    "construction": "the same four 140-degree views, written as PLY fragments",
+    "edges_submitted": 6,
+    "edges_that_survived_pruning": 3,
+    "edges_pruned": 3,
+    "max_pose_correction": 2.1739465189130058e-07,
+    "correction_is_nonzero": true,
+    "max_point_displacement": 3.711307163296749e-07,
+    "scene_extent": 5.051424799751641,
+    "max_point_displacement_as_share_of_extent": 7.347050209436395e-08,
+    "published_block_matches_the_snapshot": true,
+    "why_this_case_exists": "on consistent fragments the correction is 0.0 and nothing is prunable, so reading the poses after optimization rather than before, and publishing the surviving edge count as the submitted one, both produce identical output. This is the case where those two mutations are observable"
+  },
+  "what_the_record_omitted": {
+    "pose_graph_keys_before": [
+      "nodes",
+      "edges",
+      "reference_node",
+      "edge_prune_threshold",
+      "fused_points",
+      "fused_points_before_downsample",
+      "fused_sha256"
+    ],
+    "edges_submitted_was_published": false,
+    "edges_pruned_was_published": false,
+    "pose_correction_was_published": false,
+    "a_keyword_scan_said_otherwise_and_was_wrong": "scanning the keys for 'before' matched fused_points_before_downsample, which is about voxel downsampling and not about edges. Recorded because it is the kind of false positive that makes an audit look complete",
+    "consequence": "a run whose optimization corrected real drift and a run whose optimization did nothing serialize the same shape, and the smoke's success line says 'optimized a 3-node pose graph' either way"
+  },
+  "provenance": {
+    "harness": "harness/pose_graph_optimization.py",
+    "harness_sha256": "1f03e1b004363e6e3b25c1acfbd8b044ce9036db0bf7c0dc53ddcc450fbac135",
+    "path_is_relative_to": "this evidence directory",
+    "open3d_version": "0.20.0"
+  },
+  "what_this_does_not_claim": {
+    "not_that_optimization_is_broken": "zero correction on consistent input is the right answer. The defect is that the record cannot distinguish it from a failure, and that no test exercised a case where the optimizer has work to do",
+    "not_that_pruning_is_wrong": "rejecting a loop closure that disagrees is the mechanism working. Dropping it silently is the part a reviewer cannot audit",
+    "not_a_drift_correction_benchmark": "these constructions establish that the measurements are missing and that the optimizer reads as a no-op on the shipped data. How much drift multiway recovers on real captures is a separate question"
+  }
+}
