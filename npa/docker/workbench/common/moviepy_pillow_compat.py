@@ -1,10 +1,10 @@
 """Bind MoviePy 2.2.1 metadata to the exact qualified Pillow 13 release.
 
-MoviePy's released metadata caps Pillow below 12 even though its unchanged
-2.2.1 source passes the complete upstream suite against Pillow 13.0.0. Keep
-those released code bytes, require exactly the security-fixed Pillow 13.0.0
-closure, and update only the installed metadata and RECORD. Versions and
-licenses stay unchanged; this is not a vulnerability-version override.
+MoviePy's released metadata caps Pillow below 12. NPA's reviewed compatibility
+policy permits only unchanged MoviePy 2.2.1 release bytes with the exact
+security-fixed Pillow 13.0.0 closure. Update only the installed metadata and
+RECORD. Versions and licenses stay unchanged; this is not a
+vulnerability-version override or a claim that a build runs MoviePy's suite.
 """
 
 import base64

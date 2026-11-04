@@ -171,9 +171,10 @@ Shared Isaac builds apply the upstream Setuptools Unicode manifest fix to exact
 81.0.0 source hashes when Torch's `<82` constraint prevents a version upgrade.
 Cosmos3 serving uses the same verifier for its constrained 80.10.2 runtime.
 Both reject unknown source bytes and update installed `RECORD` hashes.
-Isaac's Python 3.11 closure installs security-fixed Pillow 13.0.0. MoviePy
-2.2.1's unchanged release source passes its complete upstream suite against
-that exact Pillow release. Their reviewed Python 3.11 linux/amd64 wheels are
+Isaac's Python 3.11 closure installs security-fixed Pillow 13.0.0. NPA's
+compatibility policy permits only unchanged MoviePy 2.2.1 release bytes with
+that exact Pillow release; the image build does not run or claim MoviePy's
+upstream suite. Their reviewed Python 3.11 linux/amd64 wheels are
 force-reinstalled through an exact `--require-hashes --only-binary` lock, so a
 same-version distribution inherited from a reused environment cannot bypass
 wheel authentication. A strict canonical-name selector rejects direct

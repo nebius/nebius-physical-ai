@@ -254,7 +254,7 @@ if [ "$MOVIEPY_PILLOW_QUALIFIED" = 1 ]; then
     --force-reinstall \
     --only-binary=:all: \
     --require-hashes \
-    -r "${COMMON_DIR}/moviepy-pillow311.lock"
+    -r "${COMMON_DIR}/moviepy-pillow311-requirements.lock"
 fi
 # PyPI's ordinary imageio-ffmpeg wheel embeds a static FFmpeg executable. The
 # package itself is BSD-2-Clause, but that bundled executable is not admissible
@@ -277,9 +277,9 @@ test -z "$(find "$ISAAC_VENV" -type f -path '*/imageio_ffmpeg/binaries/ffmpeg*' 
 # weakening Isaac Lab's declared runtime contract.
 "$ISAAC_VENV/bin/python" -m pip uninstall --yes wheel
 if [ "$MOVIEPY_PILLOW_QUALIFIED" = 1 ]; then
-  # MoviePy 2.2.1 passes its complete upstream suite on Pillow 13.0.0, but its
-  # released metadata still caps Pillow below 12. Bind the compatibility patch
-  # to exact metadata bytes and retain the real Pillow 13 installation and RECORD.
+  # MoviePy 2.2.1's released metadata caps Pillow below 12. Apply NPA's bounded
+  # compatibility policy only to exact reviewed metadata bytes and retain the
+  # real Pillow 13 installation and RECORD. This is not a build-time suite run.
   # LeIsaac's selected closure deliberately excludes MoviePy. Other versions
   # still invoke the repair so its exact-version check rejects unknown bytes.
   "$ISAAC_VENV/bin/python" "${COMMON_DIR}/moviepy_pillow_compat.py"

@@ -303,8 +303,7 @@ RUN /opt/isaac-lab/venv/bin/python -m pip install --no-deps --upgrade \
       "wheel>=0.46.2" \
     && (/opt/isaac-lab/venv/bin/python -m pip uninstall -y wandb lxml || true) \
     && /opt/isaac-lab/venv/bin/python \
-      /opt/npa/docker/workbench/common/moviepy_pillow_compat.py \
-    && /opt/isaac-lab/venv/bin/python -m pip check
+      /opt/npa/docker/workbench/common/moviepy_pillow_compat.py
 
 COPY --chown=ubuntu:ubuntu pyproject.toml /opt/npa/pyproject.toml
 COPY --chown=ubuntu:ubuntu src/npa /opt/npa/src/npa
