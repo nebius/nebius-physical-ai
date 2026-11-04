@@ -13,6 +13,7 @@ from npa.workbench.groot.offline_training import (
     _training_trace,
     _terminal_mask_evidence,
     _validate_cuda_runtime,
+    _validate_video_backend,
     _load_native_runtime,
     _load_training_dataset,
     checkpoint_digest,
@@ -241,6 +242,48 @@ def test_native_statistics_cannot_be_silently_recomputed(tmp_path):
     (tmp_path / "meta/stats.json").write_text("{}")
     with pytest.raises(ValueError, match="frozen"):
         _load_training_dataset({}, tmp_path, _manifest(), "unused", "new_embodiment")
+
+
+@pytest.mark.parametrize("backend", ["torchcodec", "decord", "torchvision_av"])
+def test_supported_native_video_backends_are_accepted(backend):
+    _validate_video_backend(backend)
+
+
+def test_unknown_native_video_backend_is_rejected():
+    with pytest.raises(ValueError, match="video_backend"):
+        _validate_video_backend("invented_backend")
+
+
+def test_selected_video_backend_reaches_native_dataset(tmp_path, monkeypatch):
+    (tmp_path / "meta").mkdir()
+    (tmp_path / "meta/stats.json").write_text('{"state": {"mean": [0]}}')
+    config = SimpleNamespace(
+        action_indices=[0, 1],
+        modality_config=lambda: {"video.front": "native"},
+        transform=lambda: "native-transform",
+    )
+    captured = {}
+
+    def native_dataset(**kwargs):
+        captured.update(kwargs)
+        return object()
+
+    monkeypatch.setattr(
+        "npa.workbench.groot.offline_training.FeedbackDataset",
+        lambda native, manifest, split: (native, split),
+    )
+    runtime = {
+        "DatasetStatisticalValues": SimpleNamespace(model_validate=lambda _: None),
+        "load_data_config": lambda _: config,
+        "LeRobotSingleDataset": native_dataset,
+        "EmbodimentTag": lambda value: f"native-{value}",
+    }
+    train, evaluation, returned_config = _load_training_dataset(
+        runtime, tmp_path, _manifest(), "native", "new_embodiment", "decord"
+    )
+    assert captured["video_backend"] == "decord"
+    assert train[1] == "train" and evaluation[1] == "eval"
+    assert returned_config is config
 
 
 def test_checkpoint_digest_binds_weights_and_normalization(tmp_path):

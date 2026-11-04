@@ -56,6 +56,11 @@ CQL. Episode outcomes must never be interpolated into invented dense progress.
 - A dedicated environment with exactly one visible BF16-capable CUDA GPU. Runtime
   dependencies must follow the upstream
   [N1.5 instructions](https://github.com/NVIDIA/Isaac-GR00T/tree/4af2b622892f7dcb5aae5a3fb70bcb02dc217b96).
+  On Linux, that source's `base` dependency set places `decord==0.6.0` in an
+  optional extra even though its processor import needs it. Environments that
+  install a separately validated CUDA Torch build therefore still need to
+  install that exact `decord` requirement; do not omit it merely because the
+  source package's core dependency list does not include it.
   The source checkout must be clean under `gr00t` and exactly at commit
   `4af2b622892f7dcb5aae5a3fb70bcb02dc217b96`. The adapter verifies imported
   modules resolve to that checkout. The adapter rejects distributed execution and
@@ -68,6 +73,13 @@ CQL. Episode outcomes must never be interpolated into invented dense progress.
   `meta/episodes.jsonl`, native `meta/modality.json`, `meta/tasks.jsonl`, frozen
   `meta/stats.json`, per-episode parquet, and the observation videos. Convert
   v3 data before using this native N1.5 reader. Symlinks are rejected.
+- A video reader backend that can decode the dataset's actual observation
+  codec. Pass one of the pinned native reader choices with `--video-backend`
+  (`torchcodec`, `decord`, or `torchvision_av`) and decode a real observation
+  before spending GPU time. Do not silently replace source video. If an
+  authorized codec derivative is necessary, retain and report the public source
+  revision, original and derivative hashes, codec/frame-count parity, exact
+  conversion command, and the lossy-conversion limitation.
 - A native modality configuration matching the actual cameras, state fields,
   action frame, rotation convention, units, and checkpoint dimensions. Actions
   must use contiguous indices `0..H-1`. This adapter does not infer or convert

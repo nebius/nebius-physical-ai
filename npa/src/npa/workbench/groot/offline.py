@@ -74,6 +74,11 @@ def _parser():
     train.add_argument("--batch-size", type=int, default=8)
     train.add_argument("--learning-rate", type=float, default=1e-4)
     train.add_argument("--seed", type=int, default=42)
+    train.add_argument(
+        "--video-backend",
+        choices=["torchcodec", "decord", "torchvision_av"],
+        default="torchcodec",
+    )
     compare = subcommands.add_parser(
         "compare", help="Compare operator-recorded matched policy trials"
     )

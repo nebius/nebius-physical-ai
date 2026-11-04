@@ -237,6 +237,35 @@ def test_runtime_local_prepare_emits_json(feedback_inputs, capsys):
     )
 
 
+def test_runtime_local_train_parser_exposes_native_video_backend():
+    from npa.workbench.groot.offline import _parser
+
+    args = _parser().parse_args(
+        [
+            "train",
+            "--dataset-root",
+            "dataset",
+            "--manifest-path",
+            "manifest.json",
+            "--groot-source",
+            "native",
+            "--base-model",
+            "checkpoint",
+            "--output-dir",
+            "output",
+            "--data-config",
+            "so100_dualcam",
+            "--embodiment-tag",
+            "new_embodiment",
+            "--max-steps",
+            "1",
+            "--video-backend",
+            "decord",
+        ]
+    )
+    assert args.video_backend == "decord"
+
+
 @pytest.mark.parametrize("payload", [None, 3, {}, {"episodes": []}])
 def test_feedback_root_must_be_json_array(feedback_inputs, payload):
     root, _, directory = feedback_inputs

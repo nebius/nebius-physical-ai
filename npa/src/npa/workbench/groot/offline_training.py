@@ -167,6 +167,7 @@ def train_offline(
     batch_size: int = 8,
     learning_rate: float = 1e-4,
     seed: int = 42,
+    video_backend: str = "torchcodec",
 ) -> dict:
     """Fine-tune a staged N1.5 checkpoint using only prepared training frames.
 
@@ -182,6 +183,7 @@ def train_offline(
         batch_size: Per-device batch size.
         learning_rate: Positive optimizer learning rate.
         seed: Training seed.
+        video_backend: Pinned native reader backend for recorded observations.
     Returns:
         Receipt identifying the trained checkpoint, without claiming robot evaluation.
     Raises:
@@ -193,12 +195,13 @@ def train_offline(
     if dataset_digest(dataset_root) != manifest.dataset_sha256:
         raise ValueError("dataset bytes changed after feedback preparation")
     _validate_schedule(max_steps, batch_size, learning_rate)
+    _validate_video_backend(video_backend)
     runtime = _load_native_runtime(groot_source)
     base_digest = checkpoint_digest(base_model)
     manifest_digest = file_digest(manifest_path)
     runtime["set_seed"](seed)
     train_dataset, eval_dataset, config = _load_training_dataset(
-        runtime, dataset_root, manifest, data_config, embodiment_tag
+        runtime, dataset_root, manifest, data_config, embodiment_tag, video_backend
     )
     terminal_mask = _terminal_mask_evidence(train_dataset)
     model = _load_model(runtime, base_model, config, manifest.action_horizon)
@@ -228,6 +231,7 @@ def train_offline(
         "batch_size": batch_size,
         "learning_rate": learning_rate,
         "seed": seed,
+        "video_backend": video_backend,
     }
     return _write_training_receipt(
         output_dir,
@@ -277,6 +281,13 @@ def _validate_schedule(max_steps, batch_size, learning_rate):
         or learning_rate <= 0
     ):
         raise ValueError("learning_rate must be positive and finite")
+
+
+def _validate_video_backend(video_backend):
+    if video_backend not in {"torchcodec", "decord", "torchvision_av"}:
+        raise ValueError(
+            "video_backend must be one of torchcodec, decord, or torchvision_av"
+        )
 
 
 def _load_native_runtime(source):
@@ -332,7 +343,9 @@ def _validate_cuda_runtime(torch):
     return visible_cuda_devices
 
 
-def _load_training_dataset(runtime, root, manifest, data_config, embodiment_tag):
+def _load_training_dataset(
+    runtime, root, manifest, data_config, embodiment_tag, video_backend="torchcodec"
+):
     statistics = json.loads((root / "meta/stats.json").read_text())
     if not isinstance(statistics, dict) or not statistics:
         raise ValueError("precomputed frozen meta/stats.json is required")
@@ -348,6 +361,7 @@ def _load_training_dataset(runtime, root, manifest, data_config, embodiment_tag)
         modality_configs=config.modality_config(),
         transforms=config.transform(),
         embodiment_tag=runtime["EmbodimentTag"](embodiment_tag),
+        video_backend=video_backend,
     )
     return (
         FeedbackDataset(native, manifest, split="train"),
