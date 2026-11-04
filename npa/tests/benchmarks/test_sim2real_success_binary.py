@@ -47,13 +47,14 @@ def test_rerun_binary_ignores_non_executable_sibling(
     assert sim2real_success._resolve_rerun_binary("rerun") == str(ambient)
 
 
-def test_rerun_binary_preserves_explicit_path() -> None:
-    explicit = "./tools/review-rerun"
-    assert sim2real_success._resolve_rerun_binary(explicit) == explicit
+def test_rerun_binary_preserves_explicit_path(tmp_path: Path) -> None:
+    explicit = tmp_path / "tools/review-rerun"
+    _write_executable(explicit)
+    assert sim2real_success._resolve_rerun_binary(str(explicit)) == str(explicit)
 
 
 def test_empty_rerun_binary_is_rejected() -> None:
-    with pytest.raises(sim2real_success.VerificationError, match="non-empty"):
+    with pytest.raises(sim2real_success.VerifierUnavailableError, match="non-empty"):
         sim2real_success._resolve_rerun_binary("")
 
 
@@ -65,7 +66,7 @@ def test_missing_bare_rerun_binary_fails_before_launch(
     monkeypatch.setattr(sys, "executable", str(python))
     monkeypatch.setenv("PATH", "")
 
-    with pytest.raises(sim2real_success.VerificationError, match="rerun-sdk"):
+    with pytest.raises(sim2real_success.VerifierUnavailableError, match="rerun-sdk"):
         sim2real_success._resolve_rerun_binary("rerun")
 
 
@@ -97,13 +98,15 @@ def test_rrd_verifier_reports_explicit_launch_failure(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     recording = tmp_path / "sim2real.rrd"
+    executable = tmp_path / "rerun"
     recording.write_bytes(b"rrd")
+    _write_executable(executable)
 
     def fail(*_args: object, **_kwargs: object) -> None:
         raise FileNotFoundError("missing executable")
 
     monkeypatch.setattr(sim2real_success.subprocess, "run", fail)
     with pytest.raises(
-        sim2real_success.VerificationError, match="could not be launched"
+        sim2real_success.VerifierUnavailableError, match="could not be launched"
     ):
-        sim2real_success._verify_rrd(recording, rerun_bin="./missing-explicit-rerun")
+        sim2real_success._verify_rrd(recording, rerun_bin=str(executable))

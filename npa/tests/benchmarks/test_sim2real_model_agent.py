@@ -32,6 +32,7 @@ from npa.benchmarks.sim2real_model_agent import (
     _run_tool,
     _sha,
     _request_active_token_estimate,
+    _record_verifier_unavailable,
     _serialize_bounded_tool_result,
     _stream_chat,
     _submitted_workflow_state,
@@ -49,6 +50,20 @@ from npa.benchmarks.sim2real_success import (
     _lift_evidence,
     verify_artifact_tree,
 )
+
+
+def test_unavailable_verifier_is_operator_failure_not_model_feedback(
+    tmp_path: Path,
+) -> None:
+    messages = [{"role": "assistant", "content": "task complete"}]
+
+    assert _record_verifier_unavailable(tmp_path, OSError("missing rerun")) == 3
+
+    failure = json.loads((tmp_path / "failure.json").read_text())
+    assert failure["classification"] == "verifier_unavailable"
+    assert failure["recovery_action"] == "repair_controller_verifier_then_resume"
+    assert messages == [{"role": "assistant", "content": "task complete"}]
+    assert not (tmp_path / "transcript.jsonl").exists()
 
 
 def _manifest(*, duration: float = 2.0, timestamped: bool = True) -> dict:
