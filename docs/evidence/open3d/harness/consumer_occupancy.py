@@ -60,8 +60,8 @@ def probe_grid(cloud, cell: float):
     Extracted from `main()` so a control can score synthetic geometry with the same
     instrument instead of a second copy of it. No line here changed in the move; the
     reproduction check at the end of `main()` is what proves that, because it compares
-    every recomputed field against the published record and exits non-zero on any
-    difference.
+    the complete recomputed report against the published record and exits non-zero on
+    any difference.
     """
     box = cloud.get_axis_aligned_bounding_box()
     origin = np.asarray(box.get_min_bound())
@@ -128,6 +128,30 @@ def score_from_distance(distance, supported, radius: float, cell: float) -> dict
     }
 
 
+def differences(expected, actual, path: str = "") -> list[tuple[str, object, object]]:
+    """Return every structural or value difference between two report objects."""
+    if isinstance(expected, dict) and isinstance(actual, dict):
+        mismatches = []
+        for key in sorted(set(expected) | set(actual)):
+            child = f"{path}.{key}" if path else key
+            if key not in expected or key not in actual:
+                mismatches.append((child, expected.get(key), actual.get(key)))
+            else:
+                mismatches.extend(differences(expected[key], actual[key], child))
+        return mismatches
+    if isinstance(expected, float) or isinstance(actual, float):
+        if not isinstance(expected, (int, float)) or not isinstance(
+            actual, (int, float)
+        ):
+            return [(path, expected, actual)]
+        return (
+            []
+            if abs(float(expected) - float(actual)) <= 1e-9
+            else [(path, expected, actual)]
+        )
+    return [] if expected == actual else [(path, expected, actual)]
+
+
 def main() -> int:
     import open3d as o3d
 
@@ -164,18 +188,7 @@ def main() -> int:
     OUT.write_text(json.dumps(report, indent=2, sort_keys=True))
 
     original = json.loads(Path("/data/downstream-consumer.json").read_text())
-    mismatches = []
-    for variant in VARIANTS:
-        for key, value in report["variants"][variant].items():
-            was = original["variants"][variant].get(key)
-            if isinstance(value, float):
-                # compute_distance builds a BVH whose traversal order is not
-                # bit-stable, so a cell centre sitting within 1e-4 of the radius
-                # can land either side of it between runs.
-                if was is None or abs(value - was) > 1e-9:
-                    mismatches.append((variant, key, was, value))
-            elif was != value:
-                mismatches.append((variant, key, was, value))
+    mismatches = differences(original, report)
     print(f"grid {tuple(int(d) for d in dims)} = {report['cells']} cells")
     print(f"cells_with_samples {report['cells_with_samples']}")
     for variant in VARIANTS:
@@ -188,11 +201,11 @@ def main() -> int:
         )
     if mismatches:
         print(f"\n{len(mismatches)} field(s) differ from the published record:")
-        for variant, key, was, now in mismatches:
-            print(f"  {variant}.{key}: published {was} -> recomputed {now}")
+        for path, was, now in mismatches:
+            print(f"  {path}: published {was} -> recomputed {now}")
     else:
         print("\nevery published field reproduced exactly")
-    return 0
+    return int(bool(mismatches))
 
 
 if __name__ == "__main__":

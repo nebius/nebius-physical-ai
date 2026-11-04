@@ -31,7 +31,9 @@ Run inside the Open3D image:
 
 from __future__ import annotations
 
+import hashlib
 import json
+import platform
 import sys
 from pathlib import Path
 
@@ -116,10 +118,9 @@ def measure(mesh, points: np.ndarray, cell: float, radius_factor: float) -> dict
 def regime_comparison(by_density: dict) -> dict:
     """Where the real artifact's sampling density sits among the control densities.
 
-    Read from the committed records, not assumed: `downstream-consumer.json` holds the
-    supported-cell count and `replay-b18d-public-report.json` holds the fused cloud's
-    point count. Both are in this repository, so a reader can check this without the
-    bundle.
+    Read from two records bound to the same support-crop cloud:
+    `downstream-consumer.json` holds the supported-cell count and
+    `independent-verification.json` holds that cloud's point count.
 
     This is a regime indication and not a correction to the published figure. The
     control is a closed convex sphere at one scale; the real artifact is a room scan
@@ -128,24 +129,17 @@ def regime_comparison(by_density: dict) -> dict:
     """
     evidence = Path(__file__).resolve().parent.parent
     consumer = json.loads((evidence / "downstream-consumer.json").read_text())
-    replay = json.loads((evidence / "replay-b18d-public-report.json").read_text())
+    verification = json.loads((evidence / "independent-verification.json").read_text())
 
-    fused = None
-
-    def find_fused(node):
-        nonlocal fused
-        if isinstance(node, dict):
-            for key, value in node.items():
-                if key == "fused_points" and isinstance(value, int):
-                    fused = value
-                find_fused(value)
-        elif isinstance(node, list):
-            for item in node:
-                find_fused(item)
-
-    find_fused(replay)
+    fused = verification["fused"]["points"]
     supported_cells = consumer["cells_with_samples"]
-    actual = round(fused / supported_cells, 3) if fused else None
+    actual = round(fused / supported_cells, 3)
+    baseline = consumer["variants"]["baseline"]
+    candidate = consumer["variants"]["candidate"]
+    extra_occupied = baseline["occupied_cells"] - candidate["occupied_cells"]
+    extra_phantom = (
+        baseline["phantom_obstacle_cells"] - candidate["phantom_obstacle_cells"]
+    )
 
     nearest = min(
         by_density.items(),
@@ -160,18 +154,24 @@ def regime_comparison(by_density: dict) -> dict:
             "observations_per_supported_cell"
         ],
         "that_controls_floor": nearest[1]["phantom_obstacle_rate"],
+        "artifact_floor_conclusion": "unresolved by these controls",
         "the_published_candidate_rate": consumer["improvement"][
             "phantom_rate_candidate"
         ],
         "the_published_baseline_rate": consumer["improvement"]["phantom_rate_baseline"],
+        "published_count_comparison": {
+            "baseline_extra_occupied_cells": extra_occupied,
+            "baseline_extra_phantom_cells": extra_phantom,
+            "fraction_of_extra_cells_that_are_phantom": extra_phantom / extra_occupied,
+        },
         "reading": (
             "The floor is not zero, so the candidate's published rate cannot be read as "
             "'this fraction of its occupied volume is fabricated' -- part of any such "
-            "number is the instrument. At the nearest control density the floor is well "
-            "below the published candidate rate, so most of that rate is not floor. The "
-            "comparison between the two variants is unaffected either way: both are "
-            "scored on one grid against one support mask, so the floor applies equally "
-            "to both and cannot produce the gap between them."
+            "number is the instrument. These closed, noise-free controls do not measure "
+            "or bound the room artifact's own floor. The variant comparison is supported "
+            f"instead by the committed counts: the baseline has {extra_occupied} more "
+            f"occupied cells than the candidate and {extra_phantom} of those additional "
+            f"cells are phantom ({100 * extra_phantom / extra_occupied:.1f}%)."
         ),
         "what_would_settle_it_properly": (
             "Running this instrument on the real cloud with the real surface removed and "
@@ -186,6 +186,29 @@ def main() -> int:
     truth = sphere()
 
     report: dict = {
+        "provenance": {
+            "harness": {
+                "path": "harness/occupancy_instrument_controls.py",
+                "sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+            },
+            "instrument": {
+                "path": "harness/consumer_occupancy.py",
+                "sha256": hashlib.sha256(
+                    (
+                        Path(__file__).resolve().parent / "consumer_occupancy.py"
+                    ).read_bytes()
+                ).hexdigest(),
+            },
+            "environment": {
+                "python": platform.python_version(),
+                "numpy": np.__version__,
+                "open3d": o3d.__version__,
+                "container_image": None,
+                "container_image_note": (
+                    "generated in the candidate-owned virtualenv; no container image used"
+                ),
+            },
+        },
         "what_this_validates": (
             "The instrument in consumer_occupancy.py, which produces this lane's "
             "published positive claim (phantom-obstacle rate 0.3245 -> 0.0708) and which "

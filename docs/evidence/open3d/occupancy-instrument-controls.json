@@ -1,4 +1,21 @@
 {
+  "provenance": {
+    "harness": {
+      "path": "harness/occupancy_instrument_controls.py",
+      "sha256": "3f87e683f15ca688072c7e0fa0e328e4cb94fbb8b50545f121ff1b234f56761a"
+    },
+    "instrument": {
+      "path": "harness/consumer_occupancy.py",
+      "sha256": "eee3d658dadbb576c2c5f4331ee67d33d35743628697e5acb82a9c7bdaaa43b6"
+    },
+    "environment": {
+      "python": "3.12.14",
+      "numpy": "2.5.4",
+      "open3d": "0.20.0",
+      "container_image": null,
+      "container_image_note": "generated in the candidate-owned virtualenv; no container image used"
+    }
+  },
   "what_this_validates": "The instrument in consumer_occupancy.py, which produces this lane's published positive claim (phantom-obstacle rate 0.3245 -> 0.0708) and which had no positive or negative control.",
   "instrument": {
     "imported_from": "consumer_occupancy.py",
@@ -57,15 +74,21 @@
       }
     },
     "how_this_bears_on_the_published_figure": {
-      "the_artifacts_observations": 6339,
+      "the_artifacts_observations": 6341,
       "the_artifacts_supported_cells": 1884,
-      "the_artifacts_observations_per_supported_cell": 3.365,
+      "the_artifacts_observations_per_supported_cell": 3.366,
       "nearest_control_density": "8000",
       "that_controls_observations_per_supported_cell": 3.861,
       "that_controls_floor": 0.016611295681063124,
+      "artifact_floor_conclusion": "unresolved by these controls",
       "the_published_candidate_rate": 0.07084188911704312,
       "the_published_baseline_rate": 0.3245156482861401,
-      "reading": "The floor is not zero, so the candidate's published rate cannot be read as 'this fraction of its occupied volume is fabricated' -- part of any such number is the instrument. At the nearest control density the floor is well below the published candidate rate, so most of that rate is not floor. The comparison between the two variants is unaffected either way: both are scored on one grid against one support mask, so the floor applies equally to both and cannot produce the gap between them.",
+      "published_count_comparison": {
+        "baseline_extra_occupied_cells": 736,
+        "baseline_extra_phantom_cells": 733,
+        "fraction_of_extra_cells_that_are_phantom": 0.9959239130434783
+      },
+      "reading": "The floor is not zero, so the candidate's published rate cannot be read as 'this fraction of its occupied volume is fabricated' -- part of any such number is the instrument. These closed, noise-free controls do not measure or bound the room artifact's own floor. The variant comparison is supported instead by the committed counts: the baseline has 736 more occupied cells than the candidate and 733 of those additional cells are phantom (99.6%).",
       "what_would_settle_it_properly": "Running this instrument on the real cloud with the real surface removed and replaced by a surface known to be fully observed. That needs /data/final-bundle, which is not in the repository."
     }
   },

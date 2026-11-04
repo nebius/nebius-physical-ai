@@ -24,12 +24,6 @@ RECORD = EVIDENCE / "occupancy-instrument-controls.json"
 HARNESS = EVIDENCE / "harness" / "occupancy_instrument_controls.py"
 INSTRUMENT = EVIDENCE / "harness" / "consumer_occupancy.py"
 
-#: Hashes in this record that name no file. Empty: every digest here names a committed
-#: file. Declared anyway so the loop below refuses an unbindable hash instead of
-#: skipping quietly past it, which is how three provenance digests went stale earlier in
-#: this program with a green suite each time.
-NOT_A_FILE_HASH: set[str] = set()
-
 
 @pytest.fixture
 def record() -> dict:
@@ -170,30 +164,13 @@ def test_the_regime_comparison_is_derived_from_committed_records(record) -> None
         "how_this_bears_on_the_published_figure"
     ]
     consumer = json.loads((EVIDENCE / "downstream-consumer.json").read_text())
-    replay = json.loads((EVIDENCE / "replay-b18d-public-report.json").read_text())
+    verification = json.loads((EVIDENCE / "independent-verification.json").read_text())
+    fused = verification["fused"]["points"]
 
-    fused: list[int] = []
-
-    def collect(node: object) -> None:
-        if isinstance(node, dict):
-            for key, value in node.items():
-                if key == "fused_points" and isinstance(value, int):
-                    fused.append(value)
-                collect(value)
-        elif isinstance(node, list):
-            for item in node:
-                collect(item)
-
-    collect(replay)
-    assert fused, "the replay report no longer records a fused point count"
-    assert len(set(fused)) == 1, (
-        f"the replay report disagrees with itself: {set(fused)}"
-    )
-
-    assert block["the_artifacts_observations"] == fused[0]
+    assert block["the_artifacts_observations"] == fused
     assert block["the_artifacts_supported_cells"] == consumer["cells_with_samples"]
     assert block["the_artifacts_observations_per_supported_cell"] == pytest.approx(
-        fused[0] / consumer["cells_with_samples"], abs=5e-4
+        fused / consumer["cells_with_samples"], abs=5e-4
     )
     assert (
         block["the_published_candidate_rate"]
@@ -218,23 +195,25 @@ def test_the_regime_comparison_is_derived_from_committed_records(record) -> None
     assert block["that_controls_floor"] == nearest[1]["phantom_obstacle_rate"]
 
 
-def test_the_record_does_not_claim_the_published_rate_is_mostly_floor(record) -> None:
-    """Guard against the overstatement this record is one step away from making.
-
-    At the comparable control density the floor is well below the published candidate
-    rate, so the honest reading is that the floor is real and most of the published rate
-    is not it. Measured here rather than taken from the prose, because the prose is what
-    would drift.
-    """
+def test_the_artifact_floor_stays_unresolved_and_the_gap_uses_counts(record) -> None:
+    """Do not transfer a closed-sphere floor to the noisy, cropped room artifact."""
     block = record["the_floor_is_a_sampling_artifact"][
         "how_this_bears_on_the_published_figure"
     ]
-    assert block["that_controls_floor"] < block["the_published_candidate_rate"], (
-        "if the comparable floor reached the published rate, the reading in this record "
-        "would be wrong and would need rewriting rather than re-asserting"
+    assert block["artifact_floor_conclusion"] == "unresolved by these controls"
+    consumer = json.loads((EVIDENCE / "downstream-consumer.json").read_text())
+    baseline = consumer["variants"]["baseline"]
+    candidate = consumer["variants"]["candidate"]
+    counts = block["published_count_comparison"]
+    expected_occupied = baseline["occupied_cells"] - candidate["occupied_cells"]
+    expected_phantom = (
+        baseline["phantom_obstacle_cells"] - candidate["phantom_obstacle_cells"]
     )
-    # And the comparison between variants must survive the floor entirely.
-    assert block["the_published_baseline_rate"] > block["the_published_candidate_rate"]
+    assert counts["baseline_extra_occupied_cells"] == expected_occupied
+    assert counts["baseline_extra_phantom_cells"] == expected_phantom
+    assert counts["fraction_of_extra_cells_that_are_phantom"] == pytest.approx(
+        expected_phantom / expected_occupied
+    )
 
 
 def _import_from_harness(*names):
@@ -258,6 +237,30 @@ def _instrument():
     failing to import, and only `consumer_occupancy` surviving.
     """
     return _import_from_harness("consumer_occupancy")[0]
+
+
+def test_reproduction_comparison_covers_top_level_and_nested_fields() -> None:
+    """A changed grid or improvement must fail just like a changed variant field."""
+    instrument = _instrument()
+    published = {
+        "cells": 10,
+        "cells_with_samples": 8,
+        "variants": {"candidate": {"phantom_obstacle_cells": 2}},
+        "improvement": {"phantom_cells_removed": 4},
+    }
+    assert instrument.differences(published, published) == []
+    for path, mutation in (
+        ("cells", {**published, "cells": 11}),
+        (
+            "cells_with_samples",
+            {**published, "cells_with_samples": 7},
+        ),
+        (
+            "improvement.phantom_cells_removed",
+            {**published, "improvement": {"phantom_cells_removed": 3}},
+        ),
+    ):
+        assert instrument.differences(published, mutation)[0][0] == path
 
 
 def test_the_control_harness_produces_what_the_instrument_produces() -> None:
@@ -412,18 +415,16 @@ def _sha256_fields(node: object, prefix: str = "") -> dict[str, str]:
 def test_no_hash_in_this_record_escapes_classification(record) -> None:
     """Every digest either names a file and matches it, or is declared not to.
 
-    This record carries no digests today, and the point of the test is that it cannot
-    start carrying an unchecked one silently.
+    The exact expected set prevents either an unchecked addition or a missing binding.
     """
     hashes = _sha256_fields(record)
-    unclassified = set(hashes) - NOT_A_FILE_HASH
-    for field in sorted(unclassified):
-        # A digest here must name a committed file somewhere in the record's own object.
-        assert False, (
-            f"{field} is a hash this test does not know how to bind; either enforce it "
-            f"against the file it names or add it to NOT_A_FILE_HASH with a reason"
-        )
-    assert set(hashes) >= NOT_A_FILE_HASH - set(hashes) or True
+    expected = {
+        "provenance.harness.sha256": HARNESS,
+        "provenance.instrument.sha256": INSTRUMENT,
+    }
+    assert set(hashes) == set(expected)
+    for field, path in expected.items():
+        assert hashes[field] == hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def test_the_harness_and_record_are_committed_together(record) -> None:
@@ -432,5 +433,5 @@ def test_the_harness_and_record_are_committed_together(record) -> None:
     assert INSTRUMENT.exists()
     # The record must not have been produced by a harness that has since vanished.
     assert record["instrument"]["imported_from"] == INSTRUMENT.name
-    digest = hashlib.sha256(HARNESS.read_bytes()).hexdigest()
-    assert len(digest) == 64
+    assert record["provenance"]["harness"]["path"] == "harness/" + HARNESS.name
+    assert record["provenance"]["instrument"]["path"] == "harness/" + INSTRUMENT.name
