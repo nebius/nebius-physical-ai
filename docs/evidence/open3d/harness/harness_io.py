@@ -44,14 +44,15 @@ OUT_FILE_ENV = "OPEN3D_OUT"
 #: `test_open3d_reading_contract.py` holds this against the `reads_as` assignments in the
 #: runner, so the next rename breaks a test instead of a measurement.
 FAR_READING = "far from any observation"
+NEAR_READING = "near-threshold surface"
 
 #: Overrides the sampling seed, so a reviewer can ask whether a result is seed-specific.
 SEED_ENV = "OPEN3D_SEED"
 
 #: Arbitrary and fixed. Nothing about the measurements depends on this value being special;
 #: it is pinned only so that two runs of the same harness are the same measurement. Whether
-#: a given conclusion survives a *different* seed is a separate question, which
-#: `seed_sensitivity.py` measures rather than assumes.
+#: a given conclusion survives a *different* seed is a separate question; reviewers can
+#: vary ``OPEN3D_SEED`` and compare the recorded ``sampling_seed`` and result bytes.
 DEFAULT_SEED = 20261101
 
 
@@ -79,6 +80,8 @@ def output_path(default: str) -> Path:
     if not os.access(parent, os.W_OK):
         raise SystemExit(f"Cannot write {resolved}: {parent} is not writable.")
     return resolved
+
+
 def seed_sampling() -> int:
     """Make this harness's point sampling repeatable, and report the seed it used.
 
@@ -94,9 +97,7 @@ def seed_sampling() -> int:
         try:
             seed = int(raw)
         except ValueError:
-            raise SystemExit(
-                f"{SEED_ENV}={raw!r} is not an integer."
-            ) from None
+            raise SystemExit(f"{SEED_ENV}={raw!r} is not an integer.") from None
 
     o3d.utility.random.seed(seed)
     return seed

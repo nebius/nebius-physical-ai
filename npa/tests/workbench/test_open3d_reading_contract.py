@@ -73,10 +73,14 @@ def test_no_harness_compares_the_reading_against_a_bare_literal() -> None:
     for path in sorted(HARNESS.glob("*.py")):
         source = path.read_text()
         for number, line in enumerate(source.splitlines(), start=1):
-            if READING_FIELD not in line and "reading[" not in line:
+            if (
+                READING_FIELD not in line
+                and "reading[" not in line
+                and '["reads_as"]' not in line
+            ):
                 continue
             window = "\n".join(source.splitlines()[number - 1 : number + 2])
-            if re.search(r'==\s*\n?\s*"[^"]+"', window):
+            if re.search(r'(?:==|!=)\s*\n?\s*"[^"]+"', window):
                 offenders.append(f"{path.name}:{number}")
 
     assert offenders == [], offenders

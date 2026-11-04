@@ -26,12 +26,10 @@ from __future__ import annotations
 
 import itertools
 import json
-from pathlib import Path
-
-from harness_io import output_path, seed_sampling
 
 import numpy as np
 import open3d as o3d
+from harness_io import NEAR_READING, output_path, seed_sampling
 from npa.workbench.open3d.runner import (
     _crop_justification,
     _support,
@@ -89,10 +87,10 @@ def main() -> int:
         ),
         "held_fixed": f"icosphere, uniform random sampling, {SAMPLES} samples",
         "read_the_scatter_not_the_cells": (
-            "Sampling is unseeded and the floor is read off a discrete ladder of cap angles, "
-            "so a single cell's floor carries run-to-run noise of the same size as the spread "
-            "across cells: repeated runs moved one cell between 0.0075 and 0.0173 with no "
-            "change in resolution. That is the finding rather than a defect in it. There is "
+            f"Sampling is seeded by default ({seed}) and the seed is recorded; set "
+            "OPEN3D_SEED to another integer to measure sensitivity. Historical unseeded "
+            "runs moved one cell between 0.0075 and 0.0173 with no change in resolution. "
+            "There is "
             "no resolution trend above the noise across a 32x range of edge/voxel, which "
             "rules resolution out as the explanation for the gap between the two measured "
             "floors. The voxel-to-spacing ratio does explain it, and is measured with a clean "
@@ -158,8 +156,7 @@ def main() -> int:
         speaks = [
             r
             for r in rows
-            if r["reads_as"] != "near-threshold surface"
-            and r["invented_area_fraction"] > 0.0
+            if r["reads_as"] != NEAR_READING and r["invented_area_fraction"] > 0.0
         ]
         report["cases"][f"subdivide_{subdivisions}"] = {
             "triangles": len(triangles),

@@ -26,12 +26,10 @@ from __future__ import annotations
 
 import itertools
 import json
-from pathlib import Path
-
-from harness_io import output_path, seed_sampling
 
 import numpy as np
 import open3d as o3d
+from harness_io import NEAR_READING, output_path, seed_sampling
 from npa.workbench.open3d.runner import (
     _crop_justification,
     _support,
@@ -165,8 +163,7 @@ def main() -> int:
             speaks = [
                 r
                 for r in rows
-                if r["reads_as"] != "near-threshold surface"
-                and r["invented_area_fraction"] > 0.0
+                if r["reads_as"] != NEAR_READING and r["invented_area_fraction"] > 0.0
             ]
             report["cases"][f"voxel_{multiple}x_spacing"] = {
                 "voxel_multiple_of_spacing": multiple,
