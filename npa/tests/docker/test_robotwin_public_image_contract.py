@@ -35,6 +35,17 @@ ARCHIVE_PREINSTALL_GUARDS = (
 )
 
 
+def _runtime_artifact(lock: dict, name: str) -> dict:
+    """Return the one runtime artifact with the requested canonical name."""
+    matches = [
+        artifact
+        for artifact in lock["runtime_artifacts"]
+        if artifact["name"].casefold() == name.casefold()
+    ]
+    assert len(matches) == 1
+    return matches[0]
+
+
 def _assert_archive_install_contract(text: str) -> None:
     download_position = text.index(ARCHIVE_DOWNLOAD)
     install_position = text.index(ARCHIVE_INSTALL)
@@ -323,28 +334,34 @@ def test_neutral_locks_are_complete_while_runtime_delivery_is_disabled() -> None
         == "only-after-customer-run-authorization"
     )
     assert len(lock["runtime_artifacts"]) == 474
-    assert [
-        artifact
-        for artifact in lock["runtime_artifacts"]
-        if artifact["name"] == "urllib3"
-    ] == [
-        {
-            "name": "urllib3",
-            "version": "2.8.0",
-            "filename": "urllib3-2.8.0-py3-none-any.whl",
-            "url": (
-                "https://files.pythonhosted.org/packages/92/9d/"
-                "c4e665119135114480843e7ab388fa94d8480650450e6f8e26b70d323a4c/"
-                "urllib3-2.8.0-py3-none-any.whl"
-            ),
-            "sha256": (
-                "0cf3cae568d36aa9576b28dfb35f11328f1cb974ca7647d9475ebb86c75ac6e3"
-            ),
-            "size_bytes": 135717,
-            "kind": "bdist_wheel",
-            "requires_python": ">=3.10",
-        }
-    ]
+    assert _runtime_artifact(lock, "urllib3") == {
+        "name": "urllib3",
+        "version": "2.8.0",
+        "filename": "urllib3-2.8.0-py3-none-any.whl",
+        "url": (
+            "https://files.pythonhosted.org/packages/92/9d/"
+            "c4e665119135114480843e7ab388fa94d8480650450e6f8e26b70d323a4c/"
+            "urllib3-2.8.0-py3-none-any.whl"
+        ),
+        "sha256": "0cf3cae568d36aa9576b28dfb35f11328f1cb974ca7647d9475ebb86c75ac6e3",
+        "size_bytes": 135717,
+        "kind": "bdist_wheel",
+        "requires_python": ">=3.10",
+    }
+    assert _runtime_artifact(lock, "werkzeug") == {
+        "name": "Werkzeug",
+        "version": "3.1.9",
+        "filename": "werkzeug-3.1.9-py3-none-any.whl",
+        "url": (
+            "https://files.pythonhosted.org/packages/a1/38/"
+            "df03f564f43cec2684823f3cccae1a652ee7face1cbaa76fb223096e64d7/"
+            "werkzeug-3.1.9-py3-none-any.whl"
+        ),
+        "sha256": "6392e50c78460ba618e5b21f08a71f59c99ce99cdc6cf6e3dd7e6ccca8754fab",
+        "size_bytes": 228700,
+        "kind": "bdist_wheel",
+        "requires_python": ">=3.9",
+    }
     assert lock["weights"] == []
     assert lock["access"]["status"] == "not-probed"
     assert lock["access"]["timing"] == "before-provisioning"
