@@ -219,6 +219,16 @@ replace_once(
     f"        processor_kwargs.setdefault(\"model_revision\", \"{cosmos_revision}\")\n",
 )
 replace_once("pyproject.toml", 'requires-python = "==3.10.*"', 'requires-python = "==3.12.*"')
+replace_once(
+    "pyproject.toml",
+    "required-environments = [\n"
+    "    \"sys_platform == 'linux' and platform_machine == 'x86_64'\",\n"
+    "    \"sys_platform == 'linux' and platform_machine == 'aarch64'\",\n"
+    "]",
+    "required-environments = [\n"
+    "    \"sys_platform == 'linux' and platform_machine == 'x86_64'\",\n"
+    "]",
+)
 (repo / ".python-version").write_text("3.12\n")
 print("GROOT_RUNTIME_PIN_PATCH_OK " + cosmos_revision)
 PY

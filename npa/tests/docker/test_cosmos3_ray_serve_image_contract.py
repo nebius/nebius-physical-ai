@@ -350,6 +350,15 @@ def test_dockerfile_builds_derivative_before_resolver_and_dependency_check() -> 
     assert "pillow==13.0.0" in override
 
 
+def test_dockerfile_makes_the_gradio_source_directory_traversable_before_copying():
+    text = DOCKERFILE.read_text(encoding="utf-8")
+    source_parent = "/tmp/gradio-source"
+    source = f"{source_parent}/gradio-6.16.0-py3-none-any.whl"
+    assert "install -d -o ubuntu -g ubuntu -m 0755 /outputs /tmp/ray" in text
+    assert source_parent in text
+    assert text.index(source_parent) < text.index("USER ubuntu") < text.index(source)
+
+
 def test_dockerfile_copies_security_requirements_and_verifies_versions() -> None:
     text = DOCKERFILE.read_text(encoding="utf-8")
     assert (

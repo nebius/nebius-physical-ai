@@ -105,3 +105,10 @@ def test_loop_eval_uses_the_fixed_kernel_header_snapshot():
     assert 'install-workflow-runtime-prereqs "${UBUNTU_SNAPSHOT}"' in text
     prereqs = (WORKBENCH / "common/install_workflow_runtime_prereqs.sh").read_text()
     assert 'linux_libc_dev_version="5.15.0-198.208"' in prereqs
+
+
+def test_loop_eval_repairs_the_reviewed_moviepy_pillow13_metadata_before_checking():
+    text = (WORKBENCH / "sim2real-eval/Dockerfile").read_text()
+    repair = "/opt/npa/moviepy_pillow_compat.py"
+    assert "COPY --chmod=0755 docker/workbench/common/moviepy_pillow_compat.py" in text
+    assert text.index(f"python {repair}") < text.index("python -m pip check")

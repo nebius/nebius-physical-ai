@@ -208,6 +208,16 @@ def test_recent_stdlib_failures_run_in_focused_compatibility(version):
         assert path in regression["run"]
 
 
+def test_python314_full_suite_regressions_run_in_focused_compatibility():
+    regression = _step("test.yml", "browser-mocked", "Run Python 3.14")
+    for path in (
+        "npa/tests/workflows/test_immutable_workflow_images.py",
+        "npa/tests/docker/test_seedvr2_payload_scanner.py",
+        "npa/tests/docker/test_image_byte_scan.py",
+    ):
+        assert path in regression["run"]
+
+
 def test_compatibility_regressions_run_before_heavy_dependencies() -> None:
     job = _load_workflow("test.yml")["jobs"]["test"]
     steps = job["steps"]
