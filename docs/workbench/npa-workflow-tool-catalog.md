@@ -290,6 +290,9 @@ explicit value is passed as `--model`, including legacy dedicated model IDs.
 The audit-only `workbench.vlm_eval.compare_judges` primitive passes distinct
 `config.primary_vlm_model` and `config.secondary_vlm_model` values and never
 averages their outcomes. It rejects the exact MiniCPM-V-4_5 plus
-gemma-3-27b-it pair because a retained six-attack calibration found shared
-false-pass modes on V1, V3, and V6. Other compatible pairs remain available;
+gemma-3-27b-it pair because a retained six-family calibration found shared
+false-pass modes in three of six retained adversarial families. See the
+sanitized retained-evidence index
+[`vlm-paired-shared-failure-calibration-20261101`](evidence/vlm-paired-shared-failure-calibration-20261101/README.md).
+Other compatible pairs remain available;
 this measured deny rule does not qualify either model or cover unseen attacks.

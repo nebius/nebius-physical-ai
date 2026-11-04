@@ -100,7 +100,8 @@ BENCHMARK_EVIDENCE_SCOPES = frozenset({"unspecified", "illustrative_only"})
 UNPARSED_RESPONSE_PARSER_VERSION = "npa_vlm_eval_unparsed_v1"
 DEFAULT_PRIMARY_JUDGE_MODEL = DEFAULT_VISION_MODEL
 DEFAULT_SECONDARY_JUDGE_MODEL = "openbmb/MiniCPM-V-4_5"
-# Only this pair shares failures in the retained six-attack model-profile matrix.
+# Only this pair shares failures in the retained six-family model-profile matrix.
+# Sanitized index: vlm-paired-shared-failure-calibration-20261101.
 # Other compatible pairs remain allowed because no equivalent overlap is established.
 _PAIRED_JUDGE_SHARED_INJECTION_FAILURE_PAIRS = frozenset(
     {
@@ -1303,8 +1304,9 @@ def _comparison_models(primary: str, secondary: str) -> tuple[str, str]:
     if frozenset(models) in _PAIRED_JUDGE_SHARED_INJECTION_FAILURE_PAIRS:
         raise VlmEvalError(
             "paired judges reject MiniCPM-V-4_5 with gemma-3-27b-it: the retained "
-            "six-attack calibration found shared in-image instruction failures on "
-            "V1, V3, and V6"
+            "six-family calibration found shared in-image instruction failures in "
+            "three of six retained adversarial families; evidence_id="
+            "vlm-paired-shared-failure-calibration-20261101"
         )
     return models
 

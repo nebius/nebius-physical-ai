@@ -11,7 +11,10 @@ a versioned heading when a release is cut.
 
 - Reject the exact MiniCPM-V-4_5 plus gemma-3-27b-it `compare-judges` pair
   before input or credential work. A retained six-attack calibration found
-  shared false-pass modes on V1, V3, and V6; the default MiniMax plus MiniCPM,
+  shared false-pass modes in three of six retained adversarial families; the
+  sanitized evidence index is
+  `docs/workbench/evidence/vlm-paired-shared-failure-calibration-20261101/`.
+  The default MiniMax plus MiniCPM,
   scheduled MiniMax plus Gemma, and unrelated compatible pairs remain valid.
 - Treat the rule as a precaution for one measured pair. The 36 profile calls
   used a legacy probe schema within a 132-attempt investigation, not the

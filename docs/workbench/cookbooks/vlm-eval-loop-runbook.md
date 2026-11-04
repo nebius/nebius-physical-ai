@@ -164,8 +164,11 @@ Models requiring incompatible generation settings are rejected before input
 preparation or provider calls. Compatibility first uses the shared hosted
 profile's temperature support, so Kimi-K3 cannot participate in this
 shared-temperature experiment. An additional evidence-bound rule rejects the
-exact MiniCPM-V-4_5 plus gemma-3-27b-it pair: a retained six-attack calibration
-found shared false-pass modes on V1, V3, and V6. Other compatible pairs remain
+exact MiniCPM-V-4_5 plus gemma-3-27b-it pair: a retained six-family calibration
+found shared false-pass modes in three of six retained adversarial families.
+The sanitized retained-evidence index is
+[`vlm-paired-shared-failure-calibration-20261101`](../evidence/vlm-paired-shared-failure-calibration-20261101/README.md).
+Other compatible pairs remain
 available. The retained calls used a legacy probe schema rather than the
 current strict paired-response contract, so this precaution does not claim an
 end-to-end reproduction, model qualification, or unseen-attack robustness.

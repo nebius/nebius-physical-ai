@@ -386,7 +386,12 @@ def test_workbench_vlm_eval_compare_judges_rejects_measured_shared_failure_pair(
     )
 
     assert result.exit_code == 1
-    assert "retained six-attack calibration" in " ".join(result.output.split())
+    assert "three of six retained adversarial families" in " ".join(
+        result.output.split()
+    )
+    assert "evidence_id=vlm-paired-shared-failure-calibration-20261101" in " ".join(
+        result.output.split()
+    )
     assert provider_activity == []
     assert not output.exists()
 

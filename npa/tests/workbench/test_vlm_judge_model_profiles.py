@@ -61,7 +61,10 @@ def test_shared_in_image_failure_pair_is_rejected_before_preparation(
         secondary_model=models[1],
     )
 
-    with pytest.raises(vlm_eval.VlmEvalError, match="six-attack calibration"):
+    with pytest.raises(
+        vlm_eval.VlmEvalError,
+        match="evidence_id=vlm-paired-shared-failure-calibration-20261101",
+    ):
         vlm_eval.compare_vlm_judges(request)
 
     assert not output.exists()

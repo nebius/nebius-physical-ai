@@ -157,8 +157,11 @@ weak judge can make disagreement common without making the scene intrinsically
 ambiguous. Unlike ordinary single-judge compatibility parsing, this path
 rejects Markdown-fenced JSON as a typed judge error instead of transforming the
 output. The exact MiniCPM-V-4_5 plus gemma-3-27b-it pair is rejected before
-input or credential work because a retained six-attack calibration found
-shared false-pass modes on V1, V3, and V6. Other compatible pairs remain
+input or credential work because a retained six-family calibration found
+shared false-pass modes in three of six retained adversarial families. The
+sanitized retained-evidence index is
+`docs/workbench/evidence/vlm-paired-shared-failure-calibration-20261101/`.
+Other compatible pairs remain
 available. Those calls used a legacy probe schema, not the current strict
 paired-response contract, so the rule is a precaution for one measured pair,
 not model qualification or unseen-attack coverage.
