@@ -379,11 +379,28 @@ before a VLM result can promote a checkpoint. Stub results, score overrides, and
 historical reports without provider evidence produce `loop_back` with an explicit
 reason. The gate checks submitted-frame metadata, request and response hashes,
 and agreement between the retained response and serialized result. These checks
-establish internal consistency, not provider authentication or visual correctness.
-Frame digests are checked for valid SHA-256 format and binding to the request
-manifest; this gate does not fetch image bytes to recompute their hashes. Consumers
-that need payload verification must retain and independently hash the submitted
-normalized images. Schema-v2 sampling counts, indices, timestamps, and coverage
+have an internal-consistency ceiling, not an authenticity guarantee. Every decision
+written by `grade_gate` records `report_producer` as `vlm`, `cosmos`, or `null`.
+Its `evidence_scope` is respectively
+`vlm_report_internal_consistency_checks_only`,
+`cosmos_report_status_pass_score_checks_only`, or `no_report_selected`. It also
+records literal `false` for
+`provider_authentication_established`,
+`captured_request_authenticity_established`,
+`visual_correctness_established`, and
+`submitted_frame_byte_equivalence_established`. Missing or invalid reports establish
+no consistency, and the Cosmos report path checks only terminal status, literal
+pass, and score. These six fields are producer-specific extensions of the direct
+`grade_gate` payload, not required fields of every
+`npa.sim2real.threshold_decision.v1` artifact. Terminal routers, standard Stage 11
+decisions, and generic workflow decision writers share that schema, and a later
+stage can replace the same decision URI with another producer's payload. The schema
+id or omission of these fields proves neither the producer, artifact age, nor any
+evidence scope. Frame digests are checked for valid SHA-256 format and binding to
+the request manifest; this gate does not fetch image bytes to recompute their
+hashes. Consumers that need payload verification must retain and independently
+hash the submitted normalized images. Schema-v2 sampling counts, indices,
+timestamps, and coverage
 flags must agree with the frame metadata. A known, uniform source kind, a source
 count, and in-range selected indices are required for `coverage_complete: true`;
 unknown or mixed source kinds normalize to null with incomplete coverage.
