@@ -1803,9 +1803,18 @@ def test_main_returns_machine_errors_without_tracebacks(
 
     monkeypatch.setattr(contract, "run_inference", unexpected)
     args = [
-        "--decision", "/decision", "--isolation-receipt", "/isolation",
-        "--consumer-view", "/consumer", "--scratch-parent", "/scratch",
-        "--output", "/output", "--publication-receipt", str(receipt_path),
+        "--decision",
+        "/decision",
+        "--isolation-receipt",
+        "/isolation",
+        "--consumer-view",
+        "/consumer",
+        "--scratch-parent",
+        "/scratch",
+        "--output",
+        "/output",
+        "--publication-receipt",
+        str(receipt_path),
     ]
     assert contract.main(args) == 2
     rendered = capsys.readouterr().err
