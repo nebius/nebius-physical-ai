@@ -18,7 +18,7 @@ markdown==3.10.3
 msgpack==1.2.3
 pillow==13.0.0
 pyarrow==23.0.1
-pyasn1==0.6.4
+pyasn1==0.6.5
 pygments==2.21.0
 requests==2.34.2
 sentencepiece==0.2.2

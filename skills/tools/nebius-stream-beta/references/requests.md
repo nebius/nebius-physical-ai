@@ -61,6 +61,108 @@ only during registration or rotation; generation requests reference the
 registered connection ID. The server verifies the Nebius endpoint and bucket
 region before admitting output.
 
+## Submission, polling and completion
+
+Generation uses durable asynchronous jobs. Send a validated JSON request to
+`POST /v1/videos`, `/v1/images` or `/v1/augmentations` with the bearer and
+`Idempotency-Key` headers shown below. Successful admission returns HTTP
+**202 Accepted** with a job record. This is a simplified first-admission
+response, not a completed result:
+
+```json
+{
+  "job_id": "job_example",
+  "accepted": true,
+  "status": "queued",
+  "status_url": "/v1/jobs/job_example"
+}
+```
+
+Retain the job ID immediately. `accepted` indicates whether this submission
+created a new job: an identical idempotent replay can return `accepted: false`
+with the original job and its current status. It does not indicate rejection.
+Reusing the key with a different request returns HTTP 409.
+
+| Operation | Response and next step |
+| --- | --- |
+| `POST /v1/videos`, `/v1/images` or `/v1/augmentations` | HTTP 202 acknowledges admission; retain `job_id` and `status_url`. |
+| `GET /v1/jobs/{job_id}` | Read the current job record; repeat while its status is active. |
+| `GET /v1/jobs/{job_id}/artifacts` | After `succeeded`, retrieve the published artifact manifest. |
+| `GET /v1/jobs/{job_id}/artifacts/{artifact_name}` | Retrieve a manifest-listed file and verify its SHA-256. |
+
+Use the same supplied HTTPS origin and bearer header for every read. A status
+GET returning HTTP 200 means the read succeeded; inspect the JSON `status` to
+learn whether generation succeeded. A typical progression is `queued` →
+`running` → `publishing` → `succeeded`; other staging, dispatch and recovery
+states are possible. Preserve failed, cancelled, `publication_retryable` and
+`needs_reconciliation` records instead of treating every non-success as active.
+Advisory `quality_status` is separate from job delivery status.
+
+### Wait with the portable client
+
+The bundled `submit` command saves the run state and prints a small
+acknowledgement with `status: "accepted"`, then exits. That CLI summary is
+distinct from the server's job status. To read status once and save the full
+record privately:
+
+```bash
+python3 scripts/cosmos_client.py status --state "$WMH_WORK_DIR/run.json" --output "$WMH_WORK_DIR/job-status.json"
+```
+
+To wait for completion and download the published artifacts:
+
+```bash
+python3 scripts/cosmos_client.py resume --state "$WMH_WORK_DIR/run.json" --output-dir "$WMH_WORK_DIR/results"
+```
+
+`resume` performs repeated status GETs, saves the latest private `job.json`,
+and sleeps three seconds between active-state reads. On success it downloads
+and checksum-verifies every published artifact before returning. On a failed,
+cancelled, recovery-required or unknown state it exits unsuccessfully and
+retains the status file. Transport or integrity errors also stop the command;
+successful admission does not guarantee delivery.
+
+There is no overall waiting deadline or `--timeout` option on `resume`.
+Individual HTTPS requests use a separate 60-second timeout. Interrupting the
+command or losing connectivity does not cancel the server job. Rerun `resume`
+with the same state after an interruption; it does not resubmit generation.
+If submission ended before retaining an ID, rerun `submit` with the identical
+request and state to reconcile its original idempotency identity first.
+
+Both batch forms also use asynchronous admission and polling: `/v1/batches`
+uses `GET /v1/batches/{batch_id}`, and `/v1/augmentation-batches` uses
+`GET /v1/augmentation-batches/{batch_id}`. The same `resume` command follows
+the retained route and saves `batch.json`; inspect child outcomes, since a
+`completed` batch can contain failures. See the
+[batch guide](iteration.md#source-inventories-and-batches) for recovery.
+
+### Optional separately supplied Python SDK
+
+The portable client requires no SDK. If the operator separately supplies the
+private `cosmos_sdk` distribution, it also offers completion waiting after
+`.create(...)` has returned a job:
+
+```python
+job_id = job["job_id"]  # Persist the ID before waiting.
+completed = client.jobs.wait(job_id, poll_interval=2, timeout=None)
+```
+
+`wait()` polls internally and returns a `succeeded` job. Failure, cancellation
+or a recovery-required state raises `JobError` carrying the job ID and record;
+HTTP/transport errors can also end the wait. `timeout=None` is the default and
+sets no overall deadline. Supplying a positive timeout in seconds stops local
+polling with `TimeoutError` without cancelling the job. The client's per-HTTP
+request timeout is separate. `AsyncCosmos` supports
+`await client.jobs.wait(job_id)` so other application work can continue.
+Obtain this SDK only through the operator's authorized distribution, not an
+unverified public package with a similar name.
+
+Both the portable client's `resume` and the SDK's `wait()` use repeated HTTP
+requests. The current HTTP contract does not expose a synchronous
+`wait=true` request field, a held-open submission response or a long-poll
+endpoint. Do not add undocumented fields; discover the running contract
+before relying on any future extension.
+
 ## Full-source video-to-video
 
 Save this complete Super request as `request.json`. Its source must already
@@ -117,8 +219,7 @@ Content-Type: application/json
 Idempotency-Key: <UNIQUE_LOGICAL_REQUEST_ID>
 ```
 
-Successful admission returns HTTP 202 with the job response; it is not a
-completed video. Reuse the same request and idempotency key after an ambiguous
+Reuse the same request and idempotency key after an ambiguous
 submission. A changed configuration is a new logical request and needs a new
 key, client state and output prefix. Customer name, type and owner are derived
 from the API key; do not add them to the request body. The same route selects
