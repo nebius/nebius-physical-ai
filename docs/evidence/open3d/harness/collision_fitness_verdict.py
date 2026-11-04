@@ -19,9 +19,9 @@ directions escape through a hole. The fraction of probe points whose inside/outs
 verdict *disagrees across ray directions* is therefore a direct measure of how often
 a collision query would be undefined, and it needs no reference model to compute.
 
-The baseline mesh is the control. It is the closed variant, so its disagreement rate
-has to come out near zero; if an instrument reports "unfit" for both variants it has
-measured nothing. Both numbers are reported for exactly that reason.
+Neither retained variant is assumed to be closed. The synthetic sphere below is the
+control: its disagreement rate has to be zero, its inside count has to be non-zero and
+close to the analytic sphere volume, and parity has to agree with signed distance.
 
 What this measures: whether inside/outside is well defined, how much of the surface
 is hole boundary, and whether the solid interior a collision query would infer is
@@ -38,6 +38,7 @@ report records which root produced it by shape, never by path.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -146,7 +147,7 @@ def parity_disagreement(mesh: o3d.geometry.TriangleMesh, points: np.ndarray) -> 
 def inferred_solid_vs_observed(
     mesh: o3d.geometry.TriangleMesh, points: np.ndarray, cloud: o3d.geometry.PointCloud
 ) -> dict:
-    """If a planner trusted the inside/outside answer, how much of that solid is real?
+    """How much inferred interior lies farther than one radius from an observation?
 
     Uses the majority verdict across directions, which is the most favourable reading
     available to the mesh: it resolves exactly the cells the parity test found
@@ -176,6 +177,11 @@ def inferred_solid_vs_observed(
 
     solid_count = int(solid.sum())
     return {
+        "measurement_scope": (
+            "Distance from inferred solid cells to observed surface samples. This includes "
+            "ordinary interior that a surface sensor cannot observe; it is not a fabricated-"
+            "geometry or collision-accuracy measurement."
+        ),
         "cells_a_planner_would_call_solid": solid_count,
         "of_those_with_no_observation_within_support_radius": int(
             (solid & ~supported).sum()
@@ -240,15 +246,26 @@ def instrument_validation() -> dict:
     inside_by_parity = parity["cells_all_directions_call_inside"]
     inside_by_distance = int((signed < 0).sum())
     analytic = (4.0 / 3.0) * np.pi / 0.15**3
+    analytic_relative_error = abs(inside_by_parity - analytic) / analytic
+    parity_agrees = inside_by_parity == inside_by_distance
+    instrument_is_valid = (
+        bool(sphere.is_watertight())
+        and parity["cells_where_the_directions_disagree"] == 0
+        and inside_by_parity > 0
+        and parity_agrees
+        and analytic_relative_error < 0.05
+    )
     return {
         "control_mesh": "open3d.geometry.TriangleMesh.create_sphere(radius=1.0, resolution=20)",
         "control_is_watertight": bool(sphere.is_watertight()),
         "undefined_cells": parity["cells_where_the_directions_disagree"],
-        "instrument_is_valid": parity["cells_where_the_directions_disagree"] == 0,
+        "instrument_is_valid": instrument_is_valid,
         "inside_cells_by_parity": inside_by_parity,
         "inside_cells_by_signed_distance": inside_by_distance,
-        "parity_agrees_with_signed_distance": inside_by_parity == inside_by_distance,
+        "parity_agrees_with_signed_distance": parity_agrees,
         "analytic_cell_estimate": round(float(analytic), 1),
+        "analytic_relative_error": round(float(analytic_relative_error), 6),
+        "analytic_tolerance": 0.05,
         "what_the_first_version_reported_here": 521,
         "why_it_was_wrong": "Axis-aligned rays against an axis-aligned probe grid graze "
         "shared edges and vertices, where count_intersections returns two hits or none. "
@@ -260,12 +277,19 @@ def instrument_validation() -> dict:
 
 def build() -> dict:
     validation = instrument_validation()
-    cloud = o3d.io.read_point_cloud(str(BUNDLE / CLOUD))
+    input_paths = {"cloud": BUNDLE / CLOUD} | {
+        name: BUNDLE / relative for name, relative in VARIANTS.items()
+    }
+    cloud = o3d.io.read_point_cloud(str(input_paths["cloud"]))
+    if not cloud.has_points():
+        raise RuntimeError(f"input point cloud is empty: {input_paths['cloud']}")
     points = probe_points(cloud)
 
     variants = {}
-    for name, relative in VARIANTS.items():
-        mesh = o3d.io.read_triangle_mesh(str(BUNDLE / relative))
+    for name in VARIANTS:
+        mesh = o3d.io.read_triangle_mesh(str(input_paths[name]))
+        if not mesh.has_triangles():
+            raise RuntimeError(f"input mesh is empty: {input_paths[name]}")
         variants[name] = {
             "topology": closedness(mesh),
             "inside_outside_is_well_defined": parity_disagreement(mesh, points),
@@ -284,6 +308,16 @@ def build() -> dict:
         == 0
     )
     return {
+        "input_provenance": {
+            "open3d_version": o3d.__version__,
+            "files": {
+                name: {
+                    "relative_path": str(path.relative_to(BUNDLE)),
+                    "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+                }
+                for name, path in input_paths.items()
+            },
+        },
         "question": "Can the delivered surface be used as a collision geometry?",
         "verdict": verdict_for(validation, fit),
         "instrument_validation": validation,
@@ -335,18 +369,17 @@ def build() -> dict:
             "0.0708. That is the narrower useful output, and it is not a workaround for "
             "this verdict -- it is a different question that does not need a closed solid."
         ),
-        "and_if_the_undefined_cells_were_resolved_generously": (
+        "interior_distance_diagnostic_not_corroboration": (
             "Taking the majority verdict across directions resolves every undefined cell in "
-            "the mesh's favour instead of discarding it. Even then the inferred solid is "
-            f"mostly fabricated: {candidate['if_a_planner_trusted_it_anyway']['of_those_with_no_observation_within_support_radius']} "
+            "the mesh's favour instead of discarding it. Of those inferred-solid cells, "
+            f"{candidate['if_a_planner_trusted_it_anyway']['of_those_with_no_observation_within_support_radius']} "
             f"of {candidate['if_a_planner_trusted_it_anyway']['cells_a_planner_would_call_solid']} "
-            "cells the candidate would have a planner treat as solid have no observation "
-            "within one support radius, which is "
+            "have no observation within one support radius, representing "
             f"{candidate['if_a_planner_trusted_it_anyway']['unobserved_inferred_solid_volume_m3']} m3 "
-            "of invented obstacle. Baseline is worse on the same reading, "
+            "of inferred interior. Baseline is larger on the same diagnostic, "
             f"{baseline['if_a_planner_trusted_it_anyway']['unobserved_inferred_solid_volume_m3']} m3. "
-            "This is the same direction the occupancy consumer found, measured a different "
-            "way, so the verdict does not rest on the parity test alone."
+            "Surface sensors do not observe ordinary solid interiors, so this is not a "
+            "fabrication measurement and does not corroborate the collision verdict."
         ),
         "what_this_does_not_claim": (
             "Nothing about accuracy against ground truth, which no artifact in this chain "
