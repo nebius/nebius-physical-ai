@@ -393,7 +393,7 @@ def _terminal_mask_evidence(dataset):
         decoded = {
             key: list(value.shape)
             for key, value in sample.items()
-            if key.startswith("video.") and hasattr(value, "shape")
+            if (key == "video" or key.startswith("video.")) and hasattr(value, "shape")
         }
         if not decoded:
             raise ValueError("native reader did not decode an observation video")
