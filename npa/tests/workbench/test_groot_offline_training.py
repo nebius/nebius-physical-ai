@@ -10,6 +10,7 @@ from npa.workbench.groot.offline_feedback import OfflineManifest, PreparedEpisod
 from npa.workbench.groot.offline_training import (
     FeedbackCollator,
     FeedbackDataset,
+    _training_trace,
     _terminal_mask_evidence,
     _validate_cuda_runtime,
     _load_native_runtime,
@@ -214,6 +215,24 @@ def test_cuda_runtime_reports_one_visible_device():
         is_bf16_supported=lambda: True,
     )
     assert _validate_cuda_runtime(SimpleNamespace(cuda=cuda)) == 1
+
+
+def test_training_trace_requires_ordered_finite_optimizer_losses():
+    trainer = SimpleNamespace(
+        state=SimpleNamespace(
+            log_history=[
+                {"step": 1, "loss": 1.25},
+                {"step": 2, "loss": 0.75, "learning_rate": 0.0001},
+            ]
+        )
+    )
+    assert _training_trace(trainer) == [
+        {"step": 1, "loss": 1.25},
+        {"step": 2, "loss": 0.75},
+    ]
+    trainer.state.log_history = [{"step": 2, "loss": 1.0}, {"step": 1, "loss": 0.5}]
+    with pytest.raises(ValueError, match="step ordered"):
+        _training_trace(trainer)
 
 
 def test_native_statistics_cannot_be_silently_recomputed(tmp_path):

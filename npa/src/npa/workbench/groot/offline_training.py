@@ -214,6 +214,7 @@ def train_offline(
         seed,
     )
     result = trainer.train()
+    training_trace = _training_trace(trainer)
     evaluation = trainer.evaluate()
     trainer.save_model(str(output_dir), _internal_call=False)
     trainer.save_state()
@@ -234,6 +235,7 @@ def train_offline(
         manifest_digest,
         manifest,
         result,
+        training_trace,
         evaluation,
         training_config,
         runtime["visible_cuda_devices"],
@@ -442,6 +444,9 @@ def _create_trainer(
         bf16=True,
         dataloader_num_workers=0,
         save_strategy="no",
+        logging_strategy="steps",
+        logging_steps=1,
+        logging_first_step=True,
         ddp_find_unused_parameters=False,
     )
     trainer = WeightedTrainer(
@@ -458,6 +463,24 @@ def _create_trainer(
         )
     )
     return trainer
+
+
+def _training_trace(trainer):
+    """Extract the native Trainer's recorded finite optimizer-loss trace."""
+
+    trace = []
+    for record in trainer.state.log_history:
+        loss = record.get("loss")
+        step = record.get("step")
+        if isinstance(loss, (float, int)) and isinstance(step, (float, int)):
+            if not math.isfinite(loss) or not math.isfinite(step) or step < 1:
+                raise ValueError("trainer logged a nonfinite optimizer trace value")
+            trace.append({"step": int(step), "loss": float(loss)})
+    if not trace:
+        raise ValueError("trainer did not record an optimizer-loss trace")
+    if [point["step"] for point in trace] != sorted(point["step"] for point in trace):
+        raise ValueError("trainer optimizer-loss trace is not step ordered")
+    return trace
 
 
 def _verify_candidate_reload(runtime, output, config, horizon):
@@ -482,6 +505,7 @@ def _write_training_receipt(
     manifest_digest,
     manifest,
     result,
+    training_trace,
     evaluation,
     training_config,
     visible_cuda_devices,
@@ -492,6 +516,8 @@ def _write_training_receipt(
         raise ValueError("training produced a nonfinite loss")
     if result.global_step != training_config["max_steps"]:
         raise ValueError("training did not complete the requested optimizer steps")
+    if training_trace[-1]["step"] != result.global_step:
+        raise ValueError("optimizer-loss trace does not reach the completed training step")
     eval_loss = evaluation.get("eval_loss")
     if not isinstance(eval_loss, (float, int)) or not math.isfinite(eval_loss):
         raise ValueError("held-out evaluation produced a nonfinite loss")
@@ -516,6 +542,7 @@ def _write_training_receipt(
         "candidate_checkpoint_sha256": checkpoint_digest(output),
         "optimizer_steps": result.global_step,
         "training_loss": result.training_loss,
+        "optimizer_loss_trace": training_trace,
         "train_episodes": sum(e.split == "train" for e in manifest.episodes),
         "eval_episodes": sum(e.split == "eval" for e in manifest.episodes),
         "train_frames": sum(e.length for e in manifest.episodes if e.split == "train"),

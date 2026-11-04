@@ -168,9 +168,11 @@ dimensions and checkpoint digest. The receipt binds dataset, feedback manifest,
 upstream source, and baseline/candidate checkpoint identities, and explicitly
 records training-weight statistics, one decoded terminal observation's shape,
 and the action-horizon rows masked beyond that recorded episode. It also records
-`robot_evaluation_performed: false`. Native logs go to stderr; the module's
-result is JSON on stdout. Resume is not supported; retain the original revision
-and use a new candidate directory for another iteration.
+`robot_evaluation_performed: false`. `optimizer_loss_trace` contains the native
+trainer's finite, ordered, per-step optimizer loss records and must reach the
+completed step. Native logs go to stderr; the module's result is JSON on stdout.
+Resume is not supported; retain the original revision and use a new candidate
+directory for another iteration.
 
 Run baseline and candidate robot trials using the same frozen task distribution,
 reset procedure, observation/action conventions, and trial schedule. Keep trials
