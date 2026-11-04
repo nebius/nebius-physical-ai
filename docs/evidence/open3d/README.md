@@ -345,7 +345,7 @@ reader which knob stops a number moving: seed the 300k-point sampling
 the reconstruction's own non-determinism was measured afterwards. What this harness isolates is
 that the points and the normals entering reconstruction are byte-identical, which leaves the Poisson
 solver and the density crop after it; `poisson-figure-reproducibility.json`, which names the
-mechanism, is in a separate pull request and may not be in this tree yet.
+mechanism, is in `poisson-figure-reproducibility.json`.
 
 Measured on the construction the first record names, reporting both figures from the same meshes.
 Seeding does make the input bit-identical, hashed to prove it, and it is the dominant cause: unseeded,
