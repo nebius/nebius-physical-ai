@@ -100,6 +100,27 @@ def test_excluded_managed_pool_does_not_block_operator_pool(excluded):
     )
 
 
+@pytest.mark.parametrize("excluded", ["cordoned", "unready", "tainted"])
+def test_unavailable_managed_node_does_not_require_gpu_inventory(excluded):
+    node = _node()
+    del node["status"]["allocatable"]["nvidia.com/gpu"]
+    if excluded == "cordoned":
+        node["spec"]["unschedulable"] = True
+    elif excluded == "unready":
+        node["status"]["conditions"][0]["status"] = "False"
+    else:
+        node["spec"]["taints"] = [
+            {"key": "dedicated", "value": "compute", "effect": "NoSchedule"}
+        ]
+
+    assert (
+        _managed_driver_isaac_nodes(
+            json.dumps({"items": [node]}), placements=_placements()
+        )
+        == []
+    )
+
+
 @pytest.mark.parametrize("effect", ["NoSchedule", "NoExecute"])
 def test_matching_toleration_keeps_managed_node_in_driver_check(effect):
     node = _node()

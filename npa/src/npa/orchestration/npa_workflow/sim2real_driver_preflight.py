@@ -279,14 +279,17 @@ def node_can_host_isaac(node, placements):
         RuntimeError: Placement constraints cannot be evaluated authoritatively.
     """
     checked = _validated_placements(placements)
-    inventory = _placement_inventory(node)
+    inventory = None
     can_host = False
     for placement in checked:
         available = _node_available(node, placement["pod_spec"])
+        if not available:
+            continue
+        if inventory is None:
+            inventory = _placement_inventory(node)
         try:
             preflight_kubernetes_gpu_gang(inventory, node_count=1, **placement)
         except UnsatisfiableAcceleratorError:
             continue
-        if available:
-            can_host = True
+        can_host = True
     return can_host
