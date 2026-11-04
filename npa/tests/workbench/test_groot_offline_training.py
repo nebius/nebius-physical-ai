@@ -137,11 +137,14 @@ def test_terminal_mask_evidence_decodes_observation_and_excludes_padding(video_k
     class Native:
         all_steps = [(0, 0), (0, 1), (0, 2), (1, 0), (1, 1)]
 
+        def get_step_data(self, episode, frame):
+            return {video_key: np.zeros((1, 2, 2, 3), dtype=np.uint8)}
+
         def __getitem__(self, index):
             return {
                 "action_mask": np.ones((2, 3), dtype=bool),
                 "action": np.full((2, 3), index),
-                video_key: np.zeros((2, 2, 3), dtype=np.uint8),
+                "eagle_content": {"decoded_by": "native"},
             }
 
     evidence = _terminal_mask_evidence(FeedbackDataset(Native(), _manifest()))
@@ -150,7 +153,8 @@ def test_terminal_mask_evidence_decodes_observation_and_excludes_padding(video_k
         "frame_index": 2,
         "valid_action_horizon_steps": 1,
         "masked_action_horizon_steps": 1,
-        "decoded_observation_shapes": {video_key: [2, 2, 3]},
+        "decoded_observation_shapes": {video_key: [1, 2, 2, 3]},
+        "transformed_model_input": "eagle_content",
     }
 
 

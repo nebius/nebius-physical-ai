@@ -391,7 +391,12 @@ def _load_model(runtime, base_model, config, horizon):
 
 
 def _terminal_mask_evidence(dataset):
-    """Decode one terminal observation and prove padding actions are excluded."""
+    """Decode one terminal observation and prove padding actions are excluded.
+
+    The native N1.5 transform consumes raw ``video.*`` arrays and emits processor
+    inputs (rather than carrying the original video keys forward), so decode
+    evidence must be collected from ``get_step_data`` before applying it.
+    """
 
     for position, (_, episode, frame) in enumerate(dataset.samples):
         if frame != episode.length - 1:
@@ -404,19 +409,23 @@ def _terminal_mask_evidence(dataset):
             raise ValueError(
                 "terminal action mask differs from recorded episode boundary"
             )
+        raw_sample = dataset.native.get_step_data(episode.episode_index, frame)
         decoded = {
             key: list(value.shape)
-            for key, value in sample.items()
+            for key, value in raw_sample.items()
             if (key == "video" or key.startswith("video.")) and hasattr(value, "shape")
         }
         if not decoded:
             raise ValueError("native reader did not decode an observation video")
+        if "eagle_content" not in sample:
+            raise ValueError("native transform did not produce N1.5 processor inputs")
         return {
             "episode_index": episode.episode_index,
             "frame_index": frame,
             "valid_action_horizon_steps": int(row_is_valid.sum()),
             "masked_action_horizon_steps": int((~row_is_valid).sum()),
             "decoded_observation_shapes": decoded,
+            "transformed_model_input": "eagle_content",
         }
     raise ValueError("training split has no terminal frame")
 
