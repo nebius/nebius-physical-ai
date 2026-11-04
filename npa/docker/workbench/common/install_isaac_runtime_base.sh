@@ -7,9 +7,10 @@
 # Dockerfile does COPY + RUN. This also avoids inventing an extra npa-isaac-base image
 # that a build-your-own customer would have to build first.
 #
-# WHAT THIS BAKES (all freely redistributable, all from PyPI / Docker Hub / Ubuntu):
+# WHAT THIS BAKES (all freely redistributable, from PyPI / Docker Hub / Ubuntu /
+# python.org):
 #   * python3.11 (Isaac requires exactly 3.11: both isaacsim and isaaclab declare
-#     `Requires-Python: ==3.11.*`, and Ubuntu 22.04 ships 3.10, hence deadsnakes)
+#     `Requires-Python: ==3.11.*`, while Ubuntu 22.04 ships 3.10)
 #   * a python3.11 venv with PyTorch and the COMPLETE OSS dependency closure that Isaac
 #     Sim / Isaac Lab need at run time
 #   * the runtime-fetch bootstrap, its hash-pinned wheel manifest, and the
@@ -39,8 +40,11 @@ UBUNTU_SNAPSHOT="${NPA_UBUNTU_SNAPSHOT:-20261018T000000Z}"
 UBUNTU_SUITE="${NPA_UBUNTU_SUITE:-jammy}"
 ISAAC_PYTHON_MINOR="${NPA_ISAAC_PYTHON_MINOR:-3.11}"
 LINUX_LIBC_DEV_VERSION="${NPA_LINUX_LIBC_DEV_VERSION:-5.15.0-198.208}"
-PYTHON_VERSION="${NPA_ISAAC_PYTHON_VERSION:-3.11.17-1+jammy1}"
-DEADSNAKES_POOL="${NPA_DEADSNAKES_POOL:-https://ppa.launchpadcontent.net/deadsnakes/ppa/ubuntu/pool/main/p/python3.11}"
+PYTHON_VERSION="${NPA_ISAAC_PYTHON_VERSION:-3.11.18}"
+PYTHON_SOURCE_SHA256="${NPA_ISAAC_PYTHON_SOURCE_SHA256:-5f62711b12470fd435f83f1451c1b1ef4a179aebc715c716874b0967567d814e}"
+PYTHON_SOURCE_BASE="${NPA_ISAAC_PYTHON_SOURCE_BASE:-https://www.python.org/ftp/python}"
+PYTHON_SOURCE_EPOCH="${NPA_ISAAC_PYTHON_SOURCE_EPOCH:-1792957289}"
+PYTHON_BUILD_JOBS="${NPA_ISAAC_PYTHON_BUILD_JOBS:-$(nproc)}"
 # cu128 wheels carry sm_120 kernels, which RTX PRO 6000 Blackwell (compute capability
 # 12.0) requires. Verified in-pod: torch._C._cuda_getArchFlags() reports
 # "sm_70 sm_75 sm_80 sm_86 sm_90 sm_100 sm_120".
@@ -50,6 +54,7 @@ TORCH_INDEX_URL="${TORCH_INDEX_URL:-https://download.pytorch.org/whl/cu128}"
 # isaac-named venv directory buries that list under 60,000 unrelated site-packages files.
 # Keeping the venv out of the namespace makes the audit output ~20 lines a human can read.
 ISAAC_VENV="${NPA_ISAAC_VENV:-/opt/npa/sim/venv}"
+INHERITED_PYTHON="${NPA_ISAAC_INHERITED_PYTHON:-}"
 RUNTIME_USER="${NPA_RUNTIME_USER:-ubuntu}"
 CACHE_DIR="${NPA_ISAAC_CACHE_DIR:-/opt/isaac-cache}"
 COMMON_DIR="${NPA_ISAAC_COMMON_DIR:-/opt/npa/docker/workbench/common}"
@@ -98,6 +103,25 @@ system_packages=(
   libxt6 \
   vulkan-tools
 )
+if [ "$ISAAC_PYTHON_MINOR" = 3.11 ]; then
+  # Build exact upstream CPython bytes rather than depending on a superseded PPA
+  # publication that Launchpad deletes after its bounded retention window.
+  system_packages+=(
+    build-essential
+    libbz2-dev
+    libffi-dev
+    libgdbm-compat-dev
+    libgdbm-dev
+    liblzma-dev
+    libncursesw5-dev
+    libreadline-dev
+    libsqlite3-dev
+    libssl-dev
+    uuid-dev
+    xz-utils
+    zlib1g-dev
+  )
+fi
 if [ -n "$LINUX_LIBC_DEV_VERSION" ]; then
   system_packages+=("linux-libc-dev=${LINUX_LIBC_DEV_VERSION}")
 elif [ "$UBUNTU_SUITE" = jammy ]; then
@@ -126,31 +150,97 @@ fi
 test ! -e /opt/nvidia/nsight-compute
 command -v nvcc >/dev/null
 
-# Isaac needs python3.11 exactly; Ubuntu 22.04 ships 3.10. Do not add the
-# moving deadsnakes apt repository. Fetch the reviewed version's immutable
-# package paths and verify every byte against the SHA-256 recorded in the PPA
-# Packages index before apt resolves their Ubuntu dependencies from the fixed
+# Isaac needs python3.11 exactly; Ubuntu 22.04 ships 3.10. Build the reviewed
+# CPython release from python.org's stable release archive and verify the source
+# before extraction. Build dependencies still come from the fixed Ubuntu
 # snapshot above.
 if [ "$ISAAC_PYTHON_MINOR" = 3.11 ]; then
-  install -d -m 0755 /tmp/npa-python311
-  while IFS='|' read -r filename digest; do
-    curl --fail --location --retry 3 \
-      "${DEADSNAKES_POOL}/${filename}" \
-      --output "/tmp/npa-python311/${filename}"
-    printf '%s  %s\n' "$digest" "/tmp/npa-python311/${filename}" | sha256sum --check --strict
-  done <<'PYTHON311_DEBS'
-libpython3.11_3.11.17-1+jammy1_amd64.deb|37cf74d9a83c16aaff5212ba16a387ddfa6475c3d949c82e63e32269f3e11652
-libpython3.11-dev_3.11.17-1+jammy1_amd64.deb|ddfb00db5ad8a98a41b78d54801eeb9bdd166b45c9125d25e11ab854e2597df3
-libpython3.11-minimal_3.11.17-1+jammy1_amd64.deb|c43729651a145caa062c62dac63259512fac11e023a55a8666bc449e1af77c36
-libpython3.11-stdlib_3.11.17-1+jammy1_amd64.deb|e1f406d5f6a3b368aac2088dfdc0ae69a7d28ec2d71d2ed423396673b3b95a58
-python3.11_3.11.17-1+jammy1_amd64.deb|8f7452c61dcf1da97fd7adcfdaa71051329e2cbf8b85b1db1f39f3059c67198b
-python3.11-dev_3.11.17-1+jammy1_amd64.deb|345a09eb7f5de4ddd4f9c9041aecc7166ba2a7de96bf9a3b07039929a8366c84
-python3.11-minimal_3.11.17-1+jammy1_amd64.deb|dfef050f38aa2cd310b262712c7673a51dc08869f625abefcb3e5fcdc0f7b410
-python3.11-venv_3.11.17-1+jammy1_amd64.deb|0572285b02976487ee908ce58b865ec608ad181618b820ea22671d9ee02874a2
-PYTHON311_DEBS
-  apt-get install -y --no-install-recommends /tmp/npa-python311/*.deb
-  test "$(dpkg-query -W -f='${Version}' python3.11)" = "$PYTHON_VERSION"
-  rm -rf /tmp/npa-python311
+  PYTHON_SOURCE_ARCHIVE="/tmp/Python-${PYTHON_VERSION}.tgz"
+  curl --fail --location --retry 3 \
+    "${PYTHON_SOURCE_BASE}/${PYTHON_VERSION}/Python-${PYTHON_VERSION}.tgz" \
+    --output "$PYTHON_SOURCE_ARCHIVE"
+  printf '%s  %s\n' "$PYTHON_SOURCE_SHA256" "$PYTHON_SOURCE_ARCHIVE" \
+    | sha256sum --check --strict
+  tar --extract --gzip --file "$PYTHON_SOURCE_ARCHIVE" \
+    --directory /tmp --no-same-owner
+  (
+    cd "/tmp/Python-${PYTHON_VERSION}"
+    command -v dpkg-buildflags >/dev/null
+    [[ "$PYTHON_SOURCE_EPOCH" =~ ^[0-9]+$ ]] || {
+      echo "NPA_ISAAC_PYTHON_SOURCE_EPOCH must be an integer" >&2
+      exit 2
+    }
+    export SOURCE_DATE_EPOCH="$PYTHON_SOURCE_EPOCH"
+    export TZ=UTC
+    CFLAGS="$(dpkg-buildflags --get CFLAGS)" \
+    CPPFLAGS="$(dpkg-buildflags --get CPPFLAGS)" \
+    LDFLAGS="$(dpkg-buildflags --get LDFLAGS)" \
+      ./configure \
+      --prefix=/usr/local \
+      --enable-optimizations \
+      --enable-option-checking=fatal \
+      --enable-shared \
+      --with-lto \
+      --with-ensurepip=no \
+      --without-static-libpython
+    make -j "$PYTHON_BUILD_JOBS"
+    LD_LIBRARY_PATH="$PWD${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
+      ./python -m test --fail-env-changed \
+      test_pyexpat test_sax test_xml_etree test_xml_etree_c
+    make altinstall
+    install -d -m 0755 /usr/share/doc/cpython3.11
+    printf '%s\n' \
+      'ea0b9c6b296c13aed6ecaa50b463e39a9c1bdc059b84f50507fd8247b2e660f9  Modules/_decimal/libmpdec/mpdecimal.h' \
+      '4633fc5859344c6f244939c27700fb941d12c4636215a8eccde17d9a6d1dcb0d  Modules/_sha3/LICENSE' \
+      '2f6c9d0ecf70be474f2853b52394993625a32960e0a64eae147ef97a3a5c1460  Modules/_blake2/impl/blake2.h' \
+      | sha256sum --check --strict
+    install -m 0444 LICENSE /usr/share/doc/cpython3.11/LICENSE
+    install -m 0444 Modules/expat/COPYING \
+      /usr/share/doc/cpython3.11/EXPAT-LICENSE
+    install -m 0444 Modules/_decimal/libmpdec/mpdecimal.h \
+      /usr/share/doc/cpython3.11/MPDECIMAL-LICENSE.h
+    install -m 0444 Modules/_sha3/LICENSE \
+      /usr/share/doc/cpython3.11/SHA3-LICENSE
+    install -m 0444 Modules/_blake2/impl/blake2.h \
+      /usr/share/doc/cpython3.11/BLAKE2-CC0-SOURCE.h
+    cmp -s Modules/_decimal/libmpdec/mpdecimal.h \
+      /usr/share/doc/cpython3.11/MPDECIMAL-LICENSE.h
+    cmp -s Modules/_sha3/LICENSE \
+      /usr/share/doc/cpython3.11/SHA3-LICENSE
+    cmp -s Modules/_blake2/impl/blake2.h \
+      /usr/share/doc/cpython3.11/BLAKE2-CC0-SOURCE.h
+  )
+  ldconfig
+  test "$(command -v python3.11)" = /usr/local/bin/python3.11
+  test "$(python3.11 -c 'import platform; print(platform.python_version())')" = "$PYTHON_VERSION"
+  python3.11 -c 'import _blake2, _sha3, bz2, ctypes, ensurepip, lzma, readline, sqlite3, ssl, zlib'
+  test "$(python3.11 -c 'import pyexpat; print(pyexpat.EXPAT_VERSION)')" = expat_2.9.0
+  PYEXPAT_EXTENSION="$(python3.11 -c 'import pyexpat; print(pyexpat.__file__)')"
+  if ldd "$PYEXPAT_EXTENSION" | grep -Fq libexpat.so; then
+    echo "CPython pyexpat unexpectedly links the snapshot system Expat" >&2
+    exit 1
+  fi
+  NPA_CPYTHON_SOURCE_EPOCH="$PYTHON_SOURCE_EPOCH" python3.11 - <<'PY'
+from datetime import datetime, timezone
+import os
+import sys
+
+epoch = int(os.environ["NPA_CPYTHON_SOURCE_EPOCH"])
+stamp = datetime.fromtimestamp(epoch, timezone.utc)
+expected = f"{stamp:%b} {stamp.day:2d} {stamp.year}, {stamp:%H:%M:%S}"
+if expected not in sys.version:
+    raise SystemExit(f"CPython build timestamp is not release-bound: {sys.version}")
+PY
+  test -s /usr/share/doc/cpython3.11/LICENSE
+  test -s /usr/share/doc/cpython3.11/EXPAT-LICENSE
+  test -s /usr/share/doc/cpython3.11/MPDECIMAL-LICENSE.h
+  test -s /usr/share/doc/cpython3.11/SHA3-LICENSE
+  test -s /usr/share/doc/cpython3.11/BLAKE2-CC0-SOURCE.h
+  # The standard-library tests were run above. Do not publish their fixture
+  # private keys or other test-only bytes in every derived public image.
+  rm -rf /usr/local/lib/python3.11/test
+  test ! -e /usr/local/lib/python3.11/test
+  rm -rf "$PYTHON_SOURCE_ARCHIVE" "/tmp/Python-${PYTHON_VERSION}"
 elif [ "$ISAAC_PYTHON_MINOR" = 3.12 ]; then
   # Isaac Sim 6 / Isaac Lab 3 require Python 3.12. The 3.x image uses the
   # digest-pinned Ubuntu 24.04 CUDA base and the immutable Noble snapshot, so
@@ -191,12 +281,36 @@ else
   log "python${ISAAC_PYTHON_MINOR} venv at ${ISAAC_VENV}"
   "python${ISAAC_PYTHON_MINOR}" -m venv "$ISAAC_VENV"
 fi
+if [ -n "$INHERITED_PYTHON" ]; then
+  [ -x "$INHERITED_PYTHON" ] || {
+    echo "NPA_ISAAC_INHERITED_PYTHON is not executable: $INHERITED_PYTHON" >&2
+    exit 2
+  }
+  inherited_site="$("$INHERITED_PYTHON" -c \
+    'import sysconfig; print(sysconfig.get_paths()["purelib"])')"
+  isaac_site="$("$ISAAC_VENV/bin/python" -c \
+    'import sysconfig; print(sysconfig.get_paths()["purelib"])')"
+  printf '%s\n' "$inherited_site" > "$isaac_site/_npa_inherited_image_site.pth"
+fi
 "$ISAAC_VENV/bin/python" -m pip install --no-cache-dir --no-deps \
   "pip==26.2.2" \
   "setuptools==84.1.0" \
   "wheel==0.47.0" \
   "packaging==26.3"
 "$ISAAC_VENV/bin/python" -m pip check
+if [ "$ISAAC_PYTHON_MINOR" = 3.11 ]; then
+  # The CPython release embeds an old bootstrap-only pip wheel. The venv now
+  # carries the reviewed current pip, so do not retain that dormant vulnerable
+  # wheel or a second global pip installation in the public image.
+  test "$("$ISAAC_VENV/bin/python" -c \
+    'from importlib import metadata; print(metadata.version("pip"))')" = 26.2.2
+  rm -rf /usr/local/lib/python3.11/ensurepip/_bundled
+  test -z "$(find /usr/local/lib/python3.11/site-packages -mindepth 1 -maxdepth 1 \
+    -iname 'pip*' -print -quit)"
+  python3.11 -m venv --without-pip /tmp/npa-python311-venv-probe
+  test -x /tmp/npa-python311-venv-probe/bin/python
+  rm -rf /tmp/npa-python311-venv-probe
+fi
 
 # Isaac releases require an exact Python minor; fail here rather than at first run.
 NPA_ISAAC_PYTHON_MINOR="$ISAAC_PYTHON_MINOR" "$ISAAC_VENV/bin/python" - <<'PY'

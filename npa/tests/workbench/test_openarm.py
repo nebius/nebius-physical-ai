@@ -436,7 +436,17 @@ def test_packaging_pins_and_excludes_isaac_payload() -> None:
     ).read_text(encoding="utf-8")
     assert "gitpython==3.2.1" in security_lock
     assert "gitpython==3.1.57" not in security_lock
-    assert (ROOT / "npa/docker/workbench/openarm/THIRD_PARTY_NOTICES.md").is_file()
+    notices = (ROOT / "npa/docker/workbench/openarm/THIRD_PARTY_NOTICES.md").read_text(
+        encoding="utf-8"
+    )
+    for notice_path in (
+        "/usr/share/doc/cpython3.11/LICENSE",
+        "/usr/share/doc/cpython3.11/EXPAT-LICENSE",
+        "/usr/share/doc/cpython3.11/MPDECIMAL-LICENSE.h",
+        "/usr/share/doc/cpython3.11/SHA3-LICENSE",
+        "/usr/share/doc/cpython3.11/BLAKE2-CC0-SOURCE.h",
+    ):
+        assert notice_path in notices
     assert "prune_python_vendor_devel.py" in dockerfile
     assert (ROOT / "npa/docker/workbench/openarm/ONBOARDING_CONTRACT.md").is_file()
     components = json.loads(
@@ -448,7 +458,16 @@ def test_packaging_pins_and_excludes_isaac_payload() -> None:
     assert "enactic/openarm_mujoco" in baked
     assert "enactic/openarm_isaac_lab" in baked
     assert "NVIDIA Isaac Sim and Isaac Lab" not in baked
+    for component in (
+        "CPython",
+        "CPython bundled Expat",
+        "CPython bundled mpdecimal",
+        "CPython bundled tiny_sha3",
+        "CPython bundled BLAKE2 reference implementation",
+    ):
+        assert component in baked
     sources = {row["name"]: row for row in components["components"]}
+    assert len(sources["CPython"]["source_sha256"]) == 64
     assert len(sources["enactic/openarm_mujoco"]["license_sha256"]) == 64
     assert len(sources["enactic/openarm_isaac_lab"]["license_sha256"]) == 64
     assert sources["OpenArm HTTP service stack"]["version"] == (

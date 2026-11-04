@@ -176,6 +176,24 @@ MoviePy Pillow compatibility bound to exact 2.2.1 metadata; the released
 MoviePy code and package versions stay intact. The compatibility patch rejects
 unknown metadata or an unpatched Pillow installation. A successful source or
 dependency check does not qualify an existing or replacement image digest.
+The shared Jammy bootstrap builds CPython 3.11.18 from the exact hash-checked
+python.org security-release archive. It does not depend on Deadsnakes PPA
+package retention: Launchpad eventually deletes superseded PPA publications.
+The shared installer selects its compiler and non-XML library inputs from the
+fixed Ubuntu snapshot. Derived bases may already contain build inputs; their
+own recipes and retained package metadata remain part of the provenance rather
+than being described as snapshot-pinned here. CPython uses its bundled Expat
+2.9.0, executes the four XML/Expat test
+modules before installation, and rejects a runtime `pyexpat` linked to the
+older snapshot system Expat. The image retains exact source-derived notices for
+CPython, Expat, mpdecimal 2.5.1, tiny_sha3, and the BLAKE2 reference
+implementation; mpdecimal, SHA-3, and BLAKE2 are compiled into `_decimal`,
+`_sha3`, and `_blake2`, respectively. The build verifies the archive before
+extraction, byte-compares each bundled-component notice with its installed
+copy, exercises the required standard-library extension modules, and removes
+the installed standard-library test fixtures before creating the runtime
+virtualenv. OpenArm records these source-built components in both its Markdown
+notices and machine-readable packaging inventory.
 
 The Sim2Real controller and Rerun viewer builds use the October 2, 2026 Debian
 snapshot and explicitly install `perl-base=5.40.1-6+deb13u1` to remove the three
