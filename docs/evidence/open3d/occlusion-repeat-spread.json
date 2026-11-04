@@ -1,0 +1,278 @@
+{
+  "what_this_measures": "How far the occlusion figures in `audit-view-occlusion.json` move between runs of the harness that wrote them, and how many runs that rests on.",
+  "why_it_replaces_an_earlier_figure": "That record declared the visible fractions agree to 2e-5. The figure came from two runs. A reviewer ran the harness twice more and their own two runs exceeded it before their numbers were compared with the record at all, which is the correct objection: two observations give a sample minimum, and a sample minimum published as a bound makes the record look falsified the first time a third party runs it.",
+  "repeats": 6,
+  "how_the_repeats_were_isolated": "Each repeat invokes the audit harness with `NPA_OCCLUSION_OUT` redirected, so the committed record is never written by this measurement.",
+  "environment": {
+    "open3d": "0.20.0",
+    "python": "3.14.7"
+  },
+  "observed_deviation": {
+    "largest_between_runs": 7.867847005971207e-05,
+    "largest_from_the_committed_record": 6.174471542463866e-05,
+    "largest_either_way": 7.867847005971207e-05,
+    "the_figure_this_replaces": 2e-05,
+    "ratio_to_the_replaced_figure": 3.933923502985603,
+    "how_to_read_it": "The largest deviation observed across these runs, not a bound. More runs may exceed it, which is the point: it is reported with its run count so a reader can see what it rests on."
+  },
+  "the_sample_count_moves_and_it_is_not_the_seed": {
+    "raised_by": "A reviewer measured the barycentric sample count moving between runs and read it as the sampling seed failing to bind, since a stable sample count is what the seed was taken to buy.",
+    "what_the_measurement_shows": "`samples` equals 6 * `removed_triangles` in every repeat and in the committed record. So the sample count is a deterministic function of the triangle count and moves only because the triangle count moves -- which is the crop-boundary mechanism the record already describes, not a second defect.",
+    "what_the_seed_does_reach": "The armadillo's point-cloud sampling, which draws a fixed number of points. It was never what fixes the barycentric sample count, and the record should not have been readable as claiming it was.",
+    "holds_in_every_record_checked": true
+  },
+  "the_controls_still_do_not_move": {
+    "why_it_matters": "The synthetic controls not moving is what locates the variation in the reconstruction rather than in the measurement. Re-checked at this run count rather than carried forward from two.",
+    "numeric_fields_checked": 14,
+    "all_identical_across_runs_and_equal_to_committed": true,
+    "fields_that_moved": []
+  },
+  "does_this_change_the_verdict": {
+    "no": "The gate is 50% and the measured values are 78% and 82%. The largest deviation observed here is 7.87e-05, which is still three orders of magnitude inside the margin.",
+    "gate": 0.5,
+    "observed_deviation": 7.867847005971207e-05
+  },
+  "scenes": {
+    "eagle_partial_scan": {
+      "fractions": {
+        "visible_area_fraction": {
+          "values": [
+            0.7848979342669726,
+            0.7848218309208228,
+            0.7848360006040692,
+            0.7848390417502202,
+            0.7848192557969129,
+            0.7848759843954455
+          ],
+          "min": 0.7848192557969129,
+          "max": 0.7848979342669726,
+          "span": 7.867847005971207e-05,
+          "identical": false,
+          "committed": 0.7848810005123376,
+          "largest_deviation_between_runs": 7.867847005971207e-05,
+          "largest_deviation_from_committed": 6.174471542463866e-05
+        },
+        "visible_with_retained_surface_shown": {
+          "values": [
+            0.35214963568335006,
+            0.35213951341523164,
+            0.35214145304660593,
+            0.3521431065283116,
+            0.35214110821211386,
+            0.3521486886453563
+          ],
+          "min": 0.35213951341523164,
+          "max": 0.35214963568335006,
+          "span": 1.0122268118417654e-05,
+          "identical": false,
+          "committed": 0.3521503113541809,
+          "largest_deviation_between_runs": 1.0122268118417654e-05,
+          "largest_deviation_from_committed": 1.0797938949258512e-05
+        },
+        "visible_with_only_its_own_self_occlusion": {
+          "values": [
+            0.7848979342669726,
+            0.7848218309208228,
+            0.7848360006040692,
+            0.7848390417502202,
+            0.7848192557969129,
+            0.7848759843954455
+          ],
+          "min": 0.7848192557969129,
+          "max": 0.7848979342669726,
+          "span": 7.867847005971207e-05,
+          "identical": false,
+          "committed": 0.7848810005123376,
+          "largest_deviation_between_runs": 7.867847005971207e-05,
+          "largest_deviation_from_committed": 6.174471542463866e-05
+        }
+      },
+      "counts": {
+        "samples": {
+          "values": [
+            707220,
+            707196,
+            707226,
+            707256,
+            707226,
+            707226
+          ],
+          "min": 707196,
+          "max": 707256,
+          "span": 60,
+          "identical": false,
+          "committed": 707208
+        },
+        "removed_triangles": {
+          "values": [
+            117870,
+            117866,
+            117871,
+            117876,
+            117871,
+            117871
+          ],
+          "min": 117866,
+          "max": 117876,
+          "span": 10,
+          "identical": false,
+          "committed": 117868
+        },
+        "retained_triangles": {
+          "values": [
+            973561,
+            973562,
+            973560,
+            973558,
+            973559,
+            973557
+          ],
+          "min": 973557,
+          "max": 973562,
+          "span": 5,
+          "identical": false,
+          "committed": 973562
+        },
+        "occluder_triangles": {
+          "values": [
+            117870,
+            117866,
+            117871,
+            117876,
+            117871,
+            117871
+          ],
+          "min": 117866,
+          "max": 117876,
+          "span": 10,
+          "identical": false,
+          "committed": 117868
+        }
+      },
+      "samples_equals_samples_per_triangle_times_removed_triangles": true
+    },
+    "armadillo_complete": {
+      "fractions": {
+        "visible_area_fraction": {
+          "values": [
+            0.8180841959691757,
+            0.8180972537991688,
+            0.8180977641963602,
+            0.8180891435860265,
+            0.818076279369017,
+            0.8180634010558236
+          ],
+          "min": 0.8180634010558236,
+          "max": 0.8180977641963602,
+          "span": 3.4363140536508574e-05,
+          "identical": false,
+          "committed": 0.8180565351651206,
+          "largest_deviation_between_runs": 3.4363140536508574e-05,
+          "largest_deviation_from_committed": 4.122903123959798e-05
+        },
+        "visible_with_retained_surface_shown": {
+          "values": [
+            0.3821107147100516,
+            0.38210503703075777,
+            0.3821135956346592,
+            0.3821295940147723,
+            0.3821270916617601,
+            0.3820769066151264
+          ],
+          "min": 0.3820769066151264,
+          "max": 0.3821295940147723,
+          "span": 5.268739964592317e-05,
+          "identical": false,
+          "committed": 0.3821141245922638,
+          "largest_deviation_between_runs": 5.268739964592317e-05,
+          "largest_deviation_from_committed": 3.721797713740482e-05
+        },
+        "visible_with_only_its_own_self_occlusion": {
+          "values": [
+            0.8180841959691757,
+            0.8180972537991688,
+            0.8180977641963602,
+            0.8180891435860265,
+            0.818076279369017,
+            0.8180634010558236
+          ],
+          "min": 0.8180634010558236,
+          "max": 0.8180977641963602,
+          "span": 3.4363140536508574e-05,
+          "identical": false,
+          "committed": 0.8180565351651206,
+          "largest_deviation_between_runs": 3.4363140536508574e-05,
+          "largest_deviation_from_committed": 4.122903123959798e-05
+        }
+      },
+      "counts": {
+        "samples": {
+          "values": [
+            1185624,
+            1185654,
+            1185624,
+            1185690,
+            1185498,
+            1185618
+          ],
+          "min": 1185498,
+          "max": 1185690,
+          "span": 192,
+          "identical": false,
+          "committed": 1185648
+        },
+        "removed_triangles": {
+          "values": [
+            197604,
+            197609,
+            197604,
+            197615,
+            197583,
+            197603
+          ],
+          "min": 197583,
+          "max": 197615,
+          "span": 32,
+          "identical": false,
+          "committed": 197608
+        },
+        "retained_triangles": {
+          "values": [
+            841059,
+            841057,
+            841062,
+            841048,
+            841083,
+            841059
+          ],
+          "min": 841048,
+          "max": 841083,
+          "span": 35,
+          "identical": false,
+          "committed": 841054
+        },
+        "occluder_triangles": {
+          "values": [
+            197604,
+            197609,
+            197604,
+            197615,
+            197583,
+            197603
+          ],
+          "min": 197583,
+          "max": 197615,
+          "span": 32,
+          "identical": false,
+          "committed": 197608
+        }
+      },
+      "samples_equals_samples_per_triangle_times_removed_triangles": true
+    }
+  },
+  "what_this_does_not_claim": [
+    "That this is a bound. It is the largest deviation seen in 6 runs on one host; a seventh run may exceed it.",
+    "That the figures are wrong. They reproduce to four decimal places, and a reviewer independently confirmed the headline verdict at that precision.",
+    "That the cause is understood beyond the crop boundary. Why the Poisson reconstruction differs run to run is measured separately and is not settled here."
+  ]
+}
