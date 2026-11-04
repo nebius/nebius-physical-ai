@@ -49,6 +49,7 @@ accidental dead entries fail the guardrail. The retired monolithic
 | `workbench.seedvr2.restore` | `npa workbench seedvr2 restore` | exact low-resolution S3 MP4, dimensions, seed, conditioning mode, assigned-GPU validation | official SeedVR2-3B restored MP4, upstream log, model/source/runtime/config provenance | no (real pinned upstream one-step GPU inference) |
 | `workbench.seedvr2.verify` | `npa workbench seedvr2 verify` | SeedVR2 `result.json` and restored MP4 | independent S3 readback hash and complete decode verification | no |
 | `workbench.seedvr2.review` | `npa workbench seedvr2 review` | verified source/result pair | non-blended bicubic-left/candidate-right MP4, contact sheet, JSON, HTML | no |
+| `workbench.seedvr2.quality_boundary` | `npa workbench seedvr2 quality-boundary` | exact SeedVR2 `result.json`, source MP4, and restored MP4 | hash-bound advisory diagnostics plus an explicit review-only, not-quality-qualified JSON boundary | no |
 | `workbench.open3d.stage_demo` | `npa workbench open3d stage-demo` | nothing (downloads the upstream `open3d.data` indoor scans) | staged `.ply` scans and a digest-bound `manifest.json` | no |
 | `workbench.open3d.prepare` | `npa workbench open3d prepare` | prefix of operator `.pcd`/`.ply` scans | digest-bound `manifest.json` | no |
 | `workbench.open3d.register` | `npa workbench open3d register` | `manifest.json` | per-pair RANSAC/FPFH + ICP results, aligned clouds, journal | no (real `registration_ransac_based_on_feature_matching` + `registration_icp`) |
