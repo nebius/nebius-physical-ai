@@ -111,7 +111,9 @@ def test_a_required_measurement_cannot_be_deleted(evidence: Path) -> None:
     assert "omits required measurement content_fraction" in result.stdout
 
 
-def test_the_background_sweep_is_bound_to_the_frames_it_measured(evidence: Path) -> None:
+def test_the_background_sweep_is_bound_to_the_frames_it_measured(
+    evidence: Path,
+) -> None:
     sweep = json.loads((evidence / "background-choice-sweep-refit.json").read_text())
     assert len(sweep["frame_bindings"]) == len(sweep["frames_measured"]) == 9
 
