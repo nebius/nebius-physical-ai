@@ -18,6 +18,7 @@ from npa.workbench.groot.offline_training import (
     _load_training_dataset,
     checkpoint_digest,
     train_offline,
+    weighted_evaluation_loss,
     weighted_flow_loss,
 )
 
@@ -168,6 +169,25 @@ def test_collator_does_not_feed_weight_to_native_processor(torch_runtime):
     assert result["offline_weight"].tolist() == [0.5]
     assert result["action"] == "preserved"
     assert features[0]["offline_weight"] == 0.5
+
+
+def test_weighted_evaluation_uses_native_mapping_call(torch_runtime):
+    torch = torch_runtime
+
+    class NativeMappingModel:
+        def __call__(self, batch):
+            assert set(batch) == {"action", "action_mask"}
+            return {"loss": torch.tensor(2.0)}
+
+    loss = weighted_evaluation_loss(
+        NativeMappingModel(),
+        {
+            "action": torch.ones((1, 2, 3)),
+            "action_mask": torch.ones((1, 2, 3)),
+            "offline_weight": torch.ones(1),
+        },
+    )
+    assert loss.item() == 2.0
 
 
 def test_changed_dataset_refuses_before_native_import(tmp_path, monkeypatch):

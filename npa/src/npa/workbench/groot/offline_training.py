@@ -141,6 +141,13 @@ def weighted_flow_loss(model, inputs):
     return loss, outputs
 
 
+def weighted_evaluation_loss(model, inputs):
+    """Evaluate through the native mapping-style N1.5 call contract."""
+
+    loss, _ = weighted_flow_loss(model, inputs)
+    return loss
+
+
 def _validate_loss_inputs(weights, mask, action_shape):
     import torch
 
@@ -441,12 +448,29 @@ def _create_trainer(
     learning_rate,
     seed,
 ):
+    import torch
+
     class WeightedTrainer(runtime["DualBrainTrainer"]):
         def compute_loss(
             self, model, inputs, return_outputs=False, num_items_in_batch=None
         ):
             loss, outputs = weighted_flow_loss(model, inputs)
             return (loss, outputs) if return_outputs else loss
+
+        def prediction_step(
+            self, model, inputs, prediction_loss_only, ignore_keys=None
+        ):
+            """Keep held-out evaluation on the native mapping call contract.
+
+            The upstream Trainer default expands the batch as keyword arguments,
+            while N1.5's forward method accepts one prepared mapping.  Training
+            already takes the mapping path through ``compute_loss``; evaluation
+            must use the same path to produce a comparable weighted flow loss.
+            """
+            inputs = self._prepare_inputs(inputs)
+            with torch.no_grad(), self.compute_loss_context_manager():
+                loss = weighted_evaluation_loss(model, inputs)
+            return loss.detach(), None, None
 
     output.mkdir(parents=True)
     metadata_dir = output / "experiment_cfg"
