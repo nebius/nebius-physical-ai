@@ -1,10 +1,17 @@
 {
+  "schema": "npa.evidence.open3d.poisson-figure-reproducibility/v0.0.1",
+  "provenance": {
+    "source_commit": "400e96f558dc33133fc111989473cd9c2cd469d1",
+    "clean_tree_before_write": true,
+    "harness_sha256": "913ebd53b061eef53cec4043803c4b63cc84496243ab4e3e2bd7bebbfe69a886"
+  },
   "what_this_measures": "Whether the ray-cast occlusion figures in `audit-view-occlusion.json` are reproducible, and if not, to what precision they are.",
   "why": "A reviewer flagged the ray-cast path as unverified and suspected it might share the one-pixel environment dependence they measured in the z-buffer footprint path. It does not. The z-buffer path reproduced exactly on this host; this one does not reproduce against itself.",
+  "subject_availability": "The audit-view record and harness are supplied by PR 1014 and are not in this merge target. Values are pinned to commit 04aacfcf89; the causal attribution here is inferred from a different fixed Eagle input.",
   "environment": {
     "open3d": "0.20.0",
     "numpy": "2.5.4",
-    "python": "3.14.7",
+    "python": "3.12.14",
     "input": "Open3D's own EaglePointCloud, a fixed dataset with no sampling",
     "input_points": 796825,
     "poisson_depth": 9
@@ -23,112 +30,119 @@
   },
   "cause": {
     "claim": "`create_from_point_cloud_poisson` is not deterministic in Open3D 0.20.0.",
-    "how_it_was_established": "Identical input, one process, same depth, repeated. Vertex and triangle counts repeat exactly while the total surface area does not, so the topology is stable and the vertex positions are not.",
+    "how_it_was_established": "Identical input, one process, same depth, repeated. Vertex and triangle counts repeat exactly while total surface area does not. Counts alone do not establish identical mesh connectivity.",
     "why_an_earlier_experiment_here_was_void": {
-      "binary": "pybind.cpython-314-x86_64-linux-gnu.so",
+      "binary": "pybind.cpython-312-x86_64-linux-gnu.so",
+      "ldd_returncode": 0,
+      "nm_returncode": 0,
       "openmp_runtime_linked": false,
       "openmp_symbols_present": false,
-      "so_omp_num_threads_is_not_a_knob_here": true
+      "omp_num_threads_was_inert_in_this_build": true
     },
     "conditions": {
       "default": {
         "repeats": 4,
         "seeded_before_each_call": false,
-        "topology_is_stable": true,
+        "vertex_and_triangle_counts_are_stable": true,
         "vertices": 563112,
         "triangles": 1126072,
         "surface_area": {
           "values": [
-            157.34137894006582,
-            157.3414767143922,
-            157.34141493887165,
-            157.3415047200707
+            157.34148590488246,
+            157.34142998191763,
+            157.34140635704972,
+            157.34149438697
           ],
           "identical": false,
-          "absolute_spread": 0.00012578000487906138,
-          "relative_spread": 7.994083039463717e-07
+          "absolute_spread": 8.802992027767687e-05,
+          "relative_spread": 5.594834971661143e-07
         },
+        "wall_seconds": [
+          9.031171782000456,
+          8.107177728001261,
+          8.287037182977656,
+          8.264771372021642
+        ],
+        "poisson_n_threads": -1,
         "label": "default"
       },
       "seeded_before_each_call": {
         "repeats": 4,
         "seeded_before_each_call": true,
-        "topology_is_stable": true,
+        "vertex_and_triangle_counts_are_stable": true,
         "vertices": 563112,
         "triangles": 1126072,
         "surface_area": {
           "values": [
-            157.3414246254681,
-            157.34146476933836,
-            157.34140779684384,
-            157.34149554152557
+            157.3414286138995,
+            157.3414305201968,
+            157.34147103476408,
+            157.3414372651799
           ],
           "identical": false,
-          "absolute_spread": 8.77446817355576e-05,
-          "relative_spread": 5.576706282484254e-07
+          "absolute_spread": 4.2420864588166296e-05,
+          "relative_spread": 2.6961026705981525e-07
         },
+        "wall_seconds": [
+          8.697100254998077,
+          9.54447970399633,
+          8.753190586983692,
+          8.566870579001261
+        ],
+        "poisson_n_threads": -1,
         "label": "seeded"
       },
-      "thread_limited": {
+      "poisson_n_threads_1": {
         "repeats": 4,
         "seeded_before_each_call": false,
-        "topology_is_stable": true,
+        "vertex_and_triangle_counts_are_stable": true,
         "vertices": 563112,
         "triangles": 1126072,
         "surface_area": {
           "values": [
-            157.3413839419504,
-            157.34144426893604,
-            157.34148304653908,
-            157.3414821540104
+            157.34151843469294,
+            157.34151843469294,
+            157.34151843469294,
+            157.34151843469294
           ],
-          "identical": false,
-          "absolute_spread": 9.910458868489513e-05,
-          "relative_spread": 6.298698168401698e-07
+          "identical": true,
+          "absolute_spread": 0.0,
+          "relative_spread": 0.0
         },
-        "label": "thread_limited",
-        "max_threads_before": 16,
-        "max_threads_observed_during": 1,
-        "the_knob_engaged": true
+        "wall_seconds": [
+          13.586360439978307,
+          13.464768495992757,
+          13.51231280300999,
+          13.301264211011585
+        ],
+        "poisson_n_threads": 1,
+        "label": "poisson_n_threads_1"
       }
     }
   },
   "what_the_remedies_do": {
     "seeding": "Does not help. The `SAMPLING_SEED` already in `audit_view_occlusion.py` is real and does bind the armadillo's sampling -- but Poisson's variation is not drawn from Open3D's generator, so seeding before the call leaves the spread where it was. Measured, not reasoned: see `cause.conditions.seeded_before_each_call`.",
-    "limiting_threads": "Does not fix it. The spread goes from 7.99e-07 to 6.30e-07, a factor of 1.3 -- smaller with threads limited, and a reviewer saw it come out larger in one of their pairings too, which is what two runs cannot tell you. And -- the part that decides it -- every condition still produced 4 distinct areas out of 4. A setting that made this deterministic would produce one. The knob is recorded as engaged (16 threads to 1), because the experiment this replaces set `OMP_NUM_THREADS=1` in a build with no OpenMP linked and therefore measured nothing.",
+    "limiting_threads": "Does not make this exact. The spread goes from 5.59e-07 to 0.00e+00, smaller with the Poisson call's documented n_threads=1. It still produced 1 distinct areas out of 4; the per-call value and wall times are recorded.",
     "so_the_record_should": "State the precision the figures hold instead of publishing sixteen digits that do not survive a second run."
   },
   "does_this_change_any_conclusion": {
-    "no": "The record's conclusion is that the removed surface is visible from the shipped camera well above the 50% criterion. The margin is 0.2849 and the observed run-to-run difference is 2.81e-05, four orders of magnitude smaller.",
+    "conclusion_changed": false,
+    "explanation": "The record's conclusion is that the removed surface is visible from the shipped camera well above the 50% criterion. The margin is 0.2849 and the observed run-to-run difference is 2.81e-05, four orders of magnitude smaller.",
     "margin_against_the_threshold": 0.28488100051233756,
     "observed_difference": 2.810119407126166e-05,
     "ratio": 10137.683110187754
   },
-  "the_guard_was_attacked_and_every_hole_found_is_now_closed": {
-    "raised_by": "review lane, who called the guard the longest-lived thing in this PR and then probed it rather than leaving the compliment, across three messages",
-    "why_this_field_was_renamed": "It was headed `..._six_holes_found` and ended 'All six caught', while the field below it listed an open hole. The sentence was true of what it counted -- six probes I ran, all six caught -- and false against the heading's noun, because one of the reviewer's six was not among them. Three artifacts then carried three different counts. The reviewer was right that this needed reconciling, and the honest fix was to close the last hole so there is one number.",
-    "it_already_caught_without_changes": [
-      "a pin split across lines by the formatter, which the reviewer predicted would evade and did not",
-      "a string comparison against the figure"
+  "guard_scope": {
+    "files": "tracked Python files from git ls-files",
+    "covered": [
+      "exact comparisons and membership",
+      "pytest.approx including its default tolerance",
+      "math.isclose and assert_allclose"
     ],
-    "the_six_holes_they_found_all_closed": [
-      "a literal extracted to a named constant, then compared. The most ordinary refactor there is, and it defeated a line-based scan without touching its logic. An AST pass now resolves bound names before examining comparisons.",
-      "`approx(figure, abs=0)`, exact equality wearing the word that bought the exemption",
-      "`assert x in (figure,)`, exact equality spelled differently",
-      "a pin in a test module outside `npa/tests`, of which they counted 36, including the golden-eval modules in `npa/src/npa/smoke/` that run in containers",
-      "a pin in a file named neither `test_*.py` nor anything else the scan reached. This is the one that was still open at the previous head: the scope is now every `.py` file in the repository, which is the only scope with no boundary left to evade. It costs about a second -- 3700 paths discovered, and a file parsed only if it holds one of the figures, which two do.",
-      "a pin in the Open3D harness directory"
-    ],
-    "two_further_classes_they_raised_after_that": [
-      "a name bound to a *container* holding the figure, which is the nearest neighbour of the refactor already closed. They supplied this with both halves of the fix after reporting that their first attempt at it did not work: binding the name is not enough unless the membership branch also looks at bare names and not only at literal containers.",
-      "a tolerance that is tiny rather than zero. The check asked whether the tolerance *is* zero, so `abs=1e-300` walked straight back through it. It now compares the tolerance against the movement these figures actually have. The reviewer pointed at the default condition's `absolute_spread` for that number, which is a spread of surface area around 157 units, while these figures are fractions near 0.78; the quantity used is the observed difference in the published figures themselves, which keeps their disclosed honest example on the correct side of it."
-    ],
-    "a_third_round_closed_two_more": "After accepting the head above, the reviewer named one more concrete evasion: a *nested* container, `N = [[figure]]` with `assert x in N[0]`. It was consistent with what the record claimed -- containers of figures, not containers of containers -- so the choice was to document the limit or close it. Closing it needed the read side too: the comparator there is a subscript, not a name, so recognising the container without recognising `N[0]` leaves the two halves not meeting. Resolving subscripts closed the dict-value case in the same stroke, since `D[\"headline\"]` is the same shape. Nested containers, dicts, and a dict inside a list are all caught now; both honest patterns retested and still unflagged.",
-    "verified_by": "Each case written to a probe file at the path it belongs to, the guard run against it, and the probe deleted. Fourteen pins caught, including the one that evaded at the previous head. Four honest patterns left unflagged: `approx(..., abs=1e-4)`, a tuple that merely holds a figure, an unrelated container, and membership in a container of other numbers. Those matter as much as the pins -- a guard that fires on a figure's mere presence is one annoyed person away from deletion.",
-    "what_is_still_not_reached": "A figure reached through an attribute or a function return. Resolved: direct literals, names bound to them, names bound to containers of them at any depth including dicts, and subscript reads from those names. A figure passed into a call is deliberately not followed -- what a function receives says nothing about what it returns."
+    "known_limit": "Values obtained through arbitrary function returns are not followed."
   },
   "what_this_does_not_claim": [
-    "That the figures are wrong. They are reproducible to about five significant figures, which is far more precision than any conclusion here uses.",
+    "That the figures are wrong. One rerun agreed to four significant figures; that single pair is not a general precision bound.",
     "That Poisson is wrong. A non-deterministic surface reconstruction is a normal consequence of parallel floating-point accumulation; the defect is publishing sixteen digits of it without saying so.",
     "That the z-buffer footprint path shares this. It reproduced exactly on this host, and the reviewer's one-pixel difference there came from a second environment, which is a different question this does not answer."
   ]

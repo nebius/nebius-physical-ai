@@ -19,17 +19,18 @@ interesting part and both of the obvious ones fail:
 - Seeding does not help. The sampling seed already in `audit_view_occlusion.py` is real
   and does bind the armadillo's *sampling*, but Poisson's variation is not drawn from
   Open3D's generator, so seeding before the call changes nothing.
-- Limiting threads does not fix it either. Two things went wrong on the way to that
+- Limiting threads through the solver's own per-call argument did make four repeated
+  surface-area results identical. Two things went wrong on the way to that
   sentence, and both are recorded rather than tidied away. A first two-run probe put
   single-threading two orders of magnitude ahead; at four repeats it is within a small
   factor, so two runs supported nothing. And the experiment behind it was measured by
   setting `OMP_NUM_THREADS=1`, which a reviewer showed is not a knob in this build at
   all - no OpenMP runtime linked, no OpenMP symbols. It ran and tested nothing. The
-  measurement now uses `o3d.utility.set_max_threads(1)` and records
-  `get_max_threads()` beside the result, so the record shows the knob turned.
+  measurement now passes `n_threads=1` to the Poisson call and records per-call wall
+  time beside the result.
 
-Which means the honest move is to state the precision the figures hold rather than to
-promise an exactness no setting delivers.
+The default path remains non-exact, so the honest move is to state the precision the
+published default-path figures hold while recording the bounded deterministic option.
 
 Run:
     npa/.venv/bin/python docs/evidence/open3d/harness/poisson_figure_reproducibility.py
@@ -229,14 +230,21 @@ def main() -> int:
             ("poisson_n_threads_1", single),
         )
     }
-    direction = "smaller" if single_spread < default_spread else "larger"
-    factor = f"a factor of {improvement:.1f}; " if improvement is not None else ""
-    single_threading_verdict = (
-        f"Does not make this exact. The spread goes from {default_spread:.2e} to "
-        f"{single_spread:.2e}, {factor}{direction} with the Poisson call's documented "
-        f"n_threads=1. It still produced {distinct['poisson_n_threads_1']} distinct "
-        f"areas out of {REPEATS}; the per-call value and wall times are recorded."
-    )
+    if single["surface_area"]["identical"]:
+        single_threading_verdict = (
+            f"Made surface area exact across {REPEATS} observations in this run: "
+            f"the spread went from {default_spread:.2e} to 0 with the Poisson call's "
+            "documented n_threads=1. This is an observed bounded result, not a general "
+            "determinism guarantee; the per-call value and wall times are recorded."
+        )
+    else:
+        direction = "smaller" if single_spread < default_spread else "larger"
+        factor = f"a factor of {improvement:.1f}; " if improvement is not None else ""
+        single_threading_verdict = (
+            f"Did not make this exact. The spread went from {default_spread:.2e} to "
+            f"{single_spread:.2e}, {factor}{direction} with n_threads=1; "
+            f"{distinct['poisson_n_threads_1']} distinct areas remained."
+        )
     published_spread = abs(
         PUBLISHED["visible_with_only_its_own_self_occlusion"] - 0.7848528993182663
     )

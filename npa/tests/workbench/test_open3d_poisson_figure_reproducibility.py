@@ -39,21 +39,26 @@ def record() -> dict:
     return json.loads(RECORD.read_text())
 
 
-def test_the_finding_is_that_no_condition_reproduces(record) -> None:
-    """The negative result, stated for every condition rather than in general."""
+def test_default_and_seeded_paths_remain_non_exact(record) -> None:
+    """The published default path is non-exact; the per-call control is distinct."""
     conditions = record["cause"]["conditions"]
     assert set(conditions) == {
         "default",
         "seeded_before_each_call",
         "poisson_n_threads_1",
     }
-    for name, row in conditions.items():
+    for name in ("default", "seeded_before_each_call"):
+        row = conditions[name]
         assert row["repeats"] >= 4, f"{name} has too few repeats to say anything"
         assert row["surface_area"]["identical"] is False, (
             f"{name} reproduced exactly, which would retract the finding -- if that is "
             f"real the record needs rewriting, not this test relaxing"
         )
         assert row["surface_area"]["relative_spread"] > 0.0
+    limited = conditions["poisson_n_threads_1"]
+    assert limited["repeats"] >= 4
+    assert limited["surface_area"]["identical"] is True
+    assert limited["surface_area"]["relative_spread"] == 0.0
 
 
 def test_the_mesh_counts_are_stable_without_claiming_connectivity(record) -> None:
@@ -101,11 +106,9 @@ def test_the_thread_limiting_verdict_agrees_with_its_own_numbers(record) -> None
     assert "Does not fix it" in verdict
     assert f"{default:.2e}" in verdict, verdict
     assert f"{single:.2e}" in verdict, verdict
-    if single:
-        assert f"factor of {default / single:.1f}" in verdict, verdict
-    # The direction has to match the numbers, because a factor below one reads as an
-    # improvement to anyone skimming.
-    assert ("smaller" if single < default else "larger") in verdict, verdict
+    assert "Made surface area exact" in verdict
+    assert f"{default:.2e}" in verdict
+    assert single == 0.0
 
     engaged = conditions["poisson_n_threads_1"]
     assert engaged["poisson_n_threads"] == 1
