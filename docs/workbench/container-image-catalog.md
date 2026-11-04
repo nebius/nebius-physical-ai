@@ -147,8 +147,8 @@ updates Wan's Accelerate and Transformers dependencies. Isaac's constrained
 Setuptools 81 receives the same hash-bound Unicode manifest backport used by
 Cosmos3 serving. MoviePy 2.2.1 retains its released code while its exact,
 hash-locked Python 3.11 wheel and metadata are rebound only to the hash-locked,
-security-fixed Pillow 13.0.0 wheel after the complete upstream suite passes on
-those exact versions. Wan's dependency union,
+security-fixed Pillow 13.0.0 wheel under the bounded NPA compatibility policy;
+the image build does not run or claim MoviePy's upstream suite. Wan's dependency union,
 real MoviePy resize/MP4 encode/decode, NLTK sandbox, and source-distribution
 regression checks pass. Isaac's vendor version constraints still need
 reconciliation and GPU qualification. These source repairs require fresh image
