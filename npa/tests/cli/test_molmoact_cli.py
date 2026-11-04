@@ -154,6 +154,21 @@ def test_finetune_cmd_rejects_bad_args():
         )
 
 
+@pytest.mark.parametrize("learning_rate", [float("nan"), float("inf"), 0.0, -1.0])
+def test_finetune_cmd_rejects_invalid_learning_rate(learning_rate: float) -> None:
+    with pytest.raises(typer.BadParameter, match="--learning-rate must"):
+        finetune_cmd(
+            model_id=DEFAULT_MODEL_ID,
+            dataset_uri="s3://bucket/demos",
+            output_s3_uri="s3://bucket/checkpoints",
+            max_steps=100,
+            batch_size=8,
+            learning_rate=learning_rate,
+            num_gpus=1,
+            run_name="",
+        )
+
+
 def test_serve_cmd_stub_and_validation():
     manifest = serve_cmd(
         model_id=DEFAULT_MODEL_ID,
