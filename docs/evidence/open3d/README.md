@@ -154,6 +154,13 @@ docker run --rm -v "$PWD/docs/evidence/open3d:/data" --entrypoint python npa-ope
     /data/harness/poisson_procedure_and_overcall_audit.py
 ```
 
+Harness reports default to `/data/<report>.json` inside the documented container.
+`OPEN3D_OUT_DIR` redirects shared `harness_io.output_path` users to an existing
+directory while retaining the default filename. `OPEN3D_OUT` selects an exact output
+file and takes precedence when both variables are set. The record-pinned
+`pose_graph_optimization.py` and `density_crop_contribution.py` harnesses predate the
+shared helper and use only the exact-file form. Neither override creates directories.
+
 Sampling is unseeded in several harnesses, deliberately: where a single cell's value carries
 run-to-run noise comparable to the spread being measured, that is itself the finding and the harness
 says so rather than publishing a precise-looking number. `floor-vs-resolution.json` is the clearest

@@ -8,8 +8,9 @@ seconds to reach that point.
 
 So this does two things, both narrow:
 
-* lets the destination be redirected with `OPEN3D_OUT_DIR`, keeping each harness's own
-  filename, so a reviewer outside the container can keep the result;
+* lets the destination be redirected with `OPEN3D_OUT` (an exact file) or
+  `OPEN3D_OUT_DIR` (a directory that keeps each harness's filename), so a reviewer
+  outside the container can keep the result;
 * resolves and checks the destination at import time, so an unwritable one is reported
   before the measurement runs rather than after.
 
@@ -24,20 +25,30 @@ from pathlib import Path
 
 #: Redirects every harness output in this directory, keeping the individual filenames.
 OUT_DIR_ENV = "OPEN3D_OUT_DIR"
+#: Redirects one harness output to an exact path. It wins when both overrides are set.
+OUT_FILE_ENV = "OPEN3D_OUT"
 
 
 def output_path(default: str) -> Path:
     """Where this harness should write, verified writable now rather than at the end."""
-    override = os.environ.get(OUT_DIR_ENV)
-    resolved = Path(override) / Path(default).name if override else Path(default)
+    file_override = os.environ.get(OUT_FILE_ENV)
+    directory_override = os.environ.get(OUT_DIR_ENV)
+    resolved = (
+        Path(file_override)
+        if file_override
+        else Path(directory_override) / Path(default).name
+        if directory_override
+        else Path(default)
+    )
 
     parent = resolved.parent
     if not parent.is_dir():
         raise SystemExit(
             f"Cannot write {resolved}: {parent} does not exist. That default is the "
             f"container mount point, where the evidence directory appears at /data. "
-            f"Outside the container, set {OUT_DIR_ENV} to a directory that exists and "
-            f"the report will be written there under the same filename."
+            f"Outside the container, set {OUT_FILE_ENV} to an exact file or "
+            f"{OUT_DIR_ENV} to a directory that exists; the directory form keeps "
+            f"the report's default filename."
         )
     if not os.access(parent, os.W_OK):
         raise SystemExit(f"Cannot write {resolved}: {parent} is not writable.")
