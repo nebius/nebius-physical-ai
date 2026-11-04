@@ -245,6 +245,12 @@ and print plan JSON. They do not write any URI. The shipped
 for planning, but normal execution cannot satisfy that output contract and is
 unsupported.
 
+MolmoAct execution boundary: these three adapters only validate configuration
+and print plan JSON. They do not write any URI. The shipped
+`workflows/testing/molmoact-finetune.yaml` declares a durable manifest output
+for planning, but normal execution cannot satisfy that output contract and is
+unsupported.
+
 Creative mashup example: `tokenfactory-cosmos-gate.yaml` (reason → augment → VLM gate loop).
 
 OSS onboarding ladder (BYOF → workflow → first-class tool):
