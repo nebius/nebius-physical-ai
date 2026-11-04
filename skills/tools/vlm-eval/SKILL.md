@@ -409,9 +409,13 @@ the latter is named `order_disagreement_or_nondeterminism` because one request
 per order cannot isolate an order effect from provider nondeterminism. The
 command never retries or averages preferences, and refuses an existing output.
 Task and rubric text containing `baseline` or `candidate` is rejected before
-transport. Telling the model not to follow image text is not a defense against
-in-image instructions. Its CLI summary omits paths, prompts, visible support,
-uncertainty, request IDs, and raw responses.
+transport. This lexical screen case-folds and searches only those two
+substrings across the model ID, task, rubric, and provider-request text;
+synonyms and content-linked disclosures can pass, so an order-consistent mapped
+preference does not establish content blinding. Telling the model not to follow
+image text is not a defense against in-image instructions. Its CLI summary
+omits paths, prompts, visible support, uncertainty, request IDs, and raw
+responses.
 
 Use toolRef `workbench.vlm_eval.compare_preference`. See
 [the live audit contract](../../../docs/testing/vlm-audit-live-contracts.md)

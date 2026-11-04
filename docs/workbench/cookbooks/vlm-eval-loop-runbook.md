@@ -766,10 +766,14 @@ retains both full provider outcomes privately, and escalates errors, unresolved
 or low-confidence output, and
 `order_disagreement_or_nondeterminism`. Even an order-consistent candidate
 preference is an audit observation, not proof of geometry accuracy, physical
-validity, or robot safety. The prompt's instruction to ignore image text is not
-a defense against in-image instructions. For S3 output, private access remains
-an operator/storage-policy requirement; the client uses an atomic create-only
-write but does not infer bucket policy or ACL state.
+validity, robot safety, or content blinding. The lexical source-role screen
+case-folds and searches only for the substrings `baseline` and `candidate`
+across the model ID, task, rubric, and provider-request text; synonyms and
+content-linked disclosures are not rejected. The prompt's instruction to
+ignore image text is not a defense against in-image instructions. For S3
+output, private access remains an operator/storage-policy requirement; the
+client uses an atomic create-only write but does not infer bucket policy or ACL
+state.
 
 Endpoint and credentials are a matched choice: the default Nebius route supports
 the usual Nebius environment/file credential, but never falls back to

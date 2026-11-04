@@ -14,6 +14,18 @@ from npa.clients import credentials, token_factory
 from npa.workbench import vlm_eval
 
 
+_LEXICAL_SCREEN_LIMITATION = (
+    "The lexical source-role screen case-folds the model ID, task, rubric, "
+    "and provider-request text and searches only for the substrings 'baseline' "
+    "and 'candidate'; synonyms and other content-linked disclosures are not "
+    "rejected. Such a disclosure can select different neutral A/B labels after "
+    "order reversal while mapping to the same private source arm, so "
+    "counterbalancing alone cannot distinguish it from a genuine source-arm "
+    "preference and a consistent mapped preference does not establish content "
+    "blinding."
+)
+
+
 @pytest.fixture(autouse=True)
 def _isolated_preference_credentials(monkeypatch):
     for name in (
@@ -187,6 +199,54 @@ def _completion(request):
             }
         ],
     }
+
+
+@pytest.mark.parametrize(
+    ("value", "reveals_source_role"),
+    [
+        ("preBASELINEpost", True),
+        ("preCANDIDATEpost", True),
+        ("the original render vs the new one", False),
+        ("compare the reference against the proposed output", False),
+        ("image A is from the old model", False),
+        ("control vs treatment", False),
+        ("v1 versus v2", False),
+        ("ours versus theirs", False),
+        ("the before and after captures", False),
+        ("the improved system output", False),
+        ("which image came from the upgraded pipeline?", False),
+    ],
+    ids=[
+        "embedded-baseline",
+        "embedded-candidate",
+        "original-new",
+        "reference-proposed",
+        "old-model",
+        "control-treatment",
+        "v1-v2",
+        "ours-theirs",
+        "before-after",
+        "improved-output",
+        "upgraded-pipeline",
+    ],
+)
+def test_preference_source_role_screen_matches_disclosed_boundary(
+    value, reveals_source_role
+):
+    assert vlm_eval._contains_source_role(value) is reveals_source_role
+
+
+def test_preference_report_discloses_lexical_screen_boundary(monkeypatch, tmp_path):
+    monkeypatch.setenv("NEBIUS_TOKEN_FACTORY_KEY", "synthetic-selected-key")
+    monkeypatch.setattr(
+        vlm_eval,
+        "_post_with_readiness_retry",
+        lambda **kwargs: _completion(kwargs["request"]),
+    )
+
+    report = vlm_eval.compare_vlm_preference(_request(tmp_path))
+
+    assert report.limitations.count(_LEXICAL_SCREEN_LIMITATION) == 1
 
 
 @pytest.mark.parametrize(
