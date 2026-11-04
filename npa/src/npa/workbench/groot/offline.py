@@ -53,7 +53,9 @@ def _parser():
     prepare.add_argument("--feedback-path", type=Path, required=True)
     prepare.add_argument("--output-path", type=Path, required=True)
     prepare.add_argument("--action-horizon", type=int, required=True)
-    prepare.add_argument("--mode", choices=["outcome", "progress"], required=True)
+    prepare.add_argument(
+        "--mode", choices=["outcome", "progress", "uniform"], required=True
+    )
     prepare.add_argument("--temperature", type=float, default=1.0)
     train = subcommands.add_parser(
         "train", help="Train in a configured native N1.5 CUDA environment"

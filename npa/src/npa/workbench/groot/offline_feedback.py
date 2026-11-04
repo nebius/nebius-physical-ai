@@ -31,7 +31,7 @@ class EpisodeFeedback(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True, allow_inf_nan=False)
     episode_index: int = Field(ge=0)
     split: Literal["train", "eval"]
-    success: bool
+    success: bool | None = None
     group: str = Field(min_length=1)
     progress: list[float] | None = None
     progress_source: Literal["measured", "arm"] | None = None
@@ -102,7 +102,7 @@ class OfflineManifest(BaseModel):
     schema_version: Literal["npa.groot-offline/v1"] = "npa.groot-offline/v1"
     dataset_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     feedback_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
-    mode: Literal["outcome", "progress"]
+    mode: Literal["outcome", "progress", "uniform"]
     action_horizon: int = Field(gt=0)
     temperature: float = Field(gt=0)
     episodes: list[PreparedEpisode]
@@ -183,7 +183,7 @@ def prepare_feedback(
         feedback_path: JSON array containing every episode's feedback.
         output_path: New manifest file outside the dataset directory.
         action_horizon: Number of actions predicted per contiguous chunk.
-        mode: Outcome-return or progress-gain weighting.
+        mode: Outcome-return, progress-gain, or unlabeled uniform weighting.
         temperature: Positive temperature; lower values favor higher returns.
     Returns:
         Validated, content-bound training manifest written to output_path.
@@ -200,8 +200,8 @@ def prepare_feedback(
         or temperature <= 0
     ):
         raise ValueError("temperature must be positive and finite")
-    if mode not in {"outcome", "progress"}:
-        raise ValueError("mode must be outcome or progress")
+    if mode not in {"outcome", "progress", "uniform"}:
+        raise ValueError("mode must be outcome, progress, or uniform")
     feedback = TypeAdapter(list[EpisodeFeedback]).validate_json(
         feedback_path.read_text()
     )
@@ -313,6 +313,14 @@ def _validate_feedback(feedback, lengths, mode):
             raise ValueError(
                 "progress mode requires explicit progress for every episode"
             )
+        if mode == "outcome" and episode.success is None:
+            raise ValueError(
+                "outcome mode requires an observed success for every episode"
+            )
+        if mode == "uniform" and (
+            episode.success is not None or episode.progress is not None
+        ):
+            raise ValueError("uniform mode accepts only unlabeled episodes")
     training = [episode for episode in feedback if episode.split == "train"]
     if not training or not any(episode.split == "eval" for episode in feedback):
         raise ValueError("both train and eval episodes are required")
@@ -326,7 +334,9 @@ def _prepare_episodes(feedback, lengths, horizon, mode, temperature):
         length = lengths[episode.episode_index]
         if episode.split == "eval":
             continue
-        if mode == "outcome":
+        if mode == "uniform":
+            gains[episode.episode_index] = [0.0] * length
+        elif mode == "outcome":
             gains[episode.episode_index] = [float(episode.success)] * length
         else:
             progress = episode.progress

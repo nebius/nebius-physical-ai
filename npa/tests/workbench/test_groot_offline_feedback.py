@@ -1,5 +1,6 @@
 """Exercise content binding, feedback alignment, and offline split isolation."""
 
+import hashlib
 import json
 import math
 
@@ -88,6 +89,21 @@ def test_dense_feedback_keeps_regression_and_recovery(feedback_inputs):
     assert manifest.episodes[1].weights[0] > 0
 
 
+def test_uniform_mode_accepts_unlabeled_demonstrations(feedback_inputs):
+    _, feedback, directory = feedback_inputs
+    for episode in feedback:
+        episode.pop("success")
+    manifest = _prepare(feedback_inputs, mode="uniform")
+    assert manifest.mode == "uniform"
+    assert all(
+        weight == 1 for episode in manifest.episodes for weight in episode.weights
+    )
+    assert (
+        manifest.feedback_sha256
+        == hashlib.sha256((directory / "feedback.json").read_bytes()).hexdigest()
+    )
+
+
 def test_eval_feedback_does_not_fit_training_weights(feedback_inputs):
     _, feedback, directory = feedback_inputs
     first = _prepare(feedback_inputs)
@@ -138,6 +154,19 @@ def test_tiny_temperature_stays_finite(feedback_inputs):
 def test_progress_requires_explicit_per_frame_labels(feedback_inputs):
     with pytest.raises(ValueError, match="explicit progress"):
         _prepare(feedback_inputs, mode="progress")
+
+
+def test_outcome_requires_observed_labels_and_uniform_rejects_them(feedback_inputs):
+    _, feedback, directory = feedback_inputs
+    feedback[0].pop("success")
+    with pytest.raises(ValueError, match="observed success"):
+        _prepare(feedback_inputs)
+    assert not (directory / "weights.json").exists()
+    feedback_inputs[1][:] = [
+        {**episode, "success": True} for episode in feedback_inputs[1]
+    ]
+    with pytest.raises(ValueError, match="unlabeled"):
+        _prepare(feedback_inputs, mode="uniform")
 
 
 @pytest.mark.parametrize("frames", [[0, 2, 1], [0, 1], [0.0, 1.0, 2.0]])

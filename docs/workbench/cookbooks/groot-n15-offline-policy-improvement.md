@@ -36,6 +36,13 @@ lower-score samples. The loss weights valid action elements and retains the
 effect of weights with batch size one. Recorded action values remain intact;
 actions beyond the recorded episode are excluded from the loss.
 
+The `uniform` mode is ordinary, unweighted behavior cloning for demonstrations
+that have no recorded outcome or dense progress. Its feedback entries omit both
+`success` and `progress`; every valid training action has weight one. It exists
+so a demonstration-only corpus is not relabelled as successful. It proves data
+and policy-training integration, not reward discrimination, policy improvement,
+or robot success.
+
 [ARM's authors](https://aiming1998.github.io/ARM/) describe relative-advantage
 reward modeling and GR00T N1.5 policy reweighting. Their
 [implementation guide](https://github.com/FluxVLA/FluxVLA/blob/main/docs/arm.md)
@@ -46,12 +53,14 @@ CQL. Episode outcomes must never be interpolated into invented dense progress.
 
 ## Inputs and prerequisites
 
-- A dedicated single-GPU N1.5 environment with BF16 CUDA support. Runtime
+- A dedicated environment with exactly one visible BF16-capable CUDA GPU. Runtime
   dependencies must follow the upstream
   [N1.5 instructions](https://github.com/NVIDIA/Isaac-GR00T/tree/4af2b622892f7dcb5aae5a3fb70bcb02dc217b96).
   The source checkout must be clean under `gr00t` and exactly at commit
   `4af2b622892f7dcb5aae5a3fb70bcb02dc217b96`. The adapter verifies imported
-  modules resolve to that checkout. Multi-GPU execution is currently rejected.
+  modules resolve to that checkout. The adapter rejects distributed execution and
+  any process that sees other than one CUDA GPU; its receipt records the visible
+  GPU count.
 - An authorized, locally staged N1.5 checkpoint with `model_type=gr00t_n1_5`.
   Model, source, data, and upstream dependency access are prepared separately;
   this recipe does not provision infrastructure or download policy weights.
@@ -84,8 +93,9 @@ adapter enables no external experiment tracker.
 
 Create a private JSON array with one entry per dataset episode, including both
 training and evaluation episodes. `episode_index` is the integer native
-identifier; `success` is a JSON boolean. `group` identifies a collection session,
-scene, or other correlated group that must stay entirely within one split.
+identifier; `group` identifies a collection session, scene, or other correlated
+group that must stay entirely within one split. In `outcome` mode, `success` is
+an observed JSON boolean. In `uniform` mode it must be omitted, not inferred.
 The following values are synthetic schema examples:
 
 ```json
@@ -123,8 +133,9 @@ export PYTHONPATH="$WORKBENCH_ROOT/npa/src"
 ```
 
 Use `--mode progress` when dense feedback is available. `--temperature` defaults
-to 1 in both modes. Preparation verifies episode coverage, row order, lengths,
-literal label types, group isolation, and progress provenance. It hashes all
+to 1 in every mode. Use `--mode uniform` for unlabeled demonstrations.
+Preparation verifies episode coverage, row order, lengths, literal label types,
+group isolation, and progress provenance. It hashes all
 `meta`, `data`, and `videos` file paths and bytes. Hashing large video datasets
 requires a complete read. It writes weights and identities, without copying
 observations or modifying the dataset. Output files are never overwritten.
@@ -148,13 +159,18 @@ observations or modifying the dataset. Output files are never overwritten.
 Training defaults to batch size 8, learning rate 0.0001, and seed 42. The vision
 and language backbones stay frozen; the native action projector and diffusion
 model train. The source and dataset identities are rechecked before model
-loading. Only training frames reach the trainer. Native checkpoint weights,
+loading. Only training frames reach the trainer; the held-out split is evaluated
+after training with its unit weights. Native checkpoint weights,
 `experiment_cfg/metadata.json`, trainer state, and `offline-training.json` are
-written under the new output directory. The receipt binds dataset, feedback
-manifest, upstream source, and baseline/candidate checkpoint identities, and
-explicitly records `robot_evaluation_performed: false`. Native logs go to stderr;
-the module's result is JSON on stdout. Resume is not supported; retain the
-original revision and use a new candidate directory for another iteration.
+written under the new output directory. After saving, the adapter reloads the
+candidate with the native N1.5 model contract and records the verified action
+dimensions and checkpoint digest. The receipt binds dataset, feedback manifest,
+upstream source, and baseline/candidate checkpoint identities, and explicitly
+records training-weight statistics, one decoded terminal observation's shape,
+and the action-horizon rows masked beyond that recorded episode. It also records
+`robot_evaluation_performed: false`. Native logs go to stderr; the module's
+result is JSON on stdout. Resume is not supported; retain the original revision
+and use a new candidate directory for another iteration.
 
 Run baseline and candidate robot trials using the same frozen task distribution,
 reset procedure, observation/action conventions, and trial schedule. Keep trials
@@ -201,7 +217,8 @@ JSON configuration. Required fields are `python`, `dataset_root`,
 `feedback_path`, `groot_source`, `base_model`, `data_config`, `embodiment_tag`,
 `action_horizon`, `mode`, `max_steps`, and `batch_size`; `temperature` defaults
 to 1. A supplied invalid config fails. An absent config skips and proves no
-native training. This test checks finite training loss, completed optimizer
-steps, changed checkpoint identity, and changed native action-decoder tensors
-in safetensors checkpoints; robot success still needs separate
+native training. This test checks finite training and held-out losses, completed
+optimizer steps, a single visible CUDA device, saved-checkpoint reload evidence,
+changed checkpoint identity, and changed native action-decoder tensors in
+safetensors checkpoints; robot success still needs separate
 matched trials. No GPU or robot result is claimed by this recipe's unit tests.

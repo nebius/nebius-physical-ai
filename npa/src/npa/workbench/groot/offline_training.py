@@ -197,16 +197,29 @@ def train_offline(
     base_digest = checkpoint_digest(base_model)
     manifest_digest = file_digest(manifest_path)
     runtime["set_seed"](seed)
-    dataset, config = _load_training_dataset(
+    train_dataset, eval_dataset, config = _load_training_dataset(
         runtime, dataset_root, manifest, data_config, embodiment_tag
     )
+    terminal_mask = _terminal_mask_evidence(train_dataset)
     model = _load_model(runtime, base_model, config, manifest.action_horizon)
     trainer = _create_trainer(
-        runtime, model, dataset, output_dir, max_steps, batch_size, learning_rate, seed
+        runtime,
+        model,
+        train_dataset,
+        eval_dataset,
+        output_dir,
+        max_steps,
+        batch_size,
+        learning_rate,
+        seed,
     )
     result = trainer.train()
+    evaluation = trainer.evaluate()
     trainer.save_model(str(output_dir), _internal_call=False)
     trainer.save_state()
+    reload_evidence = _verify_candidate_reload(
+        runtime, output_dir, config, manifest.action_horizon
+    )
     training_config = {
         "data_config": data_config,
         "embodiment_tag": embodiment_tag,
@@ -216,7 +229,16 @@ def train_offline(
         "seed": seed,
     }
     return _write_training_receipt(
-        output_dir, base_digest, manifest_digest, manifest, result, training_config
+        output_dir,
+        base_digest,
+        manifest_digest,
+        manifest,
+        result,
+        evaluation,
+        training_config,
+        runtime["visible_cuda_devices"],
+        reload_evidence,
+        terminal_mask,
     )
 
 
@@ -270,10 +292,7 @@ def _load_native_runtime(source):
     import torch
     from transformers import TrainingArguments, set_seed
 
-    if not torch.cuda.is_available():
-        raise ValueError("N1.5 policy training requires a configured CUDA GPU runtime")
-    if not torch.cuda.is_bf16_supported():
-        raise ValueError("N1.5 offline training requires BF16 CUDA support")
+    visible_cuda_devices = _validate_cuda_runtime(torch)
     modules = {}
     for name in (
         "data.dataset",
@@ -288,8 +307,27 @@ def _load_native_runtime(source):
         if not Path(module.__file__).resolve().is_relative_to(source.resolve()):
             raise ValueError("installed GR00T resolves outside the pinned checkout")
         modules.update(vars(module))
-    modules.update(TrainingArguments=TrainingArguments, set_seed=set_seed)
+    modules.update(
+        TrainingArguments=TrainingArguments,
+        set_seed=set_seed,
+        visible_cuda_devices=visible_cuda_devices,
+    )
     return modules
+
+
+def _validate_cuda_runtime(torch):
+    """Require exactly one visible BF16-capable CUDA device for this objective."""
+
+    if not torch.cuda.is_available():
+        raise ValueError("N1.5 policy training requires a configured CUDA GPU runtime")
+    visible_cuda_devices = torch.cuda.device_count()
+    if visible_cuda_devices != 1:
+        raise ValueError(
+            "experimental N1.5 offline training requires exactly one visible CUDA GPU"
+        )
+    if not torch.cuda.is_bf16_supported():
+        raise ValueError("N1.5 offline training requires BF16 CUDA support")
+    return visible_cuda_devices
 
 
 def _load_training_dataset(runtime, root, manifest, data_config, embodiment_tag):
@@ -309,7 +347,11 @@ def _load_training_dataset(runtime, root, manifest, data_config, embodiment_tag)
         transforms=config.transform(),
         embodiment_tag=runtime["EmbodimentTag"](embodiment_tag),
     )
-    return FeedbackDataset(native, manifest), config
+    return (
+        FeedbackDataset(native, manifest, split="train"),
+        FeedbackDataset(native, manifest, split="eval"),
+        config,
+    )
 
 
 def _load_model(runtime, base_model, config, horizon):
@@ -332,8 +374,47 @@ def _load_model(runtime, base_model, config, horizon):
     return model
 
 
+def _terminal_mask_evidence(dataset):
+    """Decode one terminal observation and prove padding actions are excluded."""
+
+    for position, (_, episode, frame) in enumerate(dataset.samples):
+        if frame != episode.length - 1:
+            continue
+        sample = dataset[position]
+        mask = np.asarray(sample["action_mask"])
+        row_is_valid = np.any(mask != 0, axis=1)
+        expected = np.arange(dataset.horizon) + frame < episode.length
+        if mask.ndim != 2 or not np.array_equal(row_is_valid, expected):
+            raise ValueError(
+                "terminal action mask differs from recorded episode boundary"
+            )
+        decoded = {
+            key: list(value.shape)
+            for key, value in sample.items()
+            if key.startswith("video.") and hasattr(value, "shape")
+        }
+        if not decoded:
+            raise ValueError("native reader did not decode an observation video")
+        return {
+            "episode_index": episode.episode_index,
+            "frame_index": frame,
+            "valid_action_horizon_steps": int(row_is_valid.sum()),
+            "masked_action_horizon_steps": int((~row_is_valid).sum()),
+            "decoded_observation_shapes": decoded,
+        }
+    raise ValueError("training split has no terminal frame")
+
+
 def _create_trainer(
-    runtime, model, dataset, output, steps, batch_size, learning_rate, seed
+    runtime,
+    model,
+    train_dataset,
+    eval_dataset,
+    output,
+    steps,
+    batch_size,
+    learning_rate,
+    seed,
 ):
     class WeightedTrainer(runtime["DualBrainTrainer"]):
         def compute_loss(
@@ -345,7 +426,9 @@ def _create_trainer(
     output.mkdir(parents=True)
     metadata_dir = output / "experiment_cfg"
     metadata_dir.mkdir()
-    metadata = {dataset.native.tag: dataset.native.metadata.model_dump(mode="json")}
+    metadata = {
+        train_dataset.native.tag: train_dataset.native.metadata.model_dump(mode="json")
+    }
     (metadata_dir / "metadata.json").write_text(json.dumps(metadata, indent=2))
     args = runtime["TrainingArguments"](
         output_dir=str(output),
@@ -363,7 +446,8 @@ def _create_trainer(
     trainer = WeightedTrainer(
         model=model,
         args=args,
-        train_dataset=dataset,
+        train_dataset=train_dataset,
+        eval_dataset=eval_dataset,
         data_collator=FeedbackCollator(runtime["DefaultDataCollator"]()),
         compute_dtype=model.dtype,
     )
@@ -375,15 +459,55 @@ def _create_trainer(
     return trainer
 
 
+def _verify_candidate_reload(runtime, output, config, horizon):
+    """Reload the emitted native checkpoint with the inference model contract."""
+
+    reloaded = _load_model(runtime, output, config, horizon)
+    try:
+        return {
+            "verified": True,
+            "model_class": type(reloaded).__name__,
+            "action_dim": int(reloaded.action_dim),
+            "action_horizon": int(reloaded.action_horizon),
+            "checkpoint_sha256": checkpoint_digest(output),
+        }
+    finally:
+        del reloaded
+
+
 def _write_training_receipt(
-    output, base_digest, manifest_digest, manifest, result, training_config
+    output,
+    base_digest,
+    manifest_digest,
+    manifest,
+    result,
+    evaluation,
+    training_config,
+    visible_cuda_devices,
+    reload_evidence,
+    terminal_mask,
 ):
     if not math.isfinite(result.training_loss):
         raise ValueError("training produced a nonfinite loss")
+    if result.global_step != training_config["max_steps"]:
+        raise ValueError("training did not complete the requested optimizer steps")
+    eval_loss = evaluation.get("eval_loss")
+    if not isinstance(eval_loss, (float, int)) or not math.isfinite(eval_loss):
+        raise ValueError("held-out evaluation produced a nonfinite loss")
+    train_weights = [
+        weight
+        for episode in manifest.episodes
+        if episode.split == "train"
+        for weight in episode.weights
+    ]
     receipt = {
         "schema_version": "npa.groot-offline-training/v1",
         "training_config": training_config,
-        "objective": f"{manifest.mode}-weighted-flow-matching",
+        "objective": (
+            "uniform-behavior-cloning"
+            if manifest.mode == "uniform"
+            else f"{manifest.mode}-weighted-flow-matching"
+        ),
         "upstream_ref": GROOT_N15_REF,
         "dataset_sha256": manifest.dataset_sha256,
         "manifest_sha256": manifest_digest,
@@ -393,6 +517,17 @@ def _write_training_receipt(
         "training_loss": result.training_loss,
         "train_episodes": sum(e.split == "train" for e in manifest.episodes),
         "eval_episodes": sum(e.split == "eval" for e in manifest.episodes),
+        "train_frames": sum(e.length for e in manifest.episodes if e.split == "train"),
+        "eval_frames": sum(e.length for e in manifest.episodes if e.split == "eval"),
+        "held_out_eval_loss": eval_loss,
+        "visible_cuda_devices": visible_cuda_devices,
+        "checkpoint_reload": reload_evidence,
+        "training_weight_statistics": {
+            "minimum": min(train_weights),
+            "maximum": max(train_weights),
+            "mean": sum(train_weights) / len(train_weights),
+        },
+        "terminal_mask_evidence": terminal_mask,
         "robot_evaluation_performed": False,
     }
     (output / "offline-training.json").write_text(json.dumps(receipt, indent=2) + "\n")

@@ -59,7 +59,19 @@ def test_groot_n15_offline_native_training(tmp_path):
     assert receipt == json.loads((output / "offline-training.json").read_text())
     assert receipt["optimizer_steps"] == config["max_steps"]
     assert math.isfinite(receipt["training_loss"])
+    assert math.isfinite(receipt["held_out_eval_loss"])
+    assert receipt["visible_cuda_devices"] == 1
+    assert receipt["checkpoint_reload"]["verified"] is True
+    assert (
+        receipt["checkpoint_reload"]["checkpoint_sha256"]
+        == receipt["candidate_checkpoint_sha256"]
+    )
     assert receipt["candidate_checkpoint_sha256"] != receipt["base_checkpoint_sha256"]
+    assert receipt["terminal_mask_evidence"]["valid_action_horizon_steps"] == 1
+    assert receipt["terminal_mask_evidence"]["masked_action_horizon_steps"] == (
+        config["action_horizon"] - 1
+    )
+    assert receipt["terminal_mask_evidence"]["decoded_observation_shapes"]
     assert receipt["dataset_sha256"] == manifest.dataset_sha256
     assert receipt["robot_evaluation_performed"] is False
     before = _action_decoder_weights(Path(config["base_model"]))

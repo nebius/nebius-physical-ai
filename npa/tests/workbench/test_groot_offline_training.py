@@ -10,6 +10,8 @@ from npa.workbench.groot.offline_feedback import OfflineManifest, PreparedEpisod
 from npa.workbench.groot.offline_training import (
     FeedbackCollator,
     FeedbackDataset,
+    _terminal_mask_evidence,
+    _validate_cuda_runtime,
     _load_native_runtime,
     _load_training_dataset,
     checkpoint_digest,
@@ -128,6 +130,27 @@ def test_dataset_rejects_misaligned_native_steps():
         FeedbackDataset(SimpleNamespace(all_steps=[(0, 0)]), _manifest())
 
 
+def test_terminal_mask_evidence_decodes_observation_and_excludes_padding():
+    class Native:
+        all_steps = [(0, 0), (0, 1), (0, 2), (1, 0), (1, 1)]
+
+        def __getitem__(self, index):
+            return {
+                "action_mask": np.ones((2, 3), dtype=bool),
+                "action": np.full((2, 3), index),
+                "video.front": np.zeros((2, 2, 3), dtype=np.uint8),
+            }
+
+    evidence = _terminal_mask_evidence(FeedbackDataset(Native(), _manifest()))
+    assert evidence == {
+        "episode_index": 0,
+        "frame_index": 2,
+        "valid_action_horizon_steps": 1,
+        "masked_action_horizon_steps": 1,
+        "decoded_observation_shapes": {"video.front": [2, 2, 3]},
+    }
+
+
 def test_collator_does_not_feed_weight_to_native_processor(torch_runtime):
     def native(features):
         assert all("offline_weight" not in sample for sample in features)
@@ -171,6 +194,26 @@ def test_distributed_runtime_refuses_before_source_access(monkeypatch, tmp_path)
     monkeypatch.setenv("WORLD_SIZE", "2")
     with pytest.raises(ValueError, match="one GPU"):
         _load_native_runtime(tmp_path)
+
+
+@pytest.mark.parametrize("visible_devices", [0, 2])
+def test_cuda_runtime_refuses_non_single_visible_device(visible_devices):
+    cuda = SimpleNamespace(
+        is_available=lambda: True,
+        device_count=lambda: visible_devices,
+        is_bf16_supported=lambda: True,
+    )
+    with pytest.raises(ValueError, match="exactly one visible CUDA GPU"):
+        _validate_cuda_runtime(SimpleNamespace(cuda=cuda))
+
+
+def test_cuda_runtime_reports_one_visible_device():
+    cuda = SimpleNamespace(
+        is_available=lambda: True,
+        device_count=lambda: 1,
+        is_bf16_supported=lambda: True,
+    )
+    assert _validate_cuda_runtime(SimpleNamespace(cuda=cuda)) == 1
 
 
 def test_native_statistics_cannot_be_silently_recomputed(tmp_path):
