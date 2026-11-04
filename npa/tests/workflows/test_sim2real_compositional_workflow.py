@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 import hashlib
 import json
+import shlex
 import subprocess
 import sys
 from argparse import Namespace
@@ -1861,13 +1862,65 @@ def test_stage14_selects_only_consumed_artifacts_and_cleans_workspace(
     assert workspaces and not workspaces[0].exists()
 
 
-def test_retired_materialize_command_gives_actionable_migration() -> None:
+def _migration_plan_only_options() -> list[str]:
+    return [
+        "--plan-only",
+        "--output-format",
+        "json",
+        "--run-id",
+        "retired-migration",
+        "--preset",
+        "public-franka-lift",
+        "--assume-decision",
+        "promote_checkpoint",
+        "--var",
+        "bucket=unit-bucket",
+        "--var",
+        "source_sha=" + "b" * 40,
+        "--var",
+        "controller_image=" + _SIM2REAL_TEST_IMAGE,
+        "--var",
+        "cosmos3_image=" + _SIM2REAL_TEST_IMAGE,
+        "--var",
+        "envgen_image=" + _SIM2REAL_TEST_IMAGE,
+        "--var",
+        "isaac_image=" + _SIM2REAL_TEST_IMAGE,
+        "--var",
+        "viewer_image=" + _SIM2REAL_TEST_IMAGE,
+        "--var",
+        "isaac_cache_pvc=unit-cache",
+    ]
+
+
+def test_retired_materialize_command_gives_executable_migration(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from npa.cli.workbench.sim2real import app
+    from npa.cli.workbench.workflow import app as workflow_app
 
     result = CliRunner().invoke(app, ["materialize"])
     assert result.exit_code == 2
-    assert "workflow submit" in result.output
-    assert "sim2real.yaml --runtime skypilot" in result.output
+    migration = next(
+        line.strip()
+        for line in result.output.splitlines()
+        if line.lstrip().startswith("npa workbench workflow submit")
+    )
+    assert shlex.split(migration) == [
+        "npa",
+        "workbench",
+        "workflow",
+        "submit",
+        "workflows/main/sim2real.yaml",
+        "--runtime",
+    ]
+
+    monkeypatch.chdir(ROOT)
+    plan = CliRunner().invoke(
+        workflow_app,
+        [*shlex.split(migration)[3:], *_migration_plan_only_options()],
+    )
+    assert plan.exit_code == 0, plan.output
+    assert json.loads(plan.stdout)["lifecycle_state"] == "PLAN_ONLY"
 
     representative_old_call = CliRunner().invoke(
         app,
