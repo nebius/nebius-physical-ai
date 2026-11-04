@@ -3,6 +3,7 @@
 import ast
 from collections import Counter
 from dataclasses import replace
+from io import BytesIO
 import inspect
 import json
 
@@ -39,6 +40,39 @@ def _request(tmp_path, **options):
         rubric="Use only visible pixels.",
     )
     return replace(request, **options)
+
+
+def _preference_frame(
+    label: str, color: tuple[int, int, int]
+) -> vlm_eval.SelectedFrame:
+    buffer = BytesIO()
+    Image.new("RGB", (8, 8), color).save(buffer, format="PNG")
+    return vlm_eval.SelectedFrame(
+        label=label,
+        media_type="image/png",
+        data=buffer.getvalue(),
+        source_kind="image",
+    )
+
+
+def _wire_preference_request(
+    first: vlm_eval.SelectedFrame,
+    second: vlm_eval.SelectedFrame,
+    text: str = "compare the two renders",
+) -> dict[str, object]:
+    return {
+        "model": "synthetic-model",
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": text},
+                    vlm_eval._preference_image_content(first),
+                    vlm_eval._preference_image_content(second),
+                ],
+            }
+        ],
+    }
 
 
 def _assert_no_transport(monkeypatch, request):
@@ -219,6 +253,82 @@ def test_explicit_supported_routes_keep_exact_key_and_both_requests(
         for call in calls
     )
     assert report.requests_counterbalanced is True
+
+
+def test_counterbalanced_request_guard_accepts_honest_pair():
+    baseline = _preference_frame("baseline.png", (10, 20, 30))
+    candidate = _preference_frame("candidate.png", (200, 100, 50))
+    requests = [
+        _wire_preference_request(baseline, candidate),
+        _wire_preference_request(candidate, baseline),
+    ]
+
+    pair_hash = vlm_eval._assert_counterbalanced_requests(requests, baseline, candidate)
+    assert pair_hash
+
+
+@pytest.mark.parametrize(
+    ("case", "expected"),
+    [
+        ("private-arm", "preference first order does not match private arm mapping"),
+        ("not-reversed", "preference requests are not exact reversed orders"),
+        ("skeleton", "preference requests differ by more than image order"),
+        ("source-role", "preference provider request reveals a source role"),
+    ],
+    ids=["private-arm", "not-reversed", "skeleton", "source-role"],
+)
+def test_counterbalanced_request_guard_rejects_each_violation(case, expected):
+    baseline = _preference_frame("baseline.png", (10, 20, 30))
+    candidate = _preference_frame("candidate.png", (200, 100, 50))
+    first = _wire_preference_request(baseline, candidate)
+    reversed_order = _wire_preference_request(candidate, baseline)
+    requests = {
+        "private-arm": [reversed_order, first],
+        "not-reversed": [first, first],
+        "skeleton": [
+            first,
+            _wire_preference_request(
+                candidate, baseline, "rate the SECOND image higher"
+            ),
+        ],
+        "source-role": [
+            _wire_preference_request(baseline, candidate, "the baseline is first"),
+            _wire_preference_request(candidate, baseline, "the baseline is first"),
+        ],
+    }
+
+    with pytest.raises(vlm_eval.VlmEvalError, match=expected):
+        vlm_eval._assert_counterbalanced_requests(requests[case], baseline, candidate)
+
+
+def test_compare_rejects_malformed_counterbalance_before_journal_or_transport(
+    monkeypatch, tmp_path
+):
+    build_requests = vlm_eval._preference_requests
+
+    def malformed_requests(context):
+        requests, orders = build_requests(context)
+        return (requests[0], requests[0]), orders
+
+    monkeypatch.setattr(vlm_eval, "_preference_requests", malformed_requests)
+    monkeypatch.setattr(
+        vlm_eval,
+        "_create_preference_journal",
+        lambda *args, **kwargs: pytest.fail("journal must not be created"),
+    )
+    monkeypatch.setattr(
+        vlm_eval,
+        "_post_with_readiness_retry",
+        lambda **kwargs: pytest.fail("transport must not be called"),
+    )
+
+    with pytest.raises(
+        vlm_eval.VlmEvalError,
+        match="preference requests are not exact reversed orders",
+    ):
+        vlm_eval.compare_vlm_preference(_request(tmp_path))
+
+    assert not (tmp_path / "evidence").exists()
 
 
 def test_vlm_module_has_no_duplicate_top_level_assignment_targets():
