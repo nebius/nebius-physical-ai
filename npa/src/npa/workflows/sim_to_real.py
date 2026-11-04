@@ -58,6 +58,7 @@ from npa.workflows.feedback import (
     byo_feedback_contract,
     collect_feedback,
     get_feedback_source,
+    parse_feedback_score,
     parse_feedback_type,
 )
 from npa.workflows.lerobot_dataset import (
@@ -742,14 +743,20 @@ def parse_feedback_result(
     missing = [key for key in ("success", "score", "rationale") if key not in payload]
     if missing:
         raise SimToRealError(f"feedback missing required keys: {', '.join(missing)}")
-    score = float(payload["score"])
+    success = payload["success"]
+    if not isinstance(success, bool):
+        raise SimToRealError("feedback success must be a JSON boolean")
+    try:
+        score = parse_feedback_score(payload["score"])
+    except FeedbackSourceError as exc:
+        raise SimToRealError(str(exc)) from exc
     if not 0.0 <= score <= 1.0:
         raise SimToRealError(f"feedback score must be in [0, 1], got {score}")
     rationale = str(payload["rationale"]).strip()
     if not rationale:
         raise SimToRealError("feedback rationale must not be empty")
     return FeedbackResult(
-        success=bool(payload["success"]),
+        success=success,
         score=score,
         rationale=rationale,
         critique=str(payload.get("critique", "")),
@@ -812,6 +819,18 @@ def collect_feedback_payload(
     return payload, _component_from_status(status)
 
 
+def _collect_feedback_payload_or_raise(
+    config: SimToRealConfig,
+    **kwargs: Any,
+) -> tuple[FeedbackPayload, ComponentStatus]:
+    """Translate feedback-source failures at every workflow entry point."""
+
+    try:
+        return collect_feedback_payload(config, **kwargs)
+    except FeedbackSourceError as exc:
+        raise SimToRealError(str(exc)) from exc
+
+
 def _feedback_payload_to_result(payload: FeedbackPayload) -> FeedbackResult:
     critique = ""
     if payload.feedback_type == FeedbackType.CRITIQUE and isinstance(
@@ -836,6 +855,13 @@ def _component_from_status(status: Any) -> ComponentStatus:
         evidence=status.evidence,
         artifacts=dict(status.artifacts),
     )
+
+
+def _adapt_feedback_payload(payload: FeedbackPayload) -> dict[str, Any]:
+    try:
+        return adapt_feedback_to_training_signal(payload)
+    except FeedbackSourceError as exc:
+        raise SimToRealError(str(exc)) from exc
 
 
 def feedback_to_training_signal(feedback: FeedbackResult) -> dict[str, Any]:
@@ -1200,7 +1226,7 @@ def run_structural_spine(
             "state": dataset_summary.state_keys,
         },
     }
-    feedback_payload, feedback_status = collect_feedback_payload(
+    feedback_payload, feedback_status = _collect_feedback_payload_or_raise(
         config,
         rollout_path=rollout_dir,
         output_path=vlm_output,
@@ -1210,7 +1236,7 @@ def run_structural_spine(
     )
     feedback = _feedback_payload_to_result(feedback_payload)
     components.append(feedback_status)
-    training_signal = adapt_feedback_to_training_signal(feedback_payload)
+    training_signal = _adapt_feedback_payload(feedback_payload)
     _write_json(local_dir / "training-signal.json", training_signal)
 
     try:
@@ -1622,21 +1648,18 @@ def run_real_lerobot_loop(
             raise SimToRealError(str(exc)) from exc
 
         latest_checkpoint = train_result.checkpoint_path
-        try:
-            feedback_payload, feedback_status = collect_feedback_payload(
-                config,
-                rollout_path=Path(
-                    str(eval_metric.metadata.get("output_dir") or eval_output_dir)
-                ),
-                output_path=local_dir / "feedback" / f"iter-{iteration:02d}",
-                task="Complete the demonstrated manipulation task.",
-                eval_metric=eval_metric,
-                checkpoint_uri=train_result.checkpoint_path,
-            )
-        except FeedbackSourceError as exc:
-            raise SimToRealError(str(exc)) from exc
+        feedback_payload, feedback_status = _collect_feedback_payload_or_raise(
+            config,
+            rollout_path=Path(
+                str(eval_metric.metadata.get("output_dir") or eval_output_dir)
+            ),
+            output_path=local_dir / "feedback" / f"iter-{iteration:02d}",
+            task="Complete the demonstrated manipulation task.",
+            eval_metric=eval_metric,
+            checkpoint_uri=train_result.checkpoint_path,
+        )
         latest_feedback = _feedback_payload_to_result(feedback_payload)
-        latest_signal = adapt_feedback_to_training_signal(feedback_payload)
+        latest_signal = _adapt_feedback_payload(feedback_payload)
         latest_eval_status = eval_status
         latest_feedback_status = feedback_status
         signal_path = local_dir / "training-signals" / f"iter-{iteration:02d}.json"

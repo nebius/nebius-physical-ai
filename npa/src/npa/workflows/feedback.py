@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import shlex
 import subprocess
 from dataclasses import asdict, dataclass, field
@@ -184,6 +185,9 @@ def register_feedback_adapter(
 def adapt_feedback_to_training_signal(payload: FeedbackPayload) -> dict[str, Any]:
     """Convert typed feedback into a JSON-serializable training signal."""
 
+    _validate_feedback_value(payload.value, payload.feedback_type)
+    parse_feedback_score(payload.score)
+    parse_feedback_success(payload.success)
     try:
         adapter = _ADAPTERS[payload.feedback_type]
     except KeyError as exc:
@@ -268,27 +272,31 @@ class SimEnvFeedbackSource:
     ) -> tuple[FeedbackPayload, FeedbackSourceStatus]:
         metric = request.eval_metric
         if metric is None:
-            payload = FeedbackPayload(
+            payload = _payload_from_score(
                 source=self.name,
                 feedback_type=request.feedback_type,
-                value=0.0,
                 score=0.0,
                 success=False,
                 rationale="No eval metric was available for sim-env feedback.",
+                preference_decided=False,
             )
             return payload, FeedbackSourceStatus(
                 name="sim_env_feedback",
                 tier="SEAM",
                 evidence="sim-env feedback selected, but no eval metric has been produced.",
             )
+        score = parse_feedback_score(metric.score)
+        success = (
+            parse_feedback_success(metric.passed)
+            if metric.passed is not None
+            else score >= request.threshold
+        )
         payload = _payload_from_score(
             source=self.name,
             feedback_type=request.feedback_type,
-            score=metric.score,
-            success=metric.passed
-            if metric.passed is not None
-            else metric.score >= request.threshold,
-            rationale=f"{metric.name} score={metric.score:.6f}",
+            score=score,
+            success=success,
+            rationale=f"{metric.name} score={score:.6f}",
             metadata=metric.metadata,
         )
         tier = (
@@ -343,8 +351,8 @@ class VlmFeedbackSource:
         feedback = _payload_from_score(
             source=self.name,
             feedback_type=request.feedback_type,
-            score=float(result.score),
-            success=bool(result.passed),
+            score=parse_feedback_score(result.score),
+            success=parse_feedback_success(result.passed),
             rationale=result.rationale or result.status,
             metadata={
                 "backend": result.backend,
@@ -429,7 +437,7 @@ class ByoContainerFeedbackSource:
 
 
 def parse_source_payload(
-    payload: dict[str, Any],
+    payload: Any,
     *,
     source: str,
     feedback_type: FeedbackType,
@@ -444,15 +452,21 @@ def parse_source_payload(
         Parsed feedback; explicit success controls the pass/fail value, while
         omission preserves the original value and score-based success inference.
     Raises:
-        FeedbackSourceError: The response type or success flag is invalid.
+        FeedbackSourceError: A response type, success flag, or score is invalid.
     """
 
+    if type(payload) is not dict:
+        raise FeedbackSourceError("feedback source response must be a JSON object")
     _validate_declared_feedback_type(payload, feedback_type)
-    value = payload.get("value")
-    if value is None:
-        value = _fallback_value(payload, feedback_type)
+    explicit_success = _explicit_success_from_payload(payload)
+    value = (
+        payload["value"]
+        if "value" in payload
+        else _fallback_value(payload, feedback_type)
+    )
+    _validate_feedback_value(value, feedback_type)
     score = _score_from_payload(payload, value, feedback_type)
-    success = _success_from_payload(payload, score)
+    success = score >= 0.5 if explicit_success is None else explicit_success
     if feedback_type == FeedbackType.PASS_FAIL and "success" in payload:
         value = success
     rationale = str(payload.get("rationale") or payload.get("critique") or "")
@@ -479,13 +493,18 @@ def _validate_declared_feedback_type(
         )
 
 
-def _success_from_payload(payload: dict[str, Any], score: float) -> bool:
+def _explicit_success_from_payload(payload: dict[str, Any]) -> bool | None:
     if "success" not in payload:
-        return score >= 0.5
-    success = payload["success"]
-    if not isinstance(success, bool):
+        return None
+    return parse_feedback_success(payload["success"])
+
+
+def parse_feedback_success(value: Any) -> bool:
+    """Parse an explicit JSON-boolean feedback verdict."""
+
+    if type(value) is not bool:
         raise FeedbackSourceError("feedback source 'success' must be a JSON boolean")
-    return success
+    return value
 
 
 def _payload_from_score(
@@ -496,8 +515,10 @@ def _payload_from_score(
     success: bool,
     rationale: str,
     metadata: dict[str, Any] | None = None,
+    preference_decided: bool = True,
 ) -> FeedbackPayload:
     score = _bounded(score)
+    success = parse_feedback_success(success)
     if feedback_type == FeedbackType.SCALAR:
         value: Any = score
     elif feedback_type == FeedbackType.DENSE_PER_STEP:
@@ -506,12 +527,14 @@ def _payload_from_score(
         value = success
     elif feedback_type == FeedbackType.CRITIQUE:
         value = {"score": score, "critique": rationale}
-    else:
+    elif preference_decided:
         value = {
             "chosen": "candidate" if success else "baseline",
             "rejected": "baseline" if success else "candidate",
             "score": score,
         }
+    else:
+        value = {"score": score, "status": "unavailable"}
     return FeedbackPayload(
         source=source,
         feedback_type=feedback_type,
@@ -529,13 +552,13 @@ def _blocked_payload(
     feedback_type: FeedbackType,
     evidence: str,
 ) -> tuple[FeedbackPayload, FeedbackSourceStatus]:
-    payload = FeedbackPayload(
+    payload = _payload_from_score(
         source=source,
         feedback_type=feedback_type,
-        value=0.0,
         score=0.0,
         success=False,
         rationale=evidence,
+        preference_decided=False,
     )
     return payload, FeedbackSourceStatus(
         name=f"{source.replace('-', '_')}_feedback", tier="BLOCKED", evidence=evidence
@@ -543,26 +566,26 @@ def _blocked_payload(
 
 
 def _adapt_scalar(payload: FeedbackPayload) -> TrainingSignal:
-    score = _bounded(float(payload.value))
+    score = _bounded(payload.value)
     return _base_signal(payload, score=score)
 
 
 def _adapt_dense_per_step(payload: FeedbackPayload) -> TrainingSignal:
-    dense = [_bounded(float(item)) for item in payload.value]
+    dense = [_bounded(item) for item in payload.value]
     score = sum(dense) / len(dense) if dense else 0.0
     signal = _base_signal(payload, score=score)
     return TrainingSignal(**{**signal.to_dict(), "dense_rewards": dense})
 
 
 def _adapt_pass_fail(payload: FeedbackPayload) -> TrainingSignal:
-    success = bool(payload.value)
+    success = _parse_pass_fail_value(payload.value)
     score = 1.0 if success else 0.0
     return _base_signal(payload, score=score, success=success)
 
 
 def _adapt_critique(payload: FeedbackPayload) -> TrainingSignal:
     value = payload.value if isinstance(payload.value, dict) else {}
-    score = _bounded(float(value.get("score", payload.score)))
+    score = _bounded(value.get("score", payload.score))
     critique = str(value.get("critique") or payload.rationale)
     signal = _base_signal(payload, score=score)
     return TrainingSignal(**{**signal.to_dict(), "natural_language_critique": critique})
@@ -570,7 +593,7 @@ def _adapt_critique(payload: FeedbackPayload) -> TrainingSignal:
 
 def _adapt_preference(payload: FeedbackPayload) -> TrainingSignal:
     value = payload.value if isinstance(payload.value, dict) else {}
-    score = _bounded(float(value.get("score", payload.score)))
+    score = _bounded(value.get("score", payload.score))
     signal = _base_signal(payload, score=score)
     return TrainingSignal(**{**signal.to_dict(), "preference": dict(value)})
 
@@ -582,12 +605,14 @@ def _base_signal(
     success: bool | None = None,
 ) -> TrainingSignal:
     score = _bounded(score)
-    resolved_success = payload.success if success is None else success
+    resolved_success = parse_feedback_success(
+        payload.success if success is None else success
+    )
     reward = score if resolved_success else min(score, 0.5)
     return TrainingSignal(
         schema="npa.sim_to_real.training_signal.v1",
         scalar_reward=round(float(reward), 6),
-        success=bool(resolved_success),
+        success=resolved_success,
         score=score,
         natural_language_critique=payload.rationale,
         loss_weight=round(1.0 + (1.0 - score), 6),
@@ -600,7 +625,11 @@ def _fallback_value(payload: dict[str, Any], feedback_type: FeedbackType) -> Any
     if feedback_type == FeedbackType.SCALAR:
         return payload.get("score", 0.0)
     if feedback_type == FeedbackType.DENSE_PER_STEP:
-        return payload.get("dense_rewards") or payload.get("rewards") or []
+        if "dense_rewards" in payload:
+            return payload["dense_rewards"]
+        if "rewards" in payload:
+            return payload["rewards"]
+        return []
     if feedback_type == FeedbackType.PASS_FAIL:
         return payload.get("success", False)
     if feedback_type == FeedbackType.CRITIQUE:
@@ -618,19 +647,52 @@ def _fallback_value(payload: dict[str, Any], feedback_type: FeedbackType) -> Any
 def _score_from_payload(
     payload: dict[str, Any], value: Any, feedback_type: FeedbackType
 ) -> float:
-    explicit = payload.get("score")
-    if explicit is not None:
-        return _bounded(float(explicit))
-    if feedback_type == FeedbackType.SCALAR:
-        return _bounded(float(value))
-    if feedback_type == FeedbackType.DENSE_PER_STEP:
-        values = [_bounded(float(item)) for item in value]
-        return sum(values) / len(values) if values else 0.0
     if feedback_type == FeedbackType.PASS_FAIL:
-        return 1.0 if bool(value) else 0.0
+        pass_fail_value = _parse_pass_fail_value(value)
+        if "score" in payload:
+            return _bounded(payload["score"])
+        return 1.0 if pass_fail_value else 0.0
+    if "score" in payload:
+        return _bounded(payload["score"])
+    if feedback_type == FeedbackType.SCALAR:
+        return _bounded(value)
+    if feedback_type == FeedbackType.DENSE_PER_STEP:
+        values = [_bounded(item) for item in value]
+        return sum(values) / len(values) if values else 0.0
     if isinstance(value, dict):
-        return _bounded(float(value.get("score", 0.0)))
+        return _bounded(value.get("score", 0.0))
     return 0.0
+
+
+def _validate_feedback_value(value: Any, feedback_type: FeedbackType) -> None:
+    """Require the JSON shape and numeric leaves declared by a feedback type."""
+
+    if feedback_type == FeedbackType.SCALAR:
+        parse_feedback_score(value)
+        return
+    if feedback_type == FeedbackType.DENSE_PER_STEP:
+        if type(value) is not list:
+            raise FeedbackSourceError(
+                "feedback dense-per-step value must be a JSON array"
+            )
+        for item in value:
+            parse_feedback_score(item)
+        return
+    if feedback_type == FeedbackType.PASS_FAIL:
+        _parse_pass_fail_value(value)
+        return
+    if type(value) is not dict:
+        raise FeedbackSourceError(
+            f"feedback {feedback_type.value} value must be a JSON object"
+        )
+    if "score" in value:
+        parse_feedback_score(value["score"])
+
+
+def _parse_pass_fail_value(value: Any) -> bool:
+    if type(value) is not bool:
+        raise FeedbackSourceError("feedback pass-fail value must be a JSON boolean")
+    return value
 
 
 def _default_http_post(url: str, payload: dict[str, Any]) -> dict[str, Any]:
@@ -678,8 +740,32 @@ def _normalize_mode(value: str) -> str:
     return normalized
 
 
-def _bounded(value: float) -> float:
-    return max(0.0, min(1.0, float(value)))
+def parse_feedback_score(value: Any) -> float:
+    """Parse a finite JSON-number feedback score.
+
+    Args:
+        value: Decoded JSON value expected to contain a numeric score.
+    Returns:
+        The score as a finite float.
+    Raises:
+        FeedbackSourceError: The value is not a finite JSON number.
+    """
+
+    if type(value) not in (int, float):
+        raise FeedbackSourceError("feedback score must be a finite JSON number")
+    try:
+        score = float(value)
+    except (OverflowError, TypeError, ValueError) as exc:
+        raise FeedbackSourceError(
+            "feedback score must be a finite JSON number"
+        ) from exc
+    if not math.isfinite(score):
+        raise FeedbackSourceError("feedback score must be a finite JSON number")
+    return score
+
+
+def _bounded(value: Any) -> float:
+    return max(0.0, min(1.0, parse_feedback_score(value)))
 
 
 register_feedback_adapter(FeedbackType.SCALAR, _adapt_scalar)
