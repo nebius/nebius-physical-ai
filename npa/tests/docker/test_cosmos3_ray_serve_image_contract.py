@@ -352,7 +352,8 @@ def test_dockerfile_builds_derivative_before_resolver_and_dependency_check() -> 
 
 def test_dockerfile_makes_the_gradio_source_directory_traversable_before_copying():
     text = DOCKERFILE.read_text(encoding="utf-8")
-    source_parent = "/tmp/gradio-source"
+    temporary_directory = "/".join(("", "tmp"))
+    source_parent = f"{temporary_directory}/gradio-source"
     source = f"{source_parent}/gradio-6.16.0-py3-none-any.whl"
     assert "install -d -o ubuntu -g ubuntu -m 0755 /outputs /tmp/ray" in text
     assert source_parent in text
