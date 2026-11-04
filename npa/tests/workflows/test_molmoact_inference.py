@@ -557,6 +557,52 @@ def test_gate_a_accepts_the_running_venv_projection() -> None:
     contract._validate_gate_a_interpreter(value, executable)
 
 
+def test_gate_a_selects_the_distribution_own_record_not_vendored_records(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    site = tmp_path / "site-packages"
+    metadata = site / "example-1.0.dist-info"
+    metadata.mkdir(parents=True)
+    relative = "example-1.0.dist-info/RECORD"
+    (metadata / "RECORD").write_text(f"{relative},,\n")
+    distribution = SimpleNamespace(
+        _path=metadata,
+        metadata={"Name": "example"},
+        version="1.0",
+        files=[
+            Path(relative),
+            Path("example/_vendor/nested-2.0.dist-info/RECORD"),
+        ],
+        locate_file=lambda value: site / value,
+    )
+    monkeypatch.setattr(
+        contract.importlib.metadata, "distributions", lambda: [distribution]
+    )
+    projection = contract.gate_a_distribution_projection()
+    assert projection[0]["record_path"] == relative
+    assert projection[0]["record_rows_count"] == 1
+
+
+def test_gate_a_rejects_a_distribution_without_its_own_record(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    site = tmp_path / "site-packages"
+    metadata = site / "example-1.0.dist-info"
+    metadata.mkdir(parents=True)
+    distribution = SimpleNamespace(
+        _path=metadata,
+        metadata={"Name": "example"},
+        version="1.0",
+        files=[Path("example/_vendor/nested-2.0.dist-info/RECORD")],
+        locate_file=lambda value: site / value,
+    )
+    monkeypatch.setattr(
+        contract.importlib.metadata, "distributions", lambda: [distribution]
+    )
+    with pytest.raises(ValueError, match="does not have its own RECORD"):
+        contract.gate_a_distribution_projection()
+
+
 def test_canonical_json_rejects_nonfinite_values() -> None:
     with pytest.raises(ValueError):
         contract.canonical_json_bytes({"value": float("nan")})

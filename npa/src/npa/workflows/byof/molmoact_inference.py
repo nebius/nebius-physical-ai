@@ -1590,6 +1590,37 @@ def _validate_record_row(
         raise ValueError("RECORD hash has the wrong decoded size")
 
 
+def _distribution_record_path(
+    distribution: importlib.metadata.Distribution,
+) -> tuple[Path, str]:
+    """Select this distribution's RECORD, excluding vendored metadata RECORDs."""
+
+    metadata_path = getattr(distribution, "_path", None)
+    if not isinstance(metadata_path, Path) or not metadata_path.name.endswith(
+        ".dist-info"
+    ):
+        raise ValueError("distribution metadata path is unavailable")
+    root = Path(distribution.locate_file(""))
+    try:
+        relative_metadata = metadata_path.relative_to(root)
+    except ValueError as exc:
+        raise ValueError(
+            "distribution metadata is outside its installation root"
+        ) from exc
+    relative = (relative_metadata / "RECORD").as_posix()
+    _validate_relative_path(relative)
+    files = [str(path).replace("\\", "/") for path in (distribution.files or ())]
+    # A wheel such as setuptools can legitimately carry vendored *.dist-info/RECORD
+    # files. Only the RECORD beside this Distribution object's own METADATA governs
+    # its installed-file projection.
+    if files.count(relative) != 1:
+        raise ValueError("distribution does not have its own RECORD path")
+    located = Path(distribution.locate_file(relative))
+    if located != metadata_path / "RECORD":
+        raise ValueError("distribution RECORD path does not bind its metadata")
+    return located, relative
+
+
 def gate_a_distribution_projection() -> list[dict[str, Any]]:
     """Reconstruct the running interpreter's complete strict distribution set.
 
@@ -1612,13 +1643,8 @@ def gate_a_distribution_projection() -> list[dict[str, Any]]:
         if normalized in names:
             raise ValueError("normalized distribution names are duplicate")
         names.add(normalized)
-        files = [str(path).replace("\\", "/") for path in (distribution.files or ())]
-        records = [path for path in files if path.endswith(".dist-info/RECORD")]
-        if len(records) != 1:
-            raise ValueError("distribution does not have one RECORD path")
-        relative = records[0]
-        _validate_relative_path(relative)
-        rows = _record_rows(Path(distribution.locate_file(relative)), relative)
+        record_path, relative = _distribution_record_path(distribution)
+        rows = _record_rows(record_path, relative)
         digest = hashlib.sha256(
             GATE_A_RECORD_DOMAIN + canonical_json_bytes(rows)
         ).hexdigest()
