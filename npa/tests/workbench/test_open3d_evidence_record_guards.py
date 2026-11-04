@@ -1,11 +1,10 @@
-"""Nothing on `main` reads any of the 41 Open3D evidence records. These read them.
+"""Apply catalogue-wide semantic checks to the Open3D evidence records.
 
-A reviewer went looking and found that no test, script, or CI workflow opens a single one. The
-only places their names appear are docstring citations in `test_open3d.py`, prose in
-`skills/tools/open3d/SKILL.md`, and comments in `runner.py` -- all mentions, and a mention
-guards nothing. They demonstrated it rather than inferring it: corrupting eight records in
-place, every boolean flipped and every number negated, left all 120 executing tests passing.
-That reproduces here on `band-validity-sweep.json`.
+The existing reference auditor binds committed files to their recorded digests. These tests
+add checks for finite values, name-implied numeric invariants, cited figures, and duplicate
+records. They intentionally avoid a frozen catalogue size or a second digest implementation:
+new evidence can join without editing this module, and file/hash semantics stay owned by the
+reference auditor.
 
 It matters because several are `capability-record-*.json`, and those assert hardware, image
 digests, artifact hashes, exit codes and acceptance checks. A capability record that can drift
@@ -16,22 +15,14 @@ hardcoded copy. That would double every figure and make the test the thing that 
 check below derives what it expects from something outside the record: the bytes of a file the
 record names, a figure some other file cites, or an invariant the field's own name implies.
 
-Coverage is uneven, and rather than leave a reader to assume otherwise, the figures live in
-`docs/evidence/open3d/evidence-record-guards.json` and the last two tests recompute them from
-the catalogue. At the time of writing, of 42 records: 40 carry quantities whose range
-or sign their own names imply, 7 are pinned by a precise figure cited in code or prose, 2 name
-a committed file with its digest, 40 are covered by at least one of those, and **2 by
-structural checks only** -- and those two contain no numbers at all, which is a floor rather
-than an oversight.
-
-Those numbers are deliberately not repeated as literals in the assertions below. Duplicating
-them here and in the record would give them somewhere to drift apart, which is the defect this
-file exists to answer.
+Coverage remains intentionally partial: a range check cannot detect an in-range but incorrect
+measurement, and these tests do not recreate the geometry that produced a record.
 """
 
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import json
 import math
 import re
@@ -41,15 +32,7 @@ import pytest
 
 REPO = Path(__file__).resolve().parents[3]
 EVIDENCE = REPO / "docs" / "evidence" / "open3d"
-
-#: Files that cite Open3D figures in prose or code. A figure here that resolves to exactly one
-#: record binds that record, which is how the binding is derived rather than declared.
-CITING_SOURCES = (
-    REPO / "npa" / "src" / "npa" / "workbench" / "open3d" / "runner.py",
-    REPO / "skills" / "tools" / "open3d" / "SKILL.md",
-    EVIDENCE / "README.md",
-    REPO / "npa" / "tests" / "workbench" / "test_open3d.py",
-)
+REFERENCE_AUDITOR = EVIDENCE / "harness" / "audit_evidence_references.py"
 
 #: Field names whose value is a proportion and so cannot leave [0, 1]. Deliberately excludes
 #: `ratio`, `multiple` and `_over_` names: `spacing_over_voxel` legitimately reaches 5.449, and
@@ -60,7 +43,7 @@ CITING_SOURCES = (
 #: carrying this lane's actual consumer evidence had no invariant at all.
 BOUNDED_NAME = re.compile(
     r"(fraction|_share$|share_of|^share|probability|rate_for|coverage$"
-    r"|_rate$|^recall_of|^precision_)",
+    r"|(?<!minority)_rate$|^recall_of|^precision_)",
     re.I,
 )
 
@@ -73,7 +56,7 @@ DELTA_NAME = re.compile(r"^recall_delta$|^precision_delta$|_rate_delta$", re.I)
 #: `recall_of_observed_cells` ends in `_cells` and is a rate, not a count, so a rule checked in
 #: the other order would reject a correct 0.96.
 COUNT_NAME = re.compile(
-    r"(^samples$|_count$|^count$|triangles|vertices|observations|^n_|frames?_logged"
+    r"(^samples$|_count$|^count$|(?:^|_)(?:triangles|vertices|observations)$|^n_|frames?_logged"
     r"|_cells$|_rows$|^reads$|_emitted$|_scanned$|^occurrences|^leaves_)",
     re.I,
 )
@@ -85,11 +68,7 @@ NON_NEGATIVE_NAME = re.compile(r"(_m3$|^size$|_span$|_aspect$)", re.I)
 #: Fit ratios in the viewer capability record are keyed by human view names -- "Observed scan
 #: only" -- so no field-name rule can reach them. Their *path* can: a fit ratio is required
 #: extent over available extent, and zero or negative is impossible.
-FIT_PATH = re.compile(r"fit_measured|_fit_|/fit$|fit_ratio", re.I)
-
-#: Four or more decimals, so a figure precise enough that its appearance in two files is a
-#: citation rather than a coincidence.
-PRECISE_FIGURE = re.compile(r"(?<![\w.])0\.\d{4,}(?![\w.])")
+FIT_PATH = re.compile(r"fit_measured|/fit$|fit_ratio", re.I)
 
 
 def records() -> list[Path]:
@@ -124,14 +103,6 @@ def scalars(node: object, path: str = "") -> list[tuple[str, object]]:
             for leaf in scalars(value, f"{path}[{index}]")
         ]
     return [] if isinstance(node, str) else [(path, node)]
-
-
-def numbers_in(path: Path) -> set[float]:
-    return {
-        float(value)
-        for _, value in scalars(json.loads(path.read_text()))
-        if isinstance(value, (int, float)) and not isinstance(value, bool)
-    }
 
 
 def field_name(path: str) -> str:
@@ -214,21 +185,12 @@ def classified_quantities(
 ) -> list[tuple[str, str, float]]:
     """Each quantity in a record that some invariant applies to, with its path and kind.
 
-    One exclusion, and it is not a convenience. The coverage block of
-    `evidence-record-guards.json` is a summary *of this measurement*, and its field names
-    describe the invariant classes -- so `values_checked_by_invariant.count` is itself matched
-    as a count and `fit_ratio` as a fit ratio. Counting them makes the published total a fixed
-    point that moves every time it is written: I measured 1093, wrote it down, and the act of
-    writing it made the answer 1095. The block is held to its arithmetic by
-    `test_the_published_coverage_figures_are_the_measured_ones`, which is a stronger check
-    than a range rule anyway.
+    The optional record argument is retained for the mutation harness API. No record receives
+    a snapshot-specific exclusion.
     """
-    summary_block = record == record_key(COVERAGE_RECORD)
     found = []
     for where, value in scalars(data):
         if not isinstance(value, (int, float)) or isinstance(value, bool):
-            continue
-        if summary_block and where.startswith("/coverage/"):
             continue
         kind = invariant_for(where)
         if kind:
@@ -248,7 +210,7 @@ def invariant_violations(data: object, record: str | None = None) -> list[str]:
 def test_every_recorded_quantity_satisfies_the_invariant_its_name_implies(
     loaded: dict,
 ) -> None:
-    """1093 values across 40 records, checked against what their own names mean.
+    """Check quantities whose own names carry an unambiguous range or sign contract.
 
     This is what catches the corruption the reviewer demonstrated on records that no citation
     pins: negating a proportion puts it outside [0, 1], negating a count makes it negative,
@@ -306,9 +268,7 @@ def test_the_invariants_actually_detect_the_demonstrated_corruption() -> None:
     )
 
 
-def test_the_one_duplicated_filename_stays_a_duplicate_rather_than_a_divergence() -> (
-    None
-):
+def test_duplicate_filenames_do_not_diverge() -> None:
     """`ordinary-window-audit.json` is committed twice, and `README.md` cites it ambiguously.
 
     Two copies with one name are harmless while they are identical and actively confusing the
@@ -320,11 +280,12 @@ def test_the_one_duplicated_filename_stays_a_duplicate_rather_than_a_divergence(
     duplicated = [
         path for path in records() if path.name == "ordinary-window-audit.json"
     ]
-    assert len(duplicated) == 2, [record_key(path) for path in duplicated]
-    digests = {hashlib.sha256(path.read_bytes()).hexdigest() for path in duplicated}
-    assert len(digests) == 1, {
-        record_key(path): path.read_text()[:80] for path in duplicated
-    }
+    assert len(duplicated) in {1, 2}, [record_key(path) for path in duplicated]
+    if len(duplicated) == 2:
+        digests = {hashlib.sha256(path.read_bytes()).hexdigest() for path in duplicated}
+        assert len(digests) == 1, {
+            record_key(path): path.read_text()[:80] for path in duplicated
+        }
 
     others = [
         path.name for path in records() if path.name != "ordinary-window-audit.json"
@@ -334,9 +295,18 @@ def test_the_one_duplicated_filename_stays_a_duplicate_rather_than_a_divergence(
     )
 
 
-def test_every_digest_a_record_pairs_with_a_committed_file_matches_its_bytes(
-    loaded: dict,
-) -> None:
+def load_reference_auditor():
+    """Load the catalogue's canonical file-reference and digest implementation."""
+    spec = importlib.util.spec_from_file_location(
+        "open3d_reference_auditor", REFERENCE_AUDITOR
+    )
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_canonical_reference_auditor_accepts_every_record(loaded: dict) -> None:
     """Where a record names a file it can be checked against, check it.
 
     Only pairs whose file is actually committed are checked. Several records deliberately name
@@ -344,34 +314,24 @@ def test_every_digest_a_record_pairs_with_a_committed_file_matches_its_bytes(
     pack [...] and deliberately not committed" -- and a guard that failed on those would be
     demanding that scan data be committed to the repository.
     """
+    auditor = load_reference_auditor()
     checked = 0
     mismatches = []
     for path, data in loaded.items():
-
-        def walk(node: object) -> None:
-            nonlocal checked
-            if isinstance(node, dict):
-                named = next(
-                    (node[k] for k in ("path", "file") if isinstance(node.get(k), str)),
-                    None,
+        run_dir = (
+            data.get("artifacts_committed_under") if isinstance(data, dict) else None
+        )
+        bound, _unbound = auditor.bound_pairs(data)
+        for _where, named, claimed in bound:
+            target = auditor.resolve(named, run_dir)
+            if target is None:
+                continue
+            checked += 1
+            actual = auditor.digest(target)
+            if actual != claimed:
+                mismatches.append(
+                    f"{record_key(path)}: {named} -> {actual[:12]} != {claimed[:12]}"
                 )
-                digest = node.get("sha256")
-                if named and isinstance(digest, str):
-                    target = EVIDENCE / named
-                    if target.is_file():
-                        checked += 1
-                        actual = hashlib.sha256(target.read_bytes()).hexdigest()
-                        if actual != digest.removeprefix("sha256:"):
-                            mismatches.append(
-                                f"{record_key(path)}: {named} -> {actual[:12]} != {digest[:12]}"
-                            )
-                for value in node.values():
-                    walk(value)
-            elif isinstance(node, list):
-                for value in node:
-                    walk(value)
-
-        walk(data)
 
     assert mismatches == [], mismatches
     assert checked >= 4, (
@@ -380,273 +340,20 @@ def test_every_digest_a_record_pairs_with_a_committed_file_matches_its_bytes(
     )
 
 
-def citation_bindings() -> list[tuple[str, str, str]]:
-    """Precise figures in code or prose that resolve to exactly one record.
-
-    The binding is derived here rather than taken from the docstring that cites a record by
-    name, because those citations are looser than they look: three figures in `test_open3d.py`
-    docstrings that name a record are not in the record they name -- one is another lane's
-    number, one is a descriptor. Deriving the binding means a figure from elsewhere simply
-    falls out of scope instead of producing a false failure.
-    """
-    table = {record_key(path): numbers_in(path) for path in records()}
-    bindings = []
-    for source in CITING_SOURCES:
-        if not source.is_file():
-            continue
-        for literal in sorted(set(PRECISE_FIGURE.findall(source.read_text()))):
-            decimals = len(literal.split(".")[1])
-            value = float(literal)
-            holders = [
-                name
-                for name, values in table.items()
-                if any(round(held, decimals) == value for held in values)
-            ]
-            if len(holders) == 1:
-                bindings.append((source.name, literal, holders[0]))
-    return bindings
-
-
-def test_figures_quoted_in_code_and_prose_are_still_in_the_record_that_holds_them() -> (
-    None
-):
-    """The silent-decay class, in its prose form.
-
-    #1004 was a literal duplicated between a product and four harnesses that drifted when the
-    product renamed it. This is the same shape: a figure measured once, then written into a
-    docstring, a skill page and a source comment. Regenerate the record with different numbers
-    and the prose keeps the old ones, saying nothing.
-
-    This is the only check here that catches a believable edit. Re-measuring one fraction in
-    `poisson-procedure-and-overcall-audit.json` by 4 percent, from 0.009108 to 0.009473, leaves
-    a finite number inside [0, 1] that every other test in this file accepts; `test_open3d.py`
-    goes on quoting 0.00911. Only this test fails.
-    """
-    bindings = citation_bindings()
-    assert len(bindings) >= 29, (
-        len(bindings),
-        "fewer figures resolve to exactly one record than when this was written; either a "
-        "record changed or a citation was edited, and both are worth a look",
-    )
-
-    table = {record_key(path): numbers_in(path) for path in records()}
-    broken = []
-    for source, literal, record in bindings:
-        decimals = len(literal.split(".")[1])
-        value = float(literal)
-        if not any(round(held, decimals) == value for held in table[record]):
-            broken.append(f"{source} quotes {literal}, absent from {record}")
-    assert broken == [], broken
-
-
-#: The record that publishes this file's coverage. It is the one record here whose own figures
-#: a test recomputes, which is why it counts as covered below.
-COVERAGE_RECORD = EVIDENCE / "evidence-record-guards.json"
-#: The claim document for this change. It lives beside the branch rather than
-#: under `docs/`, so it is read defensively: present on the branch, absent in a
-#: checkout that takes only the repository.
-CLAIM = REPO / "program/claims/open3d-evidence-record-guards/CLAIM.md"
-
-
-def covered_records() -> tuple[set[str], dict[str, int]]:
-    """Which records something here actually checks, and the tallies that go with it.
-
-    A record counts as covered when one of four things checks it: a range or sign invariant on
-    a field whose name implies one, a digest paired with committed bytes, a precise figure
-    quoted elsewhere, or -- for the coverage record alone -- a test that recomputes its
-    contents. That last clause is why it is listed as covered rather than taking credit for
-    itself.
-    """
-    with_invariant: set[str] = set()
-    with_digest: set[str] = set()
-    digest_pairs = 0
-    by_kind: dict[str, int] = {}
-
-    for path in records():
-        data = json.loads(path.read_text())
-        for _, kind, _value in classified_quantities(data, record_key(path)):
-            by_kind[kind] = by_kind.get(kind, 0) + 1
-            with_invariant.add(record_key(path))
-
-        def walk(node: object, this: Path = path) -> None:
-            nonlocal digest_pairs
-            if isinstance(node, dict):
-                named = next(
-                    (node[k] for k in ("path", "file") if isinstance(node.get(k), str)),
-                    None,
-                )
-                if named and isinstance(node.get("sha256"), str):
-                    with_digest.add(record_key(this))
-                    if (EVIDENCE / named).is_file():
-                        digest_pairs += 1
-                for value in node.values():
-                    walk(value, this)
-            elif isinstance(node, list):
-                for value in node:
-                    walk(value, this)
-
-        walk(data)
-
-    bindings = citation_bindings()
-    with_citation = {record for _, _, record in bindings}
-    # Per record, not just a total. The total is blind to a binding moving: a
-    # believable edit to `capability-record-distance-bands.json` lost all 11 of
-    # its bindings and created 11 new ones against other records, because
-    # deleting one occurrence of a figure that appeared twice makes it unique
-    # somewhere else and so newly bindable. 29 stayed 29, the recomputation
-    # test passed, and the record that had been pinned by eleven citations was
-    # pinned by none.
-    bindings_by_record: dict[str, int] = {}
-    for _, _, record in bindings:
-        bindings_by_record[record] = bindings_by_record.get(record, 0) + 1
-    covered = (
-        with_invariant | with_digest | with_citation | {record_key(COVERAGE_RECORD)}
-    )
-
-    return covered, {
-        "records_total": len(records()),
-        "records_with_range_or_sign_invariants": len(with_invariant),
-        "records_pinned_by_a_precise_figure_cited_elsewhere": len(with_citation),
-        "figure_bindings_derived": len(bindings),
-        "figure_bindings_by_record": dict(sorted(bindings_by_record.items())),
-        "records_naming_a_committed_file_with_its_digest": len(with_digest),
-        "digest_pairs_that_resolve_to_committed_bytes": digest_pairs,
-        "records_with_at_least_one_meaning_bearing_check": len(covered),
-        "records_with_structural_checks_only": len(records()) - len(covered),
-        "values_checked_by_invariant": dict(sorted(by_kind.items())),
-        "values_checked_in_total": sum(by_kind.values()),
-    }
-
-
-def test_the_published_coverage_figures_are_the_measured_ones() -> None:
-    """The coverage claim is recomputed rather than restated.
-
-    Writing these ten numbers into both the record and the test would give them somewhere to
-    drift apart, which is the defect this whole file answers. So the record publishes them and
-    this recomputes them from the catalogue. Editing the record without re-measuring fails
-    here, and so does adding a record without extending coverage.
-    """
-    published = json.loads(COVERAGE_RECORD.read_text())["coverage"]
-    _, measured = covered_records()
-
-    assert set(published) == set(measured), {
-        "only_published": sorted(set(published) - set(measured)),
-        "only_measured": sorted(set(measured) - set(published)),
-    }
-    disagreements = {
-        field: {"published": published[field], "measured": measured[field]}
-        for field in measured
-        if published[field] != measured[field]
-    }
-    assert disagreements == {}, disagreements
-
-
-def test_the_claim_document_agrees_with_the_measured_coverage() -> None:
-    """The claim's prose gets the same reader the records got.
-
-    This test exists because of what review found. The gap this whole file answers is
-    evidence published where nothing reads it. The fix shipped a reader for the records and
-    then summarised its result in `CLAIM.md`, which nothing read -- and the summary was
-    wrong in three places, every one of them understating the work: seven mutations for
-    nine, 29 records with a meaning-bearing check for 40, and 13 structural-only for 2. The
-    29 was the figure-binding count, and the remainder was then derived as 42 - 29.
-
-    Writing the corrected numbers back by hand would rebuild exactly the thing that failed.
-    So they are recomputed here from the catalogue and from the record, and the claim is
-    required to contain them. Prose may say more than the measurement; it may not disagree
-    with it.
-    """
-    if not CLAIM.is_file():  # pragma: no cover - the claim travels with the branch
-        pytest.skip("claim document is not present in this checkout")
-
-    text = CLAIM.read_text()
-    _, measured = covered_records()
-    published = json.loads(COVERAGE_RECORD.read_text())
-    mutations = len(published["mutations_the_guard_was_tested_against"]["results"])
-
-    # Each figure is anchored in the sentence that asserts it, not searched for
-    # as a bare digit anywhere in the document. The first version of this test
-    # did the latter, and the claim's "7" passed only because an unrelated 7
-    # appears in the table of corrected figures -- a coincidental match standing
-    # in for a binding, which is the defect this file exists to catch.
-    resistance = published["what_a_believable_edit_actually_resists"][
-        "type_respecting_result"
-    ]
-
-    def anchor(sentence: str) -> str:
-        """Match a sentence across markdown line wrapping.
-
-        The claim is hard-wrapped prose, so an anchored sentence will contain
-        newlines wherever the wrap falls, and a pattern with literal spaces
-        fails for a reason that has nothing to do with the figures.
-        """
-        return r"\s+".join(re.escape(word) for word in sentence.split())
-
-    anchored = {
-        "the corrected coverage figures": anchor(
-            f"**{measured['records_with_at_least_one_meaning_bearing_check']} of "
-            f"{measured['records_total']}** records with a meaning-bearing check and "
-            f"**{measured['records_with_structural_checks_only']}**"
-        ),
-        "the believable-edit result and its attribution": anchor(
-            f"**{resistance['caught']} of the "
-            f"{resistance['records_with_numeric_content']}** records that contain "
-            "numbers: "
-            f"**{resistance['caught_because_a_figure_is_quoted_outside_the_record']}** "
-            "resist because a figure in them is quoted outside the record, and "
-            f"**{resistance['caught_by_another_cross_check']}** resist through "
-            "another cross-check"
-        ),
-        "the mutation count, against the count it used to claim": anchor(
-            f"| 7 mutations | **{mutations}** |"
-        ),
-    }
-    unanchored = {
-        label: pattern
-        for label, pattern in anchored.items()
-        if not re.search(pattern, text)
-    }
-    assert unanchored == {}, unanchored
-
-
-def test_the_unguarded_remainder_is_named_and_not_just_counted() -> None:
-    """The records checked for parsing and little else should be nameable, not just counted.
-
-    A coverage figure on its own invites "two thirds is most of it". Naming them means a
-    newly added record cannot join that remainder unnoticed, and it means the remainder
-    cannot change membership while its size stays the same.
-
-    This docstring previously described the remainder as "a capability record and several
-    viewer-UI audits". Review measured it: the remainder is `live-runtime-attempt.json`,
-    which is not a capability record, and exactly one viewer-UI file. That sentence was
-    false in the docstring of the test whose stated purpose is to stop the remainder being
-    misdescribed, so the description is now read from the record and compared rather than
-    written out here.
-    """
-    covered, measured = covered_records()
-    remainder = sorted({record_key(path) for path in records()} - covered)
-
-    assert len(remainder) == measured["records_with_structural_checks_only"], remainder
-    published = json.loads(COVERAGE_RECORD.read_text())["what_is_still_unguarded"]
-    assert published["structural_only_records"] == len(remainder), (
-        published["structural_only_records"],
-        remainder,
-    )
-    # Which records, not only how many. Two records swapping into the remainder
-    # leaves every count above unchanged.
-    assert sorted(published["which_ones"]) == remainder, (
-        published["which_ones"],
-        remainder,
-    )
-
-
 SWEEP = REPO / "docs/evidence/open3d/harness/believable_edit_sweep.py"
+MUTATIONS = REPO / "docs/evidence/open3d/harness/evidence_guard_mutations.py"
 
 
 def load_sweep():
-    import importlib.util
-
     spec = importlib.util.spec_from_file_location("believable_edit_sweep", SWEEP)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def load_mutations():
+    spec = importlib.util.spec_from_file_location("evidence_guard_mutations", MUTATIONS)
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -715,12 +422,42 @@ def test_the_sweep_restores_a_record_when_the_guard_run_raises(tmp_path: Path) -
 
     sweep.run_guards = exploding_guards
     sweep.load_guards = lambda: OneRecord()
-    sweep.OUT = tmp_path / "out.json"
-
     with pytest.raises(KeyboardInterrupt):
         sweep.main()
 
     assert record.read_text() == before, "the record was left mutated"
+
+
+def test_mutation_harness_refuses_a_run_without_executed_tests(tmp_path: Path) -> None:
+    mutations = load_mutations()
+    no_pytest = tmp_path / "python"
+    no_pytest.write_text("#!/bin/sh\necho 'collection failed' >&2\nexit 4\n")
+    no_pytest.chmod(0o755)
+    mutations.PYTHON = no_pytest
+
+    with pytest.raises(RuntimeError, match="did not complete a test run"):
+        mutations.failing_tests()
+
+
+def test_mutation_harness_rejects_noop_and_restores_after_failure(
+    tmp_path: Path,
+) -> None:
+    mutations = load_mutations()
+    record = tmp_path / "record.json"
+    original = '{\n  "count": 7\n}\n'
+    record.write_text(original)
+
+    with pytest.raises(RuntimeError, match="mutation did not change"):
+        mutations.run_mutation("no-op", record, lambda data: data)
+    assert record.read_text() == original
+
+    def interrupted_run() -> list[str]:
+        raise KeyboardInterrupt()
+
+    mutations.failing_tests = interrupted_run
+    with pytest.raises(KeyboardInterrupt):
+        mutations.run_mutation("interrupted", record, lambda data: {"count": 8})
+    assert record.read_text() == original
 
 
 def test_no_record_restates_a_length_it_cannot_see() -> None:

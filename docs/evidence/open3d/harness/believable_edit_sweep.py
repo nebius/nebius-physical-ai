@@ -28,6 +28,7 @@ objecting because a figure is pinned to a value outside themselves.
 
 from __future__ import annotations
 
+import argparse
 import importlib.util
 import json
 import re
@@ -38,7 +39,6 @@ from types import ModuleType
 REPO = Path(__file__).resolve().parents[4]
 GUARDS = REPO / "npa/tests/workbench/test_open3d_evidence_record_guards.py"
 PYTHON = REPO / "npa/.venv/bin/python"
-OUT = Path("/tmp/believable-edit-sweep.json")
 
 FACTOR = 1.03
 
@@ -139,102 +139,89 @@ def run_guards() -> int:
     return int(failed.group(1)) if failed else 0
 
 
-def main() -> int:
-    guards = load_guards()
-    kind_of = guards.invariant_for
-    paths = sorted(guards.records(), key=guards.record_key)
+def run_mode(
+    guards, paths: list[Path], mode: str, mutated: set[str]
+) -> dict[str, object]:
+    """Measure one perturbation mode while restoring every record byte-for-byte."""
+    caught: list[str] = []
+    unnoticed: list[str] = []
+    skipped: list[str] = []
+    for path in paths:
+        key = guards.record_key(path)
+        original = path.read_text()
+        data = json.loads(original)
+        edited = walk(data, guards.invariant_for, mode)
+        if not numeric_leaves(data) or edited == data:
+            skipped.append(key)
+            continue
+        mutated.add(str(path))
+        path.write_text(json.dumps(edited, indent=2, sort_keys=True))
+        try:
+            failures = run_guards()
+        finally:
+            path.write_text(original)
+        if path.read_text() != original:
+            raise RuntimeError(f"{key} was not restored")
+        (caught if failures else unnoticed).append(key)
+        print(f"  [{mode:15}] {'caught ' if failures else 'MISSED '} {key}")
+    print(
+        f"=== {mode}: {len(caught)} caught, {len(unnoticed)} unnoticed, {len(skipped)} without numbers"
+    )
+    return {
+        "records_with_numeric_content": len(caught) + len(unnoticed),
+        "caught": len(caught),
+        "unnoticed": len(unnoticed),
+        "records_without_numeric_content": len(skipped),
+        "caught_records": sorted(caught),
+        "unnoticed_records": sorted(unnoticed),
+    }
 
+
+def restoration_residue(mutated: set[str]) -> list[str]:
+    """Return only records this run edited but failed to restore."""
+    if not mutated:
+        return []
+    result = subprocess.run(
+        ["git", "diff", "--name-only", "--", *sorted(mutated)],
+        cwd=REPO,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return [name for name in result.stdout.splitlines() if name.strip()]
+
+
+def main(output: Path | None = None) -> int:
+    guards = load_guards()
+    paths = sorted(guards.records(), key=guards.record_key)
     if run_guards():
         print("the catalogue does not pass its guards before mutation; stopping")
         return 1
-
     report: dict[str, object] = {
-        "question": (
-            "A range invariant cannot detect an in-range value. So which "
-            "records resist a believable re-measurement, and by what mechanism?"
-        ),
+        "question": "Which records resist a believable remeasurement, and how?",
         "perturbation": f"every number multiplied by {FACTOR}, booleans untouched",
         "modes": {},
     }
-
     mutated: set[str] = set()
     for mode in ("naive", "type_respecting"):
-        caught: list[str] = []
-        unnoticed: list[str] = []
-        skipped: list[str] = []
-        for path in paths:
-            key = guards.record_key(path)
-            original = path.read_text()
-            data = json.loads(original)
-            if not numeric_leaves(data):
-                skipped.append(key)
-                continue
-            edited = walk(data, kind_of, mode)
-            if edited == data:
-                skipped.append(key)
-                continue
-            mutated.add(str(path))
-            path.write_text(json.dumps(edited, indent=2, sort_keys=True))
-            try:
-                failures = run_guards()
-            finally:
-                # Without this, an interruption anywhere in the run leaves a record
-                # mutated on disk -- and in type-respecting mode the leftover values
-                # are legitimate-looking, counts still counts and proportions still in
-                # range, so it is not something a reader would notice. Git recovers it;
-                # the point is that nothing tells you to look.
-                path.write_text(original)
-            assert path.read_text() == original, f"{key} not restored"
-            (caught if failures else unnoticed).append(key)
-            print(f"  [{mode:15}] {'caught ' if failures else 'MISSED '} {key}")
-
-        report["modes"][mode] = {
-            "records_with_numeric_content": len(caught) + len(unnoticed),
-            "caught": len(caught),
-            "unnoticed": len(unnoticed),
-            "records_without_numeric_content": len(skipped),
-            "caught_records": sorted(caught),
-            "unnoticed_records": sorted(unnoticed),
-        }
-        print(
-            f"=== {mode}: {len(caught)} caught, {len(unnoticed)} unnoticed, "
-            f"{len(skipped)} without numbers"
-        )
-
-    # Say out loud whether anything was left mutated, the way the mutation harness on
-    # this branch already does. `try`/`finally` above restores on the normal paths;
-    # this is what notices when something got past it. A restoration failure that
-    # nobody reports is indistinguishable from a clean run, and in type-respecting
-    # mode the residue reads as legitimate data.
-    #
-    # Scoped to the records this run actually edited rather than to the evidence
-    # directory, so an unrelated edit elsewhere -- including to this file -- is not
-    # reported as an unrestored mutation. The first version said `docs/evidence/open3d`
-    # and duly accused the uncommitted harness source it was being run from.
-    left_modified = (
-        [
-            name
-            for name in subprocess.run(
-                ["git", "diff", "--name-only", "--", *sorted(mutated)],
-                cwd=REPO,
-                capture_output=True,
-                text=True,
-                check=False,
-            ).stdout.splitlines()
-            if name.strip()
-        ]
-        if mutated
-        else []
-    )
+        report["modes"][mode] = run_mode(guards, paths, mode, mutated)
+    left_modified = restoration_residue(mutated)
     print(
         f"\nof {len(mutated)} records edited and restored, "
         f"left modified: {len(left_modified)} {left_modified}"
     )
 
-    OUT.write_text(json.dumps(report, indent=2, sort_keys=True))
-    print(f"wrote {OUT}")
+    rendered = json.dumps(report, indent=2, sort_keys=True)
+    if output is None:
+        print(rendered)
+    else:
+        output.write_text(rendered + "\n")
+        print(f"wrote {output}")
     return 1 if left_modified else 0
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--output", type=Path, help="optional JSON report path")
+    arguments = parser.parse_args()
+    raise SystemExit(main(arguments.output))

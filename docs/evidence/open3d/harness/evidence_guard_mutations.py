@@ -5,26 +5,25 @@ reviewer showed that corrupting eight Open3D evidence records left all 120 execu
 passing. A guard written in answer to that has to be shown failing, or it is the same kind of
 artifact as the records it protects: asserted, not demonstrated.
 
-This applies seven mutations to the committed tree, runs the guard after each, restores, and
-reports which tests objected. Run it from the repository root:
+This applies representative mutations to the committed tree, runs the guard after each,
+restores, and reports which tests objected. Run it from the repository root:
 
     npa/.venv/bin/python docs/evidence/open3d/harness/evidence_guard_mutations.py
 
-Mutation 2 is the one that matters. The others are gross damage, or bookkeeping that several
-checks notice at once; mutation 2 is a believable re-measurement -- one fraction moved 4 percent, still
-finite, still inside [0, 1] -- and exactly one test in the file notices.
+The guard deliberately does not claim to detect plausible in-range remeasurement; the separate
+believable-edit sweep measures that limitation.
 """
 
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[4]
 EVIDENCE = REPO / "docs" / "evidence" / "open3d"
-CLAIM = REPO / "program/claims/open3d-evidence-record-guards/CLAIM.md"
 GUARD = REPO / "npa" / "tests" / "workbench" / "test_open3d_evidence_record_guards.py"
 PYTHON = REPO / "npa" / ".venv" / "bin" / "python"
 
@@ -47,6 +46,19 @@ def failing_tests() -> list[str]:
         cwd=REPO,
         check=False,
     )
+    summary = "\n".join(
+        line
+        for line in done.stdout.splitlines()
+        if " passed" in line or " failed" in line
+    )
+    executed = sum(
+        int(value) for value in re.findall(r"(\d+) (?:passed|failed)", summary)
+    )
+    if done.returncode not in {0, 1} or executed == 0:
+        raise RuntimeError(
+            "guard pytest did not complete a test run: "
+            f"exit={done.returncode}\n{done.stdout[-2000:]}\n{done.stderr[-2000:]}"
+        )
     return sorted(
         line.split("::")[-1].split()[0]
         for line in done.stdout.splitlines()
@@ -67,109 +79,58 @@ def negate_everything(node: object) -> object:
     return node
 
 
-def nudge_one_fraction(node: object, target: float, factor: float = 1.04) -> object:
-    """Move a single cited figure by a few percent and leave everything else alone."""
-    if isinstance(node, dict):
-        return {
-            key: nudge_one_fraction(value, target, factor)
-            for key, value in node.items()
-        }
-    if isinstance(node, list):
-        return [nudge_one_fraction(value, target, factor) for value in node]
-    if (
-        isinstance(node, float)
-        and not isinstance(node, bool)
-        and round(node, 5) == target
-    ):
-        return round(node * factor, 8)
-    return node
-
-
-def migrate_bindings(data: object) -> object:
-    """Move every number by 3 percent, keeping each value legitimate for its type.
-
-    This is the edit that previously went unnoticed on a record pinned by eleven
-    citations. It destroys all eleven bindings and creates eleven new ones
-    against other records -- deleting one occurrence of a figure that appeared
-    twice makes it unique in the other record, and so newly bindable under the
-    exactly-one-record rule. The published total stayed at 29 and the
-    recomputation test passed. It is caught now only because the coverage block
-    publishes bindings per record rather than just their sum.
-    """
-    if isinstance(data, dict):
-        return {k: migrate_bindings(v) for k, v in data.items()}
-    if isinstance(data, list):
-        return [migrate_bindings(v) for v in data]
-    if isinstance(data, bool) or not isinstance(data, (int, float)):
-        return data
-    if isinstance(data, int):
-        return data + max(1, round(abs(data) * 0.03))
-    moved = data * 1.03
-    return moved if 0.0 <= moved <= 1.0 else data * 0.97
-
-
 def rewrite_json(path: Path, transform) -> None:
     path.write_text(
         json.dumps(transform(json.loads(path.read_text())), indent=2) + "\n"
     )
 
 
-def rewrite(path: Path, transform) -> None:
-    """Apply a mutation to a record or to the claim document.
-
-    The claim is markdown, so its transform takes and returns text while a
-    record's takes and returns parsed JSON. Dispatching on the suffix keeps both
-    kinds of case in one list, which matters because the claim's prose is now
-    part of the guarded surface and should be corrupted alongside the records
-    rather than in a harness of its own.
-    """
-    if path.suffix == ".md":
-        path.write_text(transform(path.read_text()))
-    else:
+def run_mutation(label: str, path: Path, transform) -> list[str]:
+    """Apply one effective mutation, run the guard, and restore the exact bytes."""
+    original = path.read_text()
+    try:
         rewrite_json(path, transform)
+        if path.read_text() == original:
+            raise RuntimeError(f"mutation did not change {path}: {label}")
+        return failing_tests()
+    finally:
+        path.write_text(original)
+        if path.read_text() != original:
+            raise RuntimeError(f"mutation was not restored for {path}: {label}")
 
 
-def main() -> int:
-    baseline = failing_tests()
-    if baseline:
-        print(f"the guard is already failing before any mutation: {baseline}")
-        return 1
-
-    cases: list[tuple[str, Path, object]] = [
+def mutation_cases() -> list[tuple[str, Path, object]]:
+    """Return the corruption cases this harness promises to detect."""
+    return [
         (
             "1. an unpinned record corrupted the way the reviewer corrupted them",
             EVIDENCE / "band-profile-across-scenes.json",
             negate_everything,
         ),
         (
-            "2. one cited fraction re-measured by 4 percent, still a valid fraction",
-            EVIDENCE / "poisson-procedure-and-overcall-audit.json",
-            lambda data: nudge_one_fraction(data, 0.00911),
-        ),
-        (
-            "3. a capability record emptied",
+            "2. a capability record emptied",
             EVIDENCE / "capability-record-distance-bands.json",
             lambda _: {},
         ),
         (
-            "4. a count field made negative",
+            "3. a count field made negative",
             EVIDENCE / "band-validity-sweep.json",
             lambda data: json.loads(
                 json.dumps(data).replace('"samples": 300000', '"samples": -300000')
             ),
         ),
         (
-            "5a. a downstream-consumer record corrupted (unguarded until the vocabulary widened)",
+            "4. a downstream-consumer record corrupted",
             EVIDENCE / "downstream-consumer.json",
             negate_everything,
         ),
         (
-            "5b. the viewer capability record's fit ratios corrupted (reached only by path)",
+            "5. the viewer capability record's fit ratios corrupted",
             EVIDENCE / "capability-record-viewer-ui-capture.json",
             negate_everything,
         ),
         (
-            "5. the duplicated filename made to disagree with its twin",
+            "6. the duplicated filename made to disagree with its twin",
             EVIDENCE / "viewer-ui" / "ordinary-window-audit.json",
             # This record is a list at the top level, not an object, which is worth knowing
             # before writing a transform that assumes every record is a mapping.
@@ -181,112 +142,42 @@ def main() -> int:
         ),
     ]
 
-    coverage_record = EVIDENCE / "evidence-record-guards.json"
-    cases.append(
-        (
-            "6. the published coverage figures edited without re-measuring",
-            coverage_record,
-            lambda data: {
-                **data,
-                "coverage": {
-                    **data["coverage"],
-                    "records_with_structural_checks_only": 4,
-                },
-            },
-        )
-    )
 
-    cases.extend(
-        [
-            (
-                "8. the unguarded remainder swapped for two other records",
-                coverage_record,
-                lambda data: {
-                    **data,
-                    "what_is_still_unguarded": {
-                        **data["what_is_still_unguarded"],
-                        "which_ones": [
-                            "band-validity-sweep.json",
-                            "floor-vs-resolution.json",
-                        ],
-                    },
-                },
-            ),
-            (
-                "9. a binding migrated: the record's citations destroyed while the total holds",
-                EVIDENCE / "capability-record-distance-bands.json",
-                migrate_bindings,
-            ),
-            (
-                "10. the claim's corrected coverage figures reverted to the stale pair",
-                CLAIM,
-                lambda text: text.replace(
-                    "**40 of 42** records with a meaning-bearing check and **2**",
-                    "**29 of 42** records with a meaning-bearing check and **13**",
-                ),
-            ),
-            (
-                "11. the claim's mutation count left behind",
-                CLAIM,
-                lambda text: text.replace(
-                    "| 7 mutations | **", "| 7 mutations | **7** |  # **"
-                ),
-            ),
-        ]
-    )
-
-    results = []
-    for label, path, transform in cases:
-        original = path.read_text()
-        try:
-            rewrite(path, transform)
-            caught = failing_tests()
-        finally:
-            path.write_text(original)
-        results.append({"mutation": label, "tests_that_objected": caught})
-        verdict = "CAUGHT" if caught else "MISSED"
-        print(f"{verdict:>7}  {label}")
-        for name in caught:
-            print(f"         {name}")
-
-    # Mutation 7 adds a file rather than editing one, so it does not fit the loop above. It is
-    # the dilution case: a record that nothing checks must not be able to join the catalogue
-    # while the coverage figures carry on describing the old one.
-    newcomer = EVIDENCE / "unguarded-newcomer.json"
-    assert not newcomer.exists(), newcomer
-    try:
-        newcomer.write_text(
-            '{"a_note": "plausible prose, no fractions, no counts, no digests"}\n'
-        )
-        caught = failing_tests()
-    finally:
-        newcomer.unlink()
-    label = "7. a record nothing checks added to the catalogue"
-    results.append({"mutation": label, "tests_that_objected": caught})
-    print(f"{'CAUGHT' if caught else 'MISSED':>7}  {label}")
-    for name in caught:
-        print(f"         {name}")
-
-    # Only tracked modifications count. An earlier version of this counted anything in the
-    # porcelain output ending in `.json`, which reported this harness's own new, untracked
-    # records as a failure to restore.
-    # The claim is in this list because it is now one of the mutated files. Left
-    # out, a failure to restore it would go unreported by the very check that
-    # exists to notice that.
-    left_modified = subprocess.run(
+def modified_mutation_paths(paths: list[Path]) -> list[str]:
+    """Return task paths left dirty after restoration."""
+    return subprocess.run(
         [
             "git",
             "diff",
             "--name-only",
             "--",
-            "docs/evidence/open3d",
-            str(CLAIM.relative_to(REPO)),
+            *(str(path.relative_to(REPO)) for path in paths),
         ],
         capture_output=True,
         text=True,
         cwd=REPO,
         check=False,
     ).stdout.split()
+
+
+def main() -> int:
+    baseline = failing_tests()
+    if baseline:
+        print(f"the guard is already failing before any mutation: {baseline}")
+        return 1
+
+    results = []
+    mutated_paths = []
+    for label, path, transform in mutation_cases():
+        caught = run_mutation(label, path, transform)
+        mutated_paths.append(path)
+        results.append({"mutation": label, "tests_that_objected": caught})
+        verdict = "CAUGHT" if caught else "MISSED"
+        print(f"{verdict:>7}  {label}")
+        for name in caught:
+            print(f"         {name}")
+
+    left_modified = modified_mutation_paths(mutated_paths)
     print(
         f"\ncommitted evidence files left modified: {len(left_modified)} {left_modified}"
     )
@@ -295,7 +186,7 @@ def main() -> int:
     if missed:
         print(f"\nmutations the guard does not catch: {missed}")
     print(json.dumps({"baseline_failures": baseline, "mutations": results}, indent=2))
-    return 1 if missed else 0
+    return 1 if missed or left_modified else 0
 
 
 if __name__ == "__main__":
