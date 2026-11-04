@@ -17,6 +17,7 @@ from pathlib import Path
 
 import numpy as np
 import open3d as o3d
+from harness_io import read_cloud, read_mesh
 
 VOXEL = 0.05
 
@@ -87,7 +88,7 @@ def held_out(root: Path):
     clouds = {}
     for node in graph["nodes"]:
         key = node["fragment_id"]
-        pc = o3d.io.read_point_cloud(str(root / f"prepared/fragments/{key}.pcd"))
+        pc = read_cloud(root / f"prepared/fragments/{key}.pcd")
         pc.transform(np.asarray(node["pose"], dtype=float))
         clouds[key] = pc.voxel_down_sample(VOXEL)
     out = []
@@ -121,7 +122,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("root", type=Path, help="directory of delivered artifacts")
     root = parser.parse_args().root
-    fused = o3d.io.read_point_cloud(str(root / "multiway/fused.ply"))
+    fused = read_cloud(root / "multiway/fused.ply")
     report = {
         "recomputed_from": "delivered artifact bytes",
         "hashes": {
@@ -142,7 +143,7 @@ def main() -> int:
         ("baseline", "mesh-baseline/mesh.ply"),
         ("candidate_uncropped", "mesh/mesh_uncropped.ply"),
     ):
-        mesh = o3d.io.read_triangle_mesh(str(root / rel))
+        mesh = read_mesh(root / rel)
         mesh.compute_vertex_normals()
         block = {"artifact": rel, **support(mesh, fused), **coverage(mesh, fused)}
         ratio = max(

@@ -18,17 +18,16 @@ import sys
 from pathlib import Path
 
 import numpy as np
+from harness_io import read_cloud, read_mesh
 
 
 def _load_points(path: Path) -> np.ndarray:
-    import open3d as o3d
-
     head = path.read_bytes()[:2048].decode("latin-1")
     if "element face" in head and "\nelement face 0\n" not in head:
-        mesh = o3d.io.read_triangle_mesh(str(path))
+        mesh = read_mesh(path)
         if len(mesh.triangles) > 0:
             return np.asarray(mesh.vertices)
-    return np.asarray(o3d.io.read_point_cloud(str(path)).points)
+    return np.asarray(read_cloud(path).points)
 
 
 def worst_reach(points: np.ndarray, camera: dict, aspect: float) -> dict:
