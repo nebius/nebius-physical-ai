@@ -109,6 +109,37 @@ def test_test_and_lint_do_not_duplicate_feature_branch_pushes() -> None:
     assert test["schedule"] == [{"cron": "23 5 * * *"}]
 
 
+def test_dev_vm_daily_uses_reviewed_routing_variables_and_protected_transport() -> None:
+    workflow = _load_workflow("dev-vm-daily-tests.yml")
+    steps = workflow["jobs"]["dev-vm-tests"]["steps"]
+    host = "${{ secrets.DEV_VM_SSH_HOST || vars.DEV_VM_PRIMARY_HOST }}"
+    port = "${{ secrets.DEV_VM_SSH_PORT || vars.DEV_VM_PRIMARY_PORT }}"
+    protected = {
+        "DEV_VM_SSH_USER": "${{ secrets.DEV_VM_SSH_USER }}",
+        "DEV_VM_SSH_PRIVATE_KEY": "${{ secrets.DEV_VM_SSH_PRIVATE_KEY }}",
+        "DEV_VM_SSH_KNOWN_HOSTS": "${{ secrets.DEV_VM_SSH_KNOWN_HOSTS }}",
+    }
+
+    for step in steps:
+        env = step.get("env", {})
+        if "DEV_VM_SSH_HOST" in env:
+            assert env["DEV_VM_SSH_HOST"] == host, step["name"]
+    for step in steps:
+        env = step.get("env", {})
+        if "DEV_VM_SSH_PORT" in env:
+            assert env["DEV_VM_SSH_PORT"] == port, step["name"]
+
+    preflight = next(
+        step
+        for step in steps
+        if step["name"] == "Verify required secure transport settings are present"
+    )
+    assert {key: preflight["env"][key] for key in protected} == protected
+    assert "DEV_VM_SSH_HOST" in preflight["run"]
+    assert "DEV_VM_SSH_PRIVATE_KEY" in preflight["run"]
+    assert "DEV_VM_SSH_KNOWN_HOSTS" in preflight["run"]
+
+
 @pytest.mark.parametrize("name", ["harness-guardrails.yml", "lint.yml"])
 def test_candidate_checks_do_not_repeat_after_merge(name: str) -> None:
     """Keep checked candidate work from competing with the next queue entry.
