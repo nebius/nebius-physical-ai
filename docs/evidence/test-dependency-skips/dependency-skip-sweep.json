@@ -1,22 +1,24 @@
 {
-  "what_this_found": "21 fixtures in this tree call importorskip, which makes the skip as broad as the widest dependency of anything in their file rather than what the tests beneath them use. Of the 23 fixture-and-module pairs this environment can decide, 2 switch off tests that never touch the module through any path that raises, 60 tests in total.",
-  "what_it_costs_today": "0 of those 2 are costing coverage in CI now. CI installs the modules the others are gated on, so those tests run today and go quiet the moment one of those dependencies moves.",
+  "what_this_found": "21 fixtures in this tree call importorskip, which makes the skip as broad as the widest dependency of anything in their file rather than what the tests beneath them use. Of the 13 fixture-and-module pairs this environment can decide, 0 switch off tests that never touch the module through the measured path, 0 tests in total. Another 15 pairs are explicitly not fully measured.",
+  "what_it_costs_today": "0 of those 0 are costing coverage in CI now. CI installs the modules the others are gated on, so those tests run today and go quiet the moment one of those dependencies moves.",
   "where_this_came_from": "A review lane found two tests switched off everywhere by this pattern in PR 1011: the fixture they shared asked for Open3D to satisfy a module-scope import that only the harness's main() needed, and CI installs no Open3D. One of the two was the test validating that change's own headline reading. Blocking the import the way real absence does, that file went from 20 passed and 2 skipped to 23 passed. That site is fixed in its own branch; this measures how far the shape reaches.",
-  "what_this_does_not_establish": "Not that the tests are good, only that they run. Not that a module is unused by the file -- several of these fixtures sit beside tests that do need the dependency, which is why the measurement is per test rather than per file. And not a complete census: a pair this environment cannot decide is reported as undecided, not as clean.",
-  "what_this_measures": "Whether a test skipped for a missing module actually uses that module. A test that skips when the module is absent and passes when the module is importable but unusable did not touch it through any path that raises, so the skip was switching off a test that had nothing to do with the dependency.",
-  "why_not_provably_never_touched_it": "An earlier version of this file said 'provably never touched it'. That is stronger than the instrument can support, and a reviewer demonstrated it rather than arguing it: the poison raises AssertionError, so a test that calls into the module inside `except Exception` swallows the complaint and passes. They built a control that does exactly that and it passed under poison. No published number was affected, because no flagged file contains such a handler -- which is now measured per row as handlers_that_could_swallow_the_poison rather than audited once by hand. This is the only caveat here that would make a number an overcount; the others all make it a lower bound.",
-  "why_test_identity_and_not_a_count_delta": "The first version of this sweep classified a row by poisoned_passed - absent_passed. That counts any test moving into passing, while the criterion is narrower: a test that *skipped* and then passed. A reviewer reproduced the counts exactly, took per-test identities, and found the single test behind the torch finding was FAILED under absence and PASSED under poison -- never skipped, so never switched off by a skip. The same delta can also hide a finding by netting a rise against a drop; they measured ten of the thirteen rows with that capacity and found none, so it was real in principle and had cost nothing in practice. Both are now measured by intersecting sets of test identities, and every row publishes what the delta would have said so the two can be compared.",
-  "why_a_pass_under_poison_is_the_only_evidence_counted": "Poisoning a module that other libraries import during collection can break collection for reasons unrelated to the test, so a failure is not evidence of need. Only a pass is counted, which makes every number here a lower bound.",
+  "what_this_does_not_establish": "Not that the tests are good, only that the measured path runs. Not that a module is unused by the file -- several of these fixtures sit beside tests that do need the dependency, which is why the measurement is per test rather than per file. And not a complete census: a pair this environment cannot decide is reported as undecided, not as clean.",
+  "what_this_measures": "Whether a test skipped for a missing module runs when only its fixture's importorskip is bypassed while the module remains genuinely absent. Downstream imports still fail, so import-only dependencies are classified as required rather than as unnecessary skips.",
+  "sentinel_overcount_limit": "An earlier version of this file said 'provably never touched it'. That is stronger than the instrument can support, and a reviewer demonstrated it rather than arguing it: the fixture sentinel raises AssertionError, so a test that reads it inside `except Exception` can swallow the complaint and pass. The row records broad handlers found in the test file, but this is not a downstream call-graph analysis. Findings therefore establish the observed bypass behaviour, not that no downstream code touched a value.",
+  "why_test_identity_and_not_a_count_delta": "The first version of this sweep classified a row by bypassed_passed - absent_passed. That counts any test moving into passing, while the criterion is narrower: a test that *skipped* and then passed. A reviewer reproduced the counts exactly, took per-test identities, and found the single test behind the torch finding was FAILED under absence and PASSED under the old poison method -- never skipped, so never switched off by a skip. The same delta can also hide a finding by netting a rise against a drop; they measured ten of the thirteen rows with that capacity and found none, so it was real in principle and had cost nothing in practice. Both are now measured by intersecting sets of test identities, and every row publishes what the delta would have said so the two can be compared.",
+  "how_bypass_outcomes_are_interpreted": "The target stays genuinely absent. A gated pass shows the fixture skip was unnecessary; a gated failure or error shows the dependency is required; a continued skip is undecided. Unexecuted tests and collection-only outcomes are not classified as justified.",
   "fixtures_with_an_importorskip": 21,
   "fixture_and_module_pairs": 28,
-  "pairs_measurable_in_this_environment": 23,
-  "pairs_with_tests_switched_off_unnecessarily": 2,
+  "pairs_measurable_in_this_environment": 13,
+  "pairs_not_fully_measured": 15,
+  "pairs_with_tests_switched_off_unnecessarily": 0,
   "of_those_live_in_ci": 0,
   "tests_switched_off_in_ci_now": 0,
   "how_to_reproduce_this": {
-    "command": "npa/.venv/bin/python docs/evidence/test-dependency-skips/dependency_skip_sweep.py",
+    "command": "${PYTHON} docs/evidence/test-dependency-skips/dependency_skip_sweep.py",
     "needs_a_real_checkout": "The sweep refuses to run outside a git checkout, because it resolves the repository root by walking up for .git and its findings are per-file. An exported archive has no repository marker, so the evidence cannot be regenerated from one. A reviewer hit this and reported it as their own plumbing rather than a defect here; recorded so the next one does not have to discover it. No failure count is quoted because the number depends on the environment and neither of us can reproduce it.",
-    "needs_the_interpreter_it_invokes": "It shells out to npa/.venv/bin/python, so that path must exist. Link the environment *directory* if you are relocating it -- linking the interpreter binary alone corrupts prefix resolution and the run fails with unrelated-looking test failures. That is the same reviewer's finding.",
+    "child_interpreter": "sys.executable",
+    "interpreter_contract": "Set PYTHON to the environment under test. Child pytest runs use that interpreter's sys.executable; no checkout-local virtualenv path is required.",
     "runtime": "about three minutes, two pytest runs per fixture-and-module pair"
   },
   "how_live_was_determined": {
@@ -29,11 +31,33 @@
       "job_id": "124862009958",
       "of_branch": "cursor/open3d-consumer-error-structure-20261101",
       "retrieved_utc": "2026-11-01T14:05:00Z",
+      "head_sha": "b8963778a9fcda8e91a692a5f7e57ff63586c765",
       "read_from": "the uv install lines of that job's log, '+ <name>==<version>'"
     },
-    "why_not_inferred": "Inference said CI had no torch, because torch appears in no extra CI installs. CI has torch 2.14.0+cpu transitively. Publishing the inference would have called a latent finding live."
+    "why_not_inferred": "The named workflow installs sonic and genesis-test extras and asserts torch and rsl_rl imports. The retained package list supplies the exact versions, including the rsl-rl-lib distribution behind rsl_rl."
   },
-  "tests_switched_off_unnecessarily": 60,
+  "measured_source_head": "1f7450ea2fd317757a5efbfa3907fd37e96b83ea",
+  "measurement_environment": {
+    "python": "3.12.14",
+    "executable_kind": "sys.executable",
+    "module_presence": {
+      "PIL": true,
+      "av": true,
+      "lerobot.datasets.lerobot_dataset": false,
+      "numpy": true,
+      "pxr": true,
+      "pxr.Sdf": true,
+      "pxr.Usd": true,
+      "ray": false,
+      "rerun": true,
+      "rsl_rl": false,
+      "rsl_rl.modules": false,
+      "rsl_rl.modules.distribution": false,
+      "tensordict": false,
+      "torch": false
+    }
+  },
+  "tests_switched_off_unnecessarily": 0,
   "ownership": "Every row below is in another lane's tree. This change measures and reports them and edits none of them. The one site that was costing coverage in CI was in my own branch and is fixed there, not here.",
   "rows": [
     {
@@ -42,11 +66,13 @@
       "module": "av",
       "module_present_in_this_environment": true,
       "ci_installs_it": true,
-      "verdict": "tests_switched_off_unnecessarily",
-      "live_or_latent": "latent: CI installs this module, so nothing is skipped today and these tests go quiet the moment the dependency is dropped",
-      "handlers_that_could_swallow_the_poison": [],
-      "tests_that_pass_without_it": 40,
-      "which_tests_pass_without_it": [
+      "verdict": "dependency_required",
+      "live_or_latent": "latent: CI installs this module",
+      "test_file_handlers_that_could_swallow_the_sentinel": [],
+      "tests_that_pass_without_it": 0,
+      "which_tests_pass_without_it": [],
+      "tests_that_require_it": 40,
+      "which_tests_require_it": [
         "npa/tests/agent_eval/test_specialist_robot_acceptance.py::test_all_numeric_evidence_must_be_finite[finger_contacts]",
         "npa/tests/agent_eval/test_specialist_robot_acceptance.py::test_all_numeric_evidence_must_be_finite[goal]",
         "npa/tests/agent_eval/test_specialist_robot_acceptance.py::test_all_numeric_evidence_must_be_finite[gripper_position]",
@@ -88,9 +114,11 @@
         "npa/tests/agent_eval/test_specialist_robot_acceptance.py::test_native_reader_cannot_substitute_nearly_identical_camera_pixels",
         "npa/tests/agent_eval/test_specialist_robot_acceptance.py::test_report_contact_count_is_derived_from_trace_not_claim"
       ],
-      "what_a_count_delta_would_have_said": 40,
+      "gated_tests_exercised": 40,
+      "which_gated_tests_remain_undecided": [],
+      "what_a_count_delta_would_have_said": 0,
       "rose_into_passing_without_having_skipped": [],
-      "dropped_out_of_passing_under_poison": [],
+      "dropped_out_of_passing_under_bypass": [],
       "absent": {
         "passed": 0,
         "failed": 0,
@@ -140,15 +168,15 @@
             "npa/tests/agent_eval/test_specialist_robot_acceptance.py::test_report_contact_count_is_derived_from_trace_not_claim"
           ]
         },
-        "parent_unavailable": false
+        "returncode": 0
       },
-      "poisoned": {
-        "passed": 40,
+      "bypassed": {
+        "passed": 0,
         "failed": 0,
         "skipped": 0,
-        "error": 0,
+        "error": 40,
         "nodes": {
-          "passed": [
+          "error": [
             "npa/tests/agent_eval/test_specialist_robot_acceptance.py::test_all_numeric_evidence_must_be_finite[finger_contacts]",
             "npa/tests/agent_eval/test_specialist_robot_acceptance.py::test_all_numeric_evidence_must_be_finite[goal]",
             "npa/tests/agent_eval/test_specialist_robot_acceptance.py::test_all_numeric_evidence_must_be_finite[gripper_position]",
@@ -191,7 +219,7 @@
             "npa/tests/agent_eval/test_specialist_robot_acceptance.py::test_report_contact_count_is_derived_from_trace_not_claim"
           ]
         },
-        "parent_unavailable": false
+        "returncode": 1
       }
     },
     {
@@ -200,13 +228,16 @@
       "module": "av",
       "module_present_in_this_environment": true,
       "ci_installs_it": true,
-      "verdict": "tests_switched_off_unnecessarily",
-      "live_or_latent": "latent: CI installs this module, so nothing is skipped today and these tests go quiet the moment the dependency is dropped",
-      "handlers_that_could_swallow_the_poison": [],
-      "tests_that_pass_without_it": 20,
-      "which_tests_pass_without_it": [
+      "verdict": "dependency_required",
+      "live_or_latent": "latent: CI installs this module",
+      "test_file_handlers_that_could_swallow_the_sentinel": [],
+      "tests_that_pass_without_it": 0,
+      "which_tests_pass_without_it": [],
+      "tests_that_require_it": 21,
+      "which_tests_require_it": [
         "npa/tests/agent_eval/test_specialist_robot_workflow.py::test_accepted_indices_exclude_failed_episode",
         "npa/tests/agent_eval/test_specialist_robot_workflow.py::test_all_rejected_run_requires_absent_dataset",
+        "npa/tests/agent_eval/test_specialist_robot_workflow.py::test_compressed_video_matches_independent_reference",
         "npa/tests/agent_eval/test_specialist_robot_workflow.py::test_compressed_video_rejects_temporal_corruption[duplicate]",
         "npa/tests/agent_eval/test_specialist_robot_workflow.py::test_compressed_video_rejects_temporal_corruption[shift]",
         "npa/tests/agent_eval/test_specialist_robot_workflow.py::test_compressed_video_rejects_temporal_corruption[truncate]",
@@ -226,9 +257,11 @@
         "npa/tests/agent_eval/test_specialist_robot_workflow.py::test_reported_metrics_must_match_independent_physics[nan]",
         "npa/tests/agent_eval/test_specialist_robot_workflow.py::test_task_label_is_derived_from_frozen_scene"
       ],
-      "what_a_count_delta_would_have_said": 20,
+      "gated_tests_exercised": 21,
+      "which_gated_tests_remain_undecided": [],
+      "what_a_count_delta_would_have_said": 0,
       "rose_into_passing_without_having_skipped": [],
-      "dropped_out_of_passing_under_poison": [],
+      "dropped_out_of_passing_under_bypass": [],
       "absent": {
         "passed": 0,
         "failed": 0,
@@ -259,20 +292,18 @@
             "npa/tests/agent_eval/test_specialist_robot_workflow.py::test_task_label_is_derived_from_frozen_scene"
           ]
         },
-        "parent_unavailable": false
+        "returncode": 0
       },
-      "poisoned": {
-        "passed": 20,
-        "failed": 1,
+      "bypassed": {
+        "passed": 0,
+        "failed": 0,
         "skipped": 0,
-        "error": 0,
+        "error": 21,
         "nodes": {
-          "failed": [
-            "npa/tests/agent_eval/test_specialist_robot_workflow.py::test_compressed_video_matches_independent_reference"
-          ],
-          "passed": [
+          "error": [
             "npa/tests/agent_eval/test_specialist_robot_workflow.py::test_accepted_indices_exclude_failed_episode",
             "npa/tests/agent_eval/test_specialist_robot_workflow.py::test_all_rejected_run_requires_absent_dataset",
+            "npa/tests/agent_eval/test_specialist_robot_workflow.py::test_compressed_video_matches_independent_reference",
             "npa/tests/agent_eval/test_specialist_robot_workflow.py::test_compressed_video_rejects_temporal_corruption[duplicate]",
             "npa/tests/agent_eval/test_specialist_robot_workflow.py::test_compressed_video_rejects_temporal_corruption[shift]",
             "npa/tests/agent_eval/test_specialist_robot_workflow.py::test_compressed_video_rejects_temporal_corruption[truncate]",
@@ -293,7 +324,7 @@
             "npa/tests/agent_eval/test_specialist_robot_workflow.py::test_task_label_is_derived_from_frozen_scene"
           ]
         },
-        "parent_unavailable": false
+        "returncode": 1
       }
     },
     {
@@ -302,8 +333,25 @@
       "module": "lerobot.datasets.lerobot_dataset",
       "module_present_in_this_environment": false,
       "ci_installs_it": false,
-      "verdict": "not_measurable_here",
-      "why": "the parent package is not installed, so the leaf cannot be made importable-but-unusable without stubbing the parent, which perturbs unrelated fixtures in the same file",
+      "verdict": "partially_measured",
+      "why": "some gated tests were classified, while others remained skipped",
+      "live_or_latent": "live: CI does not install this module",
+      "test_file_handlers_that_could_swallow_the_sentinel": [],
+      "tests_that_pass_without_it": 0,
+      "which_tests_pass_without_it": [],
+      "tests_that_require_it": 3,
+      "which_tests_require_it": [
+        "npa/tests/test_adapter.py::TestLeRobotLibraryLoad::test_converted_dataset_loads_with_declared_shape",
+        "npa/tests/test_adapter.py::TestLeRobotLibraryLoad::test_first_sample_decodes_state_action_and_video",
+        "npa/tests/test_adapter.py::TestLeRobotLibraryLoad::test_loader_rejects_a_mislabelled_codebase_version"
+      ],
+      "gated_tests_exercised": 3,
+      "which_gated_tests_remain_undecided": [
+        "npa/tests/test_adapter.py::TestConvert::test_native_lerobot_reader_loads_exported_dataset"
+      ],
+      "what_a_count_delta_would_have_said": 0,
+      "rose_into_passing_without_having_skipped": [],
+      "dropped_out_of_passing_under_bypass": [],
       "absent": {
         "passed": 26,
         "failed": 0,
@@ -345,7 +393,52 @@
             "npa/tests/test_adapter.py::TestLeRobotLibraryLoad::test_loader_rejects_a_mislabelled_codebase_version"
           ]
         },
-        "parent_unavailable": false
+        "returncode": 0
+      },
+      "bypassed": {
+        "passed": 26,
+        "failed": 3,
+        "skipped": 1,
+        "error": 0,
+        "nodes": {
+          "failed": [
+            "npa/tests/test_adapter.py::TestLeRobotLibraryLoad::test_converted_dataset_loads_with_declared_shape",
+            "npa/tests/test_adapter.py::TestLeRobotLibraryLoad::test_first_sample_decodes_state_action_and_video",
+            "npa/tests/test_adapter.py::TestLeRobotLibraryLoad::test_loader_rejects_a_mislabelled_codebase_version"
+          ],
+          "passed": [
+            "npa/tests/test_adapter.py::TestAdapterHelpers::test_build_data_schema_has_fixed_size_lists",
+            "npa/tests/test_adapter.py::TestAdapterHelpers::test_build_data_schema_uses_lerobot_scalar_encoding_for_width_one",
+            "npa/tests/test_adapter.py::TestAdapterHelpers::test_compute_feature_stats_for_1d_arrays",
+            "npa/tests/test_adapter.py::TestAdapterHelpers::test_compute_feature_stats_for_vectors",
+            "npa/tests/test_adapter.py::TestAdapterHelpers::test_compute_feature_stats_for_video_normalizes_channels",
+            "npa/tests/test_adapter.py::TestAdapterHelpers::test_encode_video_maps_ffmpeg_failure",
+            "npa/tests/test_adapter.py::TestAdapterHelpers::test_encode_video_rejects_non_rgb_frames",
+            "npa/tests/test_adapter.py::TestAdapterHelpers::test_video_stats_match_full_dataset_with_unequal_episode_lengths",
+            "npa/tests/test_adapter.py::TestAdapterHelpers::test_video_stats_preserve_small_variance_between_constant_frames",
+            "npa/tests/test_adapter.py::TestAdapterHelpers::test_write_episodes_parquet_empty_rows_noops",
+            "npa/tests/test_adapter.py::TestAdapterHelpers::test_write_episodes_parquet_preserves_dynamic_columns",
+            "npa/tests/test_adapter.py::TestAdapterHelpers::test_write_tasks_parquet_creates_parent_dirs",
+            "npa/tests/test_adapter.py::TestConvert::test_data_parquet_schema",
+            "npa/tests/test_adapter.py::TestConvert::test_data_parquet_values",
+            "npa/tests/test_adapter.py::TestConvert::test_episodes_parquet",
+            "npa/tests/test_adapter.py::TestConvert::test_info_json",
+            "npa/tests/test_adapter.py::TestConvert::test_output_structure",
+            "npa/tests/test_adapter.py::TestConvert::test_stats_json",
+            "npa/tests/test_adapter.py::TestConvert::test_tasks_from_robocasa_metadata_are_preserved",
+            "npa/tests/test_adapter.py::TestConvert::test_tasks_parquet",
+            "npa/tests/test_adapter.py::TestConvert::test_video_stats_range",
+            "npa/tests/test_adapter.py::TestConvertErrors::test_convert_missing_required_array_raises_file_not_found",
+            "npa/tests/test_adapter.py::TestConvertErrors::test_convert_workspace_state_length_mismatch_raises_adapter_error",
+            "npa/tests/test_adapter.py::TestDiscoverEpisodes::test_empty_dir_raises",
+            "npa/tests/test_adapter.py::TestDiscoverEpisodes::test_finds_episodes",
+            "npa/tests/test_adapter.py::TestDiscoverEpisodes::test_sorted_order"
+          ],
+          "skipped": [
+            "npa/tests/test_adapter.py::TestConvert::test_native_lerobot_reader_loads_exported_dataset"
+          ]
+        },
+        "returncode": 1
       }
     },
     {
@@ -354,14 +447,21 @@
       "module": "ray",
       "module_present_in_this_environment": false,
       "ci_installs_it": false,
-      "verdict": "skip_is_justified",
-      "live_or_latent": "live: CI does not install this module, so these tests are being skipped in CI now",
-      "handlers_that_could_swallow_the_poison": [],
+      "verdict": "dependency_required",
+      "live_or_latent": "live: CI does not install this module",
+      "test_file_handlers_that_could_swallow_the_sentinel": [],
       "tests_that_pass_without_it": 0,
       "which_tests_pass_without_it": [],
+      "tests_that_require_it": 2,
+      "which_tests_require_it": [
+        "npa/tests/workbench/test_alpamayo_ray_sweep.py::test_real_ray_actors_cover_every_case_once",
+        "npa/tests/workbench/test_alpamayo_ray_sweep.py::test_real_ray_failure_is_not_reported_as_partial_success"
+      ],
+      "gated_tests_exercised": 2,
+      "which_gated_tests_remain_undecided": [],
       "what_a_count_delta_would_have_said": 0,
       "rose_into_passing_without_having_skipped": [],
-      "dropped_out_of_passing_under_poison": [],
+      "dropped_out_of_passing_under_bypass": [],
       "absent": {
         "passed": 15,
         "failed": 0,
@@ -390,9 +490,9 @@
             "npa/tests/workbench/test_alpamayo_ray_sweep.py::test_real_ray_failure_is_not_reported_as_partial_success"
           ]
         },
-        "parent_unavailable": false
+        "returncode": 0
       },
-      "poisoned": {
+      "bypassed": {
         "passed": 15,
         "failed": 0,
         "skipped": 0,
@@ -420,7 +520,7 @@
             "npa/tests/workbench/test_alpamayo_ray_sweep.py::test_sweep_cli_and_sdk_use_shared_request_and_keep_stdout_json"
           ]
         },
-        "parent_unavailable": false
+        "returncode": 1
       }
     },
     {
@@ -429,16 +529,36 @@
       "module": "torch",
       "module_present_in_this_environment": false,
       "ci_installs_it": true,
-      "verdict": "skip_is_justified",
-      "live_or_latent": "latent: CI installs this module, so nothing is skipped today and these tests go quiet the moment the dependency is dropped",
-      "handlers_that_could_swallow_the_poison": [],
+      "verdict": "dependency_required",
+      "live_or_latent": "latent: CI installs this module",
+      "test_file_handlers_that_could_swallow_the_sentinel": [],
       "tests_that_pass_without_it": 0,
       "which_tests_pass_without_it": [],
-      "what_a_count_delta_would_have_said": 1,
-      "rose_into_passing_without_having_skipped": [
-        "npa/tests/workbench/test_flex_pi_training_graphs.py::test_native_replay_observation_requires_pinned_closure_layout"
+      "tests_that_require_it": 17,
+      "which_tests_require_it": [
+        "npa/tests/workbench/test_flex_pi_training_graphs.py::test_capture_autocasts_only_forward_and_preserves_eager_backward",
+        "npa/tests/workbench/test_flex_pi_training_graphs.py::test_capture_detaches_samples_preserves_parameters_and_restores_rng",
+        "npa/tests/workbench/test_flex_pi_training_graphs.py::test_capture_wrapper_preserves_state_gradients_and_eager_evaluation",
+        "npa/tests/workbench/test_flex_pi_training_graphs.py::test_changed_static_input_contract_is_rejected",
+        "npa/tests/workbench/test_flex_pi_training_graphs.py::test_compatible_runtime_accepts_removed_suppress_errors_setting",
+        "npa/tests/workbench/test_flex_pi_training_graphs.py::test_ddp_prepare_uses_ordered_side_stream_once_and_restores_on_error[False]",
+        "npa/tests/workbench/test_flex_pi_training_graphs.py::test_ddp_prepare_uses_ordered_side_stream_once_and_restores_on_error[True]",
+        "npa/tests/workbench/test_flex_pi_training_graphs.py::test_duplicate_native_observation_fails_without_stacking_wrappers",
+        "npa/tests/workbench/test_flex_pi_training_graphs.py::test_every_gathered_rank_must_confirm_capture",
+        "npa/tests/workbench/test_flex_pi_training_graphs.py::test_incompatible_runtime_or_error_suppression_is_rejected[2.7.1+cpu-False-False]",
+        "npa/tests/workbench/test_flex_pi_training_graphs.py::test_incompatible_runtime_or_error_suppression_is_rejected[2.7.1+cu128-True-True]",
+        "npa/tests/workbench/test_flex_pi_training_graphs.py::test_incompatible_runtime_or_error_suppression_is_rejected[2.8.0+cu128-True-False]",
+        "npa/tests/workbench/test_flex_pi_training_graphs.py::test_native_capture_failure_propagates_without_eager_fallback",
+        "npa/tests/workbench/test_flex_pi_training_graphs.py::test_native_observer_counts_only_successful_forward_and_backward_replays",
+        "npa/tests/workbench/test_flex_pi_training_graphs.py::test_native_static_gradients_do_not_overwrite_accumulation",
+        "npa/tests/workbench/test_flex_pi_training_graphs.py::test_next_forward_and_receipt_require_completed_backward",
+        "npa/tests/workbench/test_flex_pi_training_graphs.py::test_observing_one_capture_leaves_other_captures_and_global_autograd_unchanged"
       ],
-      "dropped_out_of_passing_under_poison": [],
+      "gated_tests_exercised": 17,
+      "which_gated_tests_remain_undecided": [],
+      "what_a_count_delta_would_have_said": 0,
+      "rose_into_passing_without_having_skipped": [],
+      "dropped_out_of_passing_under_bypass": [],
       "absent": {
         "passed": 24,
         "failed": 1,
@@ -494,11 +614,11 @@
             "npa/tests/workbench/test_flex_pi_training_graphs.py::test_observing_one_capture_leaves_other_captures_and_global_autograd_unchanged"
           ]
         },
-        "parent_unavailable": false
+        "returncode": 1
       },
-      "poisoned": {
-        "passed": 25,
-        "failed": 12,
+      "bypassed": {
+        "passed": 24,
+        "failed": 13,
         "skipped": 0,
         "error": 5,
         "nodes": {
@@ -520,6 +640,7 @@
             "npa/tests/workbench/test_flex_pi_training_graphs.py::test_incompatible_runtime_or_error_suppression_is_rejected[2.7.1+cu128-True-True]",
             "npa/tests/workbench/test_flex_pi_training_graphs.py::test_incompatible_runtime_or_error_suppression_is_rejected[2.8.0+cu128-True-False]",
             "npa/tests/workbench/test_flex_pi_training_graphs.py::test_native_observer_counts_only_successful_forward_and_backward_replays",
+            "npa/tests/workbench/test_flex_pi_training_graphs.py::test_native_replay_observation_requires_pinned_closure_layout",
             "npa/tests/workbench/test_flex_pi_training_graphs.py::test_native_static_gradients_do_not_overwrite_accumulation",
             "npa/tests/workbench/test_flex_pi_training_graphs.py::test_observing_one_capture_leaves_other_captures_and_global_autograd_unchanged"
           ],
@@ -535,7 +656,6 @@
             "npa/tests/workbench/test_flex_pi_training_graphs.py::test_missing_graph_receipt_is_rejected[None]",
             "npa/tests/workbench/test_flex_pi_training_graphs.py::test_missing_graph_receipt_is_rejected[receipt1]",
             "npa/tests/workbench/test_flex_pi_training_graphs.py::test_missing_graph_receipt_is_rejected[receipt2]",
-            "npa/tests/workbench/test_flex_pi_training_graphs.py::test_native_replay_observation_requires_pinned_closure_layout",
             "npa/tests/workbench/test_flex_pi_training_graphs.py::test_one_rank_with_missing_or_wrong_capture_rejects_phase[backend-inductor]",
             "npa/tests/workbench/test_flex_pi_training_graphs.py::test_one_rank_with_missing_or_wrong_capture_rejects_phase[captured_training_calls-1]",
             "npa/tests/workbench/test_flex_pi_training_graphs.py::test_one_rank_with_missing_or_wrong_capture_rejects_phase[dynamic-True]",
@@ -551,7 +671,7 @@
             "npa/tests/workbench/test_flex_pi_training_graphs.py::test_parent_rejects_successful_worker_without_capture_evidence"
           ]
         },
-        "parent_unavailable": false
+        "returncode": 1
       }
     },
     {
@@ -560,14 +680,35 @@
       "module": "torch",
       "module_present_in_this_environment": false,
       "ci_installs_it": true,
-      "verdict": "skip_is_justified",
-      "live_or_latent": "latent: CI installs this module, so nothing is skipped today and these tests go quiet the moment the dependency is dropped",
-      "handlers_that_could_swallow_the_poison": [],
+      "verdict": "dependency_required",
+      "live_or_latent": "latent: CI installs this module",
+      "test_file_handlers_that_could_swallow_the_sentinel": [],
       "tests_that_pass_without_it": 0,
       "which_tests_pass_without_it": [],
+      "tests_that_require_it": 16,
+      "which_tests_require_it": [
+        "npa/tests/workbench/test_flex_pi_training_loss_sync.py::test_full_and_tail_updates_preserve_losses_gradients_and_optimizer[mot-1]",
+        "npa/tests/workbench/test_flex_pi_training_loss_sync.py::test_full_and_tail_updates_preserve_losses_gradients_and_optimizer[mot-3]",
+        "npa/tests/workbench/test_flex_pi_training_loss_sync.py::test_full_and_tail_updates_preserve_losses_gradients_and_optimizer[off-1]",
+        "npa/tests/workbench/test_flex_pi_training_loss_sync.py::test_full_and_tail_updates_preserve_losses_gradients_and_optimizer[off-3]",
+        "npa/tests/workbench/test_flex_pi_training_loss_sync.py::test_loss_readback_preserves_python_sum_and_stays_inside_update_timer",
+        "npa/tests/workbench/test_flex_pi_training_loss_sync.py::test_no_microbatch_scalar_reads_before_optimizer_boundary",
+        "npa/tests/workbench/test_flex_pi_training_loss_sync.py::test_nonfinite_earlier_loss_cannot_reach_optimizer_step[-inf-0]",
+        "npa/tests/workbench/test_flex_pi_training_loss_sync.py::test_nonfinite_earlier_loss_cannot_reach_optimizer_step[-inf-11]",
+        "npa/tests/workbench/test_flex_pi_training_loss_sync.py::test_nonfinite_earlier_loss_cannot_reach_optimizer_step[-inf-23]",
+        "npa/tests/workbench/test_flex_pi_training_loss_sync.py::test_nonfinite_earlier_loss_cannot_reach_optimizer_step[inf-0]",
+        "npa/tests/workbench/test_flex_pi_training_loss_sync.py::test_nonfinite_earlier_loss_cannot_reach_optimizer_step[inf-11]",
+        "npa/tests/workbench/test_flex_pi_training_loss_sync.py::test_nonfinite_earlier_loss_cannot_reach_optimizer_step[inf-23]",
+        "npa/tests/workbench/test_flex_pi_training_loss_sync.py::test_nonfinite_earlier_loss_cannot_reach_optimizer_step[nan-0]",
+        "npa/tests/workbench/test_flex_pi_training_loss_sync.py::test_nonfinite_earlier_loss_cannot_reach_optimizer_step[nan-11]",
+        "npa/tests/workbench/test_flex_pi_training_loss_sync.py::test_nonfinite_earlier_loss_cannot_reach_optimizer_step[nan-23]",
+        "npa/tests/workbench/test_flex_pi_training_loss_sync.py::test_nonfinite_remote_rank_prevents_local_optimizer_update"
+      ],
+      "gated_tests_exercised": 16,
+      "which_gated_tests_remain_undecided": [],
       "what_a_count_delta_would_have_said": 0,
       "rose_into_passing_without_having_skipped": [],
-      "dropped_out_of_passing_under_poison": [],
+      "dropped_out_of_passing_under_bypass": [],
       "absent": {
         "passed": 0,
         "failed": 0,
@@ -593,9 +734,9 @@
             "npa/tests/workbench/test_flex_pi_training_loss_sync.py::test_nonfinite_remote_rank_prevents_local_optimizer_update"
           ]
         },
-        "parent_unavailable": false
+        "returncode": 0
       },
-      "poisoned": {
+      "bypassed": {
         "passed": 0,
         "failed": 0,
         "skipped": 0,
@@ -620,7 +761,212 @@
             "npa/tests/workbench/test_flex_pi_training_loss_sync.py::test_nonfinite_remote_rank_prevents_local_optimizer_update"
           ]
         },
-        "parent_unavailable": false
+        "returncode": 1
+      }
+    },
+    {
+      "file": "npa/tests/workbench/test_open3d_rrd_verifier.py",
+      "fixture": "recording",
+      "module": "rerun",
+      "module_present_in_this_environment": true,
+      "ci_installs_it": null,
+      "verdict": "dependency_required",
+      "live_or_latent": "unknown: the CI snapshot does not map this module",
+      "test_file_handlers_that_could_swallow_the_sentinel": [],
+      "tests_that_pass_without_it": 0,
+      "which_tests_pass_without_it": [],
+      "tests_that_require_it": 14,
+      "which_tests_require_it": [
+        "npa/tests/workbench/test_open3d_rrd_verifier.py::test_a_mostly_complete_recording_is_refused",
+        "npa/tests/workbench/test_open3d_rrd_verifier.py::test_a_real_recording_is_accepted",
+        "npa/tests/workbench/test_open3d_rrd_verifier.py::test_a_recording_that_logged_nothing_is_refused",
+        "npa/tests/workbench/test_open3d_rrd_verifier.py::test_a_recording_truncated_to_its_header_is_refused",
+        "npa/tests/workbench/test_open3d_rrd_verifier.py::test_an_interrupt_is_not_swallowed_by_the_decode_guard[KeyboardInterrupt]",
+        "npa/tests/workbench/test_open3d_rrd_verifier.py::test_an_interrupt_is_not_swallowed_by_the_decode_guard[SystemExit]",
+        "npa/tests/workbench/test_open3d_rrd_verifier.py::test_an_io_error_during_the_decode_is_reported_as_an_open3d_error",
+        "npa/tests/workbench/test_open3d_rrd_verifier.py::test_an_unimportable_sdk_is_reported_as_an_open3d_error",
+        "npa/tests/workbench/test_open3d_rrd_verifier.py::test_an_unreadable_file_on_disk_is_reported_as_an_open3d_error",
+        "npa/tests/workbench/test_open3d_rrd_verifier.py::test_each_check_is_the_only_one_that_catches_its_shape",
+        "npa/tests/workbench/test_open3d_rrd_verifier.py::test_no_truncation_of_a_recording_passes_every_check[many_chunks]",
+        "npa/tests/workbench/test_open3d_rrd_verifier.py::test_no_truncation_of_a_recording_passes_every_check[one_chunk]",
+        "npa/tests/workbench/test_open3d_rrd_verifier.py::test_the_cli_is_not_redundant_at_a_realistic_recording_size",
+        "npa/tests/workbench/test_open3d_rrd_verifier.py::test_the_reserved_prefix_still_covers_rerun_own_metadata_path"
+      ],
+      "gated_tests_exercised": 14,
+      "which_gated_tests_remain_undecided": [],
+      "what_a_count_delta_would_have_said": 0,
+      "rose_into_passing_without_having_skipped": [],
+      "dropped_out_of_passing_under_bypass": [],
+      "absent": {
+        "passed": 3,
+        "failed": 2,
+        "skipped": 14,
+        "error": 0,
+        "nodes": {
+          "failed": [
+            "npa/tests/workbench/test_open3d_rrd_verifier.py::test_an_empty_recording_is_refused",
+            "npa/tests/workbench/test_open3d_rrd_verifier.py::test_the_cli_is_resolvable_wherever_the_sdk_is_installed"
+          ],
+          "passed": [
+            "npa/tests/workbench/test_open3d_rrd_verifier.py::test_a_file_that_is_merely_named_rrd_is_refused",
+            "npa/tests/workbench/test_open3d_rrd_verifier.py::test_a_missing_file_does_not_pass_verification",
+            "npa/tests/workbench/test_open3d_rrd_verifier.py::test_an_unavailable_cli_is_reported_as_such"
+          ],
+          "skipped": [
+            "npa/tests/workbench/test_open3d_rrd_verifier.py::test_a_mostly_complete_recording_is_refused",
+            "npa/tests/workbench/test_open3d_rrd_verifier.py::test_a_real_recording_is_accepted",
+            "npa/tests/workbench/test_open3d_rrd_verifier.py::test_a_recording_that_logged_nothing_is_refused",
+            "npa/tests/workbench/test_open3d_rrd_verifier.py::test_a_recording_truncated_to_its_header_is_refused",
+            "npa/tests/workbench/test_open3d_rrd_verifier.py::test_an_interrupt_is_not_swallowed_by_the_decode_guard[KeyboardInterrupt]",
+            "npa/tests/workbench/test_open3d_rrd_verifier.py::test_an_interrupt_is_not_swallowed_by_the_decode_guard[SystemExit]",
+            "npa/tests/workbench/test_open3d_rrd_verifier.py::test_an_io_error_during_the_decode_is_reported_as_an_open3d_error",
+            "npa/tests/workbench/test_open3d_rrd_verifier.py::test_an_unimportable_sdk_is_reported_as_an_open3d_error",
+            "npa/tests/workbench/test_open3d_rrd_verifier.py::test_an_unreadable_file_on_disk_is_reported_as_an_open3d_error",
+            "npa/tests/workbench/test_open3d_rrd_verifier.py::test_each_check_is_the_only_one_that_catches_its_shape",
+            "npa/tests/workbench/test_open3d_rrd_verifier.py::test_no_truncation_of_a_recording_passes_every_check[many_chunks]",
+            "npa/tests/workbench/test_open3d_rrd_verifier.py::test_no_truncation_of_a_recording_passes_every_check[one_chunk]",
+            "npa/tests/workbench/test_open3d_rrd_verifier.py::test_the_cli_is_not_redundant_at_a_realistic_recording_size",
+            "npa/tests/workbench/test_open3d_rrd_verifier.py::test_the_reserved_prefix_still_covers_rerun_own_metadata_path"
+          ]
+        },
+        "returncode": 1
+      },
+      "bypassed": {
+        "passed": 3,
+        "failed": 7,
+        "skipped": 0,
+        "error": 9,
+        "nodes": {
+          "error": [
+            "npa/tests/workbench/test_open3d_rrd_verifier.py::test_a_mostly_complete_recording_is_refused",
+            "npa/tests/workbench/test_open3d_rrd_verifier.py::test_a_real_recording_is_accepted",
+            "npa/tests/workbench/test_open3d_rrd_verifier.py::test_a_recording_truncated_to_its_header_is_refused",
+            "npa/tests/workbench/test_open3d_rrd_verifier.py::test_an_interrupt_is_not_swallowed_by_the_decode_guard[KeyboardInterrupt]",
+            "npa/tests/workbench/test_open3d_rrd_verifier.py::test_an_interrupt_is_not_swallowed_by_the_decode_guard[SystemExit]",
+            "npa/tests/workbench/test_open3d_rrd_verifier.py::test_an_io_error_during_the_decode_is_reported_as_an_open3d_error",
+            "npa/tests/workbench/test_open3d_rrd_verifier.py::test_an_unimportable_sdk_is_reported_as_an_open3d_error",
+            "npa/tests/workbench/test_open3d_rrd_verifier.py::test_an_unreadable_file_on_disk_is_reported_as_an_open3d_error",
+            "npa/tests/workbench/test_open3d_rrd_verifier.py::test_each_check_is_the_only_one_that_catches_its_shape"
+          ],
+          "failed": [
+            "npa/tests/workbench/test_open3d_rrd_verifier.py::test_a_recording_that_logged_nothing_is_refused",
+            "npa/tests/workbench/test_open3d_rrd_verifier.py::test_an_empty_recording_is_refused",
+            "npa/tests/workbench/test_open3d_rrd_verifier.py::test_no_truncation_of_a_recording_passes_every_check[many_chunks]",
+            "npa/tests/workbench/test_open3d_rrd_verifier.py::test_no_truncation_of_a_recording_passes_every_check[one_chunk]",
+            "npa/tests/workbench/test_open3d_rrd_verifier.py::test_the_cli_is_not_redundant_at_a_realistic_recording_size",
+            "npa/tests/workbench/test_open3d_rrd_verifier.py::test_the_cli_is_resolvable_wherever_the_sdk_is_installed",
+            "npa/tests/workbench/test_open3d_rrd_verifier.py::test_the_reserved_prefix_still_covers_rerun_own_metadata_path"
+          ],
+          "passed": [
+            "npa/tests/workbench/test_open3d_rrd_verifier.py::test_a_file_that_is_merely_named_rrd_is_refused",
+            "npa/tests/workbench/test_open3d_rrd_verifier.py::test_a_missing_file_does_not_pass_verification",
+            "npa/tests/workbench/test_open3d_rrd_verifier.py::test_an_unavailable_cli_is_reported_as_such"
+          ]
+        },
+        "returncode": 1
+      }
+    },
+    {
+      "file": "npa/tests/workbench/test_open3d_rrd_verifier.py",
+      "fixture": "recording",
+      "module": "numpy",
+      "module_present_in_this_environment": true,
+      "ci_installs_it": true,
+      "verdict": "undecided_no_gated_test_executed",
+      "why": "all tests gated by this fixture remained skipped in bypass mode",
+      "live_or_latent": "latent: CI installs this module",
+      "test_file_handlers_that_could_swallow_the_sentinel": [],
+      "tests_that_pass_without_it": 0,
+      "which_tests_pass_without_it": [],
+      "tests_that_require_it": 0,
+      "which_tests_require_it": [],
+      "gated_tests_exercised": 0,
+      "which_gated_tests_remain_undecided": [
+        "npa/tests/workbench/test_open3d_rrd_verifier.py::test_a_mostly_complete_recording_is_refused",
+        "npa/tests/workbench/test_open3d_rrd_verifier.py::test_a_real_recording_is_accepted",
+        "npa/tests/workbench/test_open3d_rrd_verifier.py::test_a_recording_that_logged_nothing_is_refused",
+        "npa/tests/workbench/test_open3d_rrd_verifier.py::test_a_recording_truncated_to_its_header_is_refused",
+        "npa/tests/workbench/test_open3d_rrd_verifier.py::test_an_interrupt_is_not_swallowed_by_the_decode_guard[KeyboardInterrupt]",
+        "npa/tests/workbench/test_open3d_rrd_verifier.py::test_an_interrupt_is_not_swallowed_by_the_decode_guard[SystemExit]",
+        "npa/tests/workbench/test_open3d_rrd_verifier.py::test_an_io_error_during_the_decode_is_reported_as_an_open3d_error",
+        "npa/tests/workbench/test_open3d_rrd_verifier.py::test_an_unimportable_sdk_is_reported_as_an_open3d_error",
+        "npa/tests/workbench/test_open3d_rrd_verifier.py::test_an_unreadable_file_on_disk_is_reported_as_an_open3d_error",
+        "npa/tests/workbench/test_open3d_rrd_verifier.py::test_each_check_is_the_only_one_that_catches_its_shape",
+        "npa/tests/workbench/test_open3d_rrd_verifier.py::test_no_truncation_of_a_recording_passes_every_check[many_chunks]",
+        "npa/tests/workbench/test_open3d_rrd_verifier.py::test_no_truncation_of_a_recording_passes_every_check[one_chunk]",
+        "npa/tests/workbench/test_open3d_rrd_verifier.py::test_the_cli_is_not_redundant_at_a_realistic_recording_size",
+        "npa/tests/workbench/test_open3d_rrd_verifier.py::test_the_reserved_prefix_still_covers_rerun_own_metadata_path"
+      ],
+      "what_a_count_delta_would_have_said": 0,
+      "rose_into_passing_without_having_skipped": [],
+      "dropped_out_of_passing_under_bypass": [],
+      "absent": {
+        "passed": 3,
+        "failed": 2,
+        "skipped": 14,
+        "error": 0,
+        "nodes": {
+          "failed": [
+            "npa/tests/workbench/test_open3d_rrd_verifier.py::test_an_empty_recording_is_refused",
+            "npa/tests/workbench/test_open3d_rrd_verifier.py::test_the_cli_is_resolvable_wherever_the_sdk_is_installed"
+          ],
+          "passed": [
+            "npa/tests/workbench/test_open3d_rrd_verifier.py::test_a_file_that_is_merely_named_rrd_is_refused",
+            "npa/tests/workbench/test_open3d_rrd_verifier.py::test_a_missing_file_does_not_pass_verification",
+            "npa/tests/workbench/test_open3d_rrd_verifier.py::test_an_unavailable_cli_is_reported_as_such"
+          ],
+          "skipped": [
+            "npa/tests/workbench/test_open3d_rrd_verifier.py::test_a_mostly_complete_recording_is_refused",
+            "npa/tests/workbench/test_open3d_rrd_verifier.py::test_a_real_recording_is_accepted",
+            "npa/tests/workbench/test_open3d_rrd_verifier.py::test_a_recording_that_logged_nothing_is_refused",
+            "npa/tests/workbench/test_open3d_rrd_verifier.py::test_a_recording_truncated_to_its_header_is_refused",
+            "npa/tests/workbench/test_open3d_rrd_verifier.py::test_an_interrupt_is_not_swallowed_by_the_decode_guard[KeyboardInterrupt]",
+            "npa/tests/workbench/test_open3d_rrd_verifier.py::test_an_interrupt_is_not_swallowed_by_the_decode_guard[SystemExit]",
+            "npa/tests/workbench/test_open3d_rrd_verifier.py::test_an_io_error_during_the_decode_is_reported_as_an_open3d_error",
+            "npa/tests/workbench/test_open3d_rrd_verifier.py::test_an_unimportable_sdk_is_reported_as_an_open3d_error",
+            "npa/tests/workbench/test_open3d_rrd_verifier.py::test_an_unreadable_file_on_disk_is_reported_as_an_open3d_error",
+            "npa/tests/workbench/test_open3d_rrd_verifier.py::test_each_check_is_the_only_one_that_catches_its_shape",
+            "npa/tests/workbench/test_open3d_rrd_verifier.py::test_no_truncation_of_a_recording_passes_every_check[many_chunks]",
+            "npa/tests/workbench/test_open3d_rrd_verifier.py::test_no_truncation_of_a_recording_passes_every_check[one_chunk]",
+            "npa/tests/workbench/test_open3d_rrd_verifier.py::test_the_cli_is_not_redundant_at_a_realistic_recording_size",
+            "npa/tests/workbench/test_open3d_rrd_verifier.py::test_the_reserved_prefix_still_covers_rerun_own_metadata_path"
+          ]
+        },
+        "returncode": 1
+      },
+      "bypassed": {
+        "passed": 3,
+        "failed": 2,
+        "skipped": 14,
+        "error": 0,
+        "nodes": {
+          "failed": [
+            "npa/tests/workbench/test_open3d_rrd_verifier.py::test_an_empty_recording_is_refused",
+            "npa/tests/workbench/test_open3d_rrd_verifier.py::test_the_cli_is_resolvable_wherever_the_sdk_is_installed"
+          ],
+          "passed": [
+            "npa/tests/workbench/test_open3d_rrd_verifier.py::test_a_file_that_is_merely_named_rrd_is_refused",
+            "npa/tests/workbench/test_open3d_rrd_verifier.py::test_a_missing_file_does_not_pass_verification",
+            "npa/tests/workbench/test_open3d_rrd_verifier.py::test_an_unavailable_cli_is_reported_as_such"
+          ],
+          "skipped": [
+            "npa/tests/workbench/test_open3d_rrd_verifier.py::test_a_mostly_complete_recording_is_refused",
+            "npa/tests/workbench/test_open3d_rrd_verifier.py::test_a_real_recording_is_accepted",
+            "npa/tests/workbench/test_open3d_rrd_verifier.py::test_a_recording_that_logged_nothing_is_refused",
+            "npa/tests/workbench/test_open3d_rrd_verifier.py::test_a_recording_truncated_to_its_header_is_refused",
+            "npa/tests/workbench/test_open3d_rrd_verifier.py::test_an_interrupt_is_not_swallowed_by_the_decode_guard[KeyboardInterrupt]",
+            "npa/tests/workbench/test_open3d_rrd_verifier.py::test_an_interrupt_is_not_swallowed_by_the_decode_guard[SystemExit]",
+            "npa/tests/workbench/test_open3d_rrd_verifier.py::test_an_io_error_during_the_decode_is_reported_as_an_open3d_error",
+            "npa/tests/workbench/test_open3d_rrd_verifier.py::test_an_unimportable_sdk_is_reported_as_an_open3d_error",
+            "npa/tests/workbench/test_open3d_rrd_verifier.py::test_an_unreadable_file_on_disk_is_reported_as_an_open3d_error",
+            "npa/tests/workbench/test_open3d_rrd_verifier.py::test_each_check_is_the_only_one_that_catches_its_shape",
+            "npa/tests/workbench/test_open3d_rrd_verifier.py::test_no_truncation_of_a_recording_passes_every_check[many_chunks]",
+            "npa/tests/workbench/test_open3d_rrd_verifier.py::test_no_truncation_of_a_recording_passes_every_check[one_chunk]",
+            "npa/tests/workbench/test_open3d_rrd_verifier.py::test_the_cli_is_not_redundant_at_a_realistic_recording_size",
+            "npa/tests/workbench/test_open3d_rrd_verifier.py::test_the_reserved_prefix_still_covers_rerun_own_metadata_path"
+          ]
+        },
+        "returncode": 1
       }
     },
     {
@@ -629,14 +975,49 @@
       "module": "torch",
       "module_present_in_this_environment": false,
       "ci_installs_it": true,
-      "verdict": "skip_is_justified",
-      "live_or_latent": "latent: CI installs this module, so nothing is skipped today and these tests go quiet the moment the dependency is dropped",
-      "handlers_that_could_swallow_the_poison": [],
+      "verdict": "undecided_no_gated_test_executed",
+      "why": "all tests gated by this fixture remained skipped in bypass mode",
+      "live_or_latent": "latent: CI installs this module",
+      "test_file_handlers_that_could_swallow_the_sentinel": [],
       "tests_that_pass_without_it": 0,
       "which_tests_pass_without_it": [],
+      "tests_that_require_it": 0,
+      "which_tests_require_it": [],
+      "gated_tests_exercised": 0,
+      "which_gated_tests_remain_undecided": [
+        "npa/tests/workflows/navigation/test_baseline_anchor.py::test_binding_preserves_exact_native_snapshot_and_rng",
+        "npa/tests/workflows/navigation/test_baseline_anchor.py::test_binding_rejects_changed_initial_state_or_randomness[optimizer]",
+        "npa/tests/workflows/navigation/test_baseline_anchor.py::test_binding_rejects_changed_initial_state_or_randomness[rng]",
+        "npa/tests/workflows/navigation/test_baseline_anchor.py::test_binding_rejects_changed_initial_state_or_randomness[snapshot]",
+        "npa/tests/workflows/navigation/test_baseline_anchor.py::test_incomplete_minibatch_population_and_unbound_update_reject",
+        "npa/tests/workflows/navigation/test_baseline_anchor.py::test_inference_needs_only_candidate_checkpoint_and_no_teacher",
+        "npa/tests/workflows/navigation/test_baseline_anchor.py::test_kl_math_gradients_and_frozen_teacher",
+        "npa/tests/workflows/navigation/test_baseline_anchor.py::test_native_none_and_zero_coefficient_are_bitwise_equivalent",
+        "npa/tests/workflows/navigation/test_baseline_anchor.py::test_native_update_with_disabled_observation_normalization[False]",
+        "npa/tests/workflows/navigation/test_baseline_anchor.py::test_native_version_and_source_guards_reject",
+        "npa/tests/workflows/navigation/test_baseline_anchor.py::test_nonfinite_or_zero_deviation_fails_before_update",
+        "npa/tests/workflows/navigation/test_baseline_anchor.py::test_null_resume_metadata_and_changed_teacher_reject",
+        "npa/tests/workflows/navigation/test_baseline_anchor.py::test_real_update_counts_all_samples_without_teacher_normalization_or_rng",
+        "npa/tests/workflows/navigation/test_baseline_anchor.py::test_refactored_update_matches_native_with_zero_auxiliary_loss[adaptive]",
+        "npa/tests/workflows/navigation/test_baseline_anchor.py::test_refactored_update_matches_native_with_zero_auxiliary_loss[fixed]",
+        "npa/tests/workflows/navigation/test_baseline_anchor.py::test_resume_keeps_original_teacher_and_exact_next_update[adaptive]",
+        "npa/tests/workflows/navigation/test_baseline_anchor.py::test_resume_keeps_original_teacher_and_exact_next_update[fixed]",
+        "npa/tests/workflows/navigation/test_baseline_anchor.py::test_resume_rejects_tampered_or_missing_anchor_provenance[coefficient]",
+        "npa/tests/workflows/navigation/test_baseline_anchor.py::test_resume_rejects_tampered_or_missing_anchor_provenance[fields]",
+        "npa/tests/workflows/navigation/test_baseline_anchor.py::test_resume_rejects_tampered_or_missing_anchor_provenance[missing]",
+        "npa/tests/workflows/navigation/test_baseline_anchor.py::test_resume_rejects_tampered_or_missing_anchor_provenance[samples]",
+        "npa/tests/workflows/navigation/test_baseline_anchor.py::test_resume_rejects_tampered_or_missing_anchor_provenance[schedule]",
+        "npa/tests/workflows/navigation/test_baseline_anchor.py::test_resume_rejects_tampered_or_missing_anchor_provenance[source]",
+        "npa/tests/workflows/navigation/test_baseline_anchor.py::test_resume_rejects_tampered_or_missing_anchor_provenance[steps]",
+        "npa/tests/workflows/navigation/test_baseline_anchor.py::test_resume_rejects_tampered_or_missing_anchor_provenance[teacher]",
+        "npa/tests/workflows/navigation/test_baseline_anchor.py::test_state_digest_preserves_nested_mapping_structure",
+        "npa/tests/workflows/navigation/test_baseline_anchor.py::test_unsupported_extensions_reject_before_native_initialization[multi_gpu_cfg]",
+        "npa/tests/workflows/navigation/test_baseline_anchor.py::test_unsupported_extensions_reject_before_native_initialization[rnd_cfg]",
+        "npa/tests/workflows/navigation/test_baseline_anchor.py::test_unsupported_extensions_reject_before_native_initialization[symmetry_cfg]"
+      ],
       "what_a_count_delta_would_have_said": 0,
       "rose_into_passing_without_having_skipped": [],
-      "dropped_out_of_passing_under_poison": [],
+      "dropped_out_of_passing_under_bypass": [],
       "absent": {
         "passed": 0,
         "failed": 0,
@@ -675,9 +1056,9 @@
             "npa/tests/workflows/navigation/test_baseline_anchor.py::test_unsupported_extensions_reject_before_native_initialization[symmetry_cfg]"
           ]
         },
-        "parent_unavailable": false
+        "returncode": 0
       },
-      "poisoned": {
+      "bypassed": {
         "passed": 0,
         "failed": 0,
         "skipped": 29,
@@ -715,7 +1096,7 @@
             "npa/tests/workflows/navigation/test_baseline_anchor.py::test_unsupported_extensions_reject_before_native_initialization[symmetry_cfg]"
           ]
         },
-        "parent_unavailable": false
+        "returncode": 0
       }
     },
     {
@@ -723,15 +1104,50 @@
       "fixture": "native",
       "module": "rsl_rl",
       "module_present_in_this_environment": false,
-      "ci_installs_it": false,
-      "verdict": "skip_is_justified",
-      "live_or_latent": "live: CI does not install this module, so these tests are being skipped in CI now",
-      "handlers_that_could_swallow_the_poison": [],
+      "ci_installs_it": true,
+      "verdict": "undecided_no_gated_test_executed",
+      "why": "all tests gated by this fixture remained skipped in bypass mode",
+      "live_or_latent": "latent: CI installs this module",
+      "test_file_handlers_that_could_swallow_the_sentinel": [],
       "tests_that_pass_without_it": 0,
       "which_tests_pass_without_it": [],
+      "tests_that_require_it": 0,
+      "which_tests_require_it": [],
+      "gated_tests_exercised": 0,
+      "which_gated_tests_remain_undecided": [
+        "npa/tests/workflows/navigation/test_baseline_anchor.py::test_binding_preserves_exact_native_snapshot_and_rng",
+        "npa/tests/workflows/navigation/test_baseline_anchor.py::test_binding_rejects_changed_initial_state_or_randomness[optimizer]",
+        "npa/tests/workflows/navigation/test_baseline_anchor.py::test_binding_rejects_changed_initial_state_or_randomness[rng]",
+        "npa/tests/workflows/navigation/test_baseline_anchor.py::test_binding_rejects_changed_initial_state_or_randomness[snapshot]",
+        "npa/tests/workflows/navigation/test_baseline_anchor.py::test_incomplete_minibatch_population_and_unbound_update_reject",
+        "npa/tests/workflows/navigation/test_baseline_anchor.py::test_inference_needs_only_candidate_checkpoint_and_no_teacher",
+        "npa/tests/workflows/navigation/test_baseline_anchor.py::test_kl_math_gradients_and_frozen_teacher",
+        "npa/tests/workflows/navigation/test_baseline_anchor.py::test_native_none_and_zero_coefficient_are_bitwise_equivalent",
+        "npa/tests/workflows/navigation/test_baseline_anchor.py::test_native_update_with_disabled_observation_normalization[False]",
+        "npa/tests/workflows/navigation/test_baseline_anchor.py::test_native_version_and_source_guards_reject",
+        "npa/tests/workflows/navigation/test_baseline_anchor.py::test_nonfinite_or_zero_deviation_fails_before_update",
+        "npa/tests/workflows/navigation/test_baseline_anchor.py::test_null_resume_metadata_and_changed_teacher_reject",
+        "npa/tests/workflows/navigation/test_baseline_anchor.py::test_real_update_counts_all_samples_without_teacher_normalization_or_rng",
+        "npa/tests/workflows/navigation/test_baseline_anchor.py::test_refactored_update_matches_native_with_zero_auxiliary_loss[adaptive]",
+        "npa/tests/workflows/navigation/test_baseline_anchor.py::test_refactored_update_matches_native_with_zero_auxiliary_loss[fixed]",
+        "npa/tests/workflows/navigation/test_baseline_anchor.py::test_resume_keeps_original_teacher_and_exact_next_update[adaptive]",
+        "npa/tests/workflows/navigation/test_baseline_anchor.py::test_resume_keeps_original_teacher_and_exact_next_update[fixed]",
+        "npa/tests/workflows/navigation/test_baseline_anchor.py::test_resume_rejects_tampered_or_missing_anchor_provenance[coefficient]",
+        "npa/tests/workflows/navigation/test_baseline_anchor.py::test_resume_rejects_tampered_or_missing_anchor_provenance[fields]",
+        "npa/tests/workflows/navigation/test_baseline_anchor.py::test_resume_rejects_tampered_or_missing_anchor_provenance[missing]",
+        "npa/tests/workflows/navigation/test_baseline_anchor.py::test_resume_rejects_tampered_or_missing_anchor_provenance[samples]",
+        "npa/tests/workflows/navigation/test_baseline_anchor.py::test_resume_rejects_tampered_or_missing_anchor_provenance[schedule]",
+        "npa/tests/workflows/navigation/test_baseline_anchor.py::test_resume_rejects_tampered_or_missing_anchor_provenance[source]",
+        "npa/tests/workflows/navigation/test_baseline_anchor.py::test_resume_rejects_tampered_or_missing_anchor_provenance[steps]",
+        "npa/tests/workflows/navigation/test_baseline_anchor.py::test_resume_rejects_tampered_or_missing_anchor_provenance[teacher]",
+        "npa/tests/workflows/navigation/test_baseline_anchor.py::test_state_digest_preserves_nested_mapping_structure",
+        "npa/tests/workflows/navigation/test_baseline_anchor.py::test_unsupported_extensions_reject_before_native_initialization[multi_gpu_cfg]",
+        "npa/tests/workflows/navigation/test_baseline_anchor.py::test_unsupported_extensions_reject_before_native_initialization[rnd_cfg]",
+        "npa/tests/workflows/navigation/test_baseline_anchor.py::test_unsupported_extensions_reject_before_native_initialization[symmetry_cfg]"
+      ],
       "what_a_count_delta_would_have_said": 0,
       "rose_into_passing_without_having_skipped": [],
-      "dropped_out_of_passing_under_poison": [],
+      "dropped_out_of_passing_under_bypass": [],
       "absent": {
         "passed": 0,
         "failed": 0,
@@ -770,9 +1186,9 @@
             "npa/tests/workflows/navigation/test_baseline_anchor.py::test_unsupported_extensions_reject_before_native_initialization[symmetry_cfg]"
           ]
         },
-        "parent_unavailable": false
+        "returncode": 0
       },
-      "poisoned": {
+      "bypassed": {
         "passed": 0,
         "failed": 0,
         "skipped": 29,
@@ -810,7 +1226,7 @@
             "npa/tests/workflows/navigation/test_baseline_anchor.py::test_unsupported_extensions_reject_before_native_initialization[symmetry_cfg]"
           ]
         },
-        "parent_unavailable": false
+        "returncode": 0
       }
     },
     {
@@ -819,14 +1235,27 @@
       "module": "torch",
       "module_present_in_this_environment": false,
       "ci_installs_it": true,
-      "verdict": "skip_is_justified",
-      "live_or_latent": "latent: CI installs this module, so nothing is skipped today and these tests go quiet the moment the dependency is dropped",
-      "handlers_that_could_swallow_the_poison": [],
+      "verdict": "dependency_required",
+      "live_or_latent": "latent: CI installs this module",
+      "test_file_handlers_that_could_swallow_the_sentinel": [],
       "tests_that_pass_without_it": 0,
       "which_tests_pass_without_it": [],
+      "tests_that_require_it": 8,
+      "which_tests_require_it": [
+        "npa/tests/workflows/navigation/test_contact_evidence.py::test_actual_paths_bind_poses_independently_from_classified_indices",
+        "npa/tests/workflows/navigation/test_contact_evidence.py::test_body_mapping_rejects_ambiguous_native_paths",
+        "npa/tests/workflows/navigation/test_contact_evidence.py::test_contacts_outside_probe_interval_are_not_recorded",
+        "npa/tests/workflows/navigation/test_contact_evidence.py::test_empty_interval_retains_zero_population_aggregate",
+        "npa/tests/workflows/navigation/test_contact_evidence.py::test_native_step_exception_retains_partial_contacts_before_propagating",
+        "npa/tests/workflows/navigation/test_contact_evidence.py::test_recognized_original_contact_is_retained_with_effective_counts_and_geometry",
+        "npa/tests/workflows/navigation/test_contact_evidence.py::test_small_individual_contacts_and_distinct_aggregate_peak_are_retained",
+        "npa/tests/workflows/navigation/test_contact_evidence.py::test_v3_nonfoot_geometry_has_false_witness_sentinel"
+      ],
+      "gated_tests_exercised": 8,
+      "which_gated_tests_remain_undecided": [],
       "what_a_count_delta_would_have_said": 0,
       "rose_into_passing_without_having_skipped": [],
-      "dropped_out_of_passing_under_poison": [],
+      "dropped_out_of_passing_under_bypass": [],
       "absent": {
         "passed": 1,
         "failed": 0,
@@ -847,9 +1276,9 @@
             "npa/tests/workflows/navigation/test_contact_evidence.py::test_v3_nonfoot_geometry_has_false_witness_sentinel"
           ]
         },
-        "parent_unavailable": false
+        "returncode": 0
       },
-      "poisoned": {
+      "bypassed": {
         "passed": 1,
         "failed": 0,
         "skipped": 0,
@@ -869,7 +1298,7 @@
             "npa/tests/workflows/navigation/test_contact_evidence.py::test_recorded_probe_exits_recorder_before_physical_gate"
           ]
         },
-        "parent_unavailable": false
+        "returncode": 1
       }
     },
     {
@@ -878,14 +1307,23 @@
       "module": "torch",
       "module_present_in_this_environment": false,
       "ci_installs_it": true,
-      "verdict": "skip_is_justified",
-      "live_or_latent": "latent: CI installs this module, so nothing is skipped today and these tests go quiet the moment the dependency is dropped",
-      "handlers_that_could_swallow_the_poison": [],
+      "verdict": "dependency_required",
+      "live_or_latent": "latent: CI installs this module",
+      "test_file_handlers_that_could_swallow_the_sentinel": [],
       "tests_that_pass_without_it": 0,
       "which_tests_pass_without_it": [],
+      "tests_that_require_it": 4,
+      "which_tests_require_it": [
+        "npa/tests/workflows/navigation/test_reference_arrival.py::test_arrival_excludes_boundary_collision_peer_and_physical_failure",
+        "npa/tests/workflows/navigation/test_reference_arrival.py::test_arrival_reward_remains_available_between_termination_and_reset",
+        "npa/tests/workflows/navigation/test_reference_arrival.py::test_nonterminal_probe_and_evaluation_cannot_repeat_arrival_reward[False-False]",
+        "npa/tests/workflows/navigation/test_reference_arrival.py::test_nonterminal_probe_and_evaluation_cannot_repeat_arrival_reward[True-True]"
+      ],
+      "gated_tests_exercised": 4,
+      "which_gated_tests_remain_undecided": [],
       "what_a_count_delta_would_have_said": 0,
       "rose_into_passing_without_having_skipped": [],
-      "dropped_out_of_passing_under_poison": [],
+      "dropped_out_of_passing_under_bypass": [],
       "absent": {
         "passed": 0,
         "failed": 0,
@@ -899,9 +1337,9 @@
             "npa/tests/workflows/navigation/test_reference_arrival.py::test_nonterminal_probe_and_evaluation_cannot_repeat_arrival_reward[True-True]"
           ]
         },
-        "parent_unavailable": false
+        "returncode": 0
       },
-      "poisoned": {
+      "bypassed": {
         "passed": 0,
         "failed": 0,
         "skipped": 0,
@@ -914,7 +1352,7 @@
             "npa/tests/workflows/navigation/test_reference_arrival.py::test_nonterminal_probe_and_evaluation_cannot_repeat_arrival_reward[True-True]"
           ]
         },
-        "parent_unavailable": false
+        "returncode": 1
       }
     },
     {
@@ -923,155 +1361,15 @@
       "module": "pxr",
       "module_present_in_this_environment": true,
       "ci_installs_it": true,
-      "verdict": "skip_is_justified",
-      "live_or_latent": "latent: CI installs this module, so nothing is skipped today and these tests go quiet the moment the dependency is dropped",
-      "handlers_that_could_swallow_the_poison": [],
-      "tests_that_pass_without_it": 0,
-      "which_tests_pass_without_it": [],
-      "what_a_count_delta_would_have_said": 0,
-      "rose_into_passing_without_having_skipped": [],
-      "dropped_out_of_passing_under_poison": [],
+      "verdict": "not_measurable_here",
+      "why": "nothing skips for this module in this environment",
       "absent": {
         "passed": 0,
         "failed": 0,
-        "skipped": 2,
-        "error": 0,
-        "nodes": {},
-        "parent_unavailable": false
-      },
-      "poisoned": {
-        "passed": 0,
-        "failed": 0,
-        "skipped": 2,
-        "error": 0,
-        "nodes": {},
-        "parent_unavailable": false
-      }
-    },
-    {
-      "file": "npa/tests/workflows/test_franka_rl_assets.py",
-      "fixture": "test_actual_usd_parser_reads_asset_and_collision_shapes",
-      "module": "pxr.Usd",
-      "module_present_in_this_environment": true,
-      "ci_installs_it": true,
-      "verdict": "skip_is_justified",
-      "live_or_latent": "latent: CI installs this module, so nothing is skipped today and these tests go quiet the moment the dependency is dropped",
-      "handlers_that_could_swallow_the_poison": [],
-      "tests_that_pass_without_it": 0,
-      "which_tests_pass_without_it": [],
-      "what_a_count_delta_would_have_said": 0,
-      "rose_into_passing_without_having_skipped": [],
-      "dropped_out_of_passing_under_poison": [],
-      "absent": {
-        "passed": 4,
-        "failed": 0,
-        "skipped": 7,
-        "error": 0,
-        "nodes": {
-          "passed": [
-            "npa/tests/workflows/test_franka_rl_assets.py::test_asset_mutation_refuses_simulation_instead_of_falling_back",
-            "npa/tests/workflows/test_franka_rl_assets.py::test_assets_are_deterministic_and_include_non_cube_contact_geometry",
-            "npa/tests/workflows/test_franka_rl_assets.py::test_replacing_geometry_preserves_task_solver_without_cube_scale",
-            "npa/tests/workflows/test_franka_rl_assets.py::test_unknown_asset_fails_before_any_artifact_is_created"
-          ],
-          "skipped": [
-            "npa/tests/workflows/test_franka_rl_assets.py::test_actual_usd_parser_reads_asset_and_collision_shapes[bottle-3]",
-            "npa/tests/workflows/test_franka_rl_assets.py::test_actual_usd_parser_reads_asset_and_collision_shapes[fixture-6]",
-            "npa/tests/workflows/test_franka_rl_assets.py::test_actual_usd_parser_reads_asset_and_collision_shapes[hex_nut-6]",
-            "npa/tests/workflows/test_franka_rl_assets.py::test_actual_usd_parser_reads_asset_and_collision_shapes[spool-3]",
-            "npa/tests/workflows/test_franka_rl_assets.py::test_sealed_distractors_rest_on_authored_tray_surface[bottle]",
-            "npa/tests/workflows/test_franka_rl_assets.py::test_sealed_distractors_rest_on_authored_tray_surface[hex_nut]",
-            "npa/tests/workflows/test_franka_rl_assets.py::test_sealed_distractors_rest_on_authored_tray_surface[spool]"
-          ]
-        },
-        "parent_unavailable": false
-      },
-      "poisoned": {
-        "passed": 4,
-        "failed": 7,
         "skipped": 0,
         "error": 0,
-        "nodes": {
-          "failed": [
-            "npa/tests/workflows/test_franka_rl_assets.py::test_actual_usd_parser_reads_asset_and_collision_shapes[bottle-3]",
-            "npa/tests/workflows/test_franka_rl_assets.py::test_actual_usd_parser_reads_asset_and_collision_shapes[fixture-6]",
-            "npa/tests/workflows/test_franka_rl_assets.py::test_actual_usd_parser_reads_asset_and_collision_shapes[hex_nut-6]",
-            "npa/tests/workflows/test_franka_rl_assets.py::test_actual_usd_parser_reads_asset_and_collision_shapes[spool-3]",
-            "npa/tests/workflows/test_franka_rl_assets.py::test_sealed_distractors_rest_on_authored_tray_surface[bottle]",
-            "npa/tests/workflows/test_franka_rl_assets.py::test_sealed_distractors_rest_on_authored_tray_surface[hex_nut]",
-            "npa/tests/workflows/test_franka_rl_assets.py::test_sealed_distractors_rest_on_authored_tray_surface[spool]"
-          ],
-          "passed": [
-            "npa/tests/workflows/test_franka_rl_assets.py::test_asset_mutation_refuses_simulation_instead_of_falling_back",
-            "npa/tests/workflows/test_franka_rl_assets.py::test_assets_are_deterministic_and_include_non_cube_contact_geometry",
-            "npa/tests/workflows/test_franka_rl_assets.py::test_replacing_geometry_preserves_task_solver_without_cube_scale",
-            "npa/tests/workflows/test_franka_rl_assets.py::test_unknown_asset_fails_before_any_artifact_is_created"
-          ]
-        },
-        "parent_unavailable": false
-      }
-    },
-    {
-      "file": "npa/tests/workflows/test_franka_rl_assets.py",
-      "fixture": "test_actual_usd_parser_reads_asset_and_collision_shapes",
-      "module": "pxr.UsdPhysics",
-      "module_present_in_this_environment": true,
-      "ci_installs_it": true,
-      "verdict": "skip_is_justified",
-      "live_or_latent": "latent: CI installs this module, so nothing is skipped today and these tests go quiet the moment the dependency is dropped",
-      "handlers_that_could_swallow_the_poison": [],
-      "tests_that_pass_without_it": 0,
-      "which_tests_pass_without_it": [],
-      "what_a_count_delta_would_have_said": 0,
-      "rose_into_passing_without_having_skipped": [],
-      "dropped_out_of_passing_under_poison": [],
-      "absent": {
-        "passed": 7,
-        "failed": 0,
-        "skipped": 4,
-        "error": 0,
-        "nodes": {
-          "passed": [
-            "npa/tests/workflows/test_franka_rl_assets.py::test_asset_mutation_refuses_simulation_instead_of_falling_back",
-            "npa/tests/workflows/test_franka_rl_assets.py::test_assets_are_deterministic_and_include_non_cube_contact_geometry",
-            "npa/tests/workflows/test_franka_rl_assets.py::test_replacing_geometry_preserves_task_solver_without_cube_scale",
-            "npa/tests/workflows/test_franka_rl_assets.py::test_sealed_distractors_rest_on_authored_tray_surface[bottle]",
-            "npa/tests/workflows/test_franka_rl_assets.py::test_sealed_distractors_rest_on_authored_tray_surface[hex_nut]",
-            "npa/tests/workflows/test_franka_rl_assets.py::test_sealed_distractors_rest_on_authored_tray_surface[spool]",
-            "npa/tests/workflows/test_franka_rl_assets.py::test_unknown_asset_fails_before_any_artifact_is_created"
-          ],
-          "skipped": [
-            "npa/tests/workflows/test_franka_rl_assets.py::test_actual_usd_parser_reads_asset_and_collision_shapes[bottle-3]",
-            "npa/tests/workflows/test_franka_rl_assets.py::test_actual_usd_parser_reads_asset_and_collision_shapes[fixture-6]",
-            "npa/tests/workflows/test_franka_rl_assets.py::test_actual_usd_parser_reads_asset_and_collision_shapes[hex_nut-6]",
-            "npa/tests/workflows/test_franka_rl_assets.py::test_actual_usd_parser_reads_asset_and_collision_shapes[spool-3]"
-          ]
-        },
-        "parent_unavailable": false
-      },
-      "poisoned": {
-        "passed": 7,
-        "failed": 4,
-        "skipped": 0,
-        "error": 0,
-        "nodes": {
-          "failed": [
-            "npa/tests/workflows/test_franka_rl_assets.py::test_actual_usd_parser_reads_asset_and_collision_shapes[bottle-3]",
-            "npa/tests/workflows/test_franka_rl_assets.py::test_actual_usd_parser_reads_asset_and_collision_shapes[fixture-6]",
-            "npa/tests/workflows/test_franka_rl_assets.py::test_actual_usd_parser_reads_asset_and_collision_shapes[hex_nut-6]",
-            "npa/tests/workflows/test_franka_rl_assets.py::test_actual_usd_parser_reads_asset_and_collision_shapes[spool-3]"
-          ],
-          "passed": [
-            "npa/tests/workflows/test_franka_rl_assets.py::test_asset_mutation_refuses_simulation_instead_of_falling_back",
-            "npa/tests/workflows/test_franka_rl_assets.py::test_assets_are_deterministic_and_include_non_cube_contact_geometry",
-            "npa/tests/workflows/test_franka_rl_assets.py::test_replacing_geometry_preserves_task_solver_without_cube_scale",
-            "npa/tests/workflows/test_franka_rl_assets.py::test_sealed_distractors_rest_on_authored_tray_surface[bottle]",
-            "npa/tests/workflows/test_franka_rl_assets.py::test_sealed_distractors_rest_on_authored_tray_surface[hex_nut]",
-            "npa/tests/workflows/test_franka_rl_assets.py::test_sealed_distractors_rest_on_authored_tray_surface[spool]",
-            "npa/tests/workflows/test_franka_rl_assets.py::test_unknown_asset_fails_before_any_artifact_is_created"
-          ]
-        },
-        "parent_unavailable": false
+        "nodes": {},
+        "returncode": 4
       }
     },
     {
@@ -1080,14 +1378,38 @@
       "module": "torch",
       "module_present_in_this_environment": false,
       "ci_installs_it": true,
-      "verdict": "skip_is_justified",
-      "live_or_latent": "latent: CI installs this module, so nothing is skipped today and these tests go quiet the moment the dependency is dropped",
-      "handlers_that_could_swallow_the_poison": [],
+      "verdict": "undecided_no_gated_test_executed",
+      "why": "all tests gated by this fixture remained skipped in bypass mode",
+      "live_or_latent": "latent: CI installs this module",
+      "test_file_handlers_that_could_swallow_the_sentinel": [],
       "tests_that_pass_without_it": 0,
       "which_tests_pass_without_it": [],
+      "tests_that_require_it": 0,
+      "which_tests_require_it": [],
+      "gated_tests_exercised": 0,
+      "which_gated_tests_remain_undecided": [
+        "npa/tests/workflows/test_franka_rl_distribution.py::test_checkpoint_persists_bounds_raw_scale_and_exact_probability_semantics",
+        "npa/tests/workflows/test_franka_rl_distribution.py::test_entropy_optimization_cannot_cross_bounds_and_retains_scale_gradients[-1]",
+        "npa/tests/workflows/test_franka_rl_distribution.py::test_entropy_optimization_cannot_cross_bounds_and_retains_scale_gradients[1]",
+        "npa/tests/workflows/test_franka_rl_distribution.py::test_every_probability_operation_uses_the_actual_bounded_normal",
+        "npa/tests/workflows/test_franka_rl_distribution.py::test_evidence_reads_current_scale_and_rejects_changed_checkpoint_bounds",
+        "npa/tests/workflows/test_franka_rl_distribution.py::test_invalid_distribution_parameters_fail_before_sampling[kwargs0]",
+        "npa/tests/workflows/test_franka_rl_distribution.py::test_invalid_distribution_parameters_fail_before_sampling[kwargs1]",
+        "npa/tests/workflows/test_franka_rl_distribution.py::test_invalid_distribution_parameters_fail_before_sampling[kwargs2]",
+        "npa/tests/workflows/test_franka_rl_distribution.py::test_invalid_distribution_parameters_fail_before_sampling[kwargs3]",
+        "npa/tests/workflows/test_franka_rl_distribution.py::test_invalid_distribution_parameters_fail_before_sampling[kwargs4]",
+        "npa/tests/workflows/test_franka_rl_distribution.py::test_invalid_distribution_parameters_fail_before_sampling[kwargs5]",
+        "npa/tests/workflows/test_franka_rl_distribution.py::test_invalid_distribution_parameters_fail_before_sampling[kwargs6]",
+        "npa/tests/workflows/test_franka_rl_distribution.py::test_invalid_distribution_parameters_fail_before_sampling[kwargs7]",
+        "npa/tests/workflows/test_franka_rl_distribution.py::test_invalid_distribution_parameters_fail_before_sampling[kwargs8]",
+        "npa/tests/workflows/test_franka_rl_distribution.py::test_invalid_distribution_parameters_fail_before_sampling[kwargs9]",
+        "npa/tests/workflows/test_franka_rl_distribution.py::test_kl_matches_independent_diagonal_normal_formula",
+        "npa/tests/workflows/test_franka_rl_distribution.py::test_native_onnx_artifact_keeps_the_unrestricted_deterministic_mean",
+        "npa/tests/workflows/test_franka_rl_distribution.py::test_native_ppo_update_save_load_and_deterministic_exports"
+      ],
       "what_a_count_delta_would_have_said": 0,
       "rose_into_passing_without_having_skipped": [],
-      "dropped_out_of_passing_under_poison": [],
+      "dropped_out_of_passing_under_bypass": [],
       "absent": {
         "passed": 2,
         "failed": 0,
@@ -1119,9 +1441,9 @@
             "npa/tests/workflows/test_franka_rl_distribution.py::test_native_ppo_update_save_load_and_deterministic_exports"
           ]
         },
-        "parent_unavailable": false
+        "returncode": 0
       },
-      "poisoned": {
+      "bypassed": {
         "passed": 2,
         "failed": 0,
         "skipped": 18,
@@ -1152,7 +1474,7 @@
             "npa/tests/workflows/test_franka_rl_distribution.py::test_native_ppo_update_save_load_and_deterministic_exports"
           ]
         },
-        "parent_unavailable": false
+        "returncode": 0
       }
     },
     {
@@ -1160,9 +1482,39 @@
       "fixture": "native",
       "module": "rsl_rl.modules.distribution",
       "module_present_in_this_environment": false,
-      "ci_installs_it": false,
-      "verdict": "not_measurable_here",
-      "why": "the parent package is not installed, so the leaf cannot be made importable-but-unusable without stubbing the parent, which perturbs unrelated fixtures in the same file",
+      "ci_installs_it": true,
+      "verdict": "undecided_no_gated_test_executed",
+      "why": "all tests gated by this fixture remained skipped in bypass mode",
+      "live_or_latent": "latent: CI installs this module",
+      "test_file_handlers_that_could_swallow_the_sentinel": [],
+      "tests_that_pass_without_it": 0,
+      "which_tests_pass_without_it": [],
+      "tests_that_require_it": 0,
+      "which_tests_require_it": [],
+      "gated_tests_exercised": 0,
+      "which_gated_tests_remain_undecided": [
+        "npa/tests/workflows/test_franka_rl_distribution.py::test_checkpoint_persists_bounds_raw_scale_and_exact_probability_semantics",
+        "npa/tests/workflows/test_franka_rl_distribution.py::test_entropy_optimization_cannot_cross_bounds_and_retains_scale_gradients[-1]",
+        "npa/tests/workflows/test_franka_rl_distribution.py::test_entropy_optimization_cannot_cross_bounds_and_retains_scale_gradients[1]",
+        "npa/tests/workflows/test_franka_rl_distribution.py::test_every_probability_operation_uses_the_actual_bounded_normal",
+        "npa/tests/workflows/test_franka_rl_distribution.py::test_evidence_reads_current_scale_and_rejects_changed_checkpoint_bounds",
+        "npa/tests/workflows/test_franka_rl_distribution.py::test_invalid_distribution_parameters_fail_before_sampling[kwargs0]",
+        "npa/tests/workflows/test_franka_rl_distribution.py::test_invalid_distribution_parameters_fail_before_sampling[kwargs1]",
+        "npa/tests/workflows/test_franka_rl_distribution.py::test_invalid_distribution_parameters_fail_before_sampling[kwargs2]",
+        "npa/tests/workflows/test_franka_rl_distribution.py::test_invalid_distribution_parameters_fail_before_sampling[kwargs3]",
+        "npa/tests/workflows/test_franka_rl_distribution.py::test_invalid_distribution_parameters_fail_before_sampling[kwargs4]",
+        "npa/tests/workflows/test_franka_rl_distribution.py::test_invalid_distribution_parameters_fail_before_sampling[kwargs5]",
+        "npa/tests/workflows/test_franka_rl_distribution.py::test_invalid_distribution_parameters_fail_before_sampling[kwargs6]",
+        "npa/tests/workflows/test_franka_rl_distribution.py::test_invalid_distribution_parameters_fail_before_sampling[kwargs7]",
+        "npa/tests/workflows/test_franka_rl_distribution.py::test_invalid_distribution_parameters_fail_before_sampling[kwargs8]",
+        "npa/tests/workflows/test_franka_rl_distribution.py::test_invalid_distribution_parameters_fail_before_sampling[kwargs9]",
+        "npa/tests/workflows/test_franka_rl_distribution.py::test_kl_matches_independent_diagonal_normal_formula",
+        "npa/tests/workflows/test_franka_rl_distribution.py::test_native_onnx_artifact_keeps_the_unrestricted_deterministic_mean",
+        "npa/tests/workflows/test_franka_rl_distribution.py::test_native_ppo_update_save_load_and_deterministic_exports"
+      ],
+      "what_a_count_delta_would_have_said": 0,
+      "rose_into_passing_without_having_skipped": [],
+      "dropped_out_of_passing_under_bypass": [],
       "absent": {
         "passed": 2,
         "failed": 0,
@@ -1194,7 +1546,40 @@
             "npa/tests/workflows/test_franka_rl_distribution.py::test_native_ppo_update_save_load_and_deterministic_exports"
           ]
         },
-        "parent_unavailable": false
+        "returncode": 0
+      },
+      "bypassed": {
+        "passed": 2,
+        "failed": 0,
+        "skipped": 18,
+        "error": 0,
+        "nodes": {
+          "passed": [
+            "npa/tests/workflows/test_franka_rl_distribution.py::test_bounded_profile_configures_native_distribution_constructor_keywords",
+            "npa/tests/workflows/test_franka_rl_distribution.py::test_bounded_profile_preserves_rewards_and_only_changes_exploration_distribution"
+          ],
+          "skipped": [
+            "npa/tests/workflows/test_franka_rl_distribution.py::test_checkpoint_persists_bounds_raw_scale_and_exact_probability_semantics",
+            "npa/tests/workflows/test_franka_rl_distribution.py::test_entropy_optimization_cannot_cross_bounds_and_retains_scale_gradients[-1]",
+            "npa/tests/workflows/test_franka_rl_distribution.py::test_entropy_optimization_cannot_cross_bounds_and_retains_scale_gradients[1]",
+            "npa/tests/workflows/test_franka_rl_distribution.py::test_every_probability_operation_uses_the_actual_bounded_normal",
+            "npa/tests/workflows/test_franka_rl_distribution.py::test_evidence_reads_current_scale_and_rejects_changed_checkpoint_bounds",
+            "npa/tests/workflows/test_franka_rl_distribution.py::test_invalid_distribution_parameters_fail_before_sampling[kwargs0]",
+            "npa/tests/workflows/test_franka_rl_distribution.py::test_invalid_distribution_parameters_fail_before_sampling[kwargs1]",
+            "npa/tests/workflows/test_franka_rl_distribution.py::test_invalid_distribution_parameters_fail_before_sampling[kwargs2]",
+            "npa/tests/workflows/test_franka_rl_distribution.py::test_invalid_distribution_parameters_fail_before_sampling[kwargs3]",
+            "npa/tests/workflows/test_franka_rl_distribution.py::test_invalid_distribution_parameters_fail_before_sampling[kwargs4]",
+            "npa/tests/workflows/test_franka_rl_distribution.py::test_invalid_distribution_parameters_fail_before_sampling[kwargs5]",
+            "npa/tests/workflows/test_franka_rl_distribution.py::test_invalid_distribution_parameters_fail_before_sampling[kwargs6]",
+            "npa/tests/workflows/test_franka_rl_distribution.py::test_invalid_distribution_parameters_fail_before_sampling[kwargs7]",
+            "npa/tests/workflows/test_franka_rl_distribution.py::test_invalid_distribution_parameters_fail_before_sampling[kwargs8]",
+            "npa/tests/workflows/test_franka_rl_distribution.py::test_invalid_distribution_parameters_fail_before_sampling[kwargs9]",
+            "npa/tests/workflows/test_franka_rl_distribution.py::test_kl_matches_independent_diagonal_normal_formula",
+            "npa/tests/workflows/test_franka_rl_distribution.py::test_native_onnx_artifact_keeps_the_unrestricted_deterministic_mean",
+            "npa/tests/workflows/test_franka_rl_distribution.py::test_native_ppo_update_save_load_and_deterministic_exports"
+          ]
+        },
+        "returncode": 0
       }
     },
     {
@@ -1203,14 +1588,37 @@
       "module": "torch",
       "module_present_in_this_environment": false,
       "ci_installs_it": true,
-      "verdict": "skip_is_justified",
-      "live_or_latent": "latent: CI installs this module, so nothing is skipped today and these tests go quiet the moment the dependency is dropped",
-      "handlers_that_could_swallow_the_poison": [],
+      "verdict": "dependency_required",
+      "live_or_latent": "latent: CI installs this module",
+      "test_file_handlers_that_could_swallow_the_sentinel": [],
       "tests_that_pass_without_it": 0,
       "which_tests_pass_without_it": [],
+      "tests_that_require_it": 18,
+      "which_tests_require_it": [
+        "npa/tests/workflows/test_franka_rl_learning.py::test_continuous_joint_keeps_rotation_range_and_native_speed_cap",
+        "npa/tests/workflows/test_franka_rl_learning.py::test_curriculum_ignores_initial_resets_and_stale_difficulty_episodes",
+        "npa/tests/workflows/test_franka_rl_learning.py::test_hold_reward_prefers_slow_continuous_holding_and_rejects_terminal_step",
+        "npa/tests/workflows/test_franka_rl_learning.py::test_initial_settling_never_receives_a_lift_or_hold_bonus",
+        "npa/tests/workflows/test_franka_rl_learning.py::test_normalization_receipt_detects_changed_inference_statistics",
+        "npa/tests/workflows/test_franka_rl_learning.py::test_partial_goal_progress_does_not_grant_lift_hold_or_success",
+        "npa/tests/workflows/test_franka_rl_learning.py::test_servo_bounds_physical_targets_and_slew_without_restricting_reach",
+        "npa/tests/workflows/test_franka_rl_learning.py::test_servo_recovers_native_continuous_joint_overflow[0.0]",
+        "npa/tests/workflows/test_franka_rl_learning.py::test_servo_recovers_native_continuous_joint_overflow[0.95]",
+        "npa/tests/workflows/test_franka_rl_learning.py::test_servo_recovers_native_continuous_joint_overflow[1.0]",
+        "npa/tests/workflows/test_franka_rl_learning.py::test_servo_recovery_rejects_invalid_native_hard_limits[bounds0]",
+        "npa/tests/workflows/test_franka_rl_learning.py::test_servo_recovery_rejects_invalid_native_hard_limits[bounds1]",
+        "npa/tests/workflows/test_franka_rl_learning.py::test_servo_recovery_rejects_invalid_native_hard_limits[bounds2]",
+        "npa/tests/workflows/test_franka_rl_learning.py::test_servo_recovery_rejects_invalid_native_soft_factor[-0.1]",
+        "npa/tests/workflows/test_franka_rl_learning.py::test_servo_recovery_rejects_invalid_native_soft_factor[1.1]",
+        "npa/tests/workflows/test_franka_rl_learning.py::test_servo_recovery_rejects_invalid_native_soft_factor[inf]",
+        "npa/tests/workflows/test_franka_rl_learning.py::test_servo_recovery_rejects_invalid_native_soft_factor[nan]",
+        "npa/tests/workflows/test_franka_rl_learning.py::test_servo_refuses_nonfinite_policy_commands"
+      ],
+      "gated_tests_exercised": 18,
+      "which_gated_tests_remain_undecided": [],
       "what_a_count_delta_would_have_said": 0,
       "rose_into_passing_without_having_skipped": [],
-      "dropped_out_of_passing_under_poison": [],
+      "dropped_out_of_passing_under_bypass": [],
       "absent": {
         "passed": 10,
         "failed": 0,
@@ -1250,9 +1658,9 @@
             "npa/tests/workflows/test_franka_rl_learning.py::test_servo_refuses_nonfinite_policy_commands"
           ]
         },
-        "parent_unavailable": false
+        "returncode": 0
       },
-      "poisoned": {
+      "bypassed": {
         "passed": 10,
         "failed": 1,
         "skipped": 0,
@@ -1293,7 +1701,7 @@
             "npa/tests/workflows/test_franka_rl_learning.py::test_new_recipe_preserves_all_held_out_criteria_and_baseline_bindings"
           ]
         },
-        "parent_unavailable": false
+        "returncode": 1
       }
     },
     {
@@ -1302,14 +1710,37 @@
       "module": "torch",
       "module_present_in_this_environment": false,
       "ci_installs_it": true,
-      "verdict": "skip_is_justified",
-      "live_or_latent": "latent: CI installs this module, so nothing is skipped today and these tests go quiet the moment the dependency is dropped",
-      "handlers_that_could_swallow_the_poison": [],
+      "verdict": "dependency_required",
+      "live_or_latent": "latent: CI installs this module",
+      "test_file_handlers_that_could_swallow_the_sentinel": [],
       "tests_that_pass_without_it": 0,
       "which_tests_pass_without_it": [],
+      "tests_that_require_it": 18,
+      "which_tests_require_it": [
+        "npa/tests/workflows/test_franka_rl_learning.py::test_continuous_joint_keeps_rotation_range_and_native_speed_cap",
+        "npa/tests/workflows/test_franka_rl_learning.py::test_curriculum_ignores_initial_resets_and_stale_difficulty_episodes",
+        "npa/tests/workflows/test_franka_rl_learning.py::test_hold_reward_prefers_slow_continuous_holding_and_rejects_terminal_step",
+        "npa/tests/workflows/test_franka_rl_learning.py::test_initial_settling_never_receives_a_lift_or_hold_bonus",
+        "npa/tests/workflows/test_franka_rl_learning.py::test_normalization_receipt_detects_changed_inference_statistics",
+        "npa/tests/workflows/test_franka_rl_learning.py::test_partial_goal_progress_does_not_grant_lift_hold_or_success",
+        "npa/tests/workflows/test_franka_rl_learning.py::test_servo_bounds_physical_targets_and_slew_without_restricting_reach",
+        "npa/tests/workflows/test_franka_rl_learning.py::test_servo_recovers_native_continuous_joint_overflow[0.0]",
+        "npa/tests/workflows/test_franka_rl_learning.py::test_servo_recovers_native_continuous_joint_overflow[0.95]",
+        "npa/tests/workflows/test_franka_rl_learning.py::test_servo_recovers_native_continuous_joint_overflow[1.0]",
+        "npa/tests/workflows/test_franka_rl_learning.py::test_servo_recovery_rejects_invalid_native_hard_limits[bounds0]",
+        "npa/tests/workflows/test_franka_rl_learning.py::test_servo_recovery_rejects_invalid_native_hard_limits[bounds1]",
+        "npa/tests/workflows/test_franka_rl_learning.py::test_servo_recovery_rejects_invalid_native_hard_limits[bounds2]",
+        "npa/tests/workflows/test_franka_rl_learning.py::test_servo_recovery_rejects_invalid_native_soft_factor[-0.1]",
+        "npa/tests/workflows/test_franka_rl_learning.py::test_servo_recovery_rejects_invalid_native_soft_factor[1.1]",
+        "npa/tests/workflows/test_franka_rl_learning.py::test_servo_recovery_rejects_invalid_native_soft_factor[inf]",
+        "npa/tests/workflows/test_franka_rl_learning.py::test_servo_recovery_rejects_invalid_native_soft_factor[nan]",
+        "npa/tests/workflows/test_franka_rl_learning.py::test_servo_refuses_nonfinite_policy_commands"
+      ],
+      "gated_tests_exercised": 18,
+      "which_gated_tests_remain_undecided": [],
       "what_a_count_delta_would_have_said": 0,
       "rose_into_passing_without_having_skipped": [],
-      "dropped_out_of_passing_under_poison": [],
+      "dropped_out_of_passing_under_bypass": [],
       "absent": {
         "passed": 10,
         "failed": 0,
@@ -1349,9 +1780,9 @@
             "npa/tests/workflows/test_franka_rl_learning.py::test_servo_refuses_nonfinite_policy_commands"
           ]
         },
-        "parent_unavailable": false
+        "returncode": 0
       },
-      "poisoned": {
+      "bypassed": {
         "passed": 10,
         "failed": 1,
         "skipped": 0,
@@ -1392,7 +1823,7 @@
             "npa/tests/workflows/test_franka_rl_learning.py::test_new_recipe_preserves_all_held_out_criteria_and_baseline_bindings"
           ]
         },
-        "parent_unavailable": false
+        "returncode": 1
       }
     },
     {
@@ -1401,14 +1832,29 @@
       "module": "pxr.Usd",
       "module_present_in_this_environment": true,
       "ci_installs_it": true,
-      "verdict": "skip_is_justified",
-      "live_or_latent": "latent: CI installs this module, so nothing is skipped today and these tests go quiet the moment the dependency is dropped",
-      "handlers_that_could_swallow_the_poison": [],
+      "verdict": "dependency_required",
+      "live_or_latent": "latent: CI installs this module",
+      "test_file_handlers_that_could_swallow_the_sentinel": [],
       "tests_that_pass_without_it": 0,
       "which_tests_pass_without_it": [],
+      "tests_that_require_it": 10,
+      "which_tests_require_it": [
+        "npa/tests/workflows/test_franka_rl_physics.py::test_composed_asset_must_match_mimic_profile[compliance]",
+        "npa/tests/workflows/test_franka_rl_physics.py::test_composed_asset_must_match_mimic_profile[drive]",
+        "npa/tests/workflows/test_franka_rl_physics.py::test_composed_asset_must_match_mimic_profile[driver]",
+        "npa/tests/workflows/test_franka_rl_physics.py::test_composed_asset_must_match_mimic_profile[gearing]",
+        "npa/tests/workflows/test_franka_rl_physics.py::test_composed_asset_must_match_mimic_profile[limit]",
+        "npa/tests/workflows/test_franka_rl_physics.py::test_composed_asset_must_match_mimic_profile[loop]",
+        "npa/tests/workflows/test_franka_rl_physics.py::test_composed_asset_must_match_mimic_profile[reference]",
+        "npa/tests/workflows/test_franka_rl_physics.py::test_composed_asset_must_match_mimic_profile[solver]",
+        "npa/tests/workflows/test_franka_rl_physics.py::test_composed_unknown_usd_schema_metadata_is_checked_without_physx_plugin",
+        "npa/tests/workflows/test_franka_rl_physics.py::test_full_receipt_separates_simulator_and_gearing_expected_limits"
+      ],
+      "gated_tests_exercised": 10,
+      "which_gated_tests_remain_undecided": [],
       "what_a_count_delta_would_have_said": 0,
       "rose_into_passing_without_having_skipped": [],
-      "dropped_out_of_passing_under_poison": [],
+      "dropped_out_of_passing_under_bypass": [],
       "absent": {
         "passed": 16,
         "failed": 0,
@@ -1446,9 +1892,9 @@
             "npa/tests/workflows/test_franka_rl_physics.py::test_full_receipt_separates_simulator_and_gearing_expected_limits"
           ]
         },
-        "parent_unavailable": false
+        "returncode": 0
       },
-      "poisoned": {
+      "bypassed": {
         "passed": 16,
         "failed": 0,
         "skipped": 0,
@@ -1485,7 +1931,7 @@
             "npa/tests/workflows/test_franka_rl_physics.py::test_profile_copies_cannot_mutate_future_recipes"
           ]
         },
-        "parent_unavailable": false
+        "returncode": 1
       }
     },
     {
@@ -1533,7 +1979,7 @@
             "npa/tests/workflows/test_franka_rl_physics.py::test_profile_copies_cannot_mutate_future_recipes"
           ]
         },
-        "parent_unavailable": false
+        "returncode": 1
       }
     },
     {
@@ -1542,14 +1988,99 @@
       "module": "torch",
       "module_present_in_this_environment": false,
       "ci_installs_it": true,
-      "verdict": "skip_is_justified",
-      "live_or_latent": "latent: CI installs this module, so nothing is skipped today and these tests go quiet the moment the dependency is dropped",
-      "handlers_that_could_swallow_the_poison": [],
+      "verdict": "dependency_required",
+      "live_or_latent": "latent: CI installs this module",
+      "test_file_handlers_that_could_swallow_the_sentinel": [],
       "tests_that_pass_without_it": 0,
       "which_tests_pass_without_it": [],
+      "tests_that_require_it": 80,
+      "which_tests_require_it": [
+        "npa/tests/workflows/test_franka_rl_validity.py::test_checked_explicit_reset_validates_before_returning_observations",
+        "npa/tests/workflows/test_franka_rl_validity.py::test_checked_wrapper_rejects_invalid_automatic_reset_before_handoff",
+        "npa/tests/workflows/test_franka_rl_validity.py::test_continuous_sentinel_bounds_accept_rotation_but_never_disable_velocity_checks",
+        "npa/tests/workflows/test_franka_rl_validity.py::test_every_measured_state_channel_rejects_nonfinite_values[-inf-joint_position]",
+        "npa/tests/workflows/test_franka_rl_validity.py::test_every_measured_state_channel_rejects_nonfinite_values[-inf-joint_velocity]",
+        "npa/tests/workflows/test_franka_rl_validity.py::test_every_measured_state_channel_rejects_nonfinite_values[-inf-object_angular_velocity]",
+        "npa/tests/workflows/test_franka_rl_validity.py::test_every_measured_state_channel_rejects_nonfinite_values[-inf-object_position]",
+        "npa/tests/workflows/test_franka_rl_validity.py::test_every_measured_state_channel_rejects_nonfinite_values[-inf-object_quaternion]",
+        "npa/tests/workflows/test_franka_rl_validity.py::test_every_measured_state_channel_rejects_nonfinite_values[-inf-object_velocity]",
+        "npa/tests/workflows/test_franka_rl_validity.py::test_every_measured_state_channel_rejects_nonfinite_values[-inf-robot_body_angular_velocity]",
+        "npa/tests/workflows/test_franka_rl_validity.py::test_every_measured_state_channel_rejects_nonfinite_values[-inf-robot_body_position]",
+        "npa/tests/workflows/test_franka_rl_validity.py::test_every_measured_state_channel_rejects_nonfinite_values[-inf-robot_body_quaternion]",
+        "npa/tests/workflows/test_franka_rl_validity.py::test_every_measured_state_channel_rejects_nonfinite_values[-inf-robot_body_velocity]",
+        "npa/tests/workflows/test_franka_rl_validity.py::test_every_measured_state_channel_rejects_nonfinite_values[-inf-robot_root_position]",
+        "npa/tests/workflows/test_franka_rl_validity.py::test_every_measured_state_channel_rejects_nonfinite_values[-inf-robot_root_quaternion]",
+        "npa/tests/workflows/test_franka_rl_validity.py::test_every_measured_state_channel_rejects_nonfinite_values[inf-joint_position]",
+        "npa/tests/workflows/test_franka_rl_validity.py::test_every_measured_state_channel_rejects_nonfinite_values[inf-joint_velocity]",
+        "npa/tests/workflows/test_franka_rl_validity.py::test_every_measured_state_channel_rejects_nonfinite_values[inf-object_angular_velocity]",
+        "npa/tests/workflows/test_franka_rl_validity.py::test_every_measured_state_channel_rejects_nonfinite_values[inf-object_position]",
+        "npa/tests/workflows/test_franka_rl_validity.py::test_every_measured_state_channel_rejects_nonfinite_values[inf-object_quaternion]",
+        "npa/tests/workflows/test_franka_rl_validity.py::test_every_measured_state_channel_rejects_nonfinite_values[inf-object_velocity]",
+        "npa/tests/workflows/test_franka_rl_validity.py::test_every_measured_state_channel_rejects_nonfinite_values[inf-robot_body_angular_velocity]",
+        "npa/tests/workflows/test_franka_rl_validity.py::test_every_measured_state_channel_rejects_nonfinite_values[inf-robot_body_position]",
+        "npa/tests/workflows/test_franka_rl_validity.py::test_every_measured_state_channel_rejects_nonfinite_values[inf-robot_body_quaternion]",
+        "npa/tests/workflows/test_franka_rl_validity.py::test_every_measured_state_channel_rejects_nonfinite_values[inf-robot_body_velocity]",
+        "npa/tests/workflows/test_franka_rl_validity.py::test_every_measured_state_channel_rejects_nonfinite_values[inf-robot_root_position]",
+        "npa/tests/workflows/test_franka_rl_validity.py::test_every_measured_state_channel_rejects_nonfinite_values[inf-robot_root_quaternion]",
+        "npa/tests/workflows/test_franka_rl_validity.py::test_every_measured_state_channel_rejects_nonfinite_values[nan-joint_position]",
+        "npa/tests/workflows/test_franka_rl_validity.py::test_every_measured_state_channel_rejects_nonfinite_values[nan-joint_velocity]",
+        "npa/tests/workflows/test_franka_rl_validity.py::test_every_measured_state_channel_rejects_nonfinite_values[nan-object_angular_velocity]",
+        "npa/tests/workflows/test_franka_rl_validity.py::test_every_measured_state_channel_rejects_nonfinite_values[nan-object_position]",
+        "npa/tests/workflows/test_franka_rl_validity.py::test_every_measured_state_channel_rejects_nonfinite_values[nan-object_quaternion]",
+        "npa/tests/workflows/test_franka_rl_validity.py::test_every_measured_state_channel_rejects_nonfinite_values[nan-object_velocity]",
+        "npa/tests/workflows/test_franka_rl_validity.py::test_every_measured_state_channel_rejects_nonfinite_values[nan-robot_body_angular_velocity]",
+        "npa/tests/workflows/test_franka_rl_validity.py::test_every_measured_state_channel_rejects_nonfinite_values[nan-robot_body_position]",
+        "npa/tests/workflows/test_franka_rl_validity.py::test_every_measured_state_channel_rejects_nonfinite_values[nan-robot_body_quaternion]",
+        "npa/tests/workflows/test_franka_rl_validity.py::test_every_measured_state_channel_rejects_nonfinite_values[nan-robot_body_velocity]",
+        "npa/tests/workflows/test_franka_rl_validity.py::test_every_measured_state_channel_rejects_nonfinite_values[nan-robot_root_position]",
+        "npa/tests/workflows/test_franka_rl_validity.py::test_every_measured_state_channel_rejects_nonfinite_values[nan-robot_root_quaternion]",
+        "npa/tests/workflows/test_franka_rl_validity.py::test_first_fault_is_deterministic_and_does_not_increment_valid_coverage",
+        "npa/tests/workflows/test_franka_rl_validity.py::test_huge_finite_passive_joint_is_rejected_despite_small_arm_commands",
+        "npa/tests/workflows/test_franka_rl_validity.py::test_invalid_initial_state_prevents_learner_construction",
+        "npa/tests/workflows/test_franka_rl_validity.py::test_invalid_native_limit_definitions_fail_closed[infinite_velocity]",
+        "npa/tests/workflows/test_franka_rl_validity.py::test_invalid_native_limit_definitions_fail_closed[nan_dt]",
+        "npa/tests/workflows/test_franka_rl_validity.py::test_invalid_native_limit_definitions_fail_closed[nan_limits]",
+        "npa/tests/workflows/test_franka_rl_validity.py::test_invalid_native_limit_definitions_fail_closed[negative_dt]",
+        "npa/tests/workflows/test_franka_rl_validity.py::test_invalid_native_limit_definitions_fail_closed[reversed_limits]",
+        "npa/tests/workflows/test_franka_rl_validity.py::test_invalid_native_limit_definitions_fail_closed[shape]",
+        "npa/tests/workflows/test_franka_rl_validity.py::test_invalid_native_limit_definitions_fail_closed[zero_velocity]",
+        "npa/tests/workflows/test_franka_rl_validity.py::test_legacy_wrapper_keeps_reset_and_step_results_without_reading_state_or_workspace_terms",
+        "npa/tests/workflows/test_franka_rl_validity.py::test_missing_guarded_workspace_term_cannot_silently_preserve_terminal_reward",
+        "npa/tests/workflows/test_franka_rl_validity.py::test_mocked_native_hook_blocks_reward_reset_and_learner_handoff",
+        "npa/tests/workflows/test_franka_rl_validity.py::test_position_allowance_uses_one_physics_tick_not_control_decimation[-1]",
+        "npa/tests/workflows/test_franka_rl_validity.py::test_position_allowance_uses_one_physics_tick_not_control_decimation[1]",
+        "npa/tests/workflows/test_franka_rl_validity.py::test_quaternion_normalization_is_checked_independently_of_finiteness[object_quaternion]",
+        "npa/tests/workflows/test_franka_rl_validity.py::test_quaternion_normalization_is_checked_independently_of_finiteness[robot_body_quaternion]",
+        "npa/tests/workflows/test_franka_rl_validity.py::test_quaternion_normalization_is_checked_independently_of_finiteness[robot_root_quaternion]",
+        "npa/tests/workflows/test_franka_rl_validity.py::test_terminal_workspace_reward_is_zero_after_reset_without_changing_other_handoff_data[-8.0]",
+        "npa/tests/workflows/test_franka_rl_validity.py::test_terminal_workspace_reward_is_zero_after_reset_without_changing_other_handoff_data[8.0]",
+        "npa/tests/workflows/test_franka_rl_validity.py::test_valid_hook_does_not_terminate_or_change_task_state",
+        "npa/tests/workflows/test_franka_rl_validity.py::test_velocity_accepts_four_eps_rounding_but_rejects_the_next_float[0.5--1]",
+        "npa/tests/workflows/test_franka_rl_validity.py::test_velocity_accepts_four_eps_rounding_but_rejects_the_next_float[0.5-1]",
+        "npa/tests/workflows/test_franka_rl_validity.py::test_velocity_accepts_four_eps_rounding_but_rejects_the_next_float[2.0--1]",
+        "npa/tests/workflows/test_franka_rl_validity.py::test_velocity_accepts_four_eps_rounding_but_rejects_the_next_float[2.0-1]",
+        "npa/tests/workflows/test_franka_rl_validity.py::test_workspace_is_xyz_relative_to_origin_and_half_spacing_is_inclusive[2.0--1-0]",
+        "npa/tests/workflows/test_franka_rl_validity.py::test_workspace_is_xyz_relative_to_origin_and_half_spacing_is_inclusive[2.0--1-1]",
+        "npa/tests/workflows/test_franka_rl_validity.py::test_workspace_is_xyz_relative_to_origin_and_half_spacing_is_inclusive[2.0--1-2]",
+        "npa/tests/workflows/test_franka_rl_validity.py::test_workspace_is_xyz_relative_to_origin_and_half_spacing_is_inclusive[2.0-1-0]",
+        "npa/tests/workflows/test_franka_rl_validity.py::test_workspace_is_xyz_relative_to_origin_and_half_spacing_is_inclusive[2.0-1-1]",
+        "npa/tests/workflows/test_franka_rl_validity.py::test_workspace_is_xyz_relative_to_origin_and_half_spacing_is_inclusive[2.0-1-2]",
+        "npa/tests/workflows/test_franka_rl_validity.py::test_workspace_is_xyz_relative_to_origin_and_half_spacing_is_inclusive[6.0--1-0]",
+        "npa/tests/workflows/test_franka_rl_validity.py::test_workspace_is_xyz_relative_to_origin_and_half_spacing_is_inclusive[6.0--1-1]",
+        "npa/tests/workflows/test_franka_rl_validity.py::test_workspace_is_xyz_relative_to_origin_and_half_spacing_is_inclusive[6.0--1-2]",
+        "npa/tests/workflows/test_franka_rl_validity.py::test_workspace_is_xyz_relative_to_origin_and_half_spacing_is_inclusive[6.0-1-0]",
+        "npa/tests/workflows/test_franka_rl_validity.py::test_workspace_is_xyz_relative_to_origin_and_half_spacing_is_inclusive[6.0-1-1]",
+        "npa/tests/workflows/test_franka_rl_validity.py::test_workspace_is_xyz_relative_to_origin_and_half_spacing_is_inclusive[6.0-1-2]",
+        "npa/tests/workflows/test_franka_rl_validity.py::test_workspace_requires_finite_positive_scene_spacing[-1.0]",
+        "npa/tests/workflows/test_franka_rl_validity.py::test_workspace_requires_finite_positive_scene_spacing[0.0]",
+        "npa/tests/workflows/test_franka_rl_validity.py::test_workspace_requires_finite_positive_scene_spacing[inf]",
+        "npa/tests/workflows/test_franka_rl_validity.py::test_workspace_requires_finite_positive_scene_spacing[nan]"
+      ],
+      "gated_tests_exercised": 80,
+      "which_gated_tests_remain_undecided": [],
       "what_a_count_delta_would_have_said": 0,
       "rose_into_passing_without_having_skipped": [],
-      "dropped_out_of_passing_under_poison": [],
+      "dropped_out_of_passing_under_bypass": [],
       "absent": {
         "passed": 9,
         "failed": 0,
@@ -1650,9 +2181,9 @@
             "npa/tests/workflows/test_franka_rl_validity.py::test_workspace_requires_finite_positive_scene_spacing[nan]"
           ]
         },
-        "parent_unavailable": false
+        "returncode": 0
       },
-      "poisoned": {
+      "bypassed": {
         "passed": 9,
         "failed": 0,
         "skipped": 0,
@@ -1752,7 +2283,7 @@
             "npa/tests/workflows/test_franka_rl_validity.py::test_tampered_contract_rejected_before_native_import[change4]"
           ]
         },
-        "parent_unavailable": false
+        "returncode": 1
       }
     },
     {
@@ -1761,14 +2292,22 @@
       "module": "PIL",
       "module_present_in_this_environment": true,
       "ci_installs_it": true,
-      "verdict": "skip_is_justified",
-      "live_or_latent": "latent: CI installs this module, so nothing is skipped today and these tests go quiet the moment the dependency is dropped",
-      "handlers_that_could_swallow_the_poison": [],
+      "verdict": "dependency_required",
+      "live_or_latent": "latent: CI installs this module",
+      "test_file_handlers_that_could_swallow_the_sentinel": [],
       "tests_that_pass_without_it": 0,
       "which_tests_pass_without_it": [],
+      "tests_that_require_it": 3,
+      "which_tests_require_it": [
+        "npa/tests/workflows/test_groot_visualization.py::test_publish_gate_fails_when_rrd_is_missing",
+        "npa/tests/workflows/test_groot_visualization.py::test_real_mcap_rrd_and_publish_gate_round_trip",
+        "npa/tests/workflows/test_groot_visualization.py::test_source_bundle_records_factual_provenance_and_timestamp_label"
+      ],
+      "gated_tests_exercised": 3,
+      "which_gated_tests_remain_undecided": [],
       "what_a_count_delta_would_have_said": 0,
       "rose_into_passing_without_having_skipped": [],
-      "dropped_out_of_passing_under_poison": [],
+      "dropped_out_of_passing_under_bypass": [],
       "absent": {
         "passed": 4,
         "failed": 0,
@@ -1787,9 +2326,9 @@
             "npa/tests/workflows/test_groot_visualization.py::test_source_bundle_records_factual_provenance_and_timestamp_label"
           ]
         },
-        "parent_unavailable": false
+        "returncode": 0
       },
-      "poisoned": {
+      "bypassed": {
         "passed": 4,
         "failed": 0,
         "skipped": 0,
@@ -1807,7 +2346,7 @@
             "npa/tests/workflows/test_groot_visualization.py::test_training_validation_fails_closed_on_missing_optimizer_evidence"
           ]
         },
-        "parent_unavailable": false
+        "returncode": 1
       }
     },
     {
@@ -1816,16 +2355,32 @@
       "module": "torch",
       "module_present_in_this_environment": false,
       "ci_installs_it": true,
-      "verdict": "skip_is_justified",
-      "live_or_latent": "latent: CI installs this module, so nothing is skipped today and these tests go quiet the moment the dependency is dropped",
-      "handlers_that_could_swallow_the_poison": [],
+      "verdict": "partially_measured",
+      "why": "some gated tests were classified, while others remained skipped",
+      "live_or_latent": "latent: CI installs this module",
+      "test_file_handlers_that_could_swallow_the_sentinel": [],
       "tests_that_pass_without_it": 0,
       "which_tests_pass_without_it": [],
+      "tests_that_require_it": 3,
+      "which_tests_require_it": [
+        "npa/tests/workflows/test_isaac_franka_bootstrap.py::test_measured_approach_and_gripper_closure_control_teacher_transition",
+        "npa/tests/workflows/test_isaac_franka_bootstrap.py::test_teacher_uses_shared_strict_placement_state_and_consecutive_dwell",
+        "npa/tests/workflows/test_isaac_franka_bootstrap.py::test_transport_targets_preserve_measured_cube_to_gripper_offset"
+      ],
+      "gated_tests_exercised": 3,
+      "which_gated_tests_remain_undecided": [
+        "npa/tests/workflows/test_isaac_franka_bootstrap.py::TestNativeBootstrapCheckpoint::test_bootstrap_then_real_ppo_save_and_load",
+        "npa/tests/workflows/test_isaac_franka_bootstrap.py::TestNativeBootstrapCheckpoint::test_corrective_replay_repeats_before_ppo_when_actor_assessment_fails",
+        "npa/tests/workflows/test_isaac_franka_bootstrap.py::TestNativeBootstrapCheckpoint::test_failed_mixture_recovers_from_guarded_native_teacher_data",
+        "npa/tests/workflows/test_isaac_franka_bootstrap.py::TestNativeBootstrapCheckpoint::test_native_inference_reset_clears_only_completed_environments[evaluation]",
+        "npa/tests/workflows/test_isaac_franka_bootstrap.py::TestNativeBootstrapCheckpoint::test_native_inference_reset_clears_only_completed_environments[rollout]",
+        "npa/tests/workflows/test_isaac_franka_bootstrap.py::test_native_rsl_actor_learns_demonstrations_with_fresh_normalization"
+      ],
       "what_a_count_delta_would_have_said": 0,
       "rose_into_passing_without_having_skipped": [],
-      "dropped_out_of_passing_under_poison": [],
+      "dropped_out_of_passing_under_bypass": [],
       "absent": {
-        "passed": 129,
+        "passed": 128,
         "failed": 0,
         "skipped": 9,
         "error": 0,
@@ -1972,10 +2527,10 @@
             "npa/tests/workflows/test_isaac_franka_bootstrap.py::test_transport_targets_preserve_measured_cube_to_gripper_offset"
           ]
         },
-        "parent_unavailable": false
+        "returncode": 0
       },
-      "poisoned": {
-        "passed": 129,
+      "bypassed": {
+        "passed": 128,
         "failed": 3,
         "skipped": 6,
         "error": 0,
@@ -2124,7 +2679,7 @@
             "npa/tests/workflows/test_isaac_franka_bootstrap.py::test_native_rsl_actor_learns_demonstrations_with_fresh_normalization"
           ]
         },
-        "parent_unavailable": false
+        "returncode": 1
       }
     },
     {
@@ -2132,17 +2687,32 @@
       "fixture": "native_runtime",
       "module": "rsl_rl",
       "module_present_in_this_environment": false,
-      "ci_installs_it": false,
-      "verdict": "skip_is_justified",
-      "live_or_latent": "live: CI does not install this module, so these tests are being skipped in CI now",
-      "handlers_that_could_swallow_the_poison": [],
+      "ci_installs_it": true,
+      "verdict": "undecided_no_gated_test_executed",
+      "why": "all tests gated by this fixture remained skipped in bypass mode",
+      "live_or_latent": "latent: CI installs this module",
+      "test_file_handlers_that_could_swallow_the_sentinel": [],
       "tests_that_pass_without_it": 0,
       "which_tests_pass_without_it": [],
+      "tests_that_require_it": 0,
+      "which_tests_require_it": [],
+      "gated_tests_exercised": 0,
+      "which_gated_tests_remain_undecided": [
+        "npa/tests/workflows/test_isaac_franka_bootstrap.py::TestNativeBootstrapCheckpoint::test_bootstrap_then_real_ppo_save_and_load",
+        "npa/tests/workflows/test_isaac_franka_bootstrap.py::TestNativeBootstrapCheckpoint::test_corrective_replay_repeats_before_ppo_when_actor_assessment_fails",
+        "npa/tests/workflows/test_isaac_franka_bootstrap.py::TestNativeBootstrapCheckpoint::test_failed_mixture_recovers_from_guarded_native_teacher_data",
+        "npa/tests/workflows/test_isaac_franka_bootstrap.py::TestNativeBootstrapCheckpoint::test_native_inference_reset_clears_only_completed_environments[evaluation]",
+        "npa/tests/workflows/test_isaac_franka_bootstrap.py::TestNativeBootstrapCheckpoint::test_native_inference_reset_clears_only_completed_environments[rollout]",
+        "npa/tests/workflows/test_isaac_franka_bootstrap.py::test_measured_approach_and_gripper_closure_control_teacher_transition",
+        "npa/tests/workflows/test_isaac_franka_bootstrap.py::test_native_rsl_actor_learns_demonstrations_with_fresh_normalization",
+        "npa/tests/workflows/test_isaac_franka_bootstrap.py::test_teacher_uses_shared_strict_placement_state_and_consecutive_dwell",
+        "npa/tests/workflows/test_isaac_franka_bootstrap.py::test_transport_targets_preserve_measured_cube_to_gripper_offset"
+      ],
       "what_a_count_delta_would_have_said": 0,
       "rose_into_passing_without_having_skipped": [],
-      "dropped_out_of_passing_under_poison": [],
+      "dropped_out_of_passing_under_bypass": [],
       "absent": {
-        "passed": 129,
+        "passed": 128,
         "failed": 0,
         "skipped": 9,
         "error": 0,
@@ -2289,10 +2859,10 @@
             "npa/tests/workflows/test_isaac_franka_bootstrap.py::test_transport_targets_preserve_measured_cube_to_gripper_offset"
           ]
         },
-        "parent_unavailable": false
+        "returncode": 0
       },
-      "poisoned": {
-        "passed": 129,
+      "bypassed": {
+        "passed": 128,
         "failed": 0,
         "skipped": 9,
         "error": 0,
@@ -2439,7 +3009,7 @@
             "npa/tests/workflows/test_isaac_franka_bootstrap.py::test_transport_targets_preserve_measured_cube_to_gripper_offset"
           ]
         },
-        "parent_unavailable": false
+        "returncode": 0
       }
     },
     {
@@ -2448,16 +3018,31 @@
       "module": "tensordict",
       "module_present_in_this_environment": false,
       "ci_installs_it": true,
-      "verdict": "skip_is_justified",
-      "live_or_latent": "latent: CI installs this module, so nothing is skipped today and these tests go quiet the moment the dependency is dropped",
-      "handlers_that_could_swallow_the_poison": [],
+      "verdict": "undecided_no_gated_test_executed",
+      "why": "all tests gated by this fixture remained skipped in bypass mode",
+      "live_or_latent": "latent: CI installs this module",
+      "test_file_handlers_that_could_swallow_the_sentinel": [],
       "tests_that_pass_without_it": 0,
       "which_tests_pass_without_it": [],
+      "tests_that_require_it": 0,
+      "which_tests_require_it": [],
+      "gated_tests_exercised": 0,
+      "which_gated_tests_remain_undecided": [
+        "npa/tests/workflows/test_isaac_franka_bootstrap.py::TestNativeBootstrapCheckpoint::test_bootstrap_then_real_ppo_save_and_load",
+        "npa/tests/workflows/test_isaac_franka_bootstrap.py::TestNativeBootstrapCheckpoint::test_corrective_replay_repeats_before_ppo_when_actor_assessment_fails",
+        "npa/tests/workflows/test_isaac_franka_bootstrap.py::TestNativeBootstrapCheckpoint::test_failed_mixture_recovers_from_guarded_native_teacher_data",
+        "npa/tests/workflows/test_isaac_franka_bootstrap.py::TestNativeBootstrapCheckpoint::test_native_inference_reset_clears_only_completed_environments[evaluation]",
+        "npa/tests/workflows/test_isaac_franka_bootstrap.py::TestNativeBootstrapCheckpoint::test_native_inference_reset_clears_only_completed_environments[rollout]",
+        "npa/tests/workflows/test_isaac_franka_bootstrap.py::test_measured_approach_and_gripper_closure_control_teacher_transition",
+        "npa/tests/workflows/test_isaac_franka_bootstrap.py::test_native_rsl_actor_learns_demonstrations_with_fresh_normalization",
+        "npa/tests/workflows/test_isaac_franka_bootstrap.py::test_teacher_uses_shared_strict_placement_state_and_consecutive_dwell",
+        "npa/tests/workflows/test_isaac_franka_bootstrap.py::test_transport_targets_preserve_measured_cube_to_gripper_offset"
+      ],
       "what_a_count_delta_would_have_said": 0,
       "rose_into_passing_without_having_skipped": [],
-      "dropped_out_of_passing_under_poison": [],
+      "dropped_out_of_passing_under_bypass": [],
       "absent": {
-        "passed": 129,
+        "passed": 128,
         "failed": 0,
         "skipped": 9,
         "error": 0,
@@ -2604,10 +3189,10 @@
             "npa/tests/workflows/test_isaac_franka_bootstrap.py::test_transport_targets_preserve_measured_cube_to_gripper_offset"
           ]
         },
-        "parent_unavailable": false
+        "returncode": 0
       },
-      "poisoned": {
-        "passed": 129,
+      "bypassed": {
+        "passed": 128,
         "failed": 0,
         "skipped": 9,
         "error": 0,
@@ -2754,7 +3339,7 @@
             "npa/tests/workflows/test_isaac_franka_bootstrap.py::test_transport_targets_preserve_measured_cube_to_gripper_offset"
           ]
         },
-        "parent_unavailable": false
+        "returncode": 0
       }
     },
     {
@@ -2763,14 +3348,36 @@
       "module": "torch",
       "module_present_in_this_environment": false,
       "ci_installs_it": true,
-      "verdict": "skip_is_justified",
-      "live_or_latent": "latent: CI installs this module, so nothing is skipped today and these tests go quiet the moment the dependency is dropped",
-      "handlers_that_could_swallow_the_poison": [],
+      "verdict": "undecided_no_gated_test_executed",
+      "why": "all tests gated by this fixture remained skipped in bypass mode",
+      "live_or_latent": "latent: CI installs this module",
+      "test_file_handlers_that_could_swallow_the_sentinel": [],
       "tests_that_pass_without_it": 0,
       "which_tests_pass_without_it": [],
+      "tests_that_require_it": 0,
+      "which_tests_require_it": [],
+      "gated_tests_exercised": 0,
+      "which_gated_tests_remain_undecided": [
+        "npa/tests/workflows/test_isaac_franka_normalization.py::test_exact_native_checkpoint_restores_freeze_after_loading_statistic_tensors",
+        "npa/tests/workflows/test_isaac_franka_normalization.py::test_explicit_unbootstrapped_checkpoint_preserves_native_statistic_updates",
+        "npa/tests/workflows/test_isaac_franka_normalization.py::test_native_load_rejects_changed_or_coerced_normalization_metadata[count-127]",
+        "npa/tests/workflows/test_isaac_franka_normalization.py::test_native_load_rejects_changed_or_coerced_normalization_metadata[count-128.0]",
+        "npa/tests/workflows/test_isaac_franka_normalization.py::test_native_load_rejects_changed_or_coerced_normalization_metadata[count-True]",
+        "npa/tests/workflows/test_isaac_franka_normalization.py::test_native_load_rejects_changed_or_coerced_normalization_metadata[frozen-1]",
+        "npa/tests/workflows/test_isaac_franka_normalization.py::test_native_load_rejects_changed_or_coerced_normalization_metadata[gold_used-0]",
+        "npa/tests/workflows/test_isaac_franka_normalization.py::test_native_load_rejects_changed_or_coerced_normalization_metadata[gold_used-True]",
+        "npa/tests/workflows/test_isaac_franka_normalization.py::test_native_load_rejects_changed_or_coerced_normalization_metadata[schema-other]",
+        "npa/tests/workflows/test_isaac_franka_normalization.py::test_native_load_rejects_changed_or_coerced_normalization_metadata[scope-validation]",
+        "npa/tests/workflows/test_isaac_franka_normalization.py::test_native_load_rejects_changed_or_coerced_normalization_metadata[until-128.0]",
+        "npa/tests/workflows/test_isaac_franka_normalization.py::test_native_load_rejects_changed_or_coerced_normalization_metadata[until-None]",
+        "npa/tests/workflows/test_isaac_franka_normalization.py::test_native_load_rejects_changed_or_coerced_normalization_metadata[until-True]",
+        "npa/tests/workflows/test_isaac_franka_normalization.py::test_native_load_rejects_missing_metadata_and_changed_loaded_count",
+        "npa/tests/workflows/test_isaac_franka_normalization.py::test_native_training_updates_cannot_move_frozen_statistics_or_actor_inputs",
+        "npa/tests/workflows/test_isaac_franka_normalization.py::test_uninitialized_or_changed_freeze_bound_cannot_be_saved"
+      ],
       "what_a_count_delta_would_have_said": 0,
       "rose_into_passing_without_having_skipped": [],
-      "dropped_out_of_passing_under_poison": [],
+      "dropped_out_of_passing_under_bypass": [],
       "absent": {
         "passed": 0,
         "failed": 0,
@@ -2796,9 +3403,9 @@
             "npa/tests/workflows/test_isaac_franka_normalization.py::test_uninitialized_or_changed_freeze_bound_cannot_be_saved"
           ]
         },
-        "parent_unavailable": false
+        "returncode": 0
       },
-      "poisoned": {
+      "bypassed": {
         "passed": 0,
         "failed": 0,
         "skipped": 16,
@@ -2823,7 +3430,7 @@
             "npa/tests/workflows/test_isaac_franka_normalization.py::test_uninitialized_or_changed_freeze_bound_cannot_be_saved"
           ]
         },
-        "parent_unavailable": false
+        "returncode": 0
       }
     },
     {
@@ -2831,9 +3438,37 @@
       "fixture": "native_statistics",
       "module": "rsl_rl.modules",
       "module_present_in_this_environment": false,
-      "ci_installs_it": false,
-      "verdict": "not_measurable_here",
-      "why": "the parent package is not installed, so the leaf cannot be made importable-but-unusable without stubbing the parent, which perturbs unrelated fixtures in the same file",
+      "ci_installs_it": true,
+      "verdict": "undecided_no_gated_test_executed",
+      "why": "all tests gated by this fixture remained skipped in bypass mode",
+      "live_or_latent": "latent: CI installs this module",
+      "test_file_handlers_that_could_swallow_the_sentinel": [],
+      "tests_that_pass_without_it": 0,
+      "which_tests_pass_without_it": [],
+      "tests_that_require_it": 0,
+      "which_tests_require_it": [],
+      "gated_tests_exercised": 0,
+      "which_gated_tests_remain_undecided": [
+        "npa/tests/workflows/test_isaac_franka_normalization.py::test_exact_native_checkpoint_restores_freeze_after_loading_statistic_tensors",
+        "npa/tests/workflows/test_isaac_franka_normalization.py::test_explicit_unbootstrapped_checkpoint_preserves_native_statistic_updates",
+        "npa/tests/workflows/test_isaac_franka_normalization.py::test_native_load_rejects_changed_or_coerced_normalization_metadata[count-127]",
+        "npa/tests/workflows/test_isaac_franka_normalization.py::test_native_load_rejects_changed_or_coerced_normalization_metadata[count-128.0]",
+        "npa/tests/workflows/test_isaac_franka_normalization.py::test_native_load_rejects_changed_or_coerced_normalization_metadata[count-True]",
+        "npa/tests/workflows/test_isaac_franka_normalization.py::test_native_load_rejects_changed_or_coerced_normalization_metadata[frozen-1]",
+        "npa/tests/workflows/test_isaac_franka_normalization.py::test_native_load_rejects_changed_or_coerced_normalization_metadata[gold_used-0]",
+        "npa/tests/workflows/test_isaac_franka_normalization.py::test_native_load_rejects_changed_or_coerced_normalization_metadata[gold_used-True]",
+        "npa/tests/workflows/test_isaac_franka_normalization.py::test_native_load_rejects_changed_or_coerced_normalization_metadata[schema-other]",
+        "npa/tests/workflows/test_isaac_franka_normalization.py::test_native_load_rejects_changed_or_coerced_normalization_metadata[scope-validation]",
+        "npa/tests/workflows/test_isaac_franka_normalization.py::test_native_load_rejects_changed_or_coerced_normalization_metadata[until-128.0]",
+        "npa/tests/workflows/test_isaac_franka_normalization.py::test_native_load_rejects_changed_or_coerced_normalization_metadata[until-None]",
+        "npa/tests/workflows/test_isaac_franka_normalization.py::test_native_load_rejects_changed_or_coerced_normalization_metadata[until-True]",
+        "npa/tests/workflows/test_isaac_franka_normalization.py::test_native_load_rejects_missing_metadata_and_changed_loaded_count",
+        "npa/tests/workflows/test_isaac_franka_normalization.py::test_native_training_updates_cannot_move_frozen_statistics_or_actor_inputs",
+        "npa/tests/workflows/test_isaac_franka_normalization.py::test_uninitialized_or_changed_freeze_bound_cannot_be_saved"
+      ],
+      "what_a_count_delta_would_have_said": 0,
+      "rose_into_passing_without_having_skipped": [],
+      "dropped_out_of_passing_under_bypass": [],
       "absent": {
         "passed": 0,
         "failed": 0,
@@ -2859,7 +3494,34 @@
             "npa/tests/workflows/test_isaac_franka_normalization.py::test_uninitialized_or_changed_freeze_bound_cannot_be_saved"
           ]
         },
-        "parent_unavailable": false
+        "returncode": 0
+      },
+      "bypassed": {
+        "passed": 0,
+        "failed": 0,
+        "skipped": 16,
+        "error": 0,
+        "nodes": {
+          "skipped": [
+            "npa/tests/workflows/test_isaac_franka_normalization.py::test_exact_native_checkpoint_restores_freeze_after_loading_statistic_tensors",
+            "npa/tests/workflows/test_isaac_franka_normalization.py::test_explicit_unbootstrapped_checkpoint_preserves_native_statistic_updates",
+            "npa/tests/workflows/test_isaac_franka_normalization.py::test_native_load_rejects_changed_or_coerced_normalization_metadata[count-127]",
+            "npa/tests/workflows/test_isaac_franka_normalization.py::test_native_load_rejects_changed_or_coerced_normalization_metadata[count-128.0]",
+            "npa/tests/workflows/test_isaac_franka_normalization.py::test_native_load_rejects_changed_or_coerced_normalization_metadata[count-True]",
+            "npa/tests/workflows/test_isaac_franka_normalization.py::test_native_load_rejects_changed_or_coerced_normalization_metadata[frozen-1]",
+            "npa/tests/workflows/test_isaac_franka_normalization.py::test_native_load_rejects_changed_or_coerced_normalization_metadata[gold_used-0]",
+            "npa/tests/workflows/test_isaac_franka_normalization.py::test_native_load_rejects_changed_or_coerced_normalization_metadata[gold_used-True]",
+            "npa/tests/workflows/test_isaac_franka_normalization.py::test_native_load_rejects_changed_or_coerced_normalization_metadata[schema-other]",
+            "npa/tests/workflows/test_isaac_franka_normalization.py::test_native_load_rejects_changed_or_coerced_normalization_metadata[scope-validation]",
+            "npa/tests/workflows/test_isaac_franka_normalization.py::test_native_load_rejects_changed_or_coerced_normalization_metadata[until-128.0]",
+            "npa/tests/workflows/test_isaac_franka_normalization.py::test_native_load_rejects_changed_or_coerced_normalization_metadata[until-None]",
+            "npa/tests/workflows/test_isaac_franka_normalization.py::test_native_load_rejects_changed_or_coerced_normalization_metadata[until-True]",
+            "npa/tests/workflows/test_isaac_franka_normalization.py::test_native_load_rejects_missing_metadata_and_changed_loaded_count",
+            "npa/tests/workflows/test_isaac_franka_normalization.py::test_native_training_updates_cannot_move_frozen_statistics_or_actor_inputs",
+            "npa/tests/workflows/test_isaac_franka_normalization.py::test_uninitialized_or_changed_freeze_bound_cannot_be_saved"
+          ]
+        },
+        "returncode": 0
       }
     },
     {
@@ -2868,14 +3530,36 @@
       "module": "torch",
       "module_present_in_this_environment": false,
       "ci_installs_it": true,
-      "verdict": "skip_is_justified",
-      "live_or_latent": "latent: CI installs this module, so nothing is skipped today and these tests go quiet the moment the dependency is dropped",
-      "handlers_that_could_swallow_the_poison": [],
+      "verdict": "partially_measured",
+      "why": "some gated tests were classified, while others remained skipped",
+      "live_or_latent": "latent: CI installs this module",
+      "test_file_handlers_that_could_swallow_the_sentinel": [],
       "tests_that_pass_without_it": 0,
       "which_tests_pass_without_it": [],
+      "tests_that_require_it": 12,
+      "which_tests_require_it": [
+        "npa/tests/workflows/test_isaac_franka_terminal_replay.py::test_incomplete_episode_cannot_certify_handoff",
+        "npa/tests/workflows/test_isaac_franka_terminal_replay.py::test_new_scenario_needs_its_own_complete_terminal_dwell",
+        "npa/tests/workflows/test_isaac_franka_terminal_replay.py::test_partial_terminal_coverage_is_rejected_before_fitting",
+        "npa/tests/workflows/test_isaac_franka_terminal_replay.py::test_real_collection_returns_terminal_failures_and_keeps_ever_events_diagnostic",
+        "npa/tests/workflows/test_isaac_franka_terminal_replay.py::test_replay_gru_predictions_match_independently_reset_collections",
+        "npa/tests/workflows/test_isaac_franka_terminal_replay.py::test_reset_dwell_and_later_retry_cannot_repair_first_episode",
+        "npa/tests/workflows/test_isaac_franka_terminal_replay.py::test_simultaneous_duplicate_scenario_failure_is_not_overwritten",
+        "npa/tests/workflows/test_isaac_franka_terminal_replay.py::test_strict_thresholds_remain_exclusive[0.04-0.03]",
+        "npa/tests/workflows/test_isaac_franka_terminal_replay.py::test_strict_thresholds_remain_exclusive[0.05-0.02]",
+        "npa/tests/workflows/test_isaac_franka_terminal_replay.py::test_terminal_outcome_uses_pre_reset_state_only[2-False]",
+        "npa/tests/workflows/test_isaac_franka_terminal_replay.py::test_terminal_outcome_uses_pre_reset_state_only[3-True]",
+        "npa/tests/workflows/test_isaac_franka_terminal_replay.py::test_transient_hold_cannot_certify_terminal_actor_handoff"
+      ],
+      "gated_tests_exercised": 12,
+      "which_gated_tests_remain_undecided": [
+        "npa/tests/workflows/test_isaac_franka_terminal_replay.py::test_partial_collections_stay_separate_without_mutating_archived_resets",
+        "npa/tests/workflows/test_isaac_franka_terminal_replay.py::test_replay_refuses_incomplete_vector_steps[0]",
+        "npa/tests/workflows/test_isaac_franka_terminal_replay.py::test_replay_refuses_incomplete_vector_steps[3]"
+      ],
       "what_a_count_delta_would_have_said": 0,
       "rose_into_passing_without_having_skipped": [],
-      "dropped_out_of_passing_under_poison": [],
+      "dropped_out_of_passing_under_bypass": [],
       "absent": {
         "passed": 0,
         "failed": 0,
@@ -2900,9 +3584,9 @@
             "npa/tests/workflows/test_isaac_franka_terminal_replay.py::test_transient_hold_cannot_certify_terminal_actor_handoff"
           ]
         },
-        "parent_unavailable": false
+        "returncode": 0
       },
-      "poisoned": {
+      "bypassed": {
         "passed": 0,
         "failed": 1,
         "skipped": 3,
@@ -2930,7 +3614,7 @@
             "npa/tests/workflows/test_isaac_franka_terminal_replay.py::test_replay_refuses_incomplete_vector_steps[3]"
           ]
         },
-        "parent_unavailable": false
+        "returncode": 1
       }
     },
     {
@@ -2939,16 +3623,8 @@
       "module": "pxr",
       "module_present_in_this_environment": true,
       "ci_installs_it": true,
-      "verdict": "not_measurable_here",
-      "why": "nothing skips for this module in this environment",
-      "absent": {
-        "passed": 0,
-        "failed": 0,
-        "skipped": 0,
-        "error": 0,
-        "nodes": {},
-        "parent_unavailable": false
-      }
+      "verdict": "not_measured_conftest",
+      "why": "A conftest.py is not a test target. This sweep does not claim a dependency verdict until fixture consumers are resolved and run explicitly."
     }
   ]
 }
