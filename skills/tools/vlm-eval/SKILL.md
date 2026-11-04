@@ -156,7 +156,16 @@ score-derived verdicts disagree or either judge errors. The artifact is always
 weak judge can make disagreement common without making the scene intrinsically
 ambiguous. Unlike ordinary single-judge compatibility parsing, this path
 rejects Markdown-fenced JSON as a typed judge error instead of transforming the
-output. It also does not defend against in-image instructions or prove a
+output. The exact MiniCPM-V-4_5 plus gemma-3-27b-it pair is rejected before
+input or credential work because a retained six-family calibration found
+shared false-pass modes in three of six retained adversarial families. The
+sanitized retained-evidence index is
+`docs/workbench/evidence/vlm-paired-shared-failure-calibration-20261101/`.
+Other compatible pairs remain
+available. Those calls used a legacy probe schema, not the current strict
+paired-response contract, so the rule is a precaution for one measured pair,
+not model qualification or unseen-attack coverage.
+The path still does not generally defend against in-image instructions or prove a
 critical visible defect absent. Full provider responses stay in the private
 artifact; CLI output is a bounded summary.
 

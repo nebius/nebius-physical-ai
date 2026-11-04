@@ -2246,7 +2246,8 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
     "workbench.vlm_eval.compare_judges": ToolEntry(
         name="workbench.vlm_eval.compare_judges",
         description=(
-            "Retain two hosted VLM outcomes over one shared prompt and frame set."
+            "Retain two hosted VLM outcomes while rejecting the measured "
+            "MiniCPM plus Gemma shared-failure pair."
         ),
         config_defaults={
             "primary_vlm_model": "MiniMaxAI/MiniMax-M3",

@@ -7,6 +7,20 @@ a versioned heading when a release is cut.
 
 ## Unreleased
 
+### Paired VLM judge shared-failure boundary
+
+- Reject the exact MiniCPM-V-4_5 plus gemma-3-27b-it `compare-judges` pair
+  before input or credential work. A retained six-attack calibration found
+  shared false-pass modes in three of six retained adversarial families; the
+  sanitized evidence index is
+  `docs/workbench/evidence/vlm-paired-shared-failure-calibration-20261101/`.
+  The default MiniMax plus MiniCPM,
+  scheduled MiniMax plus Gemma, and unrelated compatible pairs remain valid.
+- Treat the rule as a precaution for one measured pair. The 36 profile calls
+  used a legacy probe schema within a 132-attempt investigation, not the
+  current strict paired-response contract, so they do not qualify an accepted
+  model pair or establish protection from unseen in-image instructions.
+
 ### cuRobo image dependency closure
 
 - Lock the full system setuptools seed independently to the runtime's 84.0.0

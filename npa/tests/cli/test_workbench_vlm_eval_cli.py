@@ -352,6 +352,50 @@ def test_workbench_vlm_eval_compare_judges_rejects_same_model(
     assert called is False
 
 
+def test_workbench_vlm_eval_compare_judges_rejects_measured_shared_failure_pair(
+    monkeypatch, tmp_path
+) -> None:
+    from npa.workbench import vlm_eval
+
+    provider_activity = []
+
+    def unexpected_provider_activity(**_kwargs):
+        provider_activity.append(True)
+        pytest.fail("measured shared-failure pair reached provider activity")
+
+    monkeypatch.setattr(vlm_eval, "_resolve_api_key", unexpected_provider_activity)
+    monkeypatch.setattr(
+        vlm_eval, "_post_comparison_request", unexpected_provider_activity
+    )
+    output = tmp_path / "comparison"
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "vlm-eval",
+            "compare-judges",
+            "--input-path",
+            str(tmp_path / "missing-input"),
+            "--output-path",
+            str(output),
+            "--primary-model",
+            "openbmb/MiniCPM-V-4_5",
+            "--secondary-model",
+            "google/gemma-3-27b-it",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "three of six retained adversarial families" in " ".join(
+        result.output.split()
+    )
+    assert "evidence_id=vlm-paired-shared-failure-calibration-20261101" in " ".join(
+        result.output.split()
+    )
+    assert provider_activity == []
+    assert not output.exists()
+
+
 def test_workbench_vlm_eval_workflow_path() -> None:
     result = runner.invoke(
         app, ["workbench", "vlm-eval", "workflow", "--output", "json"]

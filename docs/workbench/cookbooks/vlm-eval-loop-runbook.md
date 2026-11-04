@@ -161,10 +161,18 @@ requires escalation on disagreement or judge error. Both requested model IDs
 must return their exact requested identity. A substituted or missing returned
 model is a typed judge error, with its original response retained for review.
 Models requiring incompatible generation settings are rejected before input
-preparation or provider calls. Compatibility uses the shared hosted profile's
-temperature support, not a separate model-name list. Kimi-K3 cannot participate in this
-shared-temperature experiment. This command does not change single-judge model support.
-The report is always
+preparation or provider calls. Compatibility first uses the shared hosted
+profile's temperature support, so Kimi-K3 cannot participate in this
+shared-temperature experiment. An additional evidence-bound rule rejects the
+exact MiniCPM-V-4_5 plus gemma-3-27b-it pair: a retained six-family calibration
+found shared false-pass modes in three of six retained adversarial families.
+The sanitized retained-evidence index is
+[`vlm-paired-shared-failure-calibration-20261101`](../evidence/vlm-paired-shared-failure-calibration-20261101/README.md).
+Other compatible pairs remain
+available. The retained calls used a legacy probe schema rather than the
+current strict paired-response contract, so this precaution does not claim an
+end-to-end reproduction, model qualification, or unseen-attack robustness.
+This command does not change single-judge model support. The report is always
 `audit_only`; agreement does not qualify either model, estimate an operational
 disagreement rate, establish physical correctness, or certify robot safety.
 The paired prompt explicitly requires one bare JSON object with no Markdown
