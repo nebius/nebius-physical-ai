@@ -131,7 +131,8 @@ def test_dataset_rejects_misaligned_native_steps():
         FeedbackDataset(SimpleNamespace(all_steps=[(0, 0)]), _manifest())
 
 
-def test_terminal_mask_evidence_decodes_observation_and_excludes_padding():
+@pytest.mark.parametrize("video_key", ["video.front", "video"])
+def test_terminal_mask_evidence_decodes_observation_and_excludes_padding(video_key):
     class Native:
         all_steps = [(0, 0), (0, 1), (0, 2), (1, 0), (1, 1)]
 
@@ -139,7 +140,7 @@ def test_terminal_mask_evidence_decodes_observation_and_excludes_padding():
             return {
                 "action_mask": np.ones((2, 3), dtype=bool),
                 "action": np.full((2, 3), index),
-                "video.front": np.zeros((2, 2, 3), dtype=np.uint8),
+                video_key: np.zeros((2, 2, 3), dtype=np.uint8),
             }
 
     evidence = _terminal_mask_evidence(FeedbackDataset(Native(), _manifest()))
@@ -148,7 +149,7 @@ def test_terminal_mask_evidence_decodes_observation_and_excludes_padding():
         "frame_index": 2,
         "valid_action_horizon_steps": 1,
         "masked_action_horizon_steps": 1,
-        "decoded_observation_shapes": {"video.front": [2, 2, 3]},
+        "decoded_observation_shapes": {video_key: [2, 2, 3]},
     }
 
 
