@@ -54,6 +54,7 @@ TORCH_INDEX_URL="${TORCH_INDEX_URL:-https://download.pytorch.org/whl/cu128}"
 # isaac-named venv directory buries that list under 60,000 unrelated site-packages files.
 # Keeping the venv out of the namespace makes the audit output ~20 lines a human can read.
 ISAAC_VENV="${NPA_ISAAC_VENV:-/opt/npa/sim/venv}"
+INHERITED_PYTHON="${NPA_ISAAC_INHERITED_PYTHON:-}"
 RUNTIME_USER="${NPA_RUNTIME_USER:-ubuntu}"
 CACHE_DIR="${NPA_ISAAC_CACHE_DIR:-/opt/isaac-cache}"
 COMMON_DIR="${NPA_ISAAC_COMMON_DIR:-/opt/npa/docker/workbench/common}"
@@ -235,6 +236,10 @@ PY
   test -s /usr/share/doc/cpython3.11/MPDECIMAL-LICENSE.h
   test -s /usr/share/doc/cpython3.11/SHA3-LICENSE
   test -s /usr/share/doc/cpython3.11/BLAKE2-CC0-SOURCE.h
+  # The standard-library tests were run above. Do not publish their fixture
+  # private keys or other test-only bytes in every derived public image.
+  rm -rf /usr/local/lib/python3.11/test
+  test ! -e /usr/local/lib/python3.11/test
   rm -rf "$PYTHON_SOURCE_ARCHIVE" "/tmp/Python-${PYTHON_VERSION}"
 elif [ "$ISAAC_PYTHON_MINOR" = 3.12 ]; then
   # Isaac Sim 6 / Isaac Lab 3 require Python 3.12. The 3.x image uses the
@@ -276,6 +281,17 @@ else
   log "python${ISAAC_PYTHON_MINOR} venv at ${ISAAC_VENV}"
   "python${ISAAC_PYTHON_MINOR}" -m venv "$ISAAC_VENV"
 fi
+if [ -n "$INHERITED_PYTHON" ]; then
+  [ -x "$INHERITED_PYTHON" ] || {
+    echo "NPA_ISAAC_INHERITED_PYTHON is not executable: $INHERITED_PYTHON" >&2
+    exit 2
+  }
+  inherited_site="$("$INHERITED_PYTHON" -c \
+    'import sysconfig; print(sysconfig.get_paths()["purelib"])')"
+  isaac_site="$("$ISAAC_VENV/bin/python" -c \
+    'import sysconfig; print(sysconfig.get_paths()["purelib"])')"
+  printf '%s\n' "$inherited_site" > "$isaac_site/_npa_inherited_image_site.pth"
+fi
 "$ISAAC_VENV/bin/python" -m pip install --no-cache-dir --no-deps \
   "pip==26.2.2" \
   "setuptools==84.1.0" \
@@ -291,6 +307,9 @@ if [ "$ISAAC_PYTHON_MINOR" = 3.11 ]; then
   rm -rf /usr/local/lib/python3.11/ensurepip/_bundled
   test -z "$(find /usr/local/lib/python3.11/site-packages -mindepth 1 -maxdepth 1 \
     -iname 'pip*' -print -quit)"
+  python3.11 -m venv --without-pip /tmp/npa-python311-venv-probe
+  test -x /tmp/npa-python311-venv-probe/bin/python
+  rm -rf /tmp/npa-python311-venv-probe
 fi
 
 # Isaac releases require an exact Python minor; fail here rather than at first run.

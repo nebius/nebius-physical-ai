@@ -178,14 +178,16 @@ resolve_base_python() {
 }
 
 cache_stamp() {
-  local base_python="$1" abi wheels_sha bootstrap_sha oss_deps_sha
+  local base_python="$1" abi base_python_executable wheels_sha bootstrap_sha oss_deps_sha
   abi="$("$base_python" -c 'import sys,sysconfig; print("%d.%d-%s" % (sys.version_info[0], sys.version_info[1], sysconfig.get_platform()))' 2>/dev/null || echo unknown)"
+  base_python_executable="$(readlink -f "$base_python" 2>/dev/null || printf '%s' "$base_python")"
   wheels_sha="$(sha256sum "$WHEELS_FILE" 2>/dev/null | cut -d' ' -f1 || echo nowheels)"
   bootstrap_sha="$(sha256sum "${BASH_SOURCE[0]}" 2>/dev/null | cut -d' ' -f1 || echo nobootstrap)"
   oss_deps_sha="$(sha256sum "$OSS_DEPS_FILE" 2>/dev/null | cut -d' ' -f1 || echo noossdeps)"
-  printf '%s|%s|%s|%s|%s|%s|%s|%s' \
+  printf '%s|%s|%s|%s|%s|%s|%s|%s|%s' \
     "$ISAAC_SIM_VERSION" "$ISAAC_LAB_VERSION" "$ISAAC_LAB_SRC_COMMIT" \
     "$INDEX_URL" "$wheels_sha" "$bootstrap_sha" "$oss_deps_sha" "$abi" \
+    "$base_python_executable" \
     | sha256sum | cut -d' ' -f1
 }
 
@@ -203,7 +205,10 @@ install_isaac() {
   mkdir -p "$tmp"
 
   log "creating python environment (layered over ${base_python})"
-  "$base_python" -m venv "$tmp/venv" \
+  # The public image intentionally removes CPython's stale bundled ensurepip
+  # wheels. Create the cache venv without them; the reviewed current pip in the
+  # image venv is exposed through the site layering below.
+  "$base_python" -m venv --without-pip "$tmp/venv" \
     || die "$EX_SOFTWARE" "failed to create the cache virtualenv at $tmp/venv"
 
   # Layer the IMAGE's site-packages (torch, numpy, gear_sonic, the OSS isaaclab deps)
@@ -236,6 +241,8 @@ PY
 import torch
 print(f"isaac-bootstrap: image torch {torch.__version__} visible from the cache venv")
 PY
+  "$tmp/venv/bin/python" -m pip --version >&2 \
+    || die "$EX_SOFTWARE" "the cache venv cannot use the image's reviewed pip"
 
   log "installing pinned NVIDIA Isaac wheels from ${INDEX_URL} (hash-verified)"
   # --index-url (not --extra-index-url): the NVIDIA set must not be shadowable from
@@ -274,6 +281,7 @@ PY
   "bootstrap_sha256": "$(sha256sum "${BASH_SOURCE[0]}" | cut -d' ' -f1)",
   "oss_dependencies_sha256": "$(sha256sum "$OSS_DEPS_FILE" | cut -d' ' -f1)",
   "base_python": "${base_python}",
+  "base_python_executable": "$(readlink -f "$base_python")",
   "bytes": ${bytes},
   "install_seconds": ${elapsed},
   "installed_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",

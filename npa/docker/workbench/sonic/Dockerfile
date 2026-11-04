@@ -38,6 +38,7 @@ ARG SONIC_VERSION=0.1.2
 # The Isaac interpreter is always the bootstrap shim; the baked venv is separate.
 ARG ISAAC_LAB_PYTHON=/isaac-sim/python.sh
 ARG NPA_ISAAC_VENV=/opt/npa/sim/venv
+ARG NPA_ISAAC_INHERITED_PYTHON=
 ARG NPA_ISAAC_SKIP_TORCH=0
 ARG TORCH_INDEX_URL=https://download.pytorch.org/whl/cu130
 ARG REQUIRE_TORCH_SM120=1
@@ -118,6 +119,7 @@ COPY docker/workbench/common /opt/npa/docker/workbench/common
 RUN chmod +x /opt/npa/docker/workbench/common/*.sh \
     && NPA_RUNTIME_USER="${NPA_RUNTIME_USER}" \
        NPA_ISAAC_VENV="${NPA_ISAAC_VENV}" \
+       NPA_ISAAC_INHERITED_PYTHON="${NPA_ISAAC_INHERITED_PYTHON}" \
        NPA_ISAAC_SKIP_TORCH="${NPA_ISAAC_SKIP_TORCH}" \
        TORCH_INDEX_URL="${TORCH_INDEX_URL}" \
        REQUIRE_TORCH_SM120="${REQUIRE_TORCH_SM120}" \
