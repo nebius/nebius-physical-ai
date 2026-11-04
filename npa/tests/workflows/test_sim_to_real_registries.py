@@ -90,6 +90,28 @@ def test_eval_backend_registry_selects_canonical_and_compatibility_aliases(
     assert vlm_status.tier == "PARTIAL"
 
 
+@pytest.mark.parametrize("score", [True, "0.9", None, float("nan"), float("inf")])
+def test_eval_score_boundaries_do_not_coerce_non_json_scores(
+    tmp_path: Path, score: object
+) -> None:
+    context = RolloutContext(
+        rollout_path=tmp_path,
+        task="pick",
+        sim_backend="genesis",
+        metrics={"vlm_score": score},
+    )
+
+    metric, status = evaluate_backend(
+        "vlm-frames",
+        checkpoint_uri="s3://bucket/checkpoint/",
+        context=context,
+        threshold=0.5,
+    )
+
+    assert metric.score == 0.0
+    assert status.tier == "SEAM"
+
+
 def test_state_success_backend_adapts_lerobot_eval_pc_success(
     monkeypatch, tmp_path: Path
 ) -> None:
@@ -537,11 +559,46 @@ def test_real_loop_adapter_boundary_translates_feedback_shape_errors() -> None:
         sim_to_real_workflow._adapt_feedback_payload(payload)
 
 
-def test_structural_spine_routes_feedback_through_domain_boundary() -> None:
+def test_structural_spine_routes_feedback_through_domain_boundary(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     source = inspect.getsource(sim_to_real_workflow.run_structural_spine)
 
-    assert "_adapt_feedback_payload(feedback_payload)" in source
-    assert "adapt_feedback_to_training_signal(feedback_payload)" not in source
+    assert "_collect_feedback_payload_or_raise(" in source
+    monkeypatch.setattr(
+        sim_to_real_workflow,
+        "collect_feedback_payload",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            FeedbackSourceError("invalid BYO value")
+        ),
+    )
+    with pytest.raises(SimToRealError, match="invalid BYO value"):
+        sim_to_real_workflow._collect_feedback_payload_or_raise(
+            object(),
+            rollout_path=tmp_path,
+            output_path=tmp_path / "feedback",
+            task="pick",
+        )
+
+
+@pytest.mark.parametrize("payload", [None, []])
+def test_source_payload_requires_json_object(payload: object) -> None:
+    with pytest.raises(FeedbackSourceError, match="response must be a JSON object"):
+        parse_source_payload(
+            payload,
+            source="byo-container",
+            feedback_type=FeedbackType.SCALAR,
+        )
+
+
+@pytest.mark.parametrize("value", [None, 0])
+def test_dense_reward_fallback_rejects_present_non_array(value: object) -> None:
+    with pytest.raises(FeedbackSourceError, match="must be a JSON array"):
+        parse_source_payload(
+            {"dense_rewards": value},
+            source="byo-container",
+            feedback_type=FeedbackType.DENSE_PER_STEP,
+        )
 
 
 @pytest.mark.parametrize("value", ["false", 0, 1, None, [], {}])
@@ -669,6 +726,9 @@ def test_sim_env_feedback_without_metric_emits_adaptable_zero_signal(
     assert status.tier == "SEAM"
     assert signal["scalar_reward"] == 0.0
     assert signal["success"] is False
+    if feedback_type == FeedbackType.PREFERENCE:
+        assert signal["preference"] == {"score": 0.0, "status": "unavailable"}
+        assert "chosen" not in signal["preference"]
 
 
 @pytest.mark.parametrize("feedback_type", list(FeedbackType))
@@ -692,6 +752,9 @@ def test_blocked_byo_feedback_emits_adaptable_zero_signal(
     assert status.tier == "BLOCKED"
     assert signal["scalar_reward"] == 0.0
     assert signal["success"] is False
+    if feedback_type == FeedbackType.PREFERENCE:
+        assert signal["preference"] == {"score": 0.0, "status": "unavailable"}
+        assert "chosen" not in signal["preference"]
 
 
 def test_byo_container_feedback_source_dispatches_provided_rollout_http(

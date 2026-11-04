@@ -988,6 +988,7 @@ def _normalize_test_vlm_booleans(
     success: object = _MISSING_BOOLEAN,
     disagreement: object = _MISSING_BOOLEAN,
     score: float = 0.9,
+    confidence: object = 0.9,
 ) -> dict[str, object]:
     """Normalize one VLM step with optional boolean fields."""
 
@@ -995,7 +996,7 @@ def _normalize_test_vlm_booleans(
         "step": 0,
         "critique_text": "The rollout remains aligned.",
         "error_tags": ["ok"],
-        "confidence": 0.9,
+        "confidence": confidence,
     }
     payload = {"score": score, "per_step": [step]}
     if success is not _MISSING_BOOLEAN:
@@ -1040,6 +1041,16 @@ def test_normalize_vlm_evaluation_rejects_nonliteral_disagreement(
         match=r"per_step\[0\]\.model_disagreement must be a literal boolean",
     ):
         _normalize_test_vlm_booleans(disagreement=hostile_value)
+
+
+@pytest.mark.parametrize(
+    "hostile_value", [True, "0.9", None, float("nan"), float("inf"), 10**400]
+)
+def test_normalize_vlm_evaluation_rejects_coerced_confidence(
+    hostile_value: object,
+) -> None:
+    with pytest.raises(Sim2RealLoopError, match="finite JSON number"):
+        _normalize_test_vlm_booleans(confidence=hostile_value)
 
 
 @pytest.mark.parametrize(

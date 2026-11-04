@@ -278,6 +278,7 @@ class SimEnvFeedbackSource:
                 score=0.0,
                 success=False,
                 rationale="No eval metric was available for sim-env feedback.",
+                preference_decided=False,
             )
             return payload, FeedbackSourceStatus(
                 name="sim_env_feedback",
@@ -436,7 +437,7 @@ class ByoContainerFeedbackSource:
 
 
 def parse_source_payload(
-    payload: dict[str, Any],
+    payload: Any,
     *,
     source: str,
     feedback_type: FeedbackType,
@@ -454,6 +455,8 @@ def parse_source_payload(
         FeedbackSourceError: A response type, success flag, or score is invalid.
     """
 
+    if type(payload) is not dict:
+        raise FeedbackSourceError("feedback source response must be a JSON object")
     _validate_declared_feedback_type(payload, feedback_type)
     explicit_success = _explicit_success_from_payload(payload)
     value = (
@@ -512,6 +515,7 @@ def _payload_from_score(
     success: bool,
     rationale: str,
     metadata: dict[str, Any] | None = None,
+    preference_decided: bool = True,
 ) -> FeedbackPayload:
     score = _bounded(score)
     success = parse_feedback_success(success)
@@ -523,12 +527,14 @@ def _payload_from_score(
         value = success
     elif feedback_type == FeedbackType.CRITIQUE:
         value = {"score": score, "critique": rationale}
-    else:
+    elif preference_decided:
         value = {
             "chosen": "candidate" if success else "baseline",
             "rejected": "baseline" if success else "candidate",
             "score": score,
         }
+    else:
+        value = {"score": score, "status": "unavailable"}
     return FeedbackPayload(
         source=source,
         feedback_type=feedback_type,
@@ -552,6 +558,7 @@ def _blocked_payload(
         score=0.0,
         success=False,
         rationale=evidence,
+        preference_decided=False,
     )
     return payload, FeedbackSourceStatus(
         name=f"{source.replace('-', '_')}_feedback", tier="BLOCKED", evidence=evidence
@@ -618,7 +625,11 @@ def _fallback_value(payload: dict[str, Any], feedback_type: FeedbackType) -> Any
     if feedback_type == FeedbackType.SCALAR:
         return payload.get("score", 0.0)
     if feedback_type == FeedbackType.DENSE_PER_STEP:
-        return payload.get("dense_rewards") or payload.get("rewards") or []
+        if "dense_rewards" in payload:
+            return payload["dense_rewards"]
+        if "rewards" in payload:
+            return payload["rewards"]
+        return []
     if feedback_type == FeedbackType.PASS_FAIL:
         return payload.get("success", False)
     if feedback_type == FeedbackType.CRITIQUE:
