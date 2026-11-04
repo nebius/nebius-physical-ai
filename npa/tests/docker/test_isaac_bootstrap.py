@@ -861,13 +861,13 @@ def test_base_installer_upgrades_linux_headers_from_the_fixed_snapshot() -> None
     """
 
     installer = BASE_INSTALLER.read_text(encoding="utf-8")
-    assert 'UBUNTU_SNAPSHOT="${NPA_UBUNTU_SNAPSHOT:-20261018T000000Z}"' in installer
+    assert 'UBUNTU_SNAPSHOT="${NPA_UBUNTU_SNAPSHOT:-20261103T000000Z}"' in installer
     assert (
-        'LINUX_LIBC_DEV_VERSION="${NPA_LINUX_LIBC_DEV_VERSION:-5.15.0-198.208}"'
+        'LINUX_LIBC_DEV_VERSION="${NPA_LINUX_LIBC_DEV_VERSION:-5.15.0-202.212}"'
         in installer
     )
     assert '"linux-libc-dev=${LINUX_LIBC_DEV_VERSION}"' in installer
-    assert "linux-libc-dev=5.15.0-198.208" in installer
+    assert "linux-libc-dev=5.15.0-202.212" in installer
     assert "linux-libc-dev=6.8.0-147.147" in installer
     assert "NPA_UBUNTU_SUITE:-jammy" in installer
     assert "NPA_ISAAC_PYTHON_MINOR:-3.11" in installer
@@ -1217,7 +1217,7 @@ def _assert_cpython_source_contract(text: str) -> None:
 def test_base_installer_uses_immutable_system_and_bootstrap_inputs() -> None:
     """The GPU image build must not resolve Python or packaging from moving indexes."""
     text = BASE_INSTALLER.read_text(encoding="utf-8")
-    assert "NPA_UBUNTU_SNAPSHOT:-20261018T000000Z" in text
+    assert "NPA_UBUNTU_SNAPSHOT:-20261103T000000Z" in text
     assert "https://snapshot.ubuntu.com/ubuntu/${UBUNTU_SNAPSHOT}/" in text
     assert "add-apt-repository" not in text
     _assert_cpython_source_contract(text)
