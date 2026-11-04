@@ -1326,6 +1326,9 @@ def test_benchmark_metrics_expose_ordered_false_positive_and_negative_cases() ->
     assert matrix.actual_positive.predicted_negative == metrics.false_negatives == 2
     assert matrix.actual_negative.predicted_positive == metrics.false_positives == 1
     assert matrix.actual_negative.predicted_negative == metrics.true_negatives == 3
+    assert metrics.precision == 0.6667
+    assert metrics.recall == 0.5
+    assert metrics.precision != metrics.recall
     assert metrics.false_positive_rate == 0.25
     assert metrics.false_negative_rate == 0.5
     assert (
