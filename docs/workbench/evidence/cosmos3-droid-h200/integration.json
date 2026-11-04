@@ -1,0 +1,192 @@
+{
+  "schema": "cosmos3-droid-h200-integration/v1",
+  "date": "2026-10-15",
+  "framework_revision": "cf5d68c00d97ccd2480a2320ed652b92dec63102",
+  "portable_source_sha256": {
+    "entry.py": "2d6efde906509caa783b55f20dddec182547aa59ec883aa7c103a3549b36659a",
+    "native_video.py": "1f154f50f19c8520c206305f5af0e5a6cbbf40a25a47a05a328d129393aa7eb7",
+    "recipe.py": "74d3030bacedcccd9a4348d9ac98d64c2648af8485270fef698329c896900d25",
+    "report.py": "28c24f3a73e6707e12d24b63b688c6f961af11fd9a588dbf3a88e33e684c9376",
+    "sitecustomize.py": "0ddca954c76224fba0b8409008b3e90fcfc68ea3d25e94288fe4936bff7f5f3b",
+    "verification.py": "1eb8262aafb5f05f5b2512e83e86474a58a5e317ff92b2f5627e010451103755"
+  },
+  "operations": {
+    "plan": 0,
+    "dryrun": 0,
+    "run": 0
+  },
+  "reader_equivalence": {
+    "fixed_windows": 2,
+    "controlled_augmented_windows": 1,
+    "augmentation_seed": 771,
+    "indices": [
+      6391345,
+      6391362
+    ],
+    "all_tensor_and_metadata_hashes_equal": true,
+    "sample_digest_sha256": [
+      "9c25da3cc988f01dd2bd25199c72ca0316d1ce1a7a4994356cb8306fa1bc534e",
+      "69ad02364f937e8656da9c782583b62f42069643e92459913156b65e0b720bb1",
+      "5a1f2321e528bf9e1195bf140f79fae2e551a3447c92d3e0bfbd9bdd9df13200"
+    ]
+  },
+  "configuration": {
+    "batch_per_rank": 32,
+    "accumulation": 32,
+    "workers_per_rank": 4,
+    "inner_batch": 16,
+    "prefetch_factor": 2,
+    "fps": 15,
+    "chunk_length": 32,
+    "action_space": "joint_pos",
+    "use_state": true,
+    "viewpoint": "concat_view",
+    "action_normalization": null,
+    "use_filter_dict": true,
+    "use_image_augmentation": true,
+    "model_compilation": false,
+    "vae_compilation": false,
+    "validation": false,
+    "shards": 8,
+    "replicas": 1,
+    "precision": "bfloat16",
+    "activation_checkpointing": "full"
+  },
+  "configuration_source_sha256": "8be16a019cac0318e942d5d62786c7fe0784b8e62e376c6ae64590e92049b12e",
+  "global_samples": 8192,
+  "rank_receipts": [
+    {
+      "rank": 0,
+      "microsteps": 32,
+      "samples": 1024,
+      "updates": 1,
+      "optimizer_operations": 1,
+      "finite_losses": true,
+      "terminal": true,
+      "gpu_name": "NVIDIA H200",
+      "torch_version": "2.10.0+cu130",
+      "TORCH_COMPILE_DISABLE": "1",
+      "checkpoint_saves_suppressed": true
+    },
+    {
+      "rank": 1,
+      "microsteps": 32,
+      "samples": 1024,
+      "updates": 1,
+      "optimizer_operations": 1,
+      "finite_losses": true,
+      "terminal": true,
+      "gpu_name": "NVIDIA H200",
+      "torch_version": "2.10.0+cu130",
+      "TORCH_COMPILE_DISABLE": "1",
+      "checkpoint_saves_suppressed": true
+    },
+    {
+      "rank": 2,
+      "microsteps": 32,
+      "samples": 1024,
+      "updates": 1,
+      "optimizer_operations": 1,
+      "finite_losses": true,
+      "terminal": true,
+      "gpu_name": "NVIDIA H200",
+      "torch_version": "2.10.0+cu130",
+      "TORCH_COMPILE_DISABLE": "1",
+      "checkpoint_saves_suppressed": true
+    },
+    {
+      "rank": 3,
+      "microsteps": 32,
+      "samples": 1024,
+      "updates": 1,
+      "optimizer_operations": 1,
+      "finite_losses": true,
+      "terminal": true,
+      "gpu_name": "NVIDIA H200",
+      "torch_version": "2.10.0+cu130",
+      "TORCH_COMPILE_DISABLE": "1",
+      "checkpoint_saves_suppressed": true
+    },
+    {
+      "rank": 4,
+      "microsteps": 32,
+      "samples": 1024,
+      "updates": 1,
+      "optimizer_operations": 1,
+      "finite_losses": true,
+      "terminal": true,
+      "gpu_name": "NVIDIA H200",
+      "torch_version": "2.10.0+cu130",
+      "TORCH_COMPILE_DISABLE": "1",
+      "checkpoint_saves_suppressed": true
+    },
+    {
+      "rank": 5,
+      "microsteps": 32,
+      "samples": 1024,
+      "updates": 1,
+      "optimizer_operations": 1,
+      "finite_losses": true,
+      "terminal": true,
+      "gpu_name": "NVIDIA H200",
+      "torch_version": "2.10.0+cu130",
+      "TORCH_COMPILE_DISABLE": "1",
+      "checkpoint_saves_suppressed": true
+    },
+    {
+      "rank": 6,
+      "microsteps": 32,
+      "samples": 1024,
+      "updates": 1,
+      "optimizer_operations": 1,
+      "finite_losses": true,
+      "terminal": true,
+      "gpu_name": "NVIDIA H200",
+      "torch_version": "2.10.0+cu130",
+      "TORCH_COMPILE_DISABLE": "1",
+      "checkpoint_saves_suppressed": true
+    },
+    {
+      "rank": 7,
+      "microsteps": 32,
+      "samples": 1024,
+      "updates": 1,
+      "optimizer_operations": 1,
+      "finite_losses": true,
+      "terminal": true,
+      "gpu_name": "NVIDIA H200",
+      "torch_version": "2.10.0+cu130",
+      "TORCH_COMPILE_DISABLE": "1",
+      "checkpoint_saves_suppressed": true
+    }
+  ],
+  "private_original_rank_sha256": {
+    "rank-0.json": "99b9acc864c08999565f72b95522ed7ae809e6ea151b0a0b9405c6781c6618e6",
+    "rank-1.json": "ba0198dfb65ca86408d8ebc65ba936d906afc836bf376111656af106b4719c72",
+    "rank-2.json": "f3adc7b8fba5353fead33a7c66ad8beecaa6b4d0a4c6017f26eb2fdc94f91835",
+    "rank-3.json": "6db60c571828fe28468f5769aa95af552b8be1da80dcfcc5457da7e6384410ec",
+    "rank-4.json": "d21aaab0251797017d4d028c6a925de318264a95964ffb76ded6620c9e4519e2",
+    "rank-5.json": "db3376dc56a0217c628026d72cab8f640f7056efe6bbb8c3654d8dae4bb17364",
+    "rank-6.json": "783e77e1e29698f1745162102344656796a8d84e7de04d45b026ff7f43861918",
+    "rank-7.json": "82e02f73e1bdfecb3d20d1a24aaa4c2c509c2603d96f037b53ed5a4e0b222081"
+  },
+  "driver_version": "580.173.02",
+  "clean_end": {
+    "all_eight_gpus_idle": true,
+    "new_training_checkpoints": 0,
+    "readonly_container_root": true,
+    "actual_value_hits_persisted": 0,
+    "actual_value_hits_private_tmpfs": 0,
+    "actual_value_hits_container_layers_metadata_logs": 0,
+    "positive_controls_pass": true,
+    "original_inputs_unchanged": true,
+    "source_files_verified": 1118,
+    "node_lifecycle_changed": false
+  },
+  "limits": [
+    "One requested optimizer update; this checks integration and finite execution.",
+    "Two fixed decoded windows and one controlled augmented window establish equivalence only for those samples.",
+    "No policy-quality, timing-comparison, long-run stability, maximum-capacity or multi-node claim.",
+    "Historical five-update timing belongs to the original instrumented implementation."
+  ]
+}

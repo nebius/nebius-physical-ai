@@ -1,0 +1,497 @@
+{
+  "what_this_measures": "whether a fixed random_seed makes the registration path reproducible, decomposed by stage, and if not, by how much the answer moves",
+  "why_it_matters": "`_seeded` claims it makes RANSAC repeatable and `run_register` publishes an aligned_sha256 per pair, which reads as a digest two runs can be compared on. A reviewer who compares them sees a mismatch every time and has nothing telling them whether that is expected",
+  "seed_held_fixed_at": 11,
+  "repeats_per_cell": 16,
+  "voxel_size": 0.05,
+  "cases": {
+    "non_periodic_bowl": {
+      "construction": "a bowl with no repeating structure, where the alignment is well determined",
+      "each_stage_alone": {
+        "normal_estimation_downsampled_cloud": {
+          "repeats": 16,
+          "distinct_results": 1,
+          "bit_identical_every_repeat": true
+        },
+        "normal_estimation_full_cloud": {
+          "repeats": 16,
+          "distinct_results": 1,
+          "bit_identical_every_repeat": true
+        },
+        "fpfh_features": {
+          "repeats": 16,
+          "distinct_results": 1,
+          "bit_identical_every_repeat": true
+        },
+        "ransac_global_registration": {
+          "repeats": 16,
+          "distinct_results": 1,
+          "bit_identical_every_repeat": true
+        },
+        "icp_from_one_held_pose": {
+          "point_to_point": {
+            "repeats": 16,
+            "distinct_results": 1,
+            "bit_identical_every_repeat": true,
+            "every_repeat_was_handed_identical_input": true,
+            "the_input_digest": "6b9dd2938b052d9d9c24e59c42c267dd9f1777ca5bf57ee13302892ad0388fea",
+            "fitness": {
+              "min": 0.0,
+              "max": 0.0,
+              "distinct_values": 1
+            },
+            "correspondences": {
+              "min": 0,
+              "max": 0,
+              "distinct_values": 1
+            },
+            "found_no_correspondences_in_some_repeat": true,
+            "the_start_pose": "a +0.8 m x-translation constructed by this harness"
+          },
+          "point_to_plane": {
+            "repeats": 16,
+            "distinct_results": 1,
+            "bit_identical_every_repeat": true,
+            "every_repeat_was_handed_identical_input": true,
+            "the_input_digest": "6b9dd2938b052d9d9c24e59c42c267dd9f1777ca5bf57ee13302892ad0388fea",
+            "fitness": {
+              "min": 0.0,
+              "max": 0.0,
+              "distinct_values": 1
+            },
+            "correspondences": {
+              "min": 0,
+              "max": 0,
+              "distinct_values": 1
+            },
+            "found_no_correspondences_in_some_repeat": true,
+            "the_start_pose": "a +0.8 m x-translation constructed by this harness"
+          }
+        },
+        "icp_from_the_pipelines_own_coarse_pose": {
+          "point_to_point": {
+            "repeats": 16,
+            "distinct_results": 1,
+            "bit_identical_every_repeat": true,
+            "every_repeat_was_handed_identical_input": true,
+            "the_input_digest": "b95e314e39875e3e025c04062c92c7a3fa4a1bc60ad14321cf951e2d3322eea7",
+            "fitness": {
+              "min": 0.457,
+              "max": 0.457,
+              "distinct_values": 1
+            },
+            "correspondences": {
+              "min": 1828,
+              "max": 1828,
+              "distinct_values": 1
+            },
+            "found_no_correspondences_in_some_repeat": false,
+            "the_start_pose": "the pipeline's own RANSAC coarse pose, repeat 0"
+          },
+          "point_to_plane": {
+            "repeats": 16,
+            "distinct_results": 16,
+            "bit_identical_every_repeat": false,
+            "every_repeat_was_handed_identical_input": true,
+            "the_input_digest": "b95e314e39875e3e025c04062c92c7a3fa4a1bc60ad14321cf951e2d3322eea7",
+            "fitness": {
+              "min": 0.1225,
+              "max": 0.1225,
+              "distinct_values": 1
+            },
+            "correspondences": {
+              "min": 490,
+              "max": 490,
+              "distinct_values": 1
+            },
+            "found_no_correspondences_in_some_repeat": false,
+            "the_start_pose": "the pipeline's own RANSAC coarse pose, repeat 0"
+          }
+        },
+        "the_shipped_icp_estimation": "point_to_plane"
+      },
+      "the_composed_pipeline": {
+        "repeats": 16,
+        "distinct_results": 16,
+        "bit_identical_every_repeat": false,
+        "worst_translation_disagreement_metres": 2.5079574438369453e-13,
+        "worst_translation_disagreement_in_voxels": 5.015914887673891e-12,
+        "worst_rotation_disagreement_degrees": 3.4150945850063763e-06,
+        "distinct_icp_fitness_values": 1,
+        "distinct_icp_inlier_rmse_values": 16
+      }
+    },
+    "periodic_ripple": {
+      "construction": "a ripple whose period the fragment offset can alias, so a whole family of alignments fits: the worst conditioning this directory constructs",
+      "each_stage_alone": {
+        "normal_estimation_downsampled_cloud": {
+          "repeats": 16,
+          "distinct_results": 1,
+          "bit_identical_every_repeat": true
+        },
+        "normal_estimation_full_cloud": {
+          "repeats": 16,
+          "distinct_results": 1,
+          "bit_identical_every_repeat": true
+        },
+        "fpfh_features": {
+          "repeats": 16,
+          "distinct_results": 1,
+          "bit_identical_every_repeat": true
+        },
+        "ransac_global_registration": {
+          "repeats": 16,
+          "distinct_results": 2,
+          "bit_identical_every_repeat": false
+        },
+        "icp_from_one_held_pose": {
+          "point_to_point": {
+            "repeats": 16,
+            "distinct_results": 1,
+            "bit_identical_every_repeat": true,
+            "every_repeat_was_handed_identical_input": true,
+            "the_input_digest": "bc1e25374a47e908b07946501d7f07fc268b4277dc764e4d7baf32198103d2d7",
+            "fitness": {
+              "min": 0.171,
+              "max": 0.171,
+              "distinct_values": 1
+            },
+            "correspondences": {
+              "min": 684,
+              "max": 684,
+              "distinct_values": 1
+            },
+            "found_no_correspondences_in_some_repeat": false,
+            "the_start_pose": "a +0.8 m x-translation constructed by this harness"
+          },
+          "point_to_plane": {
+            "repeats": 16,
+            "distinct_results": 16,
+            "bit_identical_every_repeat": false,
+            "every_repeat_was_handed_identical_input": true,
+            "the_input_digest": "bc1e25374a47e908b07946501d7f07fc268b4277dc764e4d7baf32198103d2d7",
+            "fitness": {
+              "min": 0.1585,
+              "max": 0.1585,
+              "distinct_values": 1
+            },
+            "correspondences": {
+              "min": 634,
+              "max": 634,
+              "distinct_values": 1
+            },
+            "found_no_correspondences_in_some_repeat": false,
+            "the_start_pose": "a +0.8 m x-translation constructed by this harness"
+          }
+        },
+        "icp_from_the_pipelines_own_coarse_pose": {
+          "point_to_point": {
+            "repeats": 16,
+            "distinct_results": 1,
+            "bit_identical_every_repeat": true,
+            "every_repeat_was_handed_identical_input": true,
+            "the_input_digest": "334c7e3d072d2867dbefc7ee8c3ca68dbce5fc3845b4a53ac7ff30d89a11f7ff",
+            "fitness": {
+              "min": 0.678,
+              "max": 0.678,
+              "distinct_values": 1
+            },
+            "correspondences": {
+              "min": 2712,
+              "max": 2712,
+              "distinct_values": 1
+            },
+            "found_no_correspondences_in_some_repeat": false,
+            "the_start_pose": "the pipeline's own RANSAC coarse pose, repeat 0"
+          },
+          "point_to_plane": {
+            "repeats": 16,
+            "distinct_results": 16,
+            "bit_identical_every_repeat": false,
+            "every_repeat_was_handed_identical_input": true,
+            "the_input_digest": "334c7e3d072d2867dbefc7ee8c3ca68dbce5fc3845b4a53ac7ff30d89a11f7ff",
+            "fitness": {
+              "min": 0.6855,
+              "max": 0.6855,
+              "distinct_values": 1
+            },
+            "correspondences": {
+              "min": 2742,
+              "max": 2742,
+              "distinct_values": 1
+            },
+            "found_no_correspondences_in_some_repeat": false,
+            "the_start_pose": "the pipeline's own RANSAC coarse pose, repeat 0"
+          }
+        },
+        "the_shipped_icp_estimation": "point_to_plane"
+      },
+      "the_composed_pipeline": {
+        "repeats": 16,
+        "distinct_results": 16,
+        "bit_identical_every_repeat": false,
+        "worst_translation_disagreement_metres": 2.964908204142745e-05,
+        "worst_translation_disagreement_in_voxels": 0.000592981640828549,
+        "worst_rotation_disagreement_degrees": 0.001916951333274199,
+        "distinct_icp_fitness_values": 1,
+        "distinct_icp_inlier_rmse_values": 11
+      }
+    },
+    "upstream_demo_scan": {
+      "construction": "o3d.data.DemoICPPointClouds fragments 0 and 1 -- Redwood's augmented ICL-NUIM living-room1, the capture every accepted record in this directory is built from. Not constructed by me, and not ambiguous: this case exists because a reviewer found the effect here after I had claimed it needed a near-degenerate surface",
+      "each_stage_alone": {
+        "normal_estimation_downsampled_cloud": {
+          "repeats": 16,
+          "distinct_results": 1,
+          "bit_identical_every_repeat": true
+        },
+        "normal_estimation_full_cloud": {
+          "repeats": 16,
+          "distinct_results": 1,
+          "bit_identical_every_repeat": true
+        },
+        "fpfh_features": {
+          "repeats": 16,
+          "distinct_results": 1,
+          "bit_identical_every_repeat": true
+        },
+        "ransac_global_registration": {
+          "repeats": 16,
+          "distinct_results": 2,
+          "bit_identical_every_repeat": false
+        },
+        "icp_from_one_held_pose": {
+          "point_to_point": {
+            "repeats": 16,
+            "distinct_results": 1,
+            "bit_identical_every_repeat": true,
+            "every_repeat_was_handed_identical_input": true,
+            "the_input_digest": "ae828ccbc83ca1d09a49acc9ac01668546f614683026c2e091f3375e2aff12be",
+            "fitness": {
+              "min": 0.03797118213594186,
+              "max": 0.03797118213594186,
+              "distinct_values": 1
+            },
+            "correspondences": {
+              "min": 7550,
+              "max": 7550,
+              "distinct_values": 1
+            },
+            "found_no_correspondences_in_some_repeat": false,
+            "the_start_pose": "a +0.8 m x-translation constructed by this harness"
+          },
+          "point_to_plane": {
+            "repeats": 16,
+            "distinct_results": 16,
+            "bit_identical_every_repeat": false,
+            "every_repeat_was_handed_identical_input": true,
+            "the_input_digest": "ae828ccbc83ca1d09a49acc9ac01668546f614683026c2e091f3375e2aff12be",
+            "fitness": {
+              "min": 0.0951693615309176,
+              "max": 0.0951693615309176,
+              "distinct_values": 1
+            },
+            "correspondences": {
+              "min": 18923,
+              "max": 18923,
+              "distinct_values": 1
+            },
+            "found_no_correspondences_in_some_repeat": false,
+            "the_start_pose": "a +0.8 m x-translation constructed by this harness"
+          }
+        },
+        "icp_from_the_pipelines_own_coarse_pose": {
+          "point_to_point": {
+            "repeats": 16,
+            "distinct_results": 1,
+            "bit_identical_every_repeat": true,
+            "every_repeat_was_handed_identical_input": true,
+            "the_input_digest": "8e9bb70c1e117cba221303d358211f8a174ecf0f59f67e15a984a318b79c6be6",
+            "fitness": {
+              "min": 0.6213342721351874,
+              "max": 0.6213342721351874,
+              "distinct_values": 1
+            },
+            "correspondences": {
+              "min": 123543,
+              "max": 123543,
+              "distinct_values": 1
+            },
+            "found_no_correspondences_in_some_repeat": false,
+            "the_start_pose": "the pipeline's own RANSAC coarse pose, repeat 0"
+          },
+          "point_to_plane": {
+            "repeats": 16,
+            "distinct_results": 16,
+            "bit_identical_every_repeat": false,
+            "every_repeat_was_handed_identical_input": true,
+            "the_input_digest": "8e9bb70c1e117cba221303d358211f8a174ecf0f59f67e15a984a318b79c6be6",
+            "fitness": {
+              "min": 0.6210677194658888,
+              "max": 0.6210677194658888,
+              "distinct_values": 1
+            },
+            "correspondences": {
+              "min": 123490,
+              "max": 123490,
+              "distinct_values": 1
+            },
+            "found_no_correspondences_in_some_repeat": false,
+            "the_start_pose": "the pipeline's own RANSAC coarse pose, repeat 0"
+          }
+        },
+        "the_shipped_icp_estimation": "point_to_plane"
+      },
+      "the_composed_pipeline": {
+        "repeats": 16,
+        "distinct_results": 16,
+        "bit_identical_every_repeat": false,
+        "worst_translation_disagreement_metres": 1.7121177085857398e-06,
+        "worst_translation_disagreement_in_voxels": 3.424235417171479e-05,
+        "worst_rotation_disagreement_degrees": 5.2394162531729266e-05,
+        "distinct_icp_fitness_values": 1,
+        "distinct_icp_inlier_rmse_values": 14
+      }
+    }
+  },
+  "stages_that_are_not_bit_reproducible_alone": [
+    "non_periodic_bowl:icp_point_to_plane_from_the_pipelines_coarse_pose",
+    "periodic_ripple:icp_point_to_plane_from_a_held_pose",
+    "periodic_ripple:icp_point_to_plane_from_the_pipelines_coarse_pose",
+    "periodic_ripple:ransac_global_registration",
+    "upstream_demo_scan:icp_point_to_plane_from_a_held_pose",
+    "upstream_demo_scan:icp_point_to_plane_from_the_pipelines_coarse_pose",
+    "upstream_demo_scan:ransac_global_registration"
+  ],
+  "how_the_thread_count_participates": {
+    "periodic_ripple": {
+      "the_case": "periodic_ripple",
+      "the_default_thread_count_here": 16,
+      "at_1_threads": {
+        "point_to_plane_icp_from_a_held_pose": {
+          "repeats": 16,
+          "distinct_results": 1,
+          "bit_identical_every_repeat": true
+        },
+        "the_whole_register_pipeline": {
+          "repeats": 16,
+          "distinct_results": 1,
+          "bit_identical_every_repeat": true
+        }
+      },
+      "at_2_threads": {
+        "point_to_plane_icp_from_a_held_pose": {
+          "repeats": 16,
+          "distinct_results": 16,
+          "bit_identical_every_repeat": false
+        },
+        "the_whole_register_pipeline": {
+          "repeats": 16,
+          "distinct_results": 15,
+          "bit_identical_every_repeat": false
+        }
+      },
+      "at_16_threads": {
+        "point_to_plane_icp_from_a_held_pose": {
+          "repeats": 16,
+          "distinct_results": 16,
+          "bit_identical_every_repeat": false
+        },
+        "the_whole_register_pipeline": {
+          "repeats": 16,
+          "distinct_results": 16,
+          "bit_identical_every_repeat": false
+        }
+      },
+      "the_environment_variable_is_not_the_lever": {
+        "measured": true,
+        "how": "a child process running this same harness with OMP_NUM_THREADS=1 in its environment, reporting its own get_max_threads and its own counts",
+        "the_childs_get_max_threads": 16,
+        "the_variable_reached_the_thread_count": false,
+        "point_to_plane_icp_from_a_held_pose": {
+          "repeats": 16,
+          "distinct_results": 16,
+          "bit_identical_every_repeat": false
+        },
+        "the_whole_register_pipeline": {
+          "repeats": 16,
+          "distinct_results": 16,
+          "bit_identical_every_repeat": false
+        }
+      }
+    },
+    "upstream_demo_scan": {
+      "the_case": "upstream_demo_scan",
+      "the_default_thread_count_here": 16,
+      "at_1_threads": {
+        "point_to_plane_icp_from_a_held_pose": {
+          "repeats": 16,
+          "distinct_results": 1,
+          "bit_identical_every_repeat": true
+        },
+        "the_whole_register_pipeline": {
+          "repeats": 16,
+          "distinct_results": 1,
+          "bit_identical_every_repeat": true
+        }
+      },
+      "at_2_threads": {
+        "point_to_plane_icp_from_a_held_pose": {
+          "repeats": 16,
+          "distinct_results": 16,
+          "bit_identical_every_repeat": false
+        },
+        "the_whole_register_pipeline": {
+          "repeats": 16,
+          "distinct_results": 16,
+          "bit_identical_every_repeat": false
+        }
+      },
+      "at_16_threads": {
+        "point_to_plane_icp_from_a_held_pose": {
+          "repeats": 16,
+          "distinct_results": 16,
+          "bit_identical_every_repeat": false
+        },
+        "the_whole_register_pipeline": {
+          "repeats": 16,
+          "distinct_results": 16,
+          "bit_identical_every_repeat": false
+        }
+      },
+      "the_environment_variable_is_not_the_lever": {
+        "measured": true,
+        "how": "a child process running this same harness with OMP_NUM_THREADS=1 in its environment, reporting its own get_max_threads and its own counts",
+        "the_childs_get_max_threads": 16,
+        "the_variable_reached_the_thread_count": false,
+        "point_to_plane_icp_from_a_held_pose": {
+          "repeats": 16,
+          "distinct_results": 16,
+          "bit_identical_every_repeat": false
+        },
+        "the_whole_register_pipeline": {
+          "repeats": 16,
+          "distinct_results": 16,
+          "bit_identical_every_repeat": false
+        }
+      }
+    }
+  },
+  "what_the_cases_establish": "the composed pipeline returns a different transformation on every repeat of every case, so the aligned cloud and the aligned_sha256 the report publishes differ on every run. Taken alone, normal estimation, FPFH and point-to-point ICP each return identical bytes every time. Two stages do not. The shipped point_to_plane ICP returns a distinct answer on all sixteen calls, on the upstream demo scan and on the ambiguous construction, while being handed provably identical points, normals, pose and distance -- it needs no contrived surface, and the demo capture is the one every accepted record in this directory is built from. RANSAC global registration is also not bit-reproducible alone, on the same two cases, from fixed downsampled clouds and fixed features: 2 distinct results on the ripple and 4 on the demo scan. Held to one thread through Open3D's API the point-to-plane call becomes bit-reproducible, so that variation is parallel accumulation rather than anything the seed reaches. Started where the pipeline starts it -- from RANSAC's coarse pose rather than from this harness's constructed offset -- point-to-plane ICP returns 16 distinct results on all three cases, the well-conditioned bowl included",
+  "the_conditioning_claim_this_record_used_to_make_was_wrong": "an earlier version read 'only on the well-conditioned bowl is that call reproducible, which is what makes this conditioning rather than a broken solver'. A reviewer reached the contradiction from control flow alone: on the bowl every stage alone was bit-identical while the composed pipeline returned 16 distinct results, and `_register_pair` holds exactly one further stochastic surface -- the same point-to-plane call, differing only in where it starts. Measuring it settles it. The bowl's held-pose cell ran at fitness 0.0 with zero correspondences: the call found nothing within the correspondence distance and returned the pose it was handed, so that cell was reproducible because it did no work, not because the surface is well conditioned. The held pose is this harness's own construction, a +0.8 m x-translation about sixteen voxels from the true alignment at an ICP correspondence distance of one and a half. Started from the pipeline's own coarse pose, with 490 correspondences at fitness 0.12, the same call on the same bowl returns 16 distinct results of 16. So point-to-plane ICP is not bit-reproducible on any case here, including the well-conditioned one, and conditioning is not what decides it",
+  "what_was_ruled_out": {
+    "normal_estimation": "identical across every repeat on both the downsampled cloud and the full cloud point-to-plane actually reads",
+    "the_inputs_varying": "every repeat's points, normals, pose and correspondence distance are digested together before the call and the digest is identical"
+  },
+  "what_this_does_not_claim": "that the registration is wrong, or that this costs accuracy. The answer is stable: on the well-determined pair the repeats disagree by about a trillionth of a voxel, which is floating-point noise, and even on the deliberately ambiguous pair by under a thousandth. That is a statement about the size of the disagreement, not about any case being free of it. Nor that the ambiguity itself is new -- #1025 measures that separately, across seeds, where the error is tens of voxels. Nor that one thread is a recommendation: it buys reproducible bytes at the cost of the parallelism, and this record measures the trade rather than taking a side on it. This is byte reproducibility under one seed, with the answer right",
+  "reproduce": "python3 docs/evidence/open3d/harness/register_seed_determinism.py, with npa/src on PYTHONPATH in an environment holding Open3D. The distinct-result counts reproduce; the magnitudes are themselves the output of a non-reproducible pipeline and move in their low digits",
+  "environment": {
+    "open3d_version": "0.20.0",
+    "python": "3.14.7",
+    "numpy": "2.5.4"
+  },
+  "produced_by": {
+    "harness": "harness/register_seed_determinism.py",
+    "sha256": "81b4ce9dd751caa9b0b9c3424759c9281418972e7780077ed78d67a586d600e6"
+  }
+}
