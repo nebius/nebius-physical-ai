@@ -20,6 +20,7 @@ import sys
 from pathlib import Path
 
 import numpy as np
+from harness_io import read_cloud, read_mesh
 from PIL import Image
 
 W, H = 960, 720
@@ -50,11 +51,9 @@ def _read_ply(path: Path):
 
 
 def _load(path: Path):
-    import open3d as o3d
-
     text = path.read_bytes()[:2048].decode("latin-1")
     if "element face" in text and "\nelement face 0\n" not in text:
-        mesh = o3d.io.read_triangle_mesh(str(path))
+        mesh = read_mesh(path)
         if len(mesh.triangles) > 0:
             mesh.compute_vertex_normals()
             return (
@@ -63,7 +62,7 @@ def _load(path: Path):
                 np.asarray(mesh.vertex_normals),
                 None,
             )
-    cloud = o3d.io.read_point_cloud(str(path))
+    cloud = read_cloud(path)
     colors = np.asarray(cloud.colors) if cloud.has_colors() else None
     return np.asarray(cloud.points), None, None, colors
 

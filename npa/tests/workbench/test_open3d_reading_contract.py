@@ -18,13 +18,15 @@ They check that the string the harnesses look for is still a string the runner c
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 
 import pytest
 
 REPO = Path(__file__).resolve().parents[3]
-HARNESS = REPO / "docs" / "evidence" / "open3d" / "harness"
+EVIDENCE = REPO / "docs" / "evidence" / "open3d"
+HARNESS = EVIDENCE / "harness"
 RUNNER = REPO / "npa" / "src" / "npa" / "workbench" / "open3d" / "runner.py"
 
 #: The name the product withdrew. It must not come back as something a harness tests for.
@@ -71,10 +73,14 @@ def test_no_harness_compares_the_reading_against_a_bare_literal() -> None:
     for path in sorted(HARNESS.glob("*.py")):
         source = path.read_text()
         for number, line in enumerate(source.splitlines(), start=1):
-            if READING_FIELD not in line and "reading[" not in line:
+            if (
+                READING_FIELD not in line
+                and "reading[" not in line
+                and '["reads_as"]' not in line
+            ):
                 continue
             window = "\n".join(source.splitlines()[number - 1 : number + 2])
-            if re.search(r'==\s*\n?\s*"[^"]+"', window):
+            if re.search(r'(?:==|!=)\s*\n?\s*"[^"]+"', window):
                 offenders.append(f"{path.name}:{number}")
 
     assert offenders == [], offenders
@@ -156,3 +162,113 @@ def test_the_committed_evidence_records_the_detector_firing() -> None:
 
         walk(report)
         assert sum(found) == firings, (name, sum(found), firings)
+
+
+#: Files whose detector column this recomputes, with the firing count pinned elsewhere here.
+RECOMPUTABLE = (
+    "band-validity-sweep.json",
+    "floor-across-geometry-and-sampling.json",
+    "band-false-negative-sweep.json",
+)
+
+
+def recorded_rows(report: dict) -> list[dict]:
+    """Every row in a report that carries the withdrawn field, at any nesting depth.
+
+    The three reports nest it differently -- flat under `rows` in one, under `cases/<name>/rows`
+    in another -- so this searches rather than indexes.
+    """
+    found: list[dict] = []
+
+    def walk(node: object) -> None:
+        if isinstance(node, dict):
+            if f"reads_as_{WITHDRAWN_READING.replace(' ', '_')}" in node:
+                found.append(node)
+            for value in node.values():
+                walk(value)
+        elif isinstance(node, list):
+            for value in node:
+                walk(value)
+
+    walk(report)
+    return found
+
+
+def runner_threshold() -> float:
+    """The share the runner compares against, read from its source.
+
+    Imported, this would resolve to whichever copy of the package the interpreter finds first,
+    which on a machine with several worktrees need not be the one under test. That is not
+    hypothetical: it is how I first ran the mutation for this test, and moving the threshold in
+    this tree left the test green because the value came from somewhere else entirely.
+    """
+    match = re.search(r"^FAR_BAND_AREA_SHARE = ([0-9.]+)$", RUNNER.read_text(), re.M)
+    assert match, (
+        "the runner no longer defines the share this contract recomputes against"
+    )
+    return float(match.group(1))
+
+
+def test_the_committed_detector_column_recomputes_from_the_committed_numbers() -> None:
+    """The one claim in this PR a reviewer could not check, made checkable without Open3D.
+
+    I claimed that restoring the comparison reproduces the committed detector sequences, and
+    review could verify the premise, the scope, the counts and the guard by execution but not
+    that: the harnesses import Open3D at module scope and no environment on this host has it.
+
+    It does not need Open3D. The runner's reading is a function of two numbers that each row
+    already records -- `unsupported_area_beyond_3_voxels / unsupported_area_fraction` against
+    `FAR_BAND_AREA_SHARE` -- and the rename touched neither. So the column can be recomputed
+    from the committed bytes and compared against the committed column, as a sequence rather
+    than a count, by anyone with Python.
+
+    That is stronger than publishing my own run's sequences would have been. It does not ask
+    anyone to trust that I ran the harness; it shows the column could not have depended on the
+    renamed string in the first place.
+
+    The threshold is read out of the runner's source rather than written as 0.1 here. Pinning
+    the number would recreate, in the test that closes this defect, the duplicated literal that
+    caused it -- and reading the source rather than importing keeps this file runnable without
+    the package, which is how every other test here already reads the runner.
+    """
+    threshold = runner_threshold()
+
+    field = f"reads_as_{WITHDRAWN_READING.replace(' ', '_')}"
+    checked = 0
+    for name in RECOMPUTABLE:
+        rows = recorded_rows(json.loads((EVIDENCE / name).read_text()))
+        assert rows, f"{name} carries no rows with {field}"
+
+        recomputed, recorded = [], []
+        for row in rows:
+            unsupported = float(row.get("unsupported_area_fraction") or 0.0)
+            far = float(row.get("unsupported_area_beyond_3_voxels") or 0.0)
+            share = (far / unsupported) if unsupported > 0 else 0.0
+            recomputed.append(share >= threshold)
+            recorded.append(bool(row[field]))
+
+        assert recomputed == recorded, (
+            name,
+            [i for i, (a, b) in enumerate(zip(recomputed, recorded)) if a != b],
+        )
+        checked += len(rows)
+
+    assert checked == 45, checked
+
+
+def test_the_share_each_row_publishes_is_the_ratio_it_claims_to_be() -> None:
+    """Otherwise the recomputation above could agree while reading a different quantity."""
+    published = 0
+    for name in RECOMPUTABLE:
+        for row in recorded_rows(json.loads((EVIDENCE / name).read_text())):
+            if "share_beyond_3_voxels" not in row:
+                continue
+            unsupported = float(row.get("unsupported_area_fraction") or 0.0)
+            far = float(row.get("unsupported_area_beyond_3_voxels") or 0.0)
+            expected = (far / unsupported) if unsupported > 0 else 0.0
+            assert abs(float(row["share_beyond_3_voxels"]) - expected) < 1e-9, (
+                name,
+                row,
+            )
+            published += 1
+    assert published > 0, "no row publishes the share, so nothing was cross-checked"

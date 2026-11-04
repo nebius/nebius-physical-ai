@@ -34,7 +34,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from harness_io import output_path
+from harness_io import output_path, read_cloud, read_mesh
 
 import numpy as np
 import open3d as o3d
@@ -54,7 +54,7 @@ VARIANTS = {"baseline": "mesh-baseline/mesh.ply", "candidate": "mesh/mesh.ply"}
 
 
 def main() -> int:
-    cloud = o3d.io.read_point_cloud(str(BUNDLE / "multiway/fused.ply"))
+    cloud = read_cloud(BUNDLE / "multiway/fused.ply")
     box = cloud.get_axis_aligned_bounding_box()
     origin = np.asarray(box.get_min_bound())
     dims = np.round(np.asarray(box.get_extent()) / CELL).astype(int)
@@ -78,7 +78,7 @@ def main() -> int:
         "variants": {},
     }
     for name, relative in VARIANTS.items():
-        mesh = o3d.io.read_triangle_mesh(str(BUNDLE / relative))
+        mesh = read_mesh(BUNDLE / relative)
         scene = o3d.t.geometry.RaycastingScene()
         scene.add_triangles(o3d.t.geometry.TriangleMesh.from_legacy(mesh))
         distance = scene.compute_distance(
