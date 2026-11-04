@@ -21,6 +21,7 @@ measurement itself needs Open3D and two of its published datasets, so it lives i
 
 from __future__ import annotations
 
+import importlib.util
 import math
 import json
 import re
@@ -367,12 +368,15 @@ def test_the_record_states_its_own_stability_rather_than_implying_exactness(
 def test_camera_binding_disclosure_is_generated_with_the_record(record) -> None:
     """Regeneration must retain the camera and rendering limitations."""
 
-    from docs.evidence.open3d.harness.audit_view_occlusion import (
-        camera_binding_disclosure,
+    spec = importlib.util.spec_from_file_location(
+        "audit_view_occlusion_harness", HARNESS
     )
+    assert spec is not None and spec.loader is not None
+    harness = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(harness)
 
     assert record["the_recorded_camera_is_bound_to_the_product_fit"] == (
-        camera_binding_disclosure()
+        harness.camera_binding_disclosure()
     )
 
     # And the margin that makes it immaterial has to be real, not asserted.
