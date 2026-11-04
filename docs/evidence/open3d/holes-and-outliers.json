@@ -1,112 +1,12 @@
 {
-  "question": "How many holes does the reconstructed surface have, and did the reconstruction reject the source cloud's outliers or fit them?",
-  "detector_validation": {
-    "control_mesh": "open3d.geometry.TriangleMesh.create_sphere(radius=1.0, resolution=20)",
-    "loops_found_on_the_intact_closed_sphere": 0,
-    "loops_found_with_one_cap_removed": 1,
-    "loops_found_with_two_caps_removed": 2,
-    "measured_area_of_the_one_cap_hole": 0.6448,
-    "analytic_area_of_that_boundary_circle": 0.6475,
-    "area_error_fraction": 0.0041,
-    "detector_is_valid": true
-  },
-  "holes": {
-    "baseline": {
-      "loops": 1,
-      "boundary_edges": 156,
-      "outer_boundary": {
-        "area": 9.1511,
-        "span": [
-          3.918,
-          1.967,
-          2.666
-        ],
-        "mesh_bbox_faces_it_reaches": 4,
-        "other_loops_whose_boxes_it_contains": "0/0",
-        "why_this_is_not_counted_as_a_hole": "It spans the mesh bounding box and contains every other loop's box, so it is the outer edge of the reconstructed patch. Counting it as a hole would inflate the hole area several-fold and describe the reconstruction's extent as a defect."
-      },
-      "interior_holes": 0,
-      "interior_hole_area": 0,
-      "largest_interior_hole_area": 0.0,
-      "surface_area": 22.245,
-      "interior_hole_area_as_share_of_surface": 0.0
-    },
-    "candidate": {
-      "loops": 14,
-      "boundary_edges": 1256,
-      "outer_boundary": {
-        "area": 5.2034,
-        "span": [
-          3.582,
-          1.616,
-          2.041
-        ],
-        "mesh_bbox_faces_it_reaches": 5,
-        "other_loops_whose_boxes_it_contains": "13/13",
-        "why_this_is_not_counted_as_a_hole": "It spans the mesh bounding box and contains every other loop's box, so it is the outer edge of the reconstructed patch. Counting it as a hole would inflate the hole area several-fold and describe the reconstruction's extent as a defect."
-      },
-      "interior_holes": 13,
-      "interior_hole_area": 0.9628,
-      "largest_interior_hole_area": 0.3253,
-      "surface_area": 10.5147,
-      "interior_hole_area_as_share_of_surface": 0.0916
-    }
-  },
-  "the_finding_on_holes": "The candidate carries 13 interior holes totalling 0.9628 m2, 0.0916 of its surface area. The baseline carries 0. So the pruning that cut phantom obstacle volume from 0.871 to 0.138 m3 in downstream-consumer.json did not come free: it opened interior holes where the baseline had none. That trade is not stated anywhere else in this evidence directory, and it is the honest cost of the variant this chain prefers.",
-  "outliers": {
-    "source_points": 6341,
-    "setting_reported": "nb_neighbors=20, std_ratio=2.0",
-    "outliers": 142,
-    "outlier_fraction": 0.0224,
-    "the_count_is_a_parameter_choice_so_here_is_the_sweep": {
-      "nb=20,std=1.0": {
-        "outliers": 1091,
-        "fraction": 0.1721
-      },
-      "nb=20,std=2.0": {
-        "outliers": 142,
-        "fraction": 0.0224
-      },
-      "nb=20,std=3.0": {
-        "outliers": 56,
-        "fraction": 0.0088
-      },
-      "nb=50,std=2.0": {
-        "outliers": 233,
-        "fraction": 0.0367
-      }
-    },
-    "distance_to_the_reconstructed_surface": {
-      "retained_points_median": 0.0032,
-      "outlier_points_median": 0.0066,
-      "random_points_in_the_same_bbox_median": 0.2704,
-      "control_samples": 20000
-    },
-    "were_they_rejected_or_fitted": {
-      "answer": "fitted",
-      "outliers_are_this_much_closer_than_random": 41.0,
-      "and_this_much_further_than_retained_points": 2.1,
-      "why_the_random_control_is_the_load_bearing_part": "Without it, 'the surface is 6.6mm from the median outlier' is unreadable: it could mean the surface is everywhere. Random points in the same box sit 41x further away, so the surface is not everywhere and the outliers were fitted rather than pruned."
-    }
-  },
-  "a_test_i_built_and_discarded": {
-    "the_test": "Call nearby surface attributable to an outlier when that surface is closer to the outlier than to any retained point.",
-    "rate_for_outliers": 0.915,
-    "rate_for_retained_points_as_a_control": 0.941,
-    "verdict": "discarded",
-    "why": "The control rate is as high as the outlier rate, so the test says almost every point owns its nearest surface and separates nothing. It would have read as a strong causal finding. Recorded because a discarded test is evidence about the method, and because the fitting result above is correlational for exactly this reason: proving an outlier *caused* its nearby surface needs a re-reconstruction without it, which this does not do.",
-    "an_asymmetry_review_found_in_this_discarded_test": {
-      "their_finding_and_their_retraction_of_it": "Review raised the control arm's rank-based self-exclusion as an upward bias -- the direction that props up the discard -- and then retracted it four minutes later with a proof of equivalence, asking me not to implement the fix. The proof is exhaustive: when the origin is the nearest, both rules take the second nearest; when it is not, the origin sits at rank two or worse, so the second nearest is at or nearer than the origin and the boolean is False either way. The two rules do compute different distances and cannot compute different verdicts.",
-      "what_i_changed_and_what_i_am_not_claiming": "The exclusion is now by identity, which is legibility and not a correctness fix. I am not claiming it fixed a defect: review proved it could not have been one, and my own measurement agreed before I read the proof. It stays because a reader should not have to reconstruct a two-case proof to see that the arms are comparable.",
-      "their_premise_measured": "The originating point is not the nearest retained point to its own surface point in 363 of 6199 cases, 5.9%. So the substitution they describe is real and not rare. Their premise held and the conclusion they drew from it did not, which is how they asked for it to be recorded and is a more accurate description than calling the row wrong. They could not measure this themselves: no venv on the review host has Open3D, which they verified.",
-      "its_effect_on_the_rate": "Nil. At a fixed sample the rank rule and identity exclusion give the same rate to three decimals, because in every one of those cases the verdict is already False under both rules: if another point is nearer the surface than the origin is, the origin loses either way.",
-      "what_was_actually_asymmetric": "The sample, and this one is mine rather than review's -- their row named only the rank rule, and crediting them with this would be wrong. The published control ran on every seventh retained point while the outlier arm ran on all of them. Both arms now run on their full sets.",
-      "a_mistake_i_nearly_made_checking_this": "My first corrected run changed the exclusion rule and the sample size together and came out higher, which I almost reported as the bias running opposite to review's prediction. It does not; the two changes had to be separated to see that one of them does nothing. Same lesson as the axis-pairing episode: vary one thing.",
-      "does_the_discard_still_hold": "Yes, and now for a measured reason rather than an unexamined comparison. The corrected control is 0.941 against the outlier arm's 0.915.",
-      "what_the_sample_asymmetry_was_worth": "0.8 points: the control reads 0.933 on the superseded commit and 0.941 here. Because the exclusion rule provably moves nothing, the whole of that movement is the sample. An earlier version of this field said 'about 1.3 points', which came from an isolation run whose intermediate rates were never shipped; review pointed out that no pairing of the committed numbers yields it, which was correct, and it is withdrawn.",
-      "the_correction_strengthened_the_conclusion_it_was_checking": "The control moved up, so the gap between the arms widened from 0.018 to 0.026. The asymmetry had been making the control look lower and the 'separates nothing' discard look weaker than it was. It cost the clarity of the reason and never the verdict.",
-      "why_this_report_was_edited_rather_than_regenerated": "The harness could not be re-run to produce it. Its input bundle lived on an ephemeral /data volume that the host reboot removed, so the meshes these numbers were measured from are no longer on this machine. Only prose fields were changed. The bound is all 50 scalar non-string leaves -- 49 numbers and one flag, which is a stronger bound than 'numeric' because a flipped flag falls inside it -- and it is enforced by digest rather than by count: sha256 over json.dumps(sorted((path, value) for every such leaf), sort_keys=True), where a path is built by appending \"/\" + key at each dict level and \"[i]\" at each list index -- so the first leaf is /a_test_i_built_and_discarded/rate_for_outliers -- is e149364291607ba750082d70ed0a9df185a077b73ded1872f330b6718c3c063f. A count would have been invariant to exactly the change it is meant to detect, which a reviewer caught in this very check. The path-spelling clause is here because that same reviewer, working only from the construction as first written, computed 262f0cad... instead: the projection, the sort and the dump were all correct and the paths were dot-separated with no leading separator. A construction that is checkable in principle is not checkable in practice until the part everyone spells differently is written down, which is the shape of the defect this very check was repaired for. The harness source carries the same corrections so the two cannot drift."
-    }
-  },
-  "what_this_does_not_claim": "Not that the holes are in the wrong places or that the outliers are noise rather than real thin structure; neither is decidable without ground truth, which no artifact in this chain carries. Not that an outlier caused the surface near it -- see the discarded test. And an interior hole is not automatically a defect: on an open patch some holes are honest absence of observation, which is why the area is reported next to the surface area rather than as a score."
+  "schema": "npa.open3d.holes-and-outliers.withdrawal.v1",
+  "status": "withdrawn",
+  "withdrawn_claims": [
+    "candidate interior-hole count and area",
+    "baseline interior-hole count",
+    "statistical outliers were fitted rather than rejected"
+  ],
+  "reason": "The original run used an unhashbound ephemeral bundle and a vertex-once boundary walker that is invalid when boundary loops share a vertex. The inputs are no longer available, so the values cannot be regenerated or tied to retained bytes.",
+  "retained_truth": "The support-crop evidence already documents the intended coverage-versus-observed-support tradeoff. This withdrawal makes no new robotics capability or quantitative reconstruction claim.",
+  "replacement": "harness/holes_and_outliers.py now requires hash-bound nonempty inputs, decomposes boundary edges into closed cycles using every edge exactly once, exposes nonmanifold boundary degree, labels Newell values as projected boundary area, and emits descriptive outlier distances without a fitted/rejected verdict. No replacement measurement is committed."
 }

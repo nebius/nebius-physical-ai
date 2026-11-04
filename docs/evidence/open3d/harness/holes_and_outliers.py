@@ -1,29 +1,9 @@
-"""Quantify the two lane-brief items that had no metric anywhere: holes and outliers.
+"""Measure boundary topology and statistical-outlier distances on bound inputs.
 
-The brief asks for support, coverage, outliers and holes. Support and coverage are
-measured elsewhere in this directory. Outliers and holes had no metric key in any
-record, and #991 deliberately declined to read its undefined-cell fraction as a hole
-count, so this is the measurement that owes.
-
-Two results, each with the control that makes it mean something.
-
-Holes. Boundary edges are linked into loops, and the loop that is the *outer edge of
-the reconstructed patch* is separated from genuine interior holes rather than counted
-with them. That distinction is the whole measurement: the largest loop in both
-variants spans the mesh bounding box and contains every other loop's box, so calling
-it a hole would turn one honest number into a dramatic wrong one. The detector is
-validated on a sphere -- zero loops intact, one cap removed gives one loop within half
-a percent of the analytic circle area, two caps give exactly two.
-
-Outliers. The question is not how many outliers the source cloud has, which is a
-parameter choice, but whether the reconstruction *rejected* them or *fitted* them. The
-control is random points in the same bounding box: if outliers were no closer to the
-surface than random points, nothing would have been fitted.
-
-One test was built, controlled, and thrown away: attributing nearby surface to an
-outlier by asking whether the surface is closer to it than to any retained point. That
-returns 91.5% for outliers and 93.3% for retained points, so it separates nothing. It
-is recorded in the report because a discarded test is evidence about the method.
+This harness deliberately publishes no retained result in the repository. A prior
+run used an unhashbound ephemeral bundle and a vertex-once boundary walker that was
+not valid for bowtie topology. Its counts are withdrawn. A future run must retain
+the exact input hashes and this harness hash alongside its output.
 
 Run inside the Open3D image:
     docker run --rm -v "$EVIDENCE_DIR:/data" --entrypoint python "$IMAGE" \
@@ -32,9 +12,10 @@ Run inside the Open3D image:
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
-from collections import defaultdict
+from collections import Counter
 from pathlib import Path
 
 import numpy as np
@@ -42,176 +23,172 @@ import open3d as o3d
 
 BUNDLE = Path(os.environ.get("OPEN3D_BUNDLE", "/data/final-bundle"))
 OUT = Path(os.environ.get("OPEN3D_OUT", "/data/holes-and-outliers.json"))
-
 VARIANTS = {"baseline": "mesh-baseline/mesh.ply", "candidate": "mesh/mesh.ply"}
 CLOUD = "multiway/fused.ply"
-
-#: Statistical-outlier setting reported as the headline. Swept below, because the
-#: count is sensitive to it and a single setting would be a choice presented as a fact.
 NB_NEIGHBORS = 20
 STD_RATIO = 2.0
-
-#: Random control points for the outlier-fitting comparison.
 CONTROL_SAMPLES = 20000
 CONTROL_SEED = 7
 
 
-def boundary_loops(mesh: o3d.geometry.TriangleMesh) -> list[list[int]]:
-    """Edges belonging to exactly one triangle, walked into loops."""
-    uses: dict[tuple[int, int], int] = defaultdict(int)
-    for triangle in np.asarray(mesh.triangles):
-        a, b, c = triangle
-        for u, v in ((a, b), (b, c), (c, a)):
-            uses[(min(u, v), max(u, v))] += 1
+def sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
-    adjacency: dict[int, list[int]] = defaultdict(list)
-    for (u, v), count in uses.items():
-        if count == 1:
-            adjacency[u].append(v)
-            adjacency[v].append(u)
 
-    seen: set[int] = set()
+def boundary_edges(triangles: np.ndarray) -> set[tuple[int, int]]:
+    """Return undirected edges used by exactly one triangle."""
+
+    uses: Counter[tuple[int, int]] = Counter()
+    for triangle in triangles:
+        a, b, c = (int(value) for value in triangle)
+        uses.update((min(u, v), max(u, v)) for u, v in ((a, b), (b, c), (c, a)))
+    return {edge for edge, count in uses.items() if count == 1}
+
+
+def _find_simple_cycle(
+    unused: set[tuple[int, int]], start_edge: tuple[int, int]
+) -> tuple[list[int], set[tuple[int, int]]] | None:
+    """Find one simple cycle containing ``start_edge`` without consuming edges."""
+
+    start, second = start_edge
+    path = [start, second]
+    path_edges = {start_edge}
+
+    def visit(current: int) -> tuple[list[int], set[tuple[int, int]]] | None:
+        for edge in sorted(unused - path_edges):
+            if current not in edge:
+                continue
+            following = edge[1] if edge[0] == current else edge[0]
+            if following == start and len(path) >= 3:
+                return list(path), {*path_edges, edge}
+            if following in path:
+                continue
+            path.append(following)
+            path_edges.add(edge)
+            found = visit(following)
+            if found is not None:
+                return found
+            path_edges.remove(edge)
+            path.pop()
+        return None
+
+    return visit(second)
+
+
+def closed_boundary_loops(triangles: np.ndarray) -> tuple[list[list[int]], dict]:
+    """Decompose boundary edges into simple closed loops, using each edge once."""
+
+    unused = boundary_edges(triangles)
+    total = len(unused)
+    degree: Counter[int] = Counter(vertex for edge in unused for vertex in edge)
     loops: list[list[int]] = []
-    for start in adjacency:
-        if start in seen:
-            continue
-        loop, current, previous = [start], start, None
-        seen.add(start)
-        while True:
-            onward = [n for n in adjacency[current] if n != previous and n not in seen]
-            if not onward:
-                break
-            previous, current = current, onward[0]
-            seen.add(current)
-            loop.append(current)
-        if len(loop) >= 3:
-            loops.append(loop)
-    return loops
+    while unused:
+        start_edge = min(unused)
+        found = _find_simple_cycle(unused, start_edge)
+        if found is None:
+            raise ValueError("boundary contains an open fragment")
+        loop, consumed = found
+        unused -= consumed
+        loops.append(loop)
+    consumed_count = sum(len(loop) for loop in loops)
+    if consumed_count != total:
+        raise ValueError("boundary loop closure did not consume each edge exactly once")
+    return loops, {
+        "boundary_edges": total,
+        "consumed_boundary_edges": consumed_count,
+        "boundary_vertices_degree_not_two": sum(
+            1 for value in degree.values() if value != 2
+        ),
+    }
 
 
-def boundary_edge_count(mesh: o3d.geometry.TriangleMesh) -> int:
-    uses: dict[tuple[int, int], int] = defaultdict(int)
-    for triangle in np.asarray(mesh.triangles):
-        a, b, c = triangle
-        for u, v in ((a, b), (b, c), (c, a)):
-            uses[(min(u, v), max(u, v))] += 1
-    return sum(1 for count in uses.values() if count == 1)
+def projected_loop_area(vertices: np.ndarray, loop: list[int]) -> dict[str, float]:
+    """Return Newell projected area and a best-fit-plane nonplanarity measure."""
 
-
-def loop_area(mesh: o3d.geometry.TriangleMesh, loop: list[int]) -> float:
-    """Newell area of the polygon the loop bounds; exact when planar."""
-    vertices = np.asarray(mesh.vertices)[loop]
-    centre = vertices.mean(axis=0)
+    points = vertices[loop].astype(float)
+    centre = points.mean(axis=0)
     normal = np.zeros(3)
-    for i in range(len(vertices)):
-        normal = normal + np.cross(
-            vertices[i] - centre, vertices[(i + 1) % len(vertices)] - centre
-        )
-    return float(0.5 * np.linalg.norm(normal))
+    for index, point in enumerate(points):
+        normal += np.cross(point - centre, points[(index + 1) % len(points)] - centre)
+    projected_area = float(0.5 * np.linalg.norm(normal))
+    _, _, axes = np.linalg.svd(points - centre, full_matrices=False)
+    plane_normal = axes[-1]
+    nonplanarity = float(np.abs((points - centre) @ plane_normal).max())
+    return {
+        "projected_boundary_area_m2": round(projected_area, 6),
+        "max_distance_from_best_fit_plane_m": round(nonplanarity, 6),
+    }
+
+
+def topology(mesh: o3d.geometry.TriangleMesh) -> dict:
+    """Describe boundary loops without deciding which loop is an interior hole."""
+
+    vertices = np.asarray(mesh.vertices)
+    triangles = np.asarray(mesh.triangles)
+    if not len(vertices) or not len(triangles):
+        raise ValueError("mesh is empty")
+    loops, closure = closed_boundary_loops(triangles)
+    return {
+        **closure,
+        "closed_boundary_loops": len(loops),
+        "is_vertex_manifold": bool(mesh.is_vertex_manifold()),
+        "is_edge_manifold": bool(mesh.is_edge_manifold(allow_boundary_edges=True)),
+        "loops": [
+            {"vertices": len(loop), **projected_loop_area(vertices, loop)}
+            for loop in loops
+        ],
+        "interpretation": (
+            "Boundary loops are reported without classifying the outer patch edge as an "
+            "interior hole. Projected boundary area is not hole surface area."
+        ),
+    }
 
 
 def detector_validation() -> dict:
-    """Zero loops on a closed sphere, one per removed cap, right area. Else nothing below holds."""
-    sphere = o3d.geometry.TriangleMesh.create_sphere(radius=1.0, resolution=20)
-    triangles = np.asarray(sphere.triangles)
-    vertices = np.asarray(sphere.vertices)
+    """Exercise closed, one-loop, bowtie, and open-fragment behavior."""
 
-    intact = len(boundary_loops(sphere))
-
-    def with_caps_removed(predicate) -> o3d.geometry.TriangleMesh:
-        keep = [
-            i for i, t in enumerate(triangles) if predicate(vertices[t].mean(axis=0))
-        ]
-        held = o3d.geometry.TriangleMesh(
-            sphere.vertices, o3d.utility.Vector3iVector(triangles[keep])
-        )
-        held.remove_unreferenced_vertices()
-        return held
-
-    one = with_caps_removed(lambda c: c[2] < 0.9)
-    one_loops = boundary_loops(one)
-    measured = loop_area(one, one_loops[0]) if one_loops else 0.0
-    ring = np.asarray(one.vertices)[one_loops[0]] if one_loops else np.zeros((1, 3))
-    radius = float(np.linalg.norm(ring[:, :2], axis=1).mean())
-    analytic = float(np.pi * radius**2)
-
-    two = with_caps_removed(lambda c: abs(c[2]) < 0.9)
-    two_loops = boundary_loops(two)
-
-    error = abs(measured - analytic) / analytic if analytic else 1.0
+    tetrahedron = np.array([(0, 1, 2), (0, 3, 1), (1, 3, 2), (0, 2, 3)], dtype=int)
+    triangle = np.array([(0, 1, 2)], dtype=int)
+    bowtie = np.array([(0, 1, 2), (0, 3, 4)], dtype=int)
+    closed = closed_boundary_loops(tetrahedron)[0]
+    one = closed_boundary_loops(triangle)[0]
+    two, bowtie_closure = closed_boundary_loops(bowtie)
+    try:
+        _find_simple_cycle({(0, 1), (1, 2)}, (0, 1))
+        open_rejected = _find_simple_cycle({(0, 1), (1, 2)}, (0, 1)) is None
+    except ValueError:
+        open_rejected = True
+    valid = (
+        len(closed) == 0
+        and len(one) == 1
+        and len(two) == 2
+        and bowtie_closure["boundary_edges"]
+        == bowtie_closure["consumed_boundary_edges"]
+        and bowtie_closure["boundary_vertices_degree_not_two"] == 1
+        and open_rejected
+    )
     return {
-        "control_mesh": "open3d.geometry.TriangleMesh.create_sphere(radius=1.0, resolution=20)",
-        "loops_found_on_the_intact_closed_sphere": intact,
-        "loops_found_with_one_cap_removed": len(one_loops),
-        "loops_found_with_two_caps_removed": len(two_loops),
-        "measured_area_of_the_one_cap_hole": round(measured, 4),
-        "analytic_area_of_that_boundary_circle": round(analytic, 4),
-        "area_error_fraction": round(error, 4),
-        "detector_is_valid": (
-            intact == 0 and len(one_loops) == 1 and len(two_loops) == 2 and error < 0.02
-        ),
+        "closed_tetrahedron_loops": len(closed),
+        "single_triangle_loops": len(one),
+        "bowtie_loops": len(two),
+        "bowtie_closure": bowtie_closure,
+        "open_fragment_rejected": open_rejected,
+        "detector_is_valid": valid,
     }
 
 
-def holes(mesh: o3d.geometry.TriangleMesh) -> dict:
-    """Separate the patch's outer edge from genuine interior holes, and justify doing so."""
-    loops = boundary_loops(mesh)
-    vertices = np.asarray(mesh.vertices)
-    described = sorted(
-        (
-            {
-                "area": loop_area(mesh, loop),
-                "vertices": len(loop),
-                "low": vertices[loop].min(axis=0),
-                "high": vertices[loop].max(axis=0),
-            }
-            for loop in loops
-        ),
-        key=lambda entry: -entry["area"],
-    )
-    if not described:
-        return {"loops": 0, "outer_boundary": None, "interior_holes": 0}
+def outlier_distances(
+    cloud: o3d.geometry.PointCloud, mesh: o3d.geometry.TriangleMesh
+) -> dict:
+    """Return descriptive distances; do not infer fitted/rejected causality."""
 
-    outer, rest = described[0], described[1:]
-    mesh_low, mesh_high = vertices.min(axis=0), vertices.max(axis=0)
-    contained = sum(
-        1
-        for entry in rest
-        if np.all(entry["low"] >= outer["low"] - 1e-9)
-        and np.all(entry["high"] <= outer["high"] + 1e-9)
-    )
-    surface = float(mesh.get_surface_area())
-    return {
-        "loops": len(described),
-        "boundary_edges": boundary_edge_count(mesh),
-        "outer_boundary": {
-            "area": round(outer["area"], 4),
-            "span": [round(float(x), 3) for x in (outer["high"] - outer["low"])],
-            "mesh_bbox_faces_it_reaches": int(
-                np.sum(np.isclose(outer["low"], mesh_low, atol=1e-6))
-                + np.sum(np.isclose(outer["high"], mesh_high, atol=1e-6))
-            ),
-            "other_loops_whose_boxes_it_contains": f"{contained}/{len(rest)}",
-            "why_this_is_not_counted_as_a_hole": "It spans the mesh bounding box and "
-            "contains every other loop's box, so it is the outer edge of the reconstructed "
-            "patch. Counting it as a hole would inflate the hole area several-fold and "
-            "describe the reconstruction's extent as a defect.",
-        },
-        "interior_holes": len(rest),
-        "interior_hole_area": round(sum(entry["area"] for entry in rest), 4),
-        "largest_interior_hole_area": round(rest[0]["area"], 4) if rest else 0.0,
-        "surface_area": round(surface, 4),
-        "interior_hole_area_as_share_of_surface": round(
-            sum(entry["area"] for entry in rest) / surface, 4
-        )
-        if surface
-        else None,
-    }
-
-
-def outliers(cloud: o3d.geometry.PointCloud, mesh: o3d.geometry.TriangleMesh) -> dict:
-    """Were the source cloud's outliers rejected by the reconstruction, or fitted?"""
     points = np.asarray(cloud.points)
+    if not len(points):
+        raise ValueError("point cloud is empty")
     scene = o3d.t.geometry.RaycastingScene()
     scene.add_triangles(o3d.t.geometry.TriangleMesh.from_legacy(mesh))
 
@@ -225,267 +202,87 @@ def outliers(cloud: o3d.geometry.PointCloud, mesh: o3d.geometry.TriangleMesh) ->
     )
     retained = np.zeros(len(points), dtype=bool)
     retained[list(kept)] = True
-
-    outlier_d = distances(points[~retained])
-    retained_d = distances(points[retained])
-
+    if not retained.any() or retained.all():
+        raise ValueError("statistical split must contain retained and flagged points")
     rng = np.random.default_rng(CONTROL_SEED)
-    low, high = points.min(axis=0), points.max(axis=0)
-    control_d = distances(rng.uniform(low, high, size=(CONTROL_SAMPLES, 3)))
-
-    sweep = {}
-    for neighbors, ratio in ((20, 1.0), (20, 2.0), (20, 3.0), (50, 2.0)):
-        _, held = cloud.remove_statistical_outlier(
-            nb_neighbors=neighbors, std_ratio=ratio
-        )
-        removed = len(points) - len(held)
-        sweep[f"nb={neighbors},std={ratio}"] = {
-            "outliers": removed,
-            "fraction": round(removed / len(points), 4),
-        }
-
+    control = rng.uniform(points.min(axis=0), points.max(axis=0), (CONTROL_SAMPLES, 3))
     return {
         "source_points": len(points),
-        "setting_reported": f"nb_neighbors={NB_NEIGHBORS}, std_ratio={STD_RATIO}",
-        "outliers": int((~retained).sum()),
-        "outlier_fraction": round(float((~retained).mean()), 4),
-        "the_count_is_a_parameter_choice_so_here_is_the_sweep": sweep,
-        "distance_to_the_reconstructed_surface": {
-            "retained_points_median": round(float(np.median(retained_d)), 4),
-            "outlier_points_median": round(float(np.median(outlier_d)), 4),
-            "random_points_in_the_same_bbox_median": round(
-                float(np.median(control_d)), 4
-            ),
-            "control_samples": CONTROL_SAMPLES,
+        "flagged_points": int((~retained).sum()),
+        "setting": {"nb_neighbors": NB_NEIGHBORS, "std_ratio": STD_RATIO},
+        "median_distance_m": {
+            "retained": round(float(np.median(distances(points[retained]))), 6),
+            "flagged": round(float(np.median(distances(points[~retained]))), 6),
+            "random_bbox_control": round(float(np.median(distances(control))), 6),
         },
-        "were_they_rejected_or_fitted": {
-            "answer": "fitted",
-            "outliers_are_this_much_closer_than_random": round(
-                float(np.median(control_d) / np.median(outlier_d)), 1
-            ),
-            "and_this_much_further_than_retained_points": round(
-                float(np.median(outlier_d) / np.median(retained_d)), 1
-            ),
-            "why_the_random_control_is_the_load_bearing_part": "Without it, 'the surface is "
-            "6.6mm from the median outlier' is unreadable: it could mean the surface is "
-            "everywhere. Random points in the same box sit 41x further away, so the surface "
-            "is not everywhere and the outliers were fitted rather than pruned.",
-        },
-    }
-
-
-def a_test_i_discarded(
-    cloud: o3d.geometry.PointCloud, mesh: o3d.geometry.TriangleMesh
-) -> dict:
-    """Attribute surface to an outlier by proximity. Fails its control; kept as a record."""
-    points = np.asarray(cloud.points)
-    scene = o3d.t.geometry.RaycastingScene()
-    scene.add_triangles(o3d.t.geometry.TriangleMesh.from_legacy(mesh))
-    _, kept = cloud.remove_statistical_outlier(
-        nb_neighbors=NB_NEIGHBORS, std_ratio=STD_RATIO
-    )
-    retained = np.zeros(len(points), dtype=bool)
-    retained[list(kept)] = True
-    outlier_points, retained_points = points[~retained], points[retained]
-
-    tree = o3d.geometry.KDTreeFlann(
-        o3d.geometry.PointCloud(o3d.utility.Vector3dVector(retained_points))
-    )
-
-    def nearer_to_self_than_to_another(
-        sample: np.ndarray, own_index: np.ndarray | None
-    ) -> float:
-        """Both arms compare against the nearest competitor, with the self removed by index.
-
-        The published version excluded the self by rank: the control arm took the second
-        nearest neighbour. Review raised that as an upward bias and then retracted it four
-        minutes later with a proof of equivalence, asking me not to implement the fix. The
-        proof is exhaustive: when the origin is the nearest, both rules take the second
-        nearest; when it is not, the origin sits at rank two or worse, so the second nearest
-        is at or nearer than the origin and the boolean is False either way. I had measured
-        the same thing before reading the retraction -- identical rates to three decimals.
-
-        So identity exclusion here is legibility, not a correctness fix, and it is not
-        claimed as one. Review has since confirmed it should stay on exactly that basis.
-
-        I found a second asymmetry in the same edit, and it is the substantive one: the
-        control arm ran on every seventh retained point while the outlier arm ran on all of
-        them. Review did not raise this one and should not be credited with it. It moves the
-        control from 0.933 to 0.941, which is 0.8 points, where the exclusion rule moves it
-        none -- and because the exclusion rule provably moves nothing, the whole of that 0.8
-        is the sample. An earlier version of this sentence said 1.3 points, which came from
-        an isolation run whose intermediate rates were never shipped, so no reader could
-        check it. Withdrawn in favour of the pair above, both of which are in the record.
-        """
-        found = scene.compute_closest_points(o3d.core.Tensor(sample.astype(np.float32)))
-        surface = found["points"].numpy()
-        to_self = np.linalg.norm(surface - sample, axis=1)
-        to_other = np.empty(len(sample))
-        for position, point in enumerate(surface):
-            _, indices, squared = tree.search_knn_vector_3d(point.astype(np.float64), 8)
-            mine = own_index[position] if own_index is not None else -1
-            to_other[position] = np.sqrt(
-                min(d for i, d in zip(indices, squared) if i != mine)
-            )
-        return float((to_self < to_other).mean())
-
-    # Outliers are not in the tree, so that arm has no self to exclude. The control arm now
-    # runs on every retained point rather than every seventh: that sampling asymmetry was
-    # also real and turned out to move the rate more than the exclusion rule did.
-    for_outliers = nearer_to_self_than_to_another(outlier_points, None)
-    for_retained = nearer_to_self_than_to_another(
-        retained_points, np.arange(len(retained_points))
-    )
-
-    not_nearest = sum(
-        1
-        for position, point in enumerate(
-            scene.compute_closest_points(
-                o3d.core.Tensor(retained_points.astype(np.float32))
-            )["points"].numpy()
-        )
-        if tree.search_knn_vector_3d(point.astype(np.float64), 1)[1][0] != position
-    )
-    return {
-        "the_test": "Call nearby surface attributable to an outlier when that surface is "
-        "closer to the outlier than to any retained point.",
-        "rate_for_outliers": round(for_outliers, 3),
-        "rate_for_retained_points_as_a_control": round(for_retained, 3),
-        "verdict": "discarded",
-        "why": "The control rate is as high as the outlier rate, so the test says almost "
-        "every point owns its nearest surface and separates nothing. It would have read as "
-        "a strong causal finding. Recorded because a discarded test is evidence about the "
-        "method, and because the fitting result above is correlational for exactly this "
-        "reason: proving an outlier *caused* its nearby surface needs a re-reconstruction "
-        "without it, which this does not do.",
-        "an_asymmetry_review_found_in_this_discarded_test": {
-            "their_finding_and_their_retraction_of_it": "Review raised the control arm's "
-            "rank-based self-exclusion as an upward bias -- the direction that props up the "
-            "discard -- and then retracted it four minutes later with a proof of equivalence, "
-            "asking me not to implement the fix. The proof is exhaustive: when the origin is "
-            "the nearest, both rules take the second nearest; when it is not, the origin sits "
-            "at rank two or worse, so the second nearest is at or nearer than the origin and "
-            "the boolean is False either way. The two rules do compute different distances and "
-            "cannot compute different verdicts.",
-            "what_i_changed_and_what_i_am_not_claiming": "The exclusion is now by identity, "
-            "which is legibility and not a correctness fix. I am not claiming it fixed a "
-            "defect: review proved it could not have been one, and my own measurement agreed "
-            "before I read the proof. It stays because a reader should not have to reconstruct "
-            "a two-case proof to see that the arms are comparable.",
-            "their_premise_measured": f"The originating point is not the nearest retained "
-            f"point to its own surface point in {not_nearest} of {len(retained_points)} cases, "
-            f"{round(100 * not_nearest / len(retained_points), 1)}%. So the substitution they "
-            "describe is real and not rare. Their premise held and the conclusion they drew "
-            "from it did not, which is how they asked for it to be recorded and is a more "
-            "accurate description than calling the row wrong. They could not measure this "
-            "themselves: no venv on the review host has Open3D, which they verified.",
-            "its_effect_on_the_rate": "Nil. At a fixed sample the rank rule and identity "
-            "exclusion give the same rate to three decimals, because in every one of those "
-            "cases the verdict is already False under both rules: if another point is nearer "
-            "the surface than the origin is, the origin loses either way.",
-            "what_was_actually_asymmetric": "The sample, and this one is mine rather than "
-            "review's -- their row named only the rank rule, and crediting them with this "
-            "would be wrong. The published control ran on every seventh retained point while "
-            "the outlier arm ran on all of them. Both arms now run on their full sets.",
-            "what_the_sample_asymmetry_was_worth": "0.8 points: the control reads 0.933 on the "
-            "superseded commit and 0.941 here. Because the exclusion rule provably moves "
-            "nothing, the whole of that movement is the sample. An earlier version of this "
-            "field said 'about 1.3 points', which came from an isolation run whose "
-            "intermediate rates were never shipped; review pointed out that no pairing of the "
-            "committed numbers yields it, which was correct, and it is withdrawn.",
-            "the_correction_strengthened_the_conclusion_it_was_checking": "The control moved "
-            "up, so the gap between the arms widened from 0.018 to 0.026. The asymmetry had "
-            "been making the control look lower and the 'separates nothing' discard look "
-            "weaker than it was. It cost the clarity of the reason and never the verdict.",
-            "a_mistake_i_nearly_made_checking_this": "My first corrected run changed the "
-            "exclusion rule and the sample size together and came out higher, which I almost "
-            "reported as the bias running opposite to review's prediction. It does not; the "
-            "two changes had to be separated to see that one of them does nothing. Same "
-            "lesson as the axis-pairing episode: vary one thing.",
-            "does_the_discard_still_hold": "Yes, and now for a measured reason rather than an "
-            "unexamined comparison. The corrected control is 0.941 against the outlier arm's "
-            "0.915.",
-        },
+        "interpretation": (
+            "Descriptive distances only. They do not establish whether a flagged point "
+            "caused, was fitted by, or was rejected by the reconstruction."
+        ),
     }
 
 
 def build() -> dict:
-    validation = detector_validation()
-    cloud = o3d.io.read_point_cloud(str(BUNDLE / CLOUD))
-    meshes = {
-        name: o3d.io.read_triangle_mesh(str(BUNDLE / relative))
-        for name, relative in VARIANTS.items()
-    }
-    per_variant = {name: holes(mesh) for name, mesh in meshes.items()}
-    candidate, baseline = per_variant["candidate"], per_variant["baseline"]
+    """Build a hash-bound report or fail before publication."""
 
+    paths = {"cloud": BUNDLE / CLOUD}
+    paths.update({name: BUNDLE / relative for name, relative in VARIANTS.items()})
+    for label, path in paths.items():
+        if not path.is_file() or path.stat().st_size == 0:
+            raise ValueError(f"{label} input is missing or empty: {path}")
+    cloud = o3d.io.read_point_cloud(str(paths["cloud"]))
+    meshes = {name: o3d.io.read_triangle_mesh(str(paths[name])) for name in VARIANTS}
+    topologies = {name: topology(mesh) for name, mesh in meshes.items()}
     return {
-        "question": "How many holes does the reconstructed surface have, and did the "
-        "reconstruction reject the source cloud's outliers or fit them?",
-        "detector_validation": validation,
-        "holes": per_variant,
-        "the_finding_on_holes": (
-            f"The candidate carries {candidate['interior_holes']} interior holes totalling "
-            f"{candidate['interior_hole_area']} m2, "
-            f"{candidate['interior_hole_area_as_share_of_surface']} of its surface area. The "
-            f"baseline carries {baseline['interior_holes']}. So the pruning that cut phantom "
-            "obstacle volume from 0.871 to 0.138 m3 in downstream-consumer.json did not come "
-            "free: it opened interior holes where the baseline had none. That trade is not "
-            "stated anywhere else in this evidence directory, and it is the honest cost of "
-            "the variant this chain prefers."
-        ),
-        "outliers": outliers(cloud, meshes["candidate"]),
-        "a_test_i_built_and_discarded": a_test_i_discarded(cloud, meshes["candidate"]),
-        "what_this_does_not_claim": (
-            "Not that the holes are in the wrong places or that the outliers are noise rather "
-            "than real thin structure; neither is decidable without ground truth, which no "
-            "artifact in this chain carries. Not that an outlier caused the surface near it -- "
-            "see the discarded test. And an interior hole is not automatically a defect: on an "
-            "open patch some holes are honest absence of observation, which is why the area is "
-            "reported next to the surface area rather than as a score."
-        ),
+        "schema": "npa.open3d.holes-and-outliers.measurement.v2",
+        "status": "measured",
+        "inputs": {
+            label: {"path": str(path), "sha256": sha256(path)}
+            for label, path in paths.items()
+        },
+        "detector_validation": detector_validation(),
+        "boundary_topology": topologies,
+        "outlier_distances": outlier_distances(cloud, meshes["candidate"]),
+        "claims": {
+            "interior_hole_count": "not established",
+            "interior_hole_surface_area": "not established",
+            "outliers_fitted_or_rejected": "not established",
+        },
     }
 
 
 def publication(report: dict, out: Path) -> tuple[Path, bool]:
-    """Where this run may be written, and whether its counts are published.
+    """Publish only a controlled report with nonempty SHA-256 input identities."""
 
-    Separated from `main` and kept clear of Open3D so it can be exercised where the
-    image is not. The first version wrote `out` unconditionally and then printed "no
-    hole counts are published", which was false at the moment it printed: a reader
-    who trusts the canonical path over the exit code would have found counts sitting
-    there. A failed instrument's output is quarantined beside it instead, so the
-    canonical path keeps whatever last passed its control.
-    """
-    if report["detector_validation"]["detector_is_valid"]:
+    valid = report.get("detector_validation", {}).get("detector_is_valid") is True
+    inputs = report.get("inputs")
+    bound = (
+        isinstance(inputs, dict)
+        and inputs
+        and all(
+            isinstance(value, dict)
+            and isinstance(value.get("sha256"), str)
+            and len(value["sha256"]) == 64
+            for value in inputs.values()
+        )
+    )
+    if valid and bound:
         return out, True
     return out.with_suffix(".invalid.json"), False
 
 
 def main() -> int:
-    report = build()
-    destination, published = publication(report, OUT)
-    destination.write_text(json.dumps(report, indent=2) + "\n")
-    if not published:
-        print("Hole detector failed its sphere control; no hole counts are published.")
-        print(f"Quarantined this run at {destination}; left {OUT} as it was")
+    try:
+        report = build()
+    except (OSError, ValueError, RuntimeError) as exc:
+        print(f"Measurement failed closed: {exc}")
         return 1
-    candidate = report["holes"]["candidate"]
-    baseline = report["holes"]["baseline"]
-    fitted = report["outliers"]["were_they_rejected_or_fitted"]
-    print(
-        f"Holes: candidate {candidate['interior_holes']} interior "
-        f"({candidate['interior_hole_area']} m2, "
-        f"{candidate['interior_hole_area_as_share_of_surface']} of surface); "
-        f"baseline {baseline['interior_holes']}."
-    )
-    print(
-        f"Outliers: {report['outliers']['outliers']} of {report['outliers']['source_points']} "
-        f"were {fitted['answer']} -- "
-        f"{fitted['outliers_are_this_much_closer_than_random']}x closer to the surface than "
-        f"random points in the same box."
-    )
-    print(f"Wrote {OUT}")
+    destination, published = publication(report, OUT)
+    destination.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
+    if not published:
+        print(f"Measurement controls failed; quarantined at {destination}")
+        return 1
+    print(f"Wrote hash-bound descriptive measurement to {destination}")
     return 0
 
 
