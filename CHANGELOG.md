@@ -7,6 +7,16 @@ a versioned heading when a release is cut.
 
 ## Unreleased
 
+### Sim2Real verdict and promotion proofs require JSON booleans
+
+- Legacy BYO evaluation and VLM payloads must encode `success` as a literal JSON
+  boolean; strings, numbers, null, and containers fail before normalized reports,
+  training, or promotion artifacts are created.
+- Real-checkpoint promotion now applies the same literal contract to
+  `loaded_for_inference`, `stock_or_scripted_policy`, and `exact_digest_match`.
+  BYO producers that emitted `0`/`1` or `"true"`/`"false"` must migrate to JSON
+  `true`/`false`.
+
 ### cuRobo image dependency closure
 
 - Lock the full system setuptools seed independently to the runtime's 84.0.0
