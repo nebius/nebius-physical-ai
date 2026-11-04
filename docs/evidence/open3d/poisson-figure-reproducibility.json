@@ -1,9 +1,9 @@
 {
   "schema": "npa.evidence.open3d.poisson-figure-reproducibility/v0.0.1",
   "provenance": {
-    "source_commit": "400e96f558dc33133fc111989473cd9c2cd469d1",
+    "source_commit": "14715bc1ba3b038e73dd3530016e7c09c72ae034",
     "clean_tree_before_write": true,
-    "harness_sha256": "913ebd53b061eef53cec4043803c4b63cc84496243ab4e3e2bd7bebbfe69a886"
+    "harness_sha256": "5b65dc6b4697ac247e8d8a7c8cb9a68352484d5a4e9f0418e6df13757815fbc6"
   },
   "what_this_measures": "Whether the ray-cast occlusion figures in `audit-view-occlusion.json` are reproducible, and if not, to what precision they are.",
   "why": "A reviewer flagged the ray-cast path as unverified and suspected it might share the one-pixel environment dependence they measured in the z-buffer footprint path. It does not. The z-buffer path reproduced exactly on this host; this one does not reproduce against itself.",
@@ -48,20 +48,20 @@
         "triangles": 1126072,
         "surface_area": {
           "values": [
-            157.34148590488246,
-            157.34142998191763,
-            157.34140635704972,
-            157.34149438697
+            157.34143530648424,
+            157.34156199208246,
+            157.34148744501468,
+            157.3415078925616
           ],
           "identical": false,
-          "absolute_spread": 8.802992027767687e-05,
-          "relative_spread": 5.594834971661143e-07
+          "absolute_spread": 0.00012668559821804593,
+          "relative_spread": 8.051636110429268e-07
         },
         "wall_seconds": [
-          9.031171782000456,
-          8.107177728001261,
-          8.287037182977656,
-          8.264771372021642
+          8.499961774999974,
+          8.165502834017389,
+          8.380870813998627,
+          8.618736097007059
         ],
         "poisson_n_threads": -1,
         "label": "default"
@@ -74,20 +74,20 @@
         "triangles": 1126072,
         "surface_area": {
           "values": [
-            157.3414286138995,
-            157.3414305201968,
-            157.34147103476408,
-            157.3414372651799
+            157.3414200388005,
+            157.34152050962246,
+            157.34149483734205,
+            157.34151573040387
           ],
           "identical": false,
-          "absolute_spread": 4.2420864588166296e-05,
-          "relative_spread": 2.6961026705981525e-07
+          "absolute_spread": 0.00010047082196251722,
+          "relative_spread": 6.38552912117744e-07
         },
         "wall_seconds": [
-          8.697100254998077,
-          9.54447970399633,
-          8.753190586983692,
-          8.566870579001261
+          8.14684112399118,
+          8.043563765997533,
+          8.337092545989435,
+          9.259965735982405
         ],
         "poisson_n_threads": -1,
         "label": "seeded"
@@ -110,10 +110,10 @@
           "relative_spread": 0.0
         },
         "wall_seconds": [
-          13.586360439978307,
-          13.464768495992757,
-          13.51231280300999,
-          13.301264211011585
+          13.4182006320043,
+          12.377800271991873,
+          13.40079176198924,
+          12.611301023018314
         ],
         "poisson_n_threads": 1,
         "label": "poisson_n_threads_1"
@@ -122,7 +122,7 @@
   },
   "what_the_remedies_do": {
     "seeding": "Does not help. The `SAMPLING_SEED` already in `audit_view_occlusion.py` is real and does bind the armadillo's sampling -- but Poisson's variation is not drawn from Open3D's generator, so seeding before the call leaves the spread where it was. Measured, not reasoned: see `cause.conditions.seeded_before_each_call`.",
-    "limiting_threads": "Does not make this exact. The spread goes from 5.59e-07 to 0.00e+00, smaller with the Poisson call's documented n_threads=1. It still produced 1 distinct areas out of 4; the per-call value and wall times are recorded.",
+    "limiting_threads": "Made surface area exact across 4 observations in this run: the spread went from 8.05e-07 to 0 with the Poisson call's documented n_threads=1. This is an observed bounded result, not a general determinism guarantee; the per-call value and wall times are recorded.",
     "so_the_record_should": "State the precision the figures hold instead of publishing sixteen digits that do not survive a second run."
   },
   "does_this_change_any_conclusion": {

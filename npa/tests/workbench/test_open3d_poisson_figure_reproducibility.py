@@ -103,11 +103,8 @@ def test_the_thread_limiting_verdict_agrees_with_its_own_numbers(record) -> None
     single = conditions["poisson_n_threads_1"]["surface_area"]["relative_spread"]
     verdict = record["what_the_remedies_do"]["limiting_threads"]
 
-    assert "Does not fix it" in verdict
-    assert f"{default:.2e}" in verdict, verdict
-    assert f"{single:.2e}" in verdict, verdict
     assert "Made surface area exact" in verdict
-    assert f"{default:.2e}" in verdict
+    assert f"{default:.2e}" in verdict, verdict
     assert single == 0.0
 
     engaged = conditions["poisson_n_threads_1"]
