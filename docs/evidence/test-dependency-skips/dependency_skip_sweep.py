@@ -452,6 +452,15 @@ def main() -> int:
             else:
                 row_verdict = "dependency_required"
 
+            reasons = {
+                "undecided_no_gated_test_executed": (
+                    "all tests gated by this fixture remained skipped in bypass mode"
+                ),
+                "partially_measured": (
+                    "some gated tests were classified, while others remained skipped"
+                ),
+            }
+
             if in_ci is True:
                 ci_status = "latent: CI installs this module"
             elif in_ci is False:
@@ -467,6 +476,7 @@ def main() -> int:
                     "module_present_in_this_environment": here,
                     "ci_installs_it": in_ci,
                     "verdict": row_verdict,
+                    **({"why": reasons[row_verdict]} if row_verdict in reasons else {}),
                     "live_or_latent": ci_status,
                     "test_file_handlers_that_could_swallow_the_sentinel": (
                         broad_except_sites(path)
