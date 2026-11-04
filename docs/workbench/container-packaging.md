@@ -31,14 +31,16 @@ node-local ephemeral storage, with durable reuse still unapproved.
 
 ## SkyPilot worker bootstrap contract
 
-The Sim2Real controller and Rerun viewer upgrade inherited Debian packages from
-the pinned `DEBIAN_SNAPSHOT=20261002T000000Z` closure. Their `MIN_*_VERSION`
-build arguments encode the observed fixed security floors: Perl for both roles,
-plus GLib and mbedcrypto for the viewer. An unreadable or below-floor installed
-version stops the build. The [package-index receipt](validation/sim2real-cpu-security-snapshot-20261002.json)
-binds the snapshot and exact package hashes; it is not replacement-image
-security, bootstrap or runtime acceptance. Do not lower these floors or
-substitute scanner exceptions for rebuilt, validated image bytes.
+The Sim2Real controller and Rerun viewer install inherited Debian packages from
+the pinned `DEBIAN_SNAPSHOT=20261024T000000Z` closure. Their `MIN_*_VERSION`
+build arguments encode the observed fixed security floors: Perl and Brotli for
+both roles, plus GLib and mbedcrypto for the viewer. An unreadable or
+below-floor installed version stops the build. The
+[package-index receipt](validation/sim2real-cpu-security-snapshot-20261024.json)
+binds the snapshot's InRelease and exact package-index hashes, including the
+security-archive Brotli package; it is not replacement-image security,
+bootstrap or runtime acceptance. Do not lower these floors or substitute
+scanner exceptions for rebuilt, validated image bytes.
 
 The GPU-role security closure separately pins PyJWT 2.14.0 for Transfer and
 Isaac. EnvGen uses the October Ubuntu snapshot and the explicit
