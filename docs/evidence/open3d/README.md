@@ -18,6 +18,7 @@ own question and method in its module docstring.
 | It does under-call below a sensitivity floor, so a low reading is a lower bound | `floor-across-geometry-and-sampling.json` |
 | The floor is set by the voxel-to-sample-spacing ratio, not by geometry, sampling or mesh resolution | `floor-vs-voxel-multiple.json`, `floor-vs-resolution.json` |
 | Even sampling zeroes the headline fraction, so its failure is a capture-time artefact | `poisson-procedure-and-overcall-audit.json` |
+| The crop's bit-identical coverage result is a measurement, not a property of the rule; surface within one voxel of a sample can be removed at any factor | `support-crop-coverage-guarantee.json` |
 | Neither declared remedy for run-to-run movement works: seeding the sampling reduces it without removing it, and thread count is not the cause | `declared-reproducibility-causes.json` |
 | The crop's per-cell answer reproduces even though the reconstruction under it does not | `crop-decision-stability.json` |
 
@@ -336,6 +337,32 @@ what changed is the conclusion drawn from them, the classification's name, and t
 cube now runs as a ground-truth control in the functional smoke, on the over-call side that a sweep of
 even sampling cannot reach.
 
+## A claim that was true and read as more than it says
+
+`support-crop-coverage-guarantee.json` examines a supported claim in
+`capability-record-support-crop.json`: that surface no sample is within one voxel of can be removed
+without moving the observed samples off the surface, with coverage bit-identical at 0.9927456237186564.
+The measurement stands and was not re-run — those inputs are not reachable from this host. The wording
+reads as a property of the crop rule, and it is not one.
+
+The crop tests *vertices* against `voxel * support_distance_factor` and removes them with
+`remove_vertices_by_mask`, which deletes every triangle touching a masked vertex. Coverage measures
+each sample's distance to the nearest point of the remaining *surface*. Those are different questions,
+and the gap has two openings. A factor below 1.0 removes vertices between `factor * voxel` and `voxel`
+from their nearest sample, which are vertices that sample is still within one voxel of; the schema
+default of 1.0 closes that one, and the recorded run used 1.0. The second does not close at any
+factor: a triangle dies for any one unsupported vertex, so two vertices a third of a voxel from a
+sample lose their triangle to a third vertex far away. Measured at 1.0, 1.5 and 2.0, each time leaving
+a sample eight voxels from any surface. The factor high enough to keep it removed nothing at all,
+which is not a crop.
+
+On the retained real-data record, coverage was unchanged at the 1.0 default. That observation is not
+a general guarantee or a frequency estimate for other scans. So the
+reconstruction now publishes `coverage_before_crop` and `coverage_cost_of_crop`, and `validate_support`
+checks them against each other, including the one direction the crop can move coverage: removing
+surface cannot bring a sample closer, so coverage can only fall and the abandonment count has to
+account for the whole drop. The crop itself is unchanged — erring toward removing is what an
+honest-holes reconstruction wants. What changed is that the cost is measured instead of assumed.
 ## Two limitations that sent a reader to the wrong knob
 
 `declared-reproducibility-causes.json` examines `limitations[3]` of two capability records. Both told a
