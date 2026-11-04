@@ -458,7 +458,16 @@ def test_packaging_pins_and_excludes_isaac_payload() -> None:
     assert "enactic/openarm_mujoco" in baked
     assert "enactic/openarm_isaac_lab" in baked
     assert "NVIDIA Isaac Sim and Isaac Lab" not in baked
+    for component in (
+        "CPython",
+        "CPython bundled Expat",
+        "CPython bundled mpdecimal",
+        "CPython bundled tiny_sha3",
+        "CPython bundled BLAKE2 reference implementation",
+    ):
+        assert component in baked
     sources = {row["name"]: row for row in components["components"]}
+    assert len(sources["CPython"]["source_sha256"]) == 64
     assert len(sources["enactic/openarm_mujoco"]["license_sha256"]) == 64
     assert len(sources["enactic/openarm_isaac_lab"]["license_sha256"]) == 64
     assert sources["OpenArm HTTP service stack"]["version"] == (

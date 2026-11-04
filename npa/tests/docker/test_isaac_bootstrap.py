@@ -519,6 +519,11 @@ def test_manifest_records_what_was_installed(tmp_path: Path) -> None:
     assert len(manifest["wheels_file_sha256"]) == 64
     assert len(manifest["bootstrap_sha256"]) == 64
     assert len(manifest["oss_dependencies_sha256"]) == 64
+    assert manifest["base_python_executable"] == str(
+        (harness.bin / "python3.11").resolve()
+    )
+    assert "-m venv --without-pip" in harness.call_log
+    assert "-m pip --version" in harness.call_log
 
 
 def test_current_symlink_points_at_the_completed_tree(tmp_path: Path) -> None:
@@ -584,6 +589,26 @@ def test_changing_bootstrap_source_changes_the_cache_stamp(tmp_path: Path) -> No
         encoding="utf-8",
     )
     assert before != stamp()
+
+
+def test_changing_base_interpreter_path_changes_the_cache_stamp(tmp_path: Path) -> None:
+    """A cache venv cannot be reused after its absolute interpreter moves."""
+
+    harness = Harness(tmp_path / "harness")
+    alternate = tmp_path / "alternate" / "python3.11"
+    alternate.parent.mkdir(parents=True)
+    shutil.copy2(harness.bin / "python3.11", alternate)
+
+    def stamp(base_python: Path) -> str:
+        result = harness.run("status", NPA_ISAAC_BASE_PYTHON=str(base_python))
+        assert result.returncode == 0, result.stderr
+        return next(
+            line
+            for line in result.stdout.splitlines()
+            if line.startswith("expected_tree=")
+        )
+
+    assert stamp(harness.bin / "python3.11") != stamp(alternate)
 
 
 def test_image_site_hook_recursively_processes_image_pth_files(tmp_path: Path) -> None:
@@ -1097,6 +1122,28 @@ def test_base_installer_proves_the_refusal_at_build_time() -> None:
     assert "-ne 78" in text, "the build must require the documented EX_CONFIG exit code"
 
 
+def test_sonic_k8s_uses_source_python_without_losing_base_packages() -> None:
+    """The npa-base variant must not reuse its Deadsnakes-backed venv."""
+
+    sonic = COMMON.parent / "sonic"
+    build_script = (sonic / "build.sh").read_text(encoding="utf-8")
+    dockerfile = (sonic / "Dockerfile").read_text(encoding="utf-8")
+    k8s = build_script.split("  k8s)", 1)[1].split("  mujoco)", 1)[0]
+
+    assert 'NPA_ISAAC_VENV="/opt/npa/sim/venv"' in k8s
+    assert 'NPA_ISAAC_INHERITED_PYTHON="/opt/npa/venv/bin/python"' in k8s
+    assert (
+        '--build-arg "NPA_ISAAC_INHERITED_PYTHON=${NPA_ISAAC_INHERITED_PYTHON}"'
+        in build_script
+    )
+    assert "ARG NPA_ISAAC_INHERITED_PYTHON=" in dockerfile
+    assert 'NPA_ISAAC_INHERITED_PYTHON="${NPA_ISAAC_INHERITED_PYTHON}"' in dockerfile
+
+    installer = BASE_INSTALLER.read_text(encoding="utf-8")
+    assert 'INHERITED_PYTHON="${NPA_ISAAC_INHERITED_PYTHON:-}"' in installer
+    assert "_npa_inherited_image_site.pth" in installer
+
+
 def _assert_cpython_source_contract(text: str) -> None:
     source = "https://www.python.org/ftp/python"
     digest = "5f62711b12470fd435f83f1451c1b1ef4a179aebc715c716874b0967567d814e"
@@ -1132,7 +1179,10 @@ def _assert_cpython_source_contract(text: str) -> None:
         "test -s /usr/share/doc/cpython3.11/SHA3-LICENSE",
         "test -s /usr/share/doc/cpython3.11/BLAKE2-CC0-SOURCE.h",
         "test -s /usr/share/doc/cpython3.11/EXPAT-LICENSE",
+        "rm -rf /usr/local/lib/python3.11/test",
+        "test ! -e /usr/local/lib/python3.11/test",
         "rm -rf /usr/local/lib/python3.11/ensurepip/_bundled",
+        "python3.11 -m venv --without-pip /tmp/npa-python311-venv-probe",
     )
     assert source in text
     assert digest in text
@@ -1250,7 +1300,10 @@ def test_cpython_source_contract_rejects_mutated_source_or_digest() -> None:
         "test -s /usr/share/doc/cpython3.11/SHA3-LICENSE",
         "test -s /usr/share/doc/cpython3.11/BLAKE2-CC0-SOURCE.h",
         "test -s /usr/share/doc/cpython3.11/EXPAT-LICENSE",
+        "rm -rf /usr/local/lib/python3.11/test",
+        "test ! -e /usr/local/lib/python3.11/test",
         "rm -rf /usr/local/lib/python3.11/ensurepip/_bundled",
+        "python3.11 -m venv --without-pip /tmp/npa-python311-venv-probe",
     ):
         mutations.append(text.replace(token, "OMITTED_CPYTHON_BUILD_CONTRACT", 1))
     for mutation in mutations:

@@ -161,7 +161,10 @@ runtime extension linked to the older snapshot system Expat. Exact
 source-derived notices for bundled Expat, mpdecimal, tiny_sha3, and BLAKE2 are
 installed before the source tree is removed, and the build byte-compares each
 notice with its source. Other compiler and library inputs remain fixed by the
-Ubuntu snapshot. This changes source recipes for GR00T, SONIC, OpenArm, and
+Ubuntu snapshot only when they are installed by this shared recipe; inherited
+build inputs remain governed by each derived base's own package provenance.
+The installed standard-library test fixtures are removed after the four tests
+run. This changes source recipes for GR00T, SONIC, OpenArm, and
 LeIsaac; it does not change any accepted image digest or establish a replacement
 release.
 
