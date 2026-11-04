@@ -435,6 +435,7 @@ def _create_trainer(
         remove_unused_columns=False,
         report_to=[],
         per_device_train_batch_size=batch_size,
+        per_device_eval_batch_size=batch_size,
         max_steps=steps,
         learning_rate=learning_rate,
         seed=seed,
