@@ -10,8 +10,9 @@ from __future__ import annotations
 
 import argparse
 import json
-import math
 from typing import Any, Mapping, Sequence
+
+from npa.literal_values import require_positive_finite_number
 
 
 DEFAULT_MODEL_ID = "allenai/MolmoAct-7B-O-0812"
@@ -60,14 +61,12 @@ def finetune(config: Mapping[str, Any]) -> dict[str, Any]:
     max_steps = _positive(int(config.get("max_steps", 5000)), "max_steps")
     batch_size = _positive(int(config.get("batch_size", 32)), "batch_size")
     learning_rate = float(config.get("learning_rate", 1e-5))
-    if not math.isfinite(learning_rate):
-        raise MolmoActPipelineError(
-            f"learning_rate must be finite, got {learning_rate!r}"
+    try:
+        learning_rate = float(
+            require_positive_finite_number(learning_rate, field="learning_rate")
         )
-    if learning_rate <= 0:
-        raise MolmoActPipelineError(
-            f"learning_rate must be positive, got {learning_rate!r}"
-        )
+    except ValueError as exc:
+        raise MolmoActPipelineError(str(exc)) from exc
     num_gpus = _positive(int(config.get("num_gpus", 1)), "num_gpus")
     return {
         "command": "finetune",
