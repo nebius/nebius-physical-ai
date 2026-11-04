@@ -70,6 +70,34 @@ SAMPLES_PER_TRIANGLE = 6
 SELF_HIT_VOXELS = 0.25
 
 
+def camera_binding_disclosure() -> dict:
+    """Limits of the camera binding that regeneration must preserve."""
+
+    return {
+        "what_is_bound": (
+            "Each recorded elevation, eye direction, look target, and up vector is "
+            "checked against the product camera fit by the offline tests."
+        ),
+        "what_is_still_not_bound": {
+            "camera_distance": (
+                "The tests do not bind the fitted distance along the checked direction; "
+                "that requires the source point geometry."
+            ),
+            "up_axis": (
+                "This harness supplies declared +Z to _view_cameras. The product normally "
+                "uses its inferred up axis. Separate evidence measured +Z for an Armadillo "
+                "cloud, but the Eagle cloud used here has not been measured through that "
+                "inference, so these visibility figures are conditional on +Z."
+            ),
+            "point_occlusion": (
+                "The fused cloud is rendered as discs but the ray instrument treats points "
+                "as non-occluding. The reported visibility fractions are therefore upper "
+                "bounds on pixels a reviewer may see, not rendered-view measurements."
+            ),
+        },
+    }
+
+
 def barycentric_samples(
     vertices: np.ndarray, triangles: np.ndarray
 ) -> tuple[np.ndarray, np.ndarray]:
@@ -453,6 +481,13 @@ def main() -> int:
                 ),
                 "camera_eye": camera["eye"],
                 "camera_elevation_degrees": camera["elevation_degrees"],
+                # The eye alone cannot be checked against anything: it is three floats
+                # fitted per scene, so any three floats look plausible. With the target
+                # and up it was fitted around, the elevation is recoverable from the
+                # geometry -- which is what makes the recorded angle checkable rather
+                # than merely present.
+                "camera_look_target": camera["look_target"],
+                "camera_up": camera["up"],
                 "view_contents": list(view.contents),
                 "view_hidden_by_default": list(view.hidden_by_default),
                 "entities_shown": shown,
@@ -479,6 +514,7 @@ def main() -> int:
 
         if not sweep:
             sweep = azimuth_sweep(o3d, removed, kept, samples, camera, voxel)
+            sweep["scene"] = name
             print(
                 f"  no camera fixes it: best of {sweep['azimuths_measured']} azimuths is "
                 f"{sweep['best_visible_area_fraction']:.1%} at "
@@ -513,6 +549,9 @@ def main() -> int:
                     "against the observations it is judged against."
                 ),
                 "why_the_camera_is_not_the_fix": sweep,
+                "the_recorded_camera_is_bound_to_the_product_fit": (
+                    camera_binding_disclosure()
+                ),
                 "the_residual_this_does_not_fix": (
                     "The removed surface occludes itself. It is an extrapolated shell, so "
                     "from any single eye the far side of it sits behind the near side, "
@@ -529,24 +568,31 @@ def main() -> int:
                         "enough to read as noise and really an unseeded draw."
                     ),
                     "and_still_not_bit_exact": (
-                        "Seeding does not make this reproduce exactly, and claiming it "
-                        "would be wrong. Measured across two full runs: the visible "
-                        "fractions agree to 2e-5, while triangle counts move by 1 of "
-                        "1.09M on the eagle and 22 of 1.04M on the armadillo, with the "
-                        "kept and removed counts moving by the same amount in opposite "
-                        "directions. Those are triangles sitting within floating-point "
-                        "reach of the crop limit changing which side they land on. "
+                        "Seeding does not make this reproduce exactly, and claiming it would be "
+                        "wrong. The largest deviation observed in the visible fractions is "
+                        "7.9e-05, across 6 runs, recorded with its run count in "
+                        "occlusion-repeat-spread.json. An earlier version of this record said "
+                        "2e-5 and called it agreement: that came from two runs, and a reviewer's "
+                        "own two runs exceeded it before their numbers were compared against this "
+                        "record at all. Two observations give a sample minimum, not a bound. "
+                        "Total reconstructed triangle counts vary by a few triangles as well as "
+                        "the crop assignment, and kept and removed counts can move in the same "
+                        "direction. The nondeterminism is therefore in reconstruction, not only "
+                        "triangles sitting near the crop boundary. "
                         "orient_normals_consistent_tangent_plane is multithreaded and its "
                         "tie-breaking is not seeded, so a seed cannot remove this. The "
-                        "synthetic controls are exactly identical across runs, which "
-                        "locates the variation in the reconstruction rather than in the "
-                        "measurement."
+                        "barycentric sample count moves with them and is not evidence of anything "
+                        "further: it is exactly 6 * removed_triangles in every run measured. The "
+                        "synthetic controls are exactly identical across runs, re-verified over "
+                        "all 6, which locates the variation in the reconstruction rather than in "
+                        "the measurement."
                     ),
                     "why_it_does_not_affect_the_verdict": (
-                        "The gate is 50% and the measured values are 78% and 82%, so a "
-                        "2e-5 wobble is 4 orders of magnitude below the margin. It is "
-                        "recorded because a figure republished to the last digit would "
-                        "otherwise look falsified on the next run."
+                        "The gate is 50% and the measured values are 78% and 82%, so a 7.9e-05 "
+                        "wobble is 3 orders of magnitude below the margin. It is recorded because "
+                        "a figure republished to the last digit would otherwise look falsified on "
+                        "the next run -- which is what happened: a reviewer ran the harness and "
+                        "the figure they got differed, exactly as this note exists to predict."
                     ),
                 },
                 "controls": controls(o3d),
