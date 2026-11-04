@@ -10,8 +10,9 @@ import pytest
 
 
 ROOT = Path(__file__).resolve().parents[3]
-SNAPSHOT = "20261002T000000Z"
+SNAPSHOT = "20261024T000000Z"
 FLOORS = {
+    "libbrotli1": ("MIN_LIBBROTLI_VERSION", "1.1.0-2+deb13u1", "1.1.0-2+b7"),
     "perl-base": ("MIN_PERL_BASE_VERSION", "5.40.1-6+deb13u1", "5.40.1-6"),
     "libglib2.0-0t64": ("MIN_LIBGLIB_VERSION", "2.84.4-3~deb13u4", "2.84.4-3~deb13u3"),
     "libmbedcrypto16": (
@@ -21,7 +22,7 @@ FLOORS = {
     ),
 }
 ROLE_PACKAGES = {
-    "sim2real-control": ("perl-base",),
+    "sim2real-control": ("perl-base", "libbrotli1"),
     "rerun-viewer": tuple(FLOORS),
 }
 
@@ -67,14 +68,27 @@ def test_observed_fixed_versions_are_enforced_without_scan_exceptions(role):
 
 def test_package_floors_match_the_hash_bound_snapshot_readback():
     receipt = (
-        ROOT / "docs/workbench/validation/sim2real-cpu-security-snapshot-20261002.json"
+        ROOT / "docs/workbench/validation/sim2real-cpu-security-snapshot-20261024.json"
     )
     value = json.loads(receipt.read_text())
     assert value["timestamp"] == SNAPSHOT
-    assert value["signed_index_authority"] == "open3d-security-snapshot-20261002.json"
+    assert value["inrelease"]["debian"]["sha256"] == (
+        "0584fba32e13e0ab8285fb16c27adea1ec03a73669c18702821094fd6ca86675"
+    )
+    assert value["inrelease"]["debian-security"]["sha256"] == (
+        "f244a867a18dc1d246cc8712675f1592849f68c6c07be6914283e534b9418d3e"
+    )
+    assert value["indexes"]["debian"]["sha256"] == (
+        "7778d3e3f303b7ddb8ce0fe7c8d57473a076c6bf2e8f241f75421d2396352498"
+    )
+    assert value["indexes"]["debian-security"]["sha256"] == (
+        "80abc7ace801ccb58732fe448148850e3078f925942b034fe532c371f804c2a0"
+    )
     for package, (_, fixed, _) in FLOORS.items():
         assert value["packages"][package]["fixed_floor"] == fixed
         assert re.fullmatch("[0-9a-f]{64}", value["packages"][package]["sha256"])
+    assert value["packages"]["libbrotli1"]["version"] == FLOORS["libbrotli1"][1]
+    assert value["packages"]["libbrotli1"]["archive"] == "debian-security"
 
 
 def _write_query_fixture(directory):
@@ -85,6 +99,7 @@ def _write_query_fixture(directory):
   fi
   case "$3" in
     perl-base) printf '%s' "$MIN_PERL_BASE_VERSION" ;;
+    libbrotli1) printf '%s' "$MIN_LIBBROTLI_VERSION" ;;
     libglib2.0-0t64) printf '%s' "$MIN_LIBGLIB_VERSION" ;;
     libmbedcrypto16) printf '%s' "$MIN_MBEDCRYPTO_VERSION" ;;
     *) exit 99 ;;
