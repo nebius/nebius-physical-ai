@@ -55,6 +55,13 @@ a versioned heading when a release is cut.
   This result remains a failed model-improvement gate, separately from the
   sampler's deterministic source/provenance contract.
 
+### VLM sample frame-count disclosure
+
+- State that the packaged benchmark's four color-swatch rollouts are
+  single-frame 2x2 inputs, while its omitted-terminal control is a separate
+  three-frame 4x2 sequence. These fixtures and their caller labels remain
+  wiring-only evidence and do not validate the named physical tasks.
+
 ### Breaking: authoritative Kubernetes GPU product aliases
 
 - Existing-capacity preflight now treats `nvidia.com/gpu.product` as

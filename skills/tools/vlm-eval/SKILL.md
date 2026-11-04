@@ -265,9 +265,9 @@ npa workbench vlm-eval benchmark \
 `--rubrics` accepts names from the dataset, inline text, or `@file` paths.
 `--dataset` defaults to a packaged sample fixture, which is useful for proving
 the sweep runs but tells you nothing about your task. Its reports declare
-`dataset_evidence_scope: illustrative_only`: four rollouts are synthetic 2x2
-color swatches with color-correlated caller labels; a fifth tiny synthetic
-sequence omits the terminal outcome. The resulting
+`dataset_evidence_scope: illustrative_only`: four rollouts are single-frame
+synthetic 2x2 color swatches with color-correlated caller labels; one separate
+three-frame 4x2 synthetic sequence omits the terminal outcome. The resulting
 metrics are wiring examples, not task-validation or operational error-rate
 evidence. Custom manifests default to `dataset_evidence_scope: unspecified`;
 declare `evidence_scope` and ordered `limitations` in the manifest when their
