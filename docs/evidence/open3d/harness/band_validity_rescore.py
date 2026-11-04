@@ -1,8 +1,9 @@
 """Criterion 5 of the signed-measure claim: what the stricter measure does to the real cases.
 
-The claim's fifth criterion is *"rerun the real cases and report the direction and size of
-every change to the committed numbers, including none."* This is that, for the one sweep whose
-conclusion turns on the 0.05 false-positive threshold.
+The claim's fifth criterion asks for every numeric change. This harness establishes only the
+decision-relevant subset for the sweep whose conclusion turns on the 0.05 threshold. Rows 2-7
+are not rescored, so their numeric deltas remain unknown even though monotonicity proves their
+already-positive verdicts cannot move.
 
 Review scoped it down and was right to: six of the eight rows already sit at or above 0.05, so
 a stricter measure can only push them further above and no verdict can move. That is provable
@@ -33,6 +34,7 @@ import json
 import os
 import statistics
 import sys
+from pathlib import Path
 
 import numpy as np
 import open3d as o3d
@@ -43,6 +45,10 @@ from band_validity_sweep import COUNTS, fabricated_area_fraction, poisson
 from harness_io import output_path, seed_sampling
 
 OUT = output_path("/data/band-validity-rescore.json")
+EVIDENCE_DIR_ENV = "OPEN3D_EVIDENCE_DIR"
+EVIDENCE_DIR = Path(
+    os.environ.get(EVIDENCE_DIR_ENV, Path(__file__).resolve().parent.parent)
+)
 
 #: Same cutoff as #1006, so the two measurements are of the same instrument.
 NORMAL_AGREEMENT_DEGREES = 60.0
@@ -147,7 +153,7 @@ def main() -> int:
         np.median(np.asarray(densest.compute_nearest_neighbor_distance())) * 2.0
     )
 
-    committed = json.loads((OUT.parent / "band-validity-sweep.json").read_text())[
+    committed = json.loads((EVIDENCE_DIR / "band-validity-sweep.json").read_text())[
         "rows"
     ]
 
@@ -229,9 +235,9 @@ def main() -> int:
 
     report = {
         "what_this_is": (
-            "Criterion 5 of program/claims/open3d-signed-fabrication-measure/CLAIM.md: the "
-            "direction and size of every change the stricter measure makes to the committed "
-            "numbers, including none."
+            "Decision-relevant subset of criterion 5: measure the rows below the 0.05 "
+            "threshold and prove the other rows' verdicts cannot move. Numeric deltas for "
+            "unmeasured rows 2-7 remain unknown."
         ),
         "nothing_was_overwritten": (
             "band-validity-sweep.json is untouched. These readings sit beside it."
@@ -248,6 +254,10 @@ def main() -> int:
                 "measured here: delta is non-negative in each run."
             ),
             "rows_covered_by_the_argument": unchanged,
+            "scope_limit": (
+                "Rows 2-7 were not rescored. Monotonicity establishes verdict stability "
+                "only; it does not establish the direction and size of their numeric deltas."
+            ),
             "where_review_and_i_differ": (
                 "Review excluded rows[0] because it reads exactly 0.000000. Exactly zero is "
                 "where the unsigned measure is most lenient, not least: in #1006 the two-box "
@@ -300,8 +310,8 @@ def main() -> int:
             "At least one row crosses the false-positive threshold under the stricter measure; "
             "the sweep's conclusion does not survive unchanged."
             if any_crossing
-            else "No verdict moves. Every row keeps the reading it was committed with, and "
-            "criterion 5 is satisfied with 'none' on the only rows where change was possible."
+            else "No false-positive verdict moves. Rows 0-1 were measured; rows 2-7 remain "
+            "above threshold by monotonicity, but their numeric deltas were not measured."
         ),
     }
 

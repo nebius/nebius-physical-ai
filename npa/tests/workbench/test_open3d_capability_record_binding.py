@@ -48,6 +48,31 @@ QUOTED_FROM = {
     "capability-record-band-validity-rescore.json": "band-validity-rescore.json",
 }
 
+# Exact record-to-report bindings. Matching against an unordered bag of numbers lets two
+# fields be swapped while every value still appears somewhere in the report.
+QUOTE_BINDINGS = {
+    "capability-record-fabrication-measure.json": {
+        "/the_leniency_reproduces/what_the_current_measure_says": "/bridged/unsigned_distance_only",
+        "/the_leniency_reproduces/what_normal_correspondence_says": "/bridged/with_normal_correspondence",
+        "/normal_correspondence_is_the_one_that_works/false_alarm_on_the_control": "/faithful/with_normal_correspondence",
+        "/the_vertex_area_diagnostic_crosses_the_threshold/the_threshold": "/does_it_threaten_any_accepted_conclusion/the_threshold_that_matters",
+        "/the_vertex_area_diagnostic_crosses_the_threshold/gap_counts_where_the_two_measures_disagree[0]": "/does_it_threaten_any_accepted_conclusion/gap_counts_where_the_verdict_differs[0]",
+        "/the_vertex_area_diagnostic_crosses_the_threshold/gap_counts_where_the_two_measures_disagree[1]": "/does_it_threaten_any_accepted_conclusion/gap_counts_where_the_verdict_differs[1]",
+        "/the_vertex_area_diagnostic_crosses_the_threshold/gap_counts_where_the_two_measures_disagree[2]": "/does_it_threaten_any_accepted_conclusion/gap_counts_where_the_verdict_differs[2]",
+    },
+    "capability-record-band-validity-rescore.json": {
+        "/the_measurement/row_0/samples": "/measured_rows[0]/samples",
+        "/the_measurement/row_0/committed_unsigned": "/measured_rows[0]/committed_unsigned",
+        "/the_measurement/row_0/stricter": "/measured_rows[0]/largest_stricter_reading",
+        "/the_measurement/row_1/samples": "/measured_rows[1]/samples",
+        "/the_measurement/row_1/committed_unsigned": "/measured_rows[1]/committed_unsigned",
+        "/the_measurement/row_1/largest_stricter_seen": "/measured_rows[1]/largest_stricter_reading",
+        "/two_sources_of_variation_separated/the_separation/row_1_three_fresh_draws_unsigned_spread": "/measured_rows[1]/unsigned_this_run/spread",
+        "/two_sources_of_variation_separated/the_separation/row_1_one_cloud_reconstructed_three_times_unsigned_spread": "/measured_rows[1]/one_cloud_reconstructed_three_times/unsigned_spread",
+        "/provenance/sampling_seed": "/sampling_seed",
+    },
+}
+
 #: Figures that are not quotations, excluded from the resolution check and
 #: carried by a named test instead. Pinned by path rather than counted, and
 #: required to exist, so the exclusion cannot quietly widen or outlive its
@@ -181,38 +206,40 @@ def module_sequence_length(path: Path, name: str) -> int:
     raise AssertionError(f"{name} not found in {path.name}")
 
 
+def value_at(document: object, pointer: str) -> object:
+    """Resolve the small JSON-pointer-plus-list-index form used above."""
+    value = document
+    for component in pointer.strip("/").split("/") if pointer != "/" else []:
+        match = re.fullmatch(r"([^[]+)(?:\[(\d+)\])?", component)
+        assert match, pointer
+        assert isinstance(value, dict), (pointer, component)
+        value = value[match.group(1)]
+        if match.group(2) is not None:
+            assert isinstance(value, list), (pointer, component)
+            value = value[int(match.group(2))]
+    return value
+
+
 @pytest.mark.parametrize("record_name", sorted(QUOTED_FROM))
-def test_every_figure_a_capability_record_quotes_is_a_figure_its_report_holds(
+def test_every_figure_a_capability_record_quotes_is_bound_to_its_exact_report_field(
     record_name,
 ):
-    """Resolve each quoted figure against the report that measured it.
-
-    Tolerance is relative and loose enough for a rounded quotation, because a
-    record legitimately writes 0.00332136 for a reading of 0.0033213598. It is
-    far tighter than the distance between any two distinct readings here, so a
-    negated or shifted figure cannot match a different one by accident.
-    """
+    """A value moved to a different semantic field must not satisfy the binding."""
     record = load(record_name)
-    report_values = [value for _, value in numbers(load(QUOTED_FROM[record_name]))]
+    report = load(QUOTED_FROM[record_name])
     excluded = NOT_QUOTATIONS[record_name]
     present = {path for path, _ in numbers(record)}
     assert excluded <= present, excluded - present
-
-    unresolved = set()
-    resolved = 0
-    for path, value in numbers(record):
-        if path in excluded:
-            continue
-        if any(
-            math.isclose(value, candidate, rel_tol=1e-6, abs_tol=1e-9)
-            for candidate in report_values
-        ):
-            resolved += 1
-        else:
-            unresolved.add(path)
-
-    assert unresolved == set(), unresolved
-    assert resolved >= 7, resolved
+    quoted = present - excluded
+    bindings = QUOTE_BINDINGS[record_name]
+    assert quoted == set(bindings), (quoted - set(bindings), set(bindings) - quoted)
+    for record_path, report_path in bindings.items():
+        assert math.isclose(
+            float(value_at(record, record_path)),
+            float(value_at(report, report_path)),
+            rel_tol=1e-6,
+            abs_tol=1e-9,
+        ), (record_path, report_path)
 
 
 def test_the_pairing_agrees_with_the_record_that_states_its_source():
@@ -345,12 +372,13 @@ def test_the_enumerated_failures_are_as_many_as_the_count_claims():
     )
 
 
-def test_the_changed_harness_count_is_the_list_the_tests_parametrize_over():
-    """Seven changed harnesses, checked against the seven the suite exercises."""
+def test_the_changed_harness_count_is_bound_to_the_enumerated_changed_files():
+    """Do not compare two unrelated seven-item sets and call the count bound."""
     record = load("capability-record-harness-usage.json")
-    assert record["provenance"]["harnesses_changed"] == module_sequence_length(
-        TESTS / "test_open3d_harness_usage.py", "NEEDS_ARGUMENTS"
-    )
+    provenance = record["provenance"]
+    changed = provenance["changed_harnesses"]
+    assert provenance["harnesses_changed"] == len(changed) == len(set(changed))
+    assert all((EVIDENCE / "harness" / name).is_file() for name in changed)
 
 
 def test_the_messages_the_record_quotes_are_the_failures_it_describes():

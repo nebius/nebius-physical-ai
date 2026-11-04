@@ -43,6 +43,13 @@ def test_the_leniency_reproduces_at_all() -> None:
     assert bridged["with_normal_correspondence"] > 0.0, bridged
 
 
+def test_the_vertex_area_proxy_is_not_called_the_committed_instrument() -> None:
+    scope = REPORT["measurement_scope"]
+    assert "Vertex-area diagnostic" in scope
+    assert "committed instrument counts whole triangle area" in scope
+    assert "not measurements of the committed instrument" in scope
+
+
 def test_the_current_measure_reports_exactly_zero_where_surface_was_fabricated() -> (
     None
 ):
@@ -108,7 +115,7 @@ def test_the_hidden_fabrication_grows_with_the_number_of_closed_gaps() -> None:
     assert max(strict) > 0.2, strict
 
 
-def test_there_is_geometry_where_the_two_measures_reach_different_verdicts() -> None:
+def test_the_vertex_area_proxy_crosses_the_threshold_on_constructed_geometry() -> None:
     """The finding that makes this more than a difference in decimal places.
 
     At these gap counts the current measure reads below the threshold that decides a false
@@ -150,9 +157,7 @@ def test_the_band_is_recomputed_from_the_rows_rather_than_asserted() -> None:
     )
 
 
-def test_the_record_says_which_way_the_bias_runs_and_does_not_just_repeat_the_note() -> (
-    None
-):
+def test_the_record_limits_the_proxy_bias_to_synthetic_geometry() -> None:
     """The runner says the bias is in the tool's favour. For this conclusion it is not.
 
     Understated fabrication lowers the measured floor, which flatters the tool. The same
@@ -164,9 +169,9 @@ def test_the_record_says_which_way_the_bias_runs_and_does_not_just_repeat_the_no
         "which_way_the_bias_runs_there"
     ]
 
-    assert "cried wolf" in stated, stated
-    assert "the other way" in stated, stated
-    assert "floor" in stated, stated
+    assert "vertex-area diagnostic" in stated, stated
+    assert "possible bias direction" in stated, stated
+    assert "does not prove any committed" in stated, stated
 
 
 def test_the_construction_that_failed_is_still_in_the_record() -> None:

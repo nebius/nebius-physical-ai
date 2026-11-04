@@ -43,7 +43,7 @@ def test_the_committed_evidence_was_not_overwritten(sweep_rows: list[dict]) -> N
     assert sum(value >= FALSE_POSITIVE_THRESHOLD for value in fabricated) == 6
 
 
-def test_exactly_the_rows_below_the_threshold_were_measured(
+def test_exactly_the_rows_that_could_change_the_verdict_were_measured(
     rescore: dict, sweep_rows: list[dict]
 ) -> None:
     """A "no change" result is worthless if the rows that could change were skipped.
@@ -58,6 +58,20 @@ def test_exactly_the_rows_below_the_threshold_were_measured(
     }
     measured = {row["row"] for row in rescore["measured_rows"]}
     assert measured == could_move == {0, 1}
+
+
+def test_unmeasured_rows_are_not_claimed_as_numeric_rescores(rescore: dict) -> None:
+    scope = rescore["why_only_two_rows_were_measured"]["scope_limit"]
+    assert "Rows 2-7 were not rescored" in scope
+    assert "numeric deltas" in scope
+    assert "verdict stability only" in scope
+
+
+def test_input_evidence_is_independent_from_the_output_directory() -> None:
+    source = (EVIDENCE / "harness" / "band_validity_rescore.py").read_text()
+    assert "OPEN3D_EVIDENCE_DIR" in source
+    assert 'EVIDENCE_DIR / "band-validity-sweep.json"' in source
+    assert 'OUT.parent / "band-validity-sweep.json"' not in source
 
 
 def test_the_row_review_called_immune_was_measured_anyway(rescore: dict) -> None:

@@ -1,5 +1,5 @@
 {
-  "capability": "Criterion 5 of the signed-measure claim, closed: the direction and size of every change the stricter fabrication measure makes to the committed band-validity numbers. The answer is none that matters, measured rather than argued.",
+  "capability": "Decision-relevant criterion-5 subset: no false-positive verdict moves under the stricter fabrication proxy. Rows 0-1 were measured; rows 2-7 were not rescored, so their numeric deltas remain unknown.",
   "why_this_shape": "I offered to rescore the committed evidence and review declined, correctly, with a cheaper scope: measure only the rows where a verdict could move and publish the delta beside the existing value. Nothing is overwritten.",
   "which_rows_could_move": {
     "argument": "The stricter mask is a superset of the unsigned one, `far | misoriented` contains `far`, so the stricter reading is never below the unsigned reading. Six of the eight rows already sit at or above the 0.05 false-positive threshold, so they can only move further above it and no verdict can change. That is a proof from the mask construction, not an assumption, and every measured delta here is non-negative as it predicts.",
@@ -21,7 +21,7 @@
       "crosses_0_05": false,
       "lift_that_would_be_needed": "16.6x"
     },
-    "verdict": "No verdict moves. Every row keeps the reading it was committed with, and criterion 5 is satisfied with 'none' on the only rows where change was possible."
+    "verdict": "No false-positive verdict moves. Rows 0-1 were measured; rows 2-7 stay above threshold by monotonicity, but their numeric deltas were not measured."
   },
   "two_sources_of_variation_separated": {
     "why_it_mattered": "I first ran three repeats per row and labelled their spread a bound on Poisson's nondeterminism. It is not: `sample_points_uniformly` advances the global RNG, so each repeat draws a different cloud even under a fixed seed. The spread bounded sampling and reconstruction together.",
@@ -29,7 +29,7 @@
       "row_1_three_fresh_draws_unsigned_spread": 0.00026381,
       "row_1_one_cloud_reconstructed_three_times_unsigned_spread": 2.48e-06,
       "ratio": "sampling moves this reading about 100x more than reconstruction does",
-      "row_0_one_cloud_three_times": "identical to eight decimals across all three reconstructions, 6.71e-06 each, while the triangle count moved by a handful (1038199 / 1038201 / 1038197)"
+      "row_0_one_cloud_three_times": "identical to eight decimals across all three reconstructions, 6.71e-06 each. Triangle counts moved by a handful, but those unpublished counts are not quoted as retained evidence."
     },
     "relation_to_the_1004_bound": "#1004 bounded two seeded runs of one harness at 2.17e-3 worst relative difference across 106 leaves. That is a third experiment again. None of the three contradicts the others; this note exists so they are not conflated later."
   },
@@ -53,15 +53,15 @@
     "harness_that_produced_this": [
       {
         "path": "harness/band_validity_rescore.py",
-        "sha256": "2167cdb426043ca6e8974192df870b49d3a2d48e301503369ecce28dec9f6324"
+        "sha256": "2cb6d46aa9ccde801a9b3cf2e70744c2ee818c34ab44452caba7ecebb7b2adac"
       },
       {
         "path": "band-validity-rescore.json",
-        "sha256": "ff2f1346110cc7818069448f2a241951121de3dc5a152b432381ed6272f59e94"
+        "sha256": "1d232ac575ccc0aa719bf34074460aeadcc17625d057fa85e1d8fca2a600a2f5"
       }
     ],
     "inputs": "Open3D's bundled Armadillo mesh, fetched by o3d.data and cached locally. No staged bundle and no retained volume, so this reproduces from a checkout.",
-    "reproduce": "OPEN3D_OUT_DIR=docs/evidence/open3d python docs/evidence/open3d/harness/band_validity_rescore.py  (about six minutes, CPU)",
+    "reproduce": "OPEN3D_EVIDENCE_DIR=docs/evidence/open3d OPEN3D_OUT_DIR=/existing/scratch npa/.venv/bin/python docs/evidence/open3d/harness/band_validity_rescore.py  (about six minutes, CPU)",
     "open3d_version": "0.20.0",
     "sampling_seed": 20261101
   }

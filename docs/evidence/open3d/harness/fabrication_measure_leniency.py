@@ -8,9 +8,10 @@
     surface. [...] A signed distance or a per-region correspondence would be stricter; neither
     was implemented.
 
-That measure is the ground truth every validity, floor and false-positive conclusion in
-`docs/evidence/open3d/` was scored against, so if it is short in a known direction the
-conclusions inherit the shortfall.
+The committed instrument counts full triangle area when any vertex is far. This diagnostic
+instead distributes triangle area across vertices so all candidate definitions share one
+weighting. It demonstrates the leniency mechanism and gives an upper-bound-style stress
+diagnostic; it does not numerically rescore the committed per-triangle instrument.
 
 This reproduces the leniency on a shape built for it, then measures three candidate
 replacements on the same surfaces. Acceptance was fixed before any of it ran, in
@@ -66,7 +67,7 @@ def triangle_areas(mesh) -> np.ndarray:
 
 
 def vertex_area(mesh) -> np.ndarray:
-    """Area attributed to each vertex, so every measure below is weighted the same way."""
+    """Area attributed to vertices for this diagnostic, not the committed instrument."""
     areas = triangle_areas(mesh)
     triangles = np.asarray(mesh.triangles)
     per_vertex = np.zeros(len(np.asarray(mesh.vertices)))
@@ -101,7 +102,8 @@ def measures(mesh, reference, voxel: float) -> dict[str, float]:
     misoriented = disagreement > NORMAL_AGREEMENT_DEGREES
 
     return {
-        # What every committed measurement used.
+        # Unsigned-distance counterpart in this vertex-area diagnostic. The committed
+        # instrument assigns whole triangle area if any vertex is far and can read higher.
         "unsigned_distance_only": float(weight[far].sum() / total),
         # The first option the runner named.
         "signed_distance": float(weight[far | inside].sum() / total),
@@ -198,6 +200,12 @@ def build() -> dict[str, object]:
             "surface spanning that gap is fabricated, because the reference has nothing "
             "there. The faithful one reconstructs a single box, where nothing is fabricated."
         ),
+        "measurement_scope": (
+            "Vertex-area diagnostic on synthetic Poisson reconstructions. The committed "
+            "instrument counts whole triangle area when any vertex is far; therefore these "
+            "shares, ratios, and threshold-crossing gap counts are not measurements of the "
+            "committed instrument and must not be used as its exact rescore."
+        ),
         "sampling_seed": seed,
         "geometry": {
             "reference": "two unit boxes separated by one voxel",
@@ -269,15 +277,10 @@ def main() -> int:
             != (row["with_normal_correspondence"] < 0.05)
         ),
         "which_way_the_bias_runs_there": (
-            "The lenient measure reads below the threshold where the stricter one reads "
-            "above it, so band_validity_sweep's false_positive condition -- far reading "
-            "fired and fabricated_area_fraction below 0.05 -- is satisfied on rows where "
-            "substantial fabrication actually exists. The sweep therefore records the tool "
-            "as having cried wolf on readings that were right. The runner's note says the "
-            "bias is in the tool's favour, and for the floor measurements it is: understated "
-            "fabrication makes the floor look lower and the tool look more precise. For this "
-            "conclusion it runs the other way. Which direction it takes depends on what is "
-            "being concluded, and the note states only one of the two."
+            "Under this vertex-area diagnostic, unsigned distance can sit below 0.05 while "
+            "normal correspondence sits above it. This establishes a possible bias direction "
+            "on synthetic geometry; because the committed instrument weights whole triangles, "
+            "it does not prove any committed band-validity row was misclassified."
         ),
     }
     report["no_regression_on_good_surface"] = {

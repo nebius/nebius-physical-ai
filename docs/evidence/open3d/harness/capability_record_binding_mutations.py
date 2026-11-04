@@ -101,9 +101,11 @@ def main() -> int:
         path = EVIDENCE / name
         original = path.read_text()
         data, changed = corrupt(json.loads(original))
-        path.write_text(json.dumps(data, indent=2) + "\n")
-        failed, _ = run_suite()
-        path.write_text(original)
+        try:
+            path.write_text(json.dumps(data, indent=2) + "\n")
+            failed, _ = run_suite()
+        finally:
+            path.write_text(original)
         assert path.read_text() == original, f"{name} not restored"
         results.append((name, changed, failed))
         verdict = f"caught, {failed} failures" if failed else "UNNOTICED"

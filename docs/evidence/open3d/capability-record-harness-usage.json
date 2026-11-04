@@ -39,6 +39,7 @@
   "regression_tests": {
     "file": "npa/tests/workbench/test_open3d_harness_usage.py",
     "count": 31,
+    "what_count_means": "collected test cases, not test functions",
     "what_they_cover": [
       "Seven harnesses, each run with no arguments, must exit 2 with a usage message naming the missing argument and containing no IndexError, KeyError, ValueError or traceback.",
       "The fault injector must name INJECT_MODE, INJECT_LOG and the three valid modes, and must not raise KeyError.",
@@ -56,6 +57,26 @@
     "interpreter": "the worktree's own npa/.venv/bin/python, 3.14.7",
     "harnesses_inventoried": 22,
     "harnesses_changed": 18,
+    "changed_harnesses": [
+      "audit_evidence_references.py",
+      "background_choice_sweep.py",
+      "band_false_negative_sweep.py",
+      "band_profile_across_scenes.py",
+      "band_validity_sweep.py",
+      "camera_framing_probe.py",
+      "consumer_occupancy.py",
+      "floor_across_geometry_and_sampling.py",
+      "floor_vs_resolution.py",
+      "floor_vs_voxel_multiple.py",
+      "frame_edge_audit.py",
+      "harness_io.py",
+      "inject_truncation.py",
+      "pane_fit_window_aspect_sweep.py",
+      "poisson_procedure_and_overcall_audit.py",
+      "preview_from_retained_plys.py",
+      "render_views.py",
+      "verify_run.py"
+    ],
     "reproduce": "npa/.venv/bin/python -m pytest npa/tests/workbench/test_open3d_harness_usage.py"
   },
   "i_had_overstated_this_and_measuring_it_corrected_me": {

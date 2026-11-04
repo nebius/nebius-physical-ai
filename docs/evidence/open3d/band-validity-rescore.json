@@ -1,5 +1,5 @@
 {
-  "what_this_is": "Criterion 5 of program/claims/open3d-signed-fabrication-measure/CLAIM.md: the direction and size of every change the stricter measure makes to the committed numbers, including none.",
+  "what_this_is": "Decision-relevant subset of criterion 5: rows below the 0.05 threshold are measured and monotonicity proves the other rows' verdicts cannot move. Numeric deltas for unmeasured rows 2-7 remain unknown.",
   "nothing_was_overwritten": "band-validity-sweep.json is untouched. These readings sit beside it.",
   "why_only_two_rows_were_measured": {
     "argument": "The stricter mask is a superset of the unsigned one -- `far | misoriented` contains `far` -- so the stricter reading is never below the unsigned reading. A row already at or above the threshold can therefore only move further above it, and no verdict can change.",
@@ -36,6 +36,7 @@
         "already_at_or_above_threshold": true
       }
     ],
+    "scope_limit": "Rows 2-7 were not rescored. Monotonicity establishes verdict stability only; it does not establish the direction and size of their numeric deltas.",
     "where_review_and_i_differ": "Review excluded rows[0] because it reads exactly 0.000000. Exactly zero is where the unsigned measure is most lenient, not least: in #1006 the two-box bridge read 0.000000 unsigned and 0.004602 under normal correspondence, the largest relative divergence in that experiment. So rows[0] is measured too."
   },
   "measured_rows": [
@@ -156,6 +157,6 @@
   },
   "verdict": {
     "any_verdict_moves": false,
-    "statement": "No verdict moves. Every row keeps the reading it was committed with, and criterion 5 is satisfied with 'none' on the only rows where change was possible."
+    "statement": "No false-positive verdict moves. Rows 0-1 were measured; rows 2-7 remain above threshold by monotonicity, but their numeric deltas were not measured."
   }
 }
