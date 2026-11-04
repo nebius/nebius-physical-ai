@@ -124,12 +124,14 @@ def test_cosmos_reason_replaces_parent_npa_metadata_before_pip_check() -> None:
     )
 
 
-def test_sim2real_cpu_images_install_security_fixed_perl() -> None:
+def test_sim2real_cpu_images_install_security_fixed_packages() -> None:
     for relative in ("sim2real-control/Dockerfile", "rerun-viewer/Dockerfile"):
         text = (WORKBENCH / relative).read_text(encoding="utf-8")
-        assert "ARG DEBIAN_SNAPSHOT=20261002T000000Z" in text, relative
+        assert "ARG DEBIAN_SNAPSHOT=20261024T000000Z" in text, relative
         assert "ARG MIN_PERL_BASE_VERSION=5.40.1-6+deb13u1" in text, relative
+        assert "ARG MIN_LIBBROTLI_VERSION=1.1.0-2+deb13u1" in text, relative
         assert '"perl-base=${MIN_PERL_BASE_VERSION}"' in text, relative
+        assert '"libbrotli1=${MIN_LIBBROTLI_VERSION}"' in text, relative
 
 
 def test_envgen_clears_inherited_source_before_copying_exact_revision() -> None:
@@ -294,14 +296,16 @@ def test_genesis_only_images_retain_the_separate_gitpython_closure() -> None:
 
 
 def test_sim2real_cpu_images_upgrade_inherited_packages_from_fixed_snapshot() -> None:
-    """Exclude the vulnerable Perl, GLib and Mbed TLS snapshot closure."""
+    """Exclude the vulnerable Perl, Brotli, GLib and Mbed TLS closure."""
 
     for relative in ("sim2real-control/Dockerfile", "rerun-viewer/Dockerfile"):
         text = (WORKBENCH / relative).read_text(encoding="utf-8")
-        assert "ARG DEBIAN_SNAPSHOT=20261002T000000Z" in text, relative
+        assert "ARG DEBIAN_SNAPSHOT=20261024T000000Z" in text, relative
         assert "ARG MIN_PERL_BASE_VERSION=5.40.1-6+deb13u1" in text, relative
+        assert "ARG MIN_LIBBROTLI_VERSION=1.1.0-2+deb13u1" in text, relative
         assert "apt-get upgrade -y --no-install-recommends" in text, relative
         assert '"perl-base=${MIN_PERL_BASE_VERSION}"' in text, relative
+        assert '"libbrotli1=${MIN_LIBBROTLI_VERSION}"' in text, relative
 
 
 def test_transfer_uses_the_hash_verified_pyjwt_signature_fix() -> None:
