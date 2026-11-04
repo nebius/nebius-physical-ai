@@ -1,7 +1,7 @@
 {
   "construction_validity_instrument": {
     "what_it_reads": "Share of reference-surface samples with solid on both sides, so on an internal face rather than the boundary.",
-    "validated_against": {
+    "retained_literal_controls_not_recomputed_by_this_harness": {
       "three_boxes_added_together_my_first_slot": 0.2203,
       "open3d_boolean_difference_output": 0.0125,
       "extruded_u_profile_used_here": 0.0,
@@ -304,7 +304,7 @@
   "local_samples_per_plane_fit": 10,
   "verdict_against_the_frozen_acceptance": {
     "where_acceptance_was_frozen": "program/claims/open3d-reference-free-fabrication/CLAIM.md",
-    "frozen_before_any_of_this_ran": true,
+    "frozen_before_any_of_this_ran": "claimed historically but not independently verifiable because the referenced file is not retained in this repository",
     "candidate_a_misoriented_against_nearest_samples": {
       "1_products_counterexample_below_0_05": {
         "reading": 0.081198,
@@ -383,8 +383,8 @@
     "outcome": "Both candidates are rejected. The hypothesis does not hold."
   },
   "the_decisive_case": {
-    "which": "narrow slot, 1.5 voxels wide",
-    "why_it_decides": "It is the only construction here whose invented surface runs parallel to observed surface: Poisson roofs a slot 1.5 voxels wide, and the slot floor underneath is sampled. Both candidates read exactly 0.0 on it while 5.9 and 5.6 percent of its area is invented, and both read higher on the cube where nothing is invented at all. That is an inversion, not a weak signal, and it is the geometry an operator is most likely to meet: a bridge over a gap in a surface is usually roughly parallel to it.",
+    "which": "0.03-wide slot at 20000 and 8000 samples",
+    "why_it_decides": "Both rows report unlocalized invented area and both candidates read exactly 0.0, while both candidates read higher on clean sparse-cube rows. This is an observed inversion. The harness does not localize the invented or far triangles to the slot footprint, so it does not establish a roof mechanism, a supporting floor explanation, or product-default reconstruction behavior.",
     "readings": {
       "invented_area_fraction": [
         0.058833,
@@ -403,20 +403,26 @@
         0.0
       ]
     },
-    "the_product_reading_is_also_unstable_here": "0.5227 at 20000 samples and 0.0000 at 8000, for invented fractions of 0.0588 and 0.0559. Same fabrication, opposite readings. That is within the limitation the runner already documents rather than a new defect, and it is recorded because it is the sharpest example of it I have measured."
+    "the_product_reading_is_also_unstable_here": "0.5227 at 20000 samples and 0.0000 at 8000, for invented fractions of 0.0588 and 0.0559. The rows do not hold voxel-relative geometry fixed: the 8000-sample slot is about 0.95 voxels wide and has an empty far band, so its zero is vacuous rather than an opposite reading of the same case."
   },
   "why_both_candidates_fail_in_one_sentence_each": {
     "candidate_a": "Comparing a triangle against whichever samples are nearest makes it fire on correct surface whose nearest samples belong to a perpendicular patch -- a sparse cube face near its edge, whose ten nearest samples are all on the adjacent dense face -- and stay silent on invented surface whose nearest samples are parallel to it.",
-    "candidate_b": "Requiring an orientation-agreeing sample nearby fixes the first failure, taking the cube control from 0.0812 to 0.0090, and leaves the second untouched: a roof over a slot has the slot floor parallel to it and well within the radius, so it reads as supported."
+    "candidate_b": "Requiring an orientation-agreeing sample nearby improves the cube control from 0.0812 to 0.0090 but still rises to 0.1508 as correct coverage thins. The slot rows also read zero, but their mechanism is unlocalized and the 0.40-deep floor is outside the 12-voxel radius at both sampled voxel sizes."
   },
   "what_this_means_for_the_product": {
-    "conclusion": "The runner's own statement -- deciding fabrication needs a reference surface -- stands, and now has a measurement behind it rather than an argument. a828e58fd3 was right to withdraw the stronger reading.",
+    "conclusion": "These two candidates are rejected because both rise above 0.05 as correct coverage thins. The runner remains right not to claim fabrication from this reference-free signal; the slot mechanism previously offered as the explanation is not established.",
     "nothing_changes_in_the_product": "No threshold, no default and no accepted number moves. This is a negative result about a reading that was never added.",
-    "what_the_next_person_should_not_repeat": "Normal correspondence against the input cloud. It is the obvious candidate, it is cheap, it reads plausibly on the counterexample the product documents, and it is defeated by the most ordinary fabrication there is.",
+    "what_the_next_person_should_not_repeat": "These exact normal-correspondence candidates without first fixing their density response and localizing any claimed failure mechanism.",
     "where_normal_correspondence_does_work": "Against a reference surface, which is #1006. That measurement stands; this one does not contradict it. The difference is entirely the reference: with one, a bridge's normal is compared against the surface it should have been part of, and without one it is compared against whatever happens to be nearby."
   },
   "visual_evaluation": {
     "status": "not_applicable",
     "reason": "Every reading here is a scalar area share computed from geometry. There is no frame, no render and nothing for a vision model to see, and attaching one would be decoration. The nonvisual allowance in EXPANDED-REVIEW-CONTRACT.md covers this."
+  },
+  "report_authorship": {
+    "raw_harness_fields": ["construction_validity_instrument", "what_this_tests", "gate_1_the_products_counterexample_reproduces", "cases", "sparse_density_sweep_zero_invented_everywhere", "bridged_cases_real_invented_surface", "open3d_version", "numpy_seed", "normal_agreement_cutoff_degrees", "local_samples_per_plane_fit"],
+    "hand_written_annotations_not_emitted_by_the_harness": ["verdict_against_the_frozen_acceptance", "the_decisive_case", "why_both_candidates_fail_in_one_sentence_each", "what_this_means_for_the_product", "visual_evaluation"],
+    "control_limit": "The construction-validity control values are retained literals; this harness does not construct and recompute the broken three-box or boolean-difference controls.",
+    "reproduction_limit": "Running the harness in a scratch directory emits raw measurements only and does not reproduce this fully annotated committed report byte-for-byte."
   }
 }

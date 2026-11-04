@@ -15,11 +15,10 @@ at the rim; a correctly reconstructed sparse region produces surface locally par
 few samples that are there. Both lie far from samples. Only one is misoriented with respect to
 them, and establishing that reads no reference surface -- only the cloud and the mesh.
 
-Acceptance was frozen before any of this ran, in
-`program/claims/open3d-reference-free-fabrication/CLAIM.md`. The first gate is the product's
-own counterexample: the cube sampled densely on five faces and sparsely on the sixth, recorded
-at 0.3157 unsupported area with 0.1316 past three voxels, a far share of 0.4169, and nothing
-invented anywhere. If that does not reproduce, nothing after it counts.
+The report says acceptance was frozen in a private program claim, but that file is not retained
+in this repository, so its pre-measurement timing is not independently verifiable here. The
+first implemented gate is the product's own counterexample: the cube sampled densely on five
+faces and sparsely on the sixth.
 """
 
 from __future__ import annotations
@@ -45,7 +44,13 @@ SEED = 7
 
 
 def out_path() -> Path:
-    directory = Path(os.environ.get("OPEN3D_OUT_DIR", "docs/evidence/open3d"))
+    raw = os.environ.get("OPEN3D_OUT_DIR")
+    if not raw:
+        raise SystemExit(
+            "OPEN3D_OUT_DIR is required and must name an existing scratch directory; "
+            "the harness emits raw measurements, not the annotated committed report."
+        )
+    directory = Path(raw)
     if not directory.is_dir():
         raise SystemExit(
             f"No directory at {directory}; set OPEN3D_OUT_DIR to an existing one."
@@ -283,7 +288,7 @@ def two_spheres(gap: float) -> object:
 
 
 def slotted_box(depth: float, width: float) -> object:
-    """One connected solid with a slot cut into its top, which Poisson roofs over.
+    """One connected solid with a slot cut into its top.
 
     Built by extruding a U profile, not by adding three boxes together. Adding them was the
     first attempt and it does not produce a solid: `+=` concatenates triangles without a
@@ -395,14 +400,10 @@ def reference_geometries() -> list[tuple[str, object]]:
     before these three were chosen, and are recorded because a construction that fails to
     exercise an effect is not evidence the effect is absent.
 
-    The slot had to be narrowed to 1.5 voxels before Poisson roofed it at all. At 2.5, 4.0 and
-    7.6 voxels wide it reconstructs the slot correctly and invents exactly nothing, which also
-    means the first slotted case here -- 0.25 wide, roughly 12 voxels -- was never a positive
-    case. Its apparent 0.1041 came entirely from the internal faces described above.
-
-    The narrow slot is the case that matters most, because its invented roof runs *parallel*
-    to the slot floor and the floor is sampled. That is the geometry the orientation
-    hypothesis is least equipped to see.
+    The 0.03-wide slot rows report unlocalized invented area, but this harness does not compute
+    what share lies inside the slot footprint. It therefore cannot call that area a roof or
+    attribute the zero candidate readings to a sampled floor. The retained label describes the
+    20000-sample voxel ratio only; the 8000-sample ratio differs.
     """
     return [
         ("two boxes, gap 0.20", two_boxes(0.20)),
@@ -508,7 +509,7 @@ def main() -> None:
                 "Share of reference-surface samples with solid on both sides, so on an "
                 "internal face rather than the boundary."
             ),
-            "validated_against": {
+            "retained_literal_controls_not_recomputed_by_this_harness": {
                 "three_boxes_added_together_my_first_slot": 0.2203,
                 "open3d_boolean_difference_output": 0.0125,
                 "extruded_u_profile_used_here": 0.0,
@@ -532,6 +533,11 @@ def main() -> None:
         "numpy_seed": SEED,
         "normal_agreement_cutoff_degrees": NORMAL_AGREEMENT_DEGREES,
         "local_samples_per_plane_fit": LOCAL_SAMPLES,
+        "report_scope": (
+            "This raw harness output ends at the measurement fields above. The committed "
+            "report's verdict, decisive-case explanation, product interpretation, and visual "
+            "evaluation are hand-written annotations and are not regenerated here."
+        ),
     }
     out_path().write_text(json.dumps(report, indent=2) + "\n")
     print(json.dumps(report["gate_1_the_products_counterexample_reproduces"], indent=2))
@@ -547,7 +553,6 @@ def main() -> None:
                 f"{case['case'][:45]:<46}"
                 f"{case['invented_area_fraction']:>9.4f}"
                 f"{case['far_band_share_of_unsupported_area']:>9.4f}"
-                f"{case['misoriented_far_share_of_unsupported_area']:>9.4f}"
                 f"{case['orientation_unsupported_far_share_of_unsupported_area']:>9.4f}"
             )
 

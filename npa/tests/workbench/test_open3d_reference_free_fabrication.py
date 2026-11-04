@@ -13,6 +13,7 @@ fields are never the thing asserted.
 from __future__ import annotations
 
 import ast
+import hashlib
 import json
 import re
 from pathlib import Path
@@ -63,21 +64,14 @@ def test_the_first_gate_is_the_products_own_counterexample(report: dict) -> None
     assert worst < 0.02, (worst, recorded, measured)
 
 
-def test_the_construction_check_is_validated_and_not_merely_asserted(
+def test_historical_control_literals_are_not_presented_as_recomputed(
     report: dict,
 ) -> None:
-    """A reference with internal faces makes "invented" meaningless, so this is load-bearing.
-
-    It reads 0.2203 on the construction that had the defect and 0.0 on the two that do not,
-    which is what makes it an instrument rather than a claim.
-    """
-    validated = report["construction_validity_instrument"]["validated_against"]
-    assert validated["three_boxes_added_together_my_first_slot"] > 0.2
-    assert validated["extruded_u_profile_used_here"] == 0.0
-    assert validated["plain_box_control"] == 0.0
-    assert validated["open3d_boolean_difference_output"] > 0.0, (
-        "the boolean output's internal faces are why the U is hand-built; without this the reason is lost"
-    )
+    instrument = report["construction_validity_instrument"]
+    retained = instrument["retained_literal_controls_not_recomputed_by_this_harness"]
+    assert retained["three_boxes_added_together_my_first_slot"] > 0.2
+    assert retained["extruded_u_profile_used_here"] == 0.0
+    assert "retained literals" in report["report_authorship"]["control_limit"]
 
 
 def test_every_reference_actually_measured_is_free_of_internal_faces(
@@ -109,14 +103,10 @@ def test_the_invented_and_clean_readings_overlap(
 
 
 @pytest.mark.parametrize("field", [CANDIDATE_A, CANDIDATE_B])
-def test_both_candidates_read_zero_on_the_case_where_a_roof_is_parallel_to_a_floor(
+def test_both_candidates_read_zero_on_the_unlocalized_slot_rows(
     field: str, bridged: list[dict]
 ) -> None:
-    """The decisive case, and the one most like real capture.
-
-    A bridge over a gap in a surface is usually roughly parallel to that surface. Both
-    candidates read exactly nothing on it.
-    """
+    """The inversion is retained without inventing an unsupported roof/floor mechanism."""
     slots = [row for row in bridged if "narrow slot" in row["case"]]
     assert len(slots) == 2, [row["case"] for row in bridged]
     for row in slots:
@@ -287,9 +277,8 @@ def test_the_two_constructions_that_failed_to_exercise_the_effect_are_still_reco
     assert "thin torus" in source, (
         "the torus that invents nothing is no longer recorded"
     )
-    assert "1.5 voxels" in source, (
-        "the width at which the slot is finally roofed is not stated"
-    )
+    assert "slotted_box(0.40, 0.03)" in source
+    assert "cannot call that area a roof" in source
 
 
 def test_the_broken_slot_construction_is_recorded_with_what_it_cost() -> None:
@@ -326,6 +315,29 @@ def test_the_visual_allowance_is_claimed_with_a_reason(report: dict) -> None:
     evaluation = report["visual_evaluation"]
     assert evaluation["status"] == "not_applicable"
     assert len(evaluation["reason"]) > 80
+
+
+def test_hand_written_report_sections_are_disclosed(report: dict) -> None:
+    authorship = report["report_authorship"]
+    hand_written = set(
+        authorship["hand_written_annotations_not_emitted_by_the_harness"]
+    )
+    assert {
+        "verdict_against_the_frozen_acceptance",
+        "the_decisive_case",
+        "why_both_candidates_fail_in_one_sentence_each",
+        "what_this_means_for_the_product",
+        "visual_evaluation",
+    } == hand_written
+    assert "does not reproduce" in authorship["reproduction_limit"]
+
+
+def test_harness_requires_a_scratch_output_and_discloses_raw_scope() -> None:
+    source = HARNESS.read_text()
+    assert 'os.environ.get("OPEN3D_OUT_DIR")' in source
+    assert "OPEN3D_OUT_DIR is required" in source
+    assert '"report_scope"' in source
+    assert '"docs/evidence/open3d"' not in source
 
 
 @pytest.fixture
@@ -438,7 +450,21 @@ def test_every_figure_the_capability_record_quotes_is_still_a_figure_the_report_
             QUOTED_BUT_NOT_IN_THE_REPORT - unresolved
         ),
     }
-    assert resolved >= 18, resolved
+    assert resolved >= 15, resolved
+
+
+def test_the_capability_record_binds_current_harness_and_report_bytes(
+    capability: dict,
+) -> None:
+    bound = capability["provenance"]["harness_that_produced_this"]
+    expected = {item["path"]: item["sha256"] for item in bound}
+    assert set(expected) == {
+        "harness/reference_free_fabrication.py",
+        "reference-free-fabrication.json",
+    }
+    for relative, digest in expected.items():
+        path = EVIDENCE / relative
+        assert hashlib.sha256(path.read_bytes()).hexdigest() == digest
 
 
 def collected_guard_count(source: str) -> int:
