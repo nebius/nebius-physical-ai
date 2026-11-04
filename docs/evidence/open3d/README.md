@@ -18,6 +18,132 @@ own question and method in its module docstring.
 | It does under-call below a sensitivity floor, so a low reading is a lower bound | `floor-across-geometry-and-sampling.json` |
 | The floor is set by the voxel-to-sample-spacing ratio, not by geometry, sampling or mesh resolution | `floor-vs-voxel-multiple.json`, `floor-vs-resolution.json` |
 | Even sampling zeroes the headline fraction, so its failure is a capture-time artefact | `poisson-procedure-and-overcall-audit.json` |
+| Neither declared remedy for run-to-run movement works: seeding the sampling reduces it without removing it, and thread count is not the cause | `declared-reproducibility-causes.json` |
+| The crop's per-cell answer reproduces even though the reconstruction under it does not | `crop-decision-stability.json` |
+
+### The multiway optimization was a step nobody could check had run
+
+`pose-graph-optimization.json`. `global_optimization` is the entire difference between multiway
+registration and chaining pairwise transforms, and it mutates the graph in place: it moves node
+poses and it prunes loop closures below the confidence threshold. The record serialized the graph
+afterwards, so neither effect survived — a pruned edge was simply absent from the list, and nothing
+stated the correction.
+
+On the fragments the pipeline runs on, the optimizer corrects nothing worth acting on: 4.7e-06 of a
+metres-wide scene on the upstream demo fragments, and exactly 0.0 through `run_multiway` on the
+synthetic fragments the smoke writes. That is the right answer — the pairwise estimates already
+agree — and it is also why the step was only ever exercised where it could not fail. The run now
+publishes the submitted and pruned edge counts and the per-node correction, so the two cases are
+distinguishable.
+
+Two things in the record are there because they nearly went wrong. The control induces a 0.5 pose
+error and watches the optimizer undo it, because without it a measured zero cannot be told from a
+probe that cannot read poses — which is what a zero on every case first looked like. And the loop
+construction is measured twice, standalone and through `run_multiway`, because they disagree: one
+pruned edge at the harness's constants, three at the manifest's. The second is the figure a test may
+assert on, so both are kept rather than averaged. The voxel size is not the difference — both are
+0.05. What differs is the correspondence distance (0.075 against 0.02) and the estimation path,
+since the product initialises with RANSAC/FPFH and refines at full resolution where the harness runs
+identity-initialised ICP on the downsampled clouds.
+
+
+## The crop decides the same thing twice, and the reconstruction does not
+
+`capability-record-support-crop.json` describes its own reproducibility as numeric to
+about 4e-06 relative on surface area. That is an aggregate and it is true, and it is not
+what a user asks: the question is *which parts* of my mesh are unsupported, and no
+average answers it. The concern was concrete rather than theoretical — the Poisson layers
+one stage downstream differ by 1-2% of their points between repeats.
+
+So the stage was repeated with the fused cloud built once and re-read, and the control
+comes first: the input is byte-identical across 24 repeats and Poisson returns 24
+distinct meshes, with 1,824–2,322 of 18,413 vertices in one repeat and not another. Not
+a reordering — genuinely different positions.
+
+The decision does not move with them. All 23 pair comparisons at each of two cut
+settings agree on every cell — Jaccard 1.0, zero verdicts flipped — and the per-cell
+downstream figure comes back at one value within a run, 733 at the scene voxel and 900
+at the fine one. That figure is this harness's own, on its own fused cloud, and it is
+not the published 733 re-measured; across the runs this record retains it has read 733
+and 734 at the scene voxel and 920, 919 and 900 at the fine one, so the constancy is a
+within-run property and the fine case's cross-run span is 20 cells.
+
+What underwrites that is the observation itself, not a ratio: across those 23 pairs no
+cell changed its verdict, which is a count of what happened on these repeats. The
+largest nearest-neighbour distance between two repeats' vertex sets is 6.08e-06 m at
+the scene cut and 9.89e-06 m at the fine one, and the record reports how large the cut
+is relative to that — but **that ratio is not a safety margin.** The crop keeps a vertex
+when its distance to the cloud is at most the cut, so what decides a verdict is
+`|distance - cut|`. A vertex sitting at 0.049999 m against a 0.05 m cut is a micron from
+flipping and a 2.187e-03 m movement flips it, while the cut is 22.9x that movement. The
+record states that arithmetic beside the ratio. Nothing here measures per-vertex
+clearance, so what the record claims is the finite no-flip count and not a margin — and
+that count does not transfer to another capture. It was measured on this capture, at
+these repeats, with these cuts. What transfers is the method: re-read one fused cloud,
+compare the per-cell verdicts pairwise, and report the separation next to the cut.
+
+The ratio is taken against the worst displacement known anywhere rather than the worst
+seen here, because the quantity has a tail: an independent lane hit one pair three orders
+of magnitude above its neighbours and could not reproduce it three times on a
+byte-identical file. 46 pairs here did not reproduce it either, which bounds its rate
+rather than disproving it. Against that displacement the cut is 22.9x at the 5 cm
+setting and 9.1x at the 2 cm one — per case, because a ratio computed against one cut
+does not describe another.
+
+Rebuild the fused cloud instead of re-reading it and the figure moves across a 3-cell
+span at the scene voxel and a 20-cell span at the fine one, because registration is
+separately not reproducible. So the figure is exactly reproducible under the crop and
+not end to end: quote it with that spread, unless you are comparing two crop settings
+on one fused cloud.
+
+The second case exists to ask whether any of this survives a denser capture, and it
+cannot answer that on its own: both cases are the *same* capture downsampled at two
+voxels, and that one knob moves the fused density, the normal radius, the cut and the
+comparison grid together. So it bounds the movement at two operating points of the
+product's configuration rather than isolating density. The ratios this record retains
+from separate runs of these same two settings are 0.5484, 0.7174, 0.8889, 1.2206,
+1.6275, 2.1212 and 2.1429 — the last two have the denser mesh moving *further*, which
+lands in a different band from the lower readings. That list is the history someone
+wrote down rather than every run there has been, and the record says so. The record
+therefore withdraws the conclusion it used to state here, that displacement does not
+grow with the capture. The no-flip counts and the per-case
+cut-to-displacement ratios are unaffected: at 2.187e-03 m the tail observation still
+dominates both cuts.
+
+### The density crop's removal count described work the next stage was going to do
+
+`density-crop-contribution.json`. Reconstruction applies two filters in sequence: the density
+crop removes vertices in the lowest quantile of Poisson's sample density, and the support crop
+then removes vertices farther than `support_distance_factor` voxels from any observed point. The
+report published the density crop's removal count, which reads as surface that filter took out of
+the delivered mesh.
+
+At the shipped defaults on the upstream demo scan, **zero** of the 518 density-removed vertices lay
+within the support distance, and the delivered mesh is identical with the density crop disabled —
+to the triangle and to six decimal places of surface area. The count was never wrong; reading it as
+this filter's effect on the delivered surface was, and nothing in the report separated the two. The
+run now publishes how much of the removal was the density crop's own.
+
+The control carries the weight: with support cropping off the density crop is the only filter and
+removes about 1025 triangles and 6.72 m² of surface, so "it changed nothing" at the defaults is
+overlap with the next filter rather than a measurement that cannot see a crop. Two further
+readings are recorded against the obvious misreadings. The crop is strongly selective — Spearman
+−0.70 of density against distance to the cloud, and at the shipped quantile the vertices it
+removes sit 51× farther from any observed point than the ones it keeps — so this is not a filter
+trimming at random. And pushed to the 0.20 quantile it removes roughly 780 triangles and 0.34 m²
+of *supported* surface, about 1.9% of the delivered mesh, so raising the quantile buys a
+contribution by deleting surface the scan does support. The sweep's widest support distance loses
+about 8980 triangles the same way, which is the worst case rather than the shipped one.
+
+Triangle counts and surface areas here are approximate because the Poisson solve is not
+deterministic and nothing seeds it. An independent lane reproduced every structural result and
+found 31 figures differing in the fourth significant digit, including between its own two runs,
+so the record now measures its own stability: over six repeats the vertex counts, the removal
+counts and every yes/no result are identical, while triangle counts and areas move by under half
+a percent. The one figure a test applies a threshold to sits 783 from that threshold with a
+spread of 3 — 4 distinct values across the six repeats, 783 through 786 — so no conclusion
+here turns on a digit that moves. A regeneration should expect differences at that scale and
+nothing larger.
 
 ## Reproducing
 
@@ -28,11 +154,18 @@ docker run --rm -v "$PWD/docs/evidence/open3d:/data" --entrypoint python npa-ope
     /data/harness/poisson_procedure_and_overcall_audit.py
 ```
 
-Sampling is unseeded in several harnesses, deliberately: where a single cell's value carries
-run-to-run noise comparable to the spread being measured, that is itself the finding and the harness
-says so rather than publishing a precise-looking number. `floor-vs-resolution.json` is the clearest
-case. Re-running will move those values; the directions and orders of magnitude are what the claims
-rest on.
+Harness reports default to `/data/<report>.json` inside the documented container.
+`OPEN3D_OUT_DIR` redirects shared `harness_io.output_path` users to an existing
+directory while retaining the default filename. `OPEN3D_OUT` selects an exact output
+file and takes precedence when both variables are set. The record-pinned
+`pose_graph_optimization.py` and `density_crop_contribution.py` harnesses predate the
+shared helper and use only the exact-file form. Neither override creates directories.
+
+Harnesses using `harness_io.seed_sampling` are seeded by default and record the seed in
+their reports. Set `OPEN3D_SEED` to another integer to measure seed sensitivity; repeated
+runs at the same seed hold the point sample fixed while a different seed exposes the
+sampling spread. Historical committed reports may predate this default and retain their
+original unseeded wording and bytes.
 
 ## View framing
 
@@ -51,6 +184,28 @@ surface the crop removed -- geometry that lies outside the cloud by construction
 chooses the page by measuring contrast against the content's own luminance; it also records that I
 expected a trade there and the measurement found none, and separates the controlled comparison from
 the confounded one.
+
+### Which way is up was decided by the run, not the scan
+
+`up-axis-ambiguity.json`. The camera's up vector is inferred from the largest planar segment, and
+`segment_plane` is RANSAC: on a floor and a wall of equal point count successive fits land on either
+one, so the axis differed run to run. Every field published to make that inference visible -- the
+source string, the inlier fraction, the tilt -- took *overlapping* ranges on both branches, so one
+run's record could not show that the next run would roll the view ninety degrees. Seeding is not a
+remedy; ten fits with Open3D's seed re-set to the same value before each one returned both answers.
+
+The fit is now repeated and an axis is named only when the repeats agree; otherwise the declared
+default is published *as* the default. The record keeps six clouds -- two ambiguous constructions,
+two constructed controls, the upstream demo scan, and a sampled Armadillo -- plus the detection rate
+at three repeat counts, because the check misses when the fits agree by chance rather than catching
+every ambiguous scan. At the shipped nine fits an independent lane's 300 runs put the detection rate
+at 0.943. The retained sweep's own count is out of 30 and carries about 1.3 runs of counting noise,
+so it moves between regenerations; quoting one of those counts as *the* figure reads as a rate that
+changed, and the 300-run number is the one to cite. The Armadillo is the case repeat agreement does
+not catch: 40 of 40 fits agree, on a plane tilted past the floor the code publishes off the axis
+they snap it to. That floor is now 10 degrees, having been lowered from 14 as fresh fits kept
+landing under each successive value, and the record carries both the rule that decides where it may
+sit and why it is published at the lowest point that rule leaves standing.
 
 ## The viewer's own frame
 
@@ -188,6 +343,41 @@ what changed is the conclusion drawn from them, the classification's name, and t
 cube now runs as a ground-truth control in the functional smoke, on the over-call side that a sweep of
 even sampling cannot reach.
 
+## Two limitations that sent a reader to the wrong knob
+
+`declared-reproducibility-causes.json` examines `limitations[3]` of two capability records. Both told a
+reader which knob stops a number moving: seed the 300k-point sampling
+(`capability-record-distance-bands.json`), or pin the container thread count
+(`capability-record-support-crop.json`). Neither settles the figure, and neither record is at fault —
+the reconstruction's own non-determinism was measured afterwards. What this harness isolates is
+that the points and the normals entering reconstruction are byte-identical, which leaves the Poisson
+solver and the density crop after it; `poisson-figure-reproducibility.json`, which names the
+mechanism, is in a separate pull request and may not be in this tree yet.
+
+Measured on the construction the first record names, reporting both figures from the same meshes.
+Seeding does make the input bit-identical, hashed to prove it, and it is the dominant cause: unseeded,
+the unsupported-area fraction's spread over four repeats spans 9.5e-04 to 5.6e-03 across seven runs, the same order
+as that record's own 0.0046 gap, straddling it rather than bounding it. Seeded, the spread falls to
+5.3e-06 to 2.3e-05 — and the fraction still takes four distinct values in four runs. Surface area with
+the input fixed has a relative spread spanning 2.3e-06 to 3.6e-06 across those runs, inside the second record's
+declared ~4e-06 but not comfortably; setting the thread count to 1, engaged and recorded as 16 → 1,
+does not settle it either.
+
+So one string changed in each record: the sampling claim now says what seeding achieves and what it
+leaves, and the thread-count claim no longer names a cause the measurement rules out. Every figure in
+both records is untouched. A third site carried the same misdirection and mattered more — the
+`_assert_support_crop_kept_the_observations` docstring in `npa/src/npa/smoke/test_open3d_functional.py`,
+which is where the ~4e-06 figure comes from, told the next maintainer not to tighten the tolerances
+"without pinning the thread count". That reads as a knob that would let them, and there is none.
+
+The spread of the spread is the part worth keeping in mind: the unseeded spread itself ranges over a
+factor of six across runs, so a sentence derived from one run of four repeats was falsified by the
+next. Comparisons are therefore made against every run observed. One series was retained late and says
+so in the record — a reviewer went looking for a figure the first corrected sentence quoted, could not
+find it, and was right that nobody including its author could reconstruct it. The corrected sentences
+now quote ranges over retained runs, and a test requires each figure in them to be the end of a series
+the evidence keeps, because these capability records are pinned by nothing else.
+
 ## Results that are retained but do not support anything
 
 `band-false-negative-sweep.json` is marked inconclusive and is kept for that reason. Occluding a
@@ -276,6 +466,50 @@ with the explicit job id drained only the active job, and the supported cleanup 
 removed the owned controller, with its absence independently confirmed. One defect does remain
 there: cleanup reported degraded local metadata, because the ownership record it went to remove
 named a different cluster.
+
+## What the random seed buys, and what it does not
+
+`register-seed-determinism.json`, from `harness/register_seed_determinism.py`. `_seeded` said
+it made RANSAC repeatable and the skill told readers a rerun repeats. With the seed, the input
+and the process all held fixed, 16 repeats return **16 distinct transformations**, so the
+`aligned_sha256` the report publishes per pair is a digest of that run and never matches the
+last one. A reviewer comparing two runs' hashes sees a mismatch every time, with nothing saying
+that is expected.
+
+The answer is nonetheless stable, which is why this survived: the repeats disagree by about a
+trillionth of a voxel on a well-conditioned pair and under a thousandth on a deliberately
+ambiguous one. `icp.fitness` is identical across every repeat in all three cases, so a consumer
+watching *that* figure sees a perfectly steady pipeline. Not every published figure is steady:
+`icp.inlier_rmse` takes 16, 8 and 15 distinct values across the sixteen repeats of the three
+cases, so it moves visibly and is also published per pair.
+
+The seed is not what is loose. Taken alone, normal estimation, FPFH and point-to-point ICP each
+return identical bytes every time; the shipped **point-to-plane** ICP does not, while being
+handed provably identical points, normals, pose and distance. **This needs no contrived
+surface:** it happens on `DemoICPPointClouds`, the capture every accepted record in this
+directory is built from, which is where a reviewer found it after reading an earlier version of
+this paragraph claim it took a near-degenerate pair. RANSAC global registration is not
+bit-reproducible alone either, on those same two cases and from fixed clouds and fixed features:
+2 distinct results of 16 on the ripple, 4 on the demo scan. So a fixed seed does not make the
+RANSAC repeat.
+
+An earlier version of this paragraph read "only on a well-conditioned constructed bowl is that
+call reproducible, which is what makes this conditioning rather than a broken solver". The
+record's own numbers do not support it. On the bowl every stage alone is bit-identical while the
+composed pipeline returns 16 distinct results, and the only further stochastic surface in
+`_register_pair` is that same point-to-plane call — so it is non-reproducible on the bowl too.
+What differed was the start pose: the stage-alone cell was handed a +0.8 m translation the
+harness constructs, roughly sixteen voxels out at an ICP correspondence distance of one and a
+half, which may be a call with nothing to converge to. The record now starts the same call from
+the pipeline's own coarse pose and publishes each call's fitness and correspondence count.
+
+Held to one thread through Open3D's own API, that call and the whole pipeline become
+bit-reproducible — measured on the constructed ripple and on the demo capture, rather than
+generalised from the construction alone. `OMP_NUM_THREADS` does not reach it, which is the lever
+a reader of the thread-count finding in `capability-record-support-crop.json` would try first;
+that is now measured in a child process started under the variable rather than asserted, because
+asserting it was the same defect this record is about. One thread is a measured trade, not a
+recommendation: the cost in parallelism is not measured here.
 
 `ATTRIBUTION.md` covers the data all of this is computed from. The published capture renders
 Open3D's `DemoICPPointClouds`, which is Redwood's augmented ICL-NUIM `living-room1` -- a

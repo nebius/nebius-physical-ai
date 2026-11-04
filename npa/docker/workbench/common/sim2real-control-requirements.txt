@@ -20,7 +20,7 @@ kubernetes==33.1.0
 lz4==4.4.5
 mcap==1.4.0
 oauthlib==4.0.0
-pyasn1==0.6.4
+pyasn1==0.6.5
 pyasn1-modules==0.4.2
 pycparser==3.0
 PyYAML==6.0.3

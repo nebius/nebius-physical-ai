@@ -25,12 +25,14 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from harness_io import FAR_READING, output_path, seed_sampling
+
 import numpy as np
 import open3d as o3d
 
 from npa.workbench.open3d.runner import _crop_justification, _support
 
-OUT = Path("/data/band-false-negative-sweep.json")
+OUT = output_path("/data/band-false-negative-sweep.json")
 
 SAMPLES = 300000
 DENSITY_QUANTILE = 0.02
@@ -88,6 +90,7 @@ def fabricated(mesh, reference, voxel: float) -> dict[str, float]:
 
 
 def main() -> int:
+    seed = seed_sampling()
     reference = o3d.io.read_triangle_mesh(o3d.data.ArmadilloMesh().path)
     reference.compute_vertex_normals()
     full = reference.sample_points_uniformly(number_of_points=SAMPLES)
@@ -114,7 +117,7 @@ def main() -> int:
         reading = _crop_justification(support, 0, _Mesh(len(mesh.vertices)))
         truth = fabricated(mesh, reference, voxel)
         share = reading["unsupported_area_share_beyond_3_voxels"]
-        reads_shell = reading["removed_surface_reads_as"] == "extrapolated shell"
+        reads_far = reading["removed_surface_reads_as"] == FAR_READING
         rows.append(
             {
                 "occlusion_radius_as_diagonal_fraction": fraction,
@@ -125,18 +128,18 @@ def main() -> int:
                     "unsupported_area_beyond_3_voxels"
                 ],
                 "share_beyond_3_voxels": share,
-                "reads_as_extrapolated_shell": reads_shell,
+                "reads_as_far_from_any_observation": reads_far,
                 **truth,
                 # A shell that reads near-threshold while real surface was invented. The
                 # error the validity sweep could not reach.
-                "false_negative": (not reads_shell)
+                "false_negative": (not reads_far)
                 and truth["fabricated_area_fraction"] > 0.01,
             }
         )
 
     informative = [r for r in rows if r["fabricated_area_fraction"] > 0.01]
     missed = [r for r in rows if r["false_negative"]]
-    caught = [r for r in rows if r["reads_as_extrapolated_shell"]]
+    caught = [r for r in rows if r["reads_as_far_from_any_observation"]]
     report = {
         "voxel_size": voxel,
         "occlusion_centre_rule": (
@@ -166,6 +169,7 @@ def main() -> int:
             "as a pass."
         ),
     }
+    report["sampling_seed"] = seed
     OUT.write_text(json.dumps(report, indent=2, sort_keys=True))
 
     print(f"voxel {voxel:.5f}; occlusion centred on the most protruding sample")
@@ -183,7 +187,7 @@ def main() -> int:
             f"{row['share_beyond_3_voxels']:8.4f} "
             f"{row['fabricated_area_fraction']:11.4f} "
             f"{row['max_vertex_distance_to_truth_in_voxels']:9.2f}  "
-            f"{'shell' if row['reads_as_extrapolated_shell'] else 'near-threshold'}{flag}"
+            f"{'shell' if row['reads_as_far_from_any_observation'] else 'near-threshold'}{flag}"
         )
     if not informative:
         print(

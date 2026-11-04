@@ -26,16 +26,16 @@ from __future__ import annotations
 
 import itertools
 import json
-from pathlib import Path
 
 import numpy as np
 import open3d as o3d
+from harness_io import NEAR_READING, output_path, seed_sampling
 from npa.workbench.open3d.runner import (
     _crop_justification,
     _support,
 )
 
-OUT = Path("/data/floor-vs-voxel-multiple.json")
+OUT = output_path("/data/floor-vs-voxel-multiple.json")
 
 SAMPLES = 60000
 #: Subdivision levels. A first pass used 2 to 5 and never reached the review lane's regime:
@@ -77,6 +77,7 @@ def median_edge(mesh) -> float:
 
 
 def main() -> int:
+    seed = seed_sampling()
     report: dict = {
         "question": (
             "Resolution did not explain the gap between my floor near 0.017 and the review "
@@ -162,8 +163,7 @@ def main() -> int:
             speaks = [
                 r
                 for r in rows
-                if r["reads_as"] != "near-threshold surface"
-                and r["invented_area_fraction"] > 0.0
+                if r["reads_as"] != NEAR_READING and r["invented_area_fraction"] > 0.0
             ]
             report["cases"][f"voxel_{multiple}x_spacing"] = {
                 "voxel_multiple_of_spacing": multiple,
@@ -213,6 +213,7 @@ def main() -> int:
             "to 22.467."
         ),
     }
+    report["sampling_seed"] = seed
     OUT.write_text(json.dumps(report, indent=2, sort_keys=True))
 
     print(

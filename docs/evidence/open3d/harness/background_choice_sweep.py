@@ -19,6 +19,7 @@ the point is to change the page, never the data.
 
 from __future__ import annotations
 
+import argparse
 import json
 import sys
 from pathlib import Path
@@ -53,8 +54,11 @@ def score(luminance: np.ndarray, background_level: float) -> dict:
 
 
 def main() -> int:
-    out = Path(sys.argv[1])
-    frames = [Path(a) for a in sys.argv[2:]]
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("output", type=Path, help="where to write the report JSON")
+    parser.add_argument("frames", type=Path, nargs="+", help="PNG frames to measure")
+    args = parser.parse_args()
+    out, frames = args.output, args.frames
     luminance = np.concatenate([content_luminance(p) for p in frames])
 
     candidates = np.arange(0, 256, 2, dtype=float)
