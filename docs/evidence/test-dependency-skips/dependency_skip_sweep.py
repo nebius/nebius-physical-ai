@@ -14,29 +14,22 @@ So this measures it. Two runs of the same test file:
     `ImportError` on purpose so a broken install is not masked, and skips only on
     `ModuleNotFoundError`. This is what CI sees.
 
-`poison`
-    The module imports, and every attribute access on it raises. `importorskip`
-    is satisfied, so the tests run; any test that *touches* the module fails on
-    the first attribute it reads.
+`bypass`
+    The module remains genuinely absent, but the fixture's own `importorskip`
+    returns an unusable sentinel instead of skipping. A downstream `import` still
+    raises `ModuleNotFoundError`, so import-only dependencies are detected too.
 
-A test that skips under `absent` and passes under `poison` did not touch the module it
-was skipped for through any path that raises. That is the finding. A test that fails
-under `poison` needs it, and its skip is correct.
+A test that skips under `absent` and passes under `bypass` did not need the module.
+A test that fails or errors under `bypass` does need it. Tests that still skip for
+another dependency are undecided rather than reported as justified.
 
-"Through any path that raises" rather than "never touched it", because the poison
-raises `AssertionError`: a test that reads the module inside `except Exception`
-swallows the complaint and passes. That is the one caveat here that would make a
-number an overcount rather than a lower bound, so every row reports the broad
-handlers in its file, and a test constructs one to show the limit is real.
+The classification is deliberately per-test and conservative. A gated test that
+passes is unnecessary, one that fails or errors requires the dependency, and one
+that still skips is undecided. Collection failures and unexecuted tests are never
+reported as evidence that a skip was justified.
 
-The classification is deliberately one-sided. Poisoning a module that other
-libraries import during collection can break collection for reasons that have
-nothing to do with the test's own needs, so only a *pass* under poison counts as
-evidence. The result is a lower bound on how many tests are switched off
-unnecessarily, which is the safe direction for a claim of this kind.
-
-Run from the repository root:
-    python3 docs/evidence/open3d/harness/dependency_skip_sweep.py
+Run from the repository root with the environment under test:
+    ${PYTHON} docs/evidence/test-dependency-skips/dependency_skip_sweep.py
 """
 
 from __future__ import annotations
@@ -66,9 +59,7 @@ def repository_root(start: Path | None = None) -> Path:
     raise RuntimeError("not inside a repository checkout")
 
 
-REPO = repository_root()
-TESTS = REPO / "npa/tests"
-PYTHON = REPO / "npa/.venv/bin/python"
+PYTHON = Path(sys.executable)
 
 OUT = Path(
     os.environ.get(
@@ -95,7 +86,7 @@ class _Blocker:
 
 
 class _Poison(ModuleType):
-    """Importable, and unusable. Reading any attribute is the test admitting it needs this."""
+    """Fixture sentinel: unusable, but deliberately absent from sys.modules."""
 
     def __getattr__(self, name):
         raise AssertionError("touched %s.%s" % (self.__name__, name))
@@ -104,37 +95,25 @@ class _Poison(ModuleType):
 def pytest_configure(config):
     for name in [m for m in list(sys.modules) if m == TARGET or m.startswith(TARGET + ".")]:
         del sys.modules[name]
+    sys.meta_path.insert(0, _Blocker())
     if MODE == "absent":
-        sys.meta_path.insert(0, _Blocker())
         return
+    if MODE != "bypass":
+        raise RuntimeError("unknown sweep mode")
 
-    # Poison the leaf only, and import real parents. Stubbing the parents too gave
-    # this sweep a visible artifact: poisoning `pxr.UsdPhysics` replaced `pxr` with a
-    # stub whose `__path__` is empty, so an unrelated fixture's
-    # `importorskip("pxr.Usd")` started failing and three tests moved from passing to
-    # skipped. A negative result from a measurement instrument is the instrument
-    # talking about itself.
-    parts = TARGET.split(".")
-    if len(parts) > 1:
-        import importlib
+    import pytest
 
-        try:
-            parent = importlib.import_module(".".join(parts[:-1]))
-        except ImportError:
-            # Without a real parent there is no way to make the leaf importable but
-            # unusable without stubbing the parent as well, which is the artifact
-            # above. Say so instead of measuring something else.
-            raise RuntimeError("NPA_SWEEP_PARENT_UNAVAILABLE") from None
-    else:
-        parent = None
-    poison = _Poison(TARGET)
-    poison.__path__ = []
-    sys.modules[TARGET] = poison
-    if parent is not None:
-        setattr(parent, parts[-1], poison)
+    original = pytest.importorskip
+    sentinel = _Poison(TARGET)
+
+    def importorskip(name, *args, **kwargs):
+        if name == TARGET:
+            return sentinel
+        return original(name, *args, **kwargs)
+
+    pytest.importorskip = importorskip
 '''
 
-OUTCOME = re.compile(r"(\d+) (passed|failed|skipped|error|errors)")
 #: `-v` names every test and its outcome, which `-rA` does not: its SKIPPED lines
 #: carry a file and line rather than a node identifier, so they cannot be intersected
 #: with anything.
@@ -143,10 +122,22 @@ VERBOSE_OUTCOME = re.compile(
 )
 
 
+def _is_fixture_decorator(node: ast.expr) -> bool:
+    """Recognize @pytest.fixture/@fixture, not arbitrary text containing fixture."""
+    target = node.func if isinstance(node, ast.Call) else node
+    return (isinstance(target, ast.Name) and target.id == "fixture") or (
+        isinstance(target, ast.Attribute)
+        and target.attr == "fixture"
+        and isinstance(target.value, ast.Name)
+        and target.value.id == "pytest"
+    )
+
+
 def fixture_level_sites() -> list[tuple[Path, str, list[str]]]:
     """Every `importorskip` inside a fixture, which is as broad as the file's widest need."""
     sites: list[tuple[Path, str, list[str]]] = []
-    for path in sorted(TESTS.rglob("test_*.py")) + sorted(TESTS.rglob("conftest.py")):
+    tests = repository_root() / "npa/tests"
+    for path in sorted(tests.rglob("test_*.py")) + sorted(tests.rglob("conftest.py")):
         try:
             tree = ast.parse(path.read_text())
         except SyntaxError:
@@ -154,7 +145,7 @@ def fixture_level_sites() -> list[tuple[Path, str, list[str]]]:
         for node in ast.walk(tree):
             if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
-            if not any("fixture" in ast.unparse(d) for d in node.decorator_list):
+            if not any(_is_fixture_decorator(d) for d in node.decorator_list):
                 continue
             modules = [
                 call.args[0].value
@@ -172,18 +163,27 @@ def fixture_level_sites() -> list[tuple[Path, str, list[str]]]:
 
 
 def run(path: Path, target: str, mode: str) -> dict[str, int | list[str]]:
+    repo = repository_root()
     with tempfile.TemporaryDirectory() as plugin_dir:
         name = "npa_sweep_plugin"
         (Path(plugin_dir) / f"{name}.py").write_text(
             PLUGIN.format(target=target, mode=mode)
         )
-        environment = dict(os.environ, PYTHONPATH=plugin_dir)
+        existing_pythonpath = os.environ.get("PYTHONPATH")
+        environment = dict(
+            os.environ,
+            PYTHONPATH=(
+                plugin_dir
+                if not existing_pythonpath
+                else plugin_dir + os.pathsep + existing_pythonpath
+            ),
+        )
         completed = subprocess.run(
             [
                 str(PYTHON),
                 "-m",
                 "pytest",
-                str(path if not path.is_relative_to(REPO) else path.relative_to(REPO)),
+                str(path if not path.is_relative_to(repo) else path.relative_to(repo)),
                 "-v",
                 "--tb=no",
                 "-p",
@@ -192,21 +192,20 @@ def run(path: Path, target: str, mode: str) -> dict[str, int | list[str]]:
                 "no:cacheprovider",
                 "--timeout=120",
             ],
-            cwd=REPO,
+            cwd=repo,
             capture_output=True,
             text=True,
             env=environment,
             check=False,
         )
-    tail = completed.stdout[-6000:]
-    counts = {kind: 0 for kind in ("passed", "failed", "skipped", "error")}
-    for number, kind in OUTCOME.findall(tail):
-        counts["error" if kind.startswith("error") else kind] += int(number)
     by_outcome: dict[str, list[str]] = {}
     for node, outcome in VERBOSE_OUTCOME.findall(completed.stdout):
         by_outcome.setdefault(outcome.lower(), []).append(node)
     return {
-        **counts,
+        **{
+            outcome: len(by_outcome.get(outcome, []))
+            for outcome in ("passed", "failed", "skipped", "error")
+        },
         # Per test, because the criterion is about individual tests and a count is
         # not. A delta over counts cannot tell a test that moved from skipped into
         # passing from one that moved from *failed* into passing, and it nets a rise
@@ -215,8 +214,7 @@ def run(path: Path, target: str, mode: str) -> dict[str, int | list[str]]:
         "nodes": {
             outcome: sorted(nodes) for outcome, nodes in sorted(by_outcome.items())
         },
-        "parent_unavailable": "NPA_SWEEP_PARENT_UNAVAILABLE"
-        in (completed.stdout + completed.stderr),
+        "returncode": completed.returncode,
     }
 
 
@@ -226,11 +224,9 @@ OBSERVED = Path(__file__).resolve().parent / "ci-observed-packages.json"
 def ci_installs(module: str) -> bool | None:
     """Whether CI has the module, read from a real CI job rather than inferred.
 
-    Inference was tried first and was wrong. `npa/ci/requirements.txt` pins torch,
-    which reads as though CI installs it, but that file is passed with `-c` and
-    constrains versions without installing anything. The extras CI does install
-    carry no torch at all. A real job has `torch==2.14.0+cpu`, arriving
-    transitively, and the inference was one step from publishing the opposite.
+    The named job is retained because environment contents change. Current CI also
+    explicitly installs the sonic and genesis-test extras and asserts that torch and
+    rsl_rl import; the snapshot maps import names to the actual distribution names.
 
     So the oracle is `ci-observed-packages.json`, which names the job it was read
     from. `None` means the snapshot does not cover this module, which is reported
@@ -249,14 +245,14 @@ def ci_installs(module: str) -> bool | None:
 
 
 def broad_except_sites(path: Path) -> list[int]:
-    """Line numbers of handlers that would swallow the poison's AssertionError.
+    """Line numbers of handlers that could swallow the sentinel's AssertionError.
 
     This is the one limit of the instrument that errs in the unsafe direction. A test
-    that calls into the module inside `except Exception` catches the poison's
+    that reads the fixture sentinel inside `except Exception` catches the sentinel's
     complaint and passes, and would be recorded as a test that does not need the
     module. A reviewer demonstrated it with a purpose-built control rather than
-    arguing it, and then checked that no flagged file contains such a handler, so no
-    published number was affected.
+    arguing it. This scans only the test file, not arbitrary downstream call graphs,
+    so the limitation is retained beside each row rather than claimed away.
 
     Measured per file and published beside each row, so the claim is checkable at the
     row level instead of resting on a one-time audit of three files.
@@ -296,7 +292,7 @@ def importable(module: str) -> bool:
             "-c",
             f"import importlib.util as u; raise SystemExit(0 if u.find_spec({module!r}) else 1)",
         ],
-        cwd=REPO,
+        cwd=repository_root(),
         capture_output=True,
         check=False,
     )
@@ -319,7 +315,8 @@ def narrative(measured: dict[str, int]) -> dict[str, str]:
             f"file rather than what the tests beneath them use. Of the "
             f"{measured['measurable']} fixture-and-module pairs this environment can "
             f"decide, {measured['findings']} switch off tests that never touch the "
-            f"module through any path that raises, {measured['tests']} tests in total."
+            f"module through the measured path, {measured['tests']} tests in total. "
+            f"Another {measured['undecided']} pairs are explicitly not fully measured."
         ),
         "what_it_costs_today": (
             f"{live} of those {measured['findings']} are costing coverage in CI now. "
@@ -339,7 +336,7 @@ def narrative(measured: dict[str, int]) -> dict[str, str]:
             "fixed in its own branch; this measures how far the shape reaches."
         ),
         "what_this_does_not_establish": (
-            "Not that the tests are good, only that they run. Not that a module is "
+            "Not that the tests are good, only that the measured path runs. Not that a module is "
             "unused by the file -- several of these fixtures sit beside tests that do "
             "need the dependency, which is why the measurement is per test rather than "
             "per file. And not a complete census: a pair this environment cannot "
@@ -348,47 +345,78 @@ def narrative(measured: dict[str, int]) -> dict[str, str]:
     }
 
 
-def classify(absent: dict, poisoned: dict) -> dict:
+def classify(absent: dict, bypassed: dict) -> dict:
     """Decide one row from the two runs, by test identity rather than by a count.
 
     Separate from `main` so the two ways a count delta gets this wrong can be driven
     directly by a test, instead of only through a three-minute sweep of the tree.
     """
     skipped_when_absent = set(absent["nodes"].get("skipped", []))
-    passing_when_poisoned = set(poisoned["nodes"].get("passed", []))
+    passing_when_bypassed = set(bypassed["nodes"].get("passed", []))
+    failing_when_bypassed = set(bypassed["nodes"].get("failed", [])) | set(
+        bypassed["nodes"].get("error", [])
+    )
+    skipped_when_bypassed = set(bypassed["nodes"].get("skipped", []))
     passing_when_absent = set(absent["nodes"].get("passed", []))
 
     # The criterion, applied to the tests it is about. A reviewer reproduced this
     # sweep's counts exactly and then took the one reading it had not: the single test
-    # behind its `torch` finding was FAILED under absence and PASSED under poison. It
+    # behind its `torch` finding was FAILED under absence and PASSED under the old
+    # poison method. It
     # never skipped, so no over-broad skip ever switched it off, and a count delta had
     # counted it anyway.
-    switched_off = sorted(skipped_when_absent & passing_when_poisoned)
+    switched_off = sorted(skipped_when_absent & passing_when_bypassed)
+    dependency_required = sorted(skipped_when_absent & failing_when_bypassed)
+    undecided = sorted(skipped_when_absent & skipped_when_bypassed)
+    exercised = sorted(set(switched_off) | set(dependency_required))
 
     # The same delta can also hide a finding, by netting a rise against a drop. That
     # reviewer checked ten of the thirteen rows with the capacity for it and found
     # none, so it was real in principle and had cost nothing in practice. Both
     # directions are reported per row now rather than left to be rechecked by hand.
-    rose = passing_when_poisoned - passing_when_absent
+    rose = passing_when_bypassed - passing_when_absent
     return {
         "tests_that_pass_without_it": len(switched_off),
         "which_tests_pass_without_it": switched_off,
-        "what_a_count_delta_would_have_said": int(poisoned["passed"])
+        "tests_that_require_it": len(dependency_required),
+        "which_tests_require_it": dependency_required,
+        "gated_tests_exercised": len(exercised),
+        "which_gated_tests_remain_undecided": undecided,
+        "what_a_count_delta_would_have_said": int(bypassed["passed"])
         - int(absent["passed"]),
         "rose_into_passing_without_having_skipped": sorted(rose - skipped_when_absent),
-        "dropped_out_of_passing_under_poison": sorted(
-            passing_when_absent - passing_when_poisoned
+        "dropped_out_of_passing_under_bypass": sorted(
+            passing_when_absent - passing_when_bypassed
         ),
     }
 
 
 def main() -> int:
+    repo = repository_root()
+    tests = repo / "npa/tests"
     sites = fixture_level_sites()
     rows = []
     for path, fixture, modules in sites:
         for target in modules:
             here = importable(target)
             in_ci = ci_installs(target)
+            if path.name == "conftest.py":
+                rows.append(
+                    {
+                        "file": str(path.relative_to(repo)),
+                        "fixture": fixture,
+                        "module": target,
+                        "module_present_in_this_environment": here,
+                        "ci_installs_it": in_ci,
+                        "verdict": "not_measured_conftest",
+                        "why": (
+                            "A conftest.py is not a test target. This sweep does not "
+                            "claim a dependency verdict until fixture consumers are "
+                            "resolved and run explicitly."
+                        ),
+                    }
+                )
+                continue
             absent = run(path, target, "absent")
             if not absent["skipped"]:
                 # The module is installed in this environment, or the fixture is
@@ -397,7 +425,7 @@ def main() -> int:
                 # reporting a zero that reads like a clean result.
                 rows.append(
                     {
-                        "file": str(path.relative_to(REPO)),
+                        "file": str(path.relative_to(repo)),
                         "fixture": fixture,
                         "module": target,
                         "module_present_in_this_environment": here,
@@ -408,133 +436,127 @@ def main() -> int:
                     }
                 )
                 continue
-            poisoned = run(path, target, "poison")
-            if poisoned["parent_unavailable"]:
-                rows.append(
-                    {
-                        "file": str(path.relative_to(REPO)),
-                        "fixture": fixture,
-                        "module": target,
-                        "module_present_in_this_environment": here,
-                        "ci_installs_it": in_ci,
-                        "verdict": "not_measurable_here",
-                        "why": (
-                            "the parent package is not installed, so the leaf cannot be "
-                            "made importable-but-unusable without stubbing the parent, "
-                            "which perturbs unrelated fixtures in the same file"
-                        ),
-                        "absent": absent,
-                    }
-                )
-                print(
-                    f"{path.relative_to(TESTS)}::{fixture} [{target}] "
-                    f"not measurable: parent package absent",
-                    flush=True,
-                )
-                continue
-            verdict = classify(absent, poisoned)
+            bypassed = run(path, target, "bypass")
+            verdict = classify(absent, bypassed)
             gained = verdict["tests_that_pass_without_it"]
+            required = verdict["tests_that_require_it"]
+            undecided = verdict["which_gated_tests_remain_undecided"]
+            if verdict["gated_tests_exercised"] == 0:
+                row_verdict = "undecided_no_gated_test_executed"
+            elif undecided:
+                row_verdict = "partially_measured"
+            elif gained and required:
+                row_verdict = "mixed_dependency_need"
+            elif gained:
+                row_verdict = "tests_switched_off_unnecessarily"
+            else:
+                row_verdict = "dependency_required"
+
+            if in_ci is True:
+                ci_status = "latent: CI installs this module"
+            elif in_ci is False:
+                ci_status = "live: CI does not install this module"
+            else:
+                ci_status = "unknown: the CI snapshot does not map this module"
 
             rows.append(
                 {
-                    "file": str(path.relative_to(REPO)),
+                    "file": str(path.relative_to(repo)),
                     "fixture": fixture,
                     "module": target,
                     "module_present_in_this_environment": here,
                     "ci_installs_it": in_ci,
-                    "verdict": (
-                        "tests_switched_off_unnecessarily"
-                        if gained > 0
-                        else "skip_is_justified"
+                    "verdict": row_verdict,
+                    "live_or_latent": ci_status,
+                    "test_file_handlers_that_could_swallow_the_sentinel": (
+                        broad_except_sites(path)
                     ),
-                    "live_or_latent": (
-                        "latent: CI installs this module, so nothing is skipped today "
-                        "and these tests go quiet the moment the dependency is dropped"
-                        if in_ci
-                        else "live: CI does not install this module, so these tests are "
-                        "being skipped in CI now"
-                    ),
-                    "handlers_that_could_swallow_the_poison": broad_except_sites(path),
                     **verdict,
                     "absent": absent,
-                    "poisoned": poisoned,
+                    "bypassed": bypassed,
                 }
             )
             delta = verdict["what_a_count_delta_would_have_said"]
             print(
-                f"{path.relative_to(TESTS)}::{fixture} [{target}] "
+                f"{path.relative_to(tests)}::{fixture} [{target}] "
                 f"absent {absent['passed']}p/{absent['skipped']}s -> "
-                f"poison {poisoned['passed']}p/{poisoned['skipped']}s/"
-                f"{poisoned['failed']}f  switched off {gained}"
+                f"bypass {bypassed['passed']}p/{bypassed['skipped']}s/"
+                f"{bypassed['failed'] + bypassed['error']}f/e  "
+                f"unnecessary {gained}, required {required}, undecided {len(undecided)}"
                 + (f"  (a count delta would say {delta})" if delta != gained else ""),
                 flush=True,
             )
 
-    measurable = [r for r in rows if r["verdict"] != "not_measurable_here"]
-    switched_off = [
-        r for r in measurable if r["verdict"] == "tests_switched_off_unnecessarily"
-    ]
+    fully_decided_verdicts = {
+        "dependency_required",
+        "mixed_dependency_need",
+        "tests_switched_off_unnecessarily",
+    }
+    measurable = [r for r in rows if r["verdict"] in fully_decided_verdicts]
+    undecided_rows = [r for r in rows if r["verdict"] not in fully_decided_verdicts]
+    switched_off = [r for r in rows if r.get("tests_that_pass_without_it", 0) > 0]
     measured = {
         "fixtures": len(sites),
         "pairs": len(rows),
         "measurable": len(measurable),
         "findings": len(switched_off),
         "tests": sum(int(r["tests_that_pass_without_it"]) for r in switched_off),
-        "live": sum(1 for r in switched_off if not r["ci_installs_it"]),
+        "live": sum(1 for r in switched_off if r["ci_installs_it"] is False),
+        "undecided": len(undecided_rows),
     }
     record = {
         **narrative(measured),
         "what_this_measures": (
-            "Whether a test skipped for a missing module actually uses that module. A "
-            "test that skips when the module is absent and passes when the module is "
-            "importable but unusable did not touch it through any path that raises, so "
-            "the skip was switching off a test that had nothing to do with the "
-            "dependency."
+            "Whether a test skipped for a missing module runs when only its fixture's "
+            "importorskip is bypassed while the module remains genuinely absent. "
+            "Downstream imports still fail, so import-only dependencies are classified "
+            "as required rather than as unnecessary skips."
         ),
-        "why_not_provably_never_touched_it": (
+        "sentinel_overcount_limit": (
             "An earlier version of this file said 'provably never touched it'. That is "
             "stronger than the instrument can support, and a reviewer demonstrated it "
-            "rather than arguing it: the poison raises AssertionError, so a test that "
-            "calls into the module inside `except Exception` swallows the complaint and "
-            "passes. They built a control that does exactly that and it passed under "
-            "poison. No published number was affected, because no flagged file contains "
-            "such a handler -- which is now measured per row as "
-            "handlers_that_could_swallow_the_poison rather than audited once by hand. "
-            "This is the only caveat here that would make a number an overcount; the "
-            "others all make it a lower bound."
+            "rather than arguing it: the fixture sentinel raises AssertionError, so a "
+            "test that reads it inside `except Exception` can swallow the complaint and "
+            "pass. The row records broad handlers found in the test file, but this is "
+            "not a downstream call-graph analysis. Findings therefore establish the "
+            "observed bypass behaviour, not that no downstream code touched a value."
         ),
         "why_test_identity_and_not_a_count_delta": (
             "The first version of this sweep classified a row by "
-            "poisoned_passed - absent_passed. That counts any test moving into passing, "
+            "bypassed_passed - absent_passed. That counts any test moving into passing, "
             "while the criterion is narrower: a test that *skipped* and then passed. A "
             "reviewer reproduced the counts exactly, took per-test identities, and found "
             "the single test behind the torch finding was FAILED under absence and "
-            "PASSED under poison -- never skipped, so never switched off by a skip. The "
+            "PASSED under the old poison method -- never skipped, so never switched off "
+            "by a skip. The "
             "same delta can also hide a finding by netting a rise against a drop; they "
             "measured ten of the thirteen rows with that capacity and found none, so it "
             "was real in principle and had cost nothing in practice. Both are now "
             "measured by intersecting sets of test identities, and every row publishes "
             "what the delta would have said so the two can be compared."
         ),
-        "why_a_pass_under_poison_is_the_only_evidence_counted": (
-            "Poisoning a module that other libraries import during collection can break "
-            "collection for reasons unrelated to the test, so a failure is not evidence "
-            "of need. Only a pass is counted, which makes every number here a lower bound."
+        "how_bypass_outcomes_are_interpreted": (
+            "The target stays genuinely absent. A gated pass shows the fixture skip was "
+            "unnecessary; a gated failure or error shows the dependency is required; a "
+            "continued skip is undecided. Unexecuted tests and collection-only outcomes "
+            "are not classified as justified."
         ),
         "fixtures_with_an_importorskip": len(sites),
         "fixture_and_module_pairs": len(rows),
         "pairs_measurable_in_this_environment": len(measurable),
+        "pairs_not_fully_measured": len(undecided_rows),
         "pairs_with_tests_switched_off_unnecessarily": len(switched_off),
-        "of_those_live_in_ci": sum(1 for r in switched_off if not r["ci_installs_it"]),
+        "of_those_live_in_ci": sum(
+            1 for r in switched_off if r["ci_installs_it"] is False
+        ),
         "tests_switched_off_in_ci_now": sum(
             int(r["tests_that_pass_without_it"])
             for r in switched_off
-            if not r["ci_installs_it"]
+            if r["ci_installs_it"] is False
         ),
         "how_to_reproduce_this": {
             "command": (
-                "npa/.venv/bin/python "
-                "docs/evidence/test-dependency-skips/dependency_skip_sweep.py"
+                "${PYTHON} docs/evidence/test-dependency-skips/dependency_skip_sweep.py"
             ),
             "needs_a_real_checkout": (
                 "The sweep refuses to run outside a git checkout, because it resolves the "
@@ -545,11 +567,10 @@ def main() -> int:
                 "have to discover it. No failure count is quoted because the number "
                 "depends on the environment and neither of us can reproduce it."
             ),
-            "needs_the_interpreter_it_invokes": (
-                "It shells out to npa/.venv/bin/python, so that path must exist. Link the "
-                "environment *directory* if you are relocating it -- linking the interpreter "
-                "binary alone corrupts prefix resolution and the run fails with "
-                "unrelated-looking test failures. That is the same reviewer's finding."
+            "child_interpreter": "sys.executable",
+            "interpreter_contract": (
+                "Set PYTHON to the environment under test. Child pytest runs use that "
+                "interpreter's sys.executable; no checkout-local virtualenv path is required."
             ),
             "runtime": "about three minutes, two pytest runs per fixture-and-module pair",
         },
@@ -561,10 +582,25 @@ def main() -> int:
             ),
             "job": json.loads(OBSERVED.read_text())["source"],
             "why_not_inferred": (
-                "Inference said CI had no torch, because torch appears in no extra CI "
-                "installs. CI has torch 2.14.0+cpu transitively. Publishing the "
-                "inference would have called a latent finding live."
+                "The named workflow installs sonic and genesis-test extras and asserts "
+                "torch and rsl_rl imports. The retained package list supplies the exact "
+                "versions, including the rsl-rl-lib distribution behind rsl_rl."
             ),
+        },
+        "measured_source_head": subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=repo,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip(),
+        "measurement_environment": {
+            "python": sys.version.split()[0],
+            "executable_kind": "sys.executable",
+            "module_presence": {
+                module: importable(module)
+                for module in sorted({row["module"] for row in rows})
+            },
         },
         "tests_switched_off_unnecessarily": sum(
             int(r["tests_that_pass_without_it"]) for r in switched_off
@@ -582,7 +618,7 @@ def main() -> int:
         f"{len(switched_off)} with tests switched off unnecessarily "
         f"({record['tests_switched_off_unnecessarily']} tests)"
     )
-    print(f"wrote {OUT.relative_to(REPO) if OUT.is_relative_to(REPO) else OUT}")
+    print(f"wrote {OUT.relative_to(repo) if OUT.is_relative_to(repo) else OUT}")
     return 0
 
 

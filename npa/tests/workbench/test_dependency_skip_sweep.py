@@ -13,6 +13,7 @@ torch.
 
 from __future__ import annotations
 
+import ast
 import importlib.util
 import json
 from pathlib import Path
@@ -81,11 +82,11 @@ def test_the_sweep_detects_a_skip_that_was_not_needed(sweep, tmp_path: Path) -> 
     path.write_text(UNUSED)
 
     absent = sweep.run(path, FAKE, "absent")
-    poisoned = sweep.run(path, FAKE, "poison")
+    bypassed = sweep.run(path, FAKE, "bypass")
 
     assert absent["skipped"] == 2 and absent["passed"] == 0, absent
-    assert poisoned["passed"] == 2 and poisoned["skipped"] == 0, poisoned
-    assert poisoned["passed"] - absent["passed"] == 2
+    assert bypassed["passed"] == 2 and bypassed["skipped"] == 0, bypassed
+    assert sweep.classify(absent, bypassed)["tests_that_pass_without_it"] == 2
 
 
 def test_the_sweep_leaves_a_skip_that_was_needed_alone(sweep, tmp_path: Path) -> None:
@@ -98,20 +99,20 @@ def test_the_sweep_leaves_a_skip_that_was_needed_alone(sweep, tmp_path: Path) ->
     path.write_text(USED)
 
     absent = sweep.run(path, FAKE, "absent")
-    poisoned = sweep.run(path, FAKE, "poison")
+    bypassed = sweep.run(path, FAKE, "bypass")
 
     assert absent["skipped"] == 1 and absent["passed"] == 0, absent
-    assert poisoned["passed"] == 0, poisoned
-    assert poisoned["failed"] + poisoned["error"] >= 1, poisoned
-    assert poisoned["passed"] - absent["passed"] == 0
+    assert bypassed["passed"] == 0, bypassed
+    assert bypassed["failed"] + bypassed["error"] >= 1, bypassed
+    assert sweep.classify(absent, bypassed)["tests_that_require_it"] == 1
 
 
-def test_poisoning_a_dotted_module_does_not_disturb_its_siblings(
+def test_bypassing_a_dotted_module_does_not_disturb_its_siblings(
     sweep, tmp_path: Path
 ) -> None:
     """The artifact that produced a negative result, pinned so it cannot return.
 
-    The first version stubbed every parent of a dotted target. Poisoning
+    The first version stubbed every parent of a dotted target. Replacing
     `pxr.UsdPhysics` therefore replaced `pxr` with a stub whose `__path__` was
     empty, an unrelated fixture's `importorskip("pxr.Usd")` began failing, and three
     passing tests were reported as newly skipped. A measurement instrument returning
@@ -133,26 +134,65 @@ def test_the_sibling_still_works(sibling):
 """
     )
 
-    poisoned = sweep.run(path, "json.encoder", "poison")
+    bypassed = sweep.run(path, "json.encoder", "bypass")
 
-    assert poisoned["passed"] == 1, poisoned
-    assert poisoned["skipped"] == 0, poisoned
+    assert bypassed["passed"] == 1, bypassed
+    assert bypassed["skipped"] == 0, bypassed
 
 
-def test_a_target_whose_parent_is_missing_is_reported_not_measured(
-    sweep, tmp_path: Path
-) -> None:
-    """There is no way to make a leaf usable-but-poisoned without a real parent.
+def test_an_import_only_dependency_is_detected(sweep, tmp_path: Path) -> None:
+    """Bypassing the fixture must not make downstream imports magically succeed."""
+    (tmp_path / "consumer.py").write_text(f"import {FAKE}\n")
+    path = tmp_path / "test_import_only.py"
+    path.write_text(
+        f'''
+import importlib
+import pytest
 
-    Stubbing the parent is the artifact above, so the sweep says it cannot measure
-    this instead of measuring something else and calling it the same thing.
-    """
-    path = tmp_path / "test_absent_parent.py"
-    path.write_text(UNUSED.replace(FAKE, f"{FAKE}.child"))
 
-    poisoned = sweep.run(path, f"{FAKE}.child", "poison")
+@pytest.fixture
+def dependency(monkeypatch):
+    pytest.importorskip("{FAKE}")
+    monkeypatch.syspath_prepend({str(tmp_path)!r})
+    return importlib.import_module("consumer")
 
-    assert poisoned["parent_unavailable"] is True, poisoned
+
+def test_consumer_imports(dependency):
+    assert dependency is not None
+'''
+    )
+
+    absent = sweep.run(path, FAKE, "absent")
+    bypassed = sweep.run(path, FAKE, "bypass")
+    verdict = sweep.classify(absent, bypassed)
+
+    assert absent["skipped"] == 1, absent
+    assert bypassed["error"] + bypassed["failed"] == 1, bypassed
+    assert verdict["tests_that_require_it"] == 1
+    assert verdict["tests_that_pass_without_it"] == 0
+
+
+def test_fixture_detection_uses_decorator_structure_not_substrings(sweep) -> None:
+    """A helper whose name merely contains 'fixture' is not a pytest fixture."""
+    tree = ast.parse(
+        """
+@pytest.fixture
+def real(): ...
+
+@fixture()
+def imported(): ...
+
+@not_a_fixture
+def false_positive(): ...
+"""
+    )
+    functions = [node for node in tree.body if isinstance(node, ast.FunctionDef)]
+    detected = {
+        node.name
+        for node in functions
+        if any(sweep._is_fixture_decorator(item) for item in node.decorator_list)
+    }
+    assert detected == {"real", "imported"}
 
 
 def test_the_prose_is_reproducible_from_the_measurements_it_describes(
@@ -172,6 +212,7 @@ def test_the_prose_is_reproducible_from_the_measurements_it_describes(
         "findings": record["pairs_with_tests_switched_off_unnecessarily"],
         "tests": record["tests_switched_off_unnecessarily"],
         "live": record["of_those_live_in_ci"],
+        "undecided": record["pairs_not_fully_measured"],
     }
     regenerated = sweep.narrative(measured)
     for block in sorted(regenerated):
@@ -181,39 +222,43 @@ def test_the_prose_is_reproducible_from_the_measurements_it_describes(
 def test_the_published_findings_are_recomputed_from_the_rows(record) -> None:
     """The summary is derived, so derive it again rather than reading it."""
     rows = record["rows"]
-    measurable = [r for r in rows if r["verdict"] != "not_measurable_here"]
-    switched_off = [
-        r for r in measurable if r["verdict"] == "tests_switched_off_unnecessarily"
-    ]
+    decided = {
+        "dependency_required",
+        "mixed_dependency_need",
+        "tests_switched_off_unnecessarily",
+    }
+    measurable = [r for r in rows if r["verdict"] in decided]
+    unmeasured = [r for r in rows if r["verdict"] not in decided]
+    switched_off = [r for r in rows if r.get("tests_that_pass_without_it", 0) > 0]
 
     assert record["fixture_and_module_pairs"] == len(rows)
     assert record["pairs_measurable_in_this_environment"] == len(measurable)
+    assert record["pairs_not_fully_measured"] == len(unmeasured)
     assert record["pairs_with_tests_switched_off_unnecessarily"] == len(switched_off)
     assert record["tests_switched_off_unnecessarily"] == sum(
         r["tests_that_pass_without_it"] for r in switched_off
     )
     assert record["of_those_live_in_ci"] == sum(
-        1 for r in switched_off if not r["ci_installs_it"]
+        1 for r in switched_off if r["ci_installs_it"] is False
     )
     assert record["tests_switched_off_in_ci_now"] == sum(
-        r["tests_that_pass_without_it"] for r in switched_off if not r["ci_installs_it"]
+        r["tests_that_pass_without_it"]
+        for r in switched_off
+        if r["ci_installs_it"] is False
     )
 
 
-def test_every_finding_counts_only_tests_that_passed_without_the_module(record) -> None:
-    """The one-sided rule, enforced rather than described.
-
-    A failure under poison is not evidence of need -- poisoning a module that other
-    libraries import during collection can break collection for its own reasons --
-    so only a pass is counted. That makes every number here a lower bound, and it is
-    worth a test because the tempting stronger reading is right there in the data.
-    """
+def test_every_finding_is_the_intersection_of_skipped_and_bypassed_passes(record):
+    """Use test identities; an aggregate count delta is not the criterion."""
     for row in record["rows"]:
-        if row["verdict"] != "tests_switched_off_unnecessarily":
+        if not row.get("tests_that_pass_without_it"):
             continue
-        gained = row["poisoned"]["passed"] - row["absent"]["passed"]
-        assert row["tests_that_pass_without_it"] == gained, row["file"]
-        assert gained > 0, row["file"]
+        expected = sorted(
+            set(row["absent"]["nodes"].get("skipped", []))
+            & set(row["bypassed"]["nodes"].get("passed", []))
+        )
+        assert row["which_tests_pass_without_it"] == expected, row["file"]
+        assert row["tests_that_pass_without_it"] == len(expected), row["file"]
 
 
 def test_whether_ci_has_a_module_comes_from_a_named_job(record) -> None:
@@ -232,6 +277,8 @@ def test_whether_ci_has_a_module_comes_from_a_named_job(record) -> None:
     assert record["how_live_was_determined"]["job"] == source
     assert "torch" in snapshot["import_name_to_distribution"]
     assert snapshot["observed_installed"]["torch"].startswith("2.")
+    assert snapshot["import_name_to_distribution"]["rsl_rl"] == "rsl-rl-lib"
+    assert snapshot["observed_installed"]["rsl-rl-lib"] == "5.5.1"
     assert "open3d" in snapshot["observed_absent"]
 
 
@@ -239,17 +286,27 @@ def test_the_sweep_reports_sites_it_cannot_measure_rather_than_passing_them(
     record,
 ) -> None:
     """A site this environment cannot decide must not be counted as decided either way."""
-    unmeasured = [r for r in record["rows"] if r["verdict"] == "not_measurable_here"]
+    unmeasured = [
+        r
+        for r in record["rows"]
+        if r["verdict"]
+        in {
+            "not_measurable_here",
+            "not_measured_conftest",
+            "partially_measured",
+            "undecided_no_gated_test_executed",
+        }
+    ]
     assert unmeasured, "the sweep claims every site was measurable, which is unlikely"
     for row in unmeasured:
         assert row["why"], row["module"]
-        assert "tests_that_pass_without_it" not in row, row["module"]
+        if row["verdict"] in {"not_measurable_here", "not_measured_conftest"}:
+            assert "tests_that_pass_without_it" not in row, row["module"]
 
 
-#: A test that skips when the module is absent and passes when it is poisoned -- a real
-#: finding -- beside a second test that is not gated at all and whose outcome tracks
-#: whether the module imports. That second one FAILS under absence and PASSES under
-#: poison without ever skipping, which is the shape that produced a false positive.
+#: A real gated finding beside a test that imports the target without using the fixture.
+#: True absence must keep the latter failed in both modes; the old module-level poison
+#: made it pass and corrupted the count.
 FAILED_THEN_PASSED = f'''
 import pytest
 
@@ -270,8 +327,8 @@ def test_not_gated_at_all():
     assert module is not None
 '''
 
-#: The other direction: one test rises into passing and one drops out of it, so the two
-#: cancel and a count delta reads zero over a row that has a real finding in it.
+#: A gated finding beside a test that is expected to pass only while the module is
+#: absent. Both modes keep it absent, so its outcome must not change.
 RISE_CANCELS_DROP = f'''
 import pytest
 
@@ -291,22 +348,20 @@ def test_passes_only_while_the_module_is_missing():
         import {FAKE}  # noqa: F401
 '''
 
-#: Touches the module, and swallows the poison's complaint. Passes under poison anyway.
-SWALLOWS_THE_POISON = f'''
+#: Touches the fixture sentinel and swallows its complaint. This remains a documented
+#: limitation of the observed-behaviour claim.
+SWALLOWS_THE_SENTINEL = f'''
 import pytest
 
 
 @pytest.fixture
 def dependency():
-    pytest.importorskip("{FAKE}")
-    return "not the module"
+    return pytest.importorskip("{FAKE}")
 
 
 def test_reads_an_attribute_but_catches_everything(dependency):
-    import {FAKE} as module
-
     try:
-        module.some_attribute
+        dependency.some_attribute
     except Exception:
         pass
 '''
@@ -319,9 +374,8 @@ def test_a_test_that_failed_rather_than_skipped_is_not_a_finding(
 
     A reviewer reproduced this sweep's counts exactly and then took the reading it had
     not: the single test behind its `torch` finding was FAILED under absence and PASSED
-    under poison. Never skipped, so no over-broad skip had switched it off -- and
-    `poisoned.passed - absent.passed` counted it regardless. One of the three published
-    findings was that one test.
+    under the old poison mode. Never skipped, so no over-broad skip had switched it off.
+    Keeping the target genuinely absent now leaves that unrelated test failed.
 
     Both numbers are asserted here, because the point is not that the new one is right
     but that the two disagree on a case that occurs in this repository.
@@ -330,55 +384,42 @@ def test_a_test_that_failed_rather_than_skipped_is_not_a_finding(
     path.write_text(FAILED_THEN_PASSED)
 
     absent = sweep.run(path, FAKE, "absent")
-    poisoned = sweep.run(path, FAKE, "poison")
-    verdict = sweep.classify(absent, poisoned)
+    bypassed = sweep.run(path, FAKE, "bypass")
+    verdict = sweep.classify(absent, bypassed)
 
     assert absent["skipped"] == 1 and absent["failed"] == 1, absent
-    assert poisoned["passed"] == 2, poisoned
-    assert verdict["what_a_count_delta_would_have_said"] == 2, verdict
+    assert bypassed["passed"] == 1 and bypassed["failed"] == 1, bypassed
+    assert verdict["what_a_count_delta_would_have_said"] == 1, verdict
     assert verdict["tests_that_pass_without_it"] == 1, verdict
     assert [
         node.split("::")[-1] for node in verdict["which_tests_pass_without_it"]
     ] == ["test_gated"]
-    assert [
-        node.split("::")[-1]
-        for node in verdict["rose_into_passing_without_having_skipped"]
-    ] == ["test_not_gated_at_all"]
+    assert verdict["rose_into_passing_without_having_skipped"] == []
 
 
-def test_a_rise_cancelling_a_drop_does_not_hide_the_finding(
-    sweep, tmp_path: Path
-) -> None:
-    """The other way a count delta is wrong: it nets out, and the row reads clean.
-
-    The reviewer who found the false positive raised this as the matching risk and
-    checked ten of the thirteen rows that had the capacity for it, finding none. So it
-    was real in principle and had cost nothing in practice. Here it is constructed, to
-    keep it that way: the delta is zero while a test was genuinely switched off.
-    """
+def test_true_absence_keeps_unrelated_outcomes_stable(sweep, tmp_path: Path) -> None:
+    """Bypass changes only the gated test, not ordinary import semantics."""
     path = tmp_path / "test_rise_cancels_drop.py"
     path.write_text(RISE_CANCELS_DROP)
 
     absent = sweep.run(path, FAKE, "absent")
-    poisoned = sweep.run(path, FAKE, "poison")
-    verdict = sweep.classify(absent, poisoned)
+    bypassed = sweep.run(path, FAKE, "bypass")
+    verdict = sweep.classify(absent, bypassed)
 
-    assert verdict["what_a_count_delta_would_have_said"] == 0, verdict
+    assert verdict["what_a_count_delta_would_have_said"] == 1, verdict
     assert verdict["tests_that_pass_without_it"] == 1, verdict
     assert [
         node.split("::")[-1] for node in verdict["which_tests_pass_without_it"]
     ] == ["test_gated"]
-    assert [
-        node.split("::")[-1] for node in verdict["dropped_out_of_passing_under_poison"]
-    ] == ["test_passes_only_while_the_module_is_missing"]
+    assert verdict["dropped_out_of_passing_under_bypass"] == []
 
 
-def test_a_broad_handler_can_swallow_the_poison_and_is_reported(
+def test_a_broad_handler_can_swallow_the_sentinel_and_is_reported(
     sweep, tmp_path: Path
 ) -> None:
     """The instrument's one overcounting limit, demonstrated rather than asserted.
 
-    The poison raises `AssertionError` on attribute access, so a test that reads the
+    The sentinel raises `AssertionError` on attribute access, so a test that reads the
     module inside `except Exception` passes anyway and is counted as not needing it.
     That is why the record says these tests "did not touch it through any path that
     raises" and not "provably never touched it".
@@ -387,15 +428,15 @@ def test_a_broad_handler_can_swallow_the_poison_and_is_reported(
     audit: `broad_except_sites` runs on every file the sweep visits, and this asserts
     it finds the one here.
     """
-    path = tmp_path / "test_swallows_the_poison.py"
-    path.write_text(SWALLOWS_THE_POISON)
+    path = tmp_path / "test_swallows_the_sentinel.py"
+    path.write_text(SWALLOWS_THE_SENTINEL)
 
-    poisoned = sweep.run(path, FAKE, "poison")
+    bypassed = sweep.run(path, FAKE, "bypass")
     absent = sweep.run(path, FAKE, "absent")
 
     assert absent["skipped"] == 1, absent
-    assert poisoned["passed"] == 1, poisoned
-    assert sweep.classify(absent, poisoned)["tests_that_pass_without_it"] == 1
+    assert bypassed["passed"] == 1, bypassed
+    assert sweep.classify(absent, bypassed)["tests_that_pass_without_it"] == 1
 
     swallowing = sweep.broad_except_sites(path)
     assert len(swallowing) == 1, swallowing
@@ -403,18 +444,16 @@ def test_a_broad_handler_can_swallow_the_poison_and_is_reported(
     assert source[swallowing[0] - 1].strip() == "except Exception:"
 
 
-def test_no_published_finding_rests_on_a_file_that_could_swallow_the_poison(
+def test_published_findings_expose_test_file_sentinel_handlers(
     record,
 ) -> None:
     """The limit above, applied to the catalogue, by measurement rather than by eye."""
     flagged = [
-        row
-        for row in record["rows"]
-        if row["verdict"] == "tests_switched_off_unnecessarily"
+        row for row in record["rows"] if row.get("tests_that_pass_without_it", 0) > 0
     ]
     assert flagged, "no findings to check"
     for row in flagged:
-        assert row["handlers_that_could_swallow_the_poison"] == [], row["file"]
+        assert "test_file_handlers_that_could_swallow_the_sentinel" in row, row["file"]
 
 
 def test_the_documented_reproduction_matches_what_the_sweep_actually_runs(
@@ -431,13 +470,12 @@ def test_the_documented_reproduction_matches_what_the_sweep_actually_runs(
     how = record["how_to_reproduce_this"]
 
     assert str(SWEEP.relative_to(REPO)) in how["command"]
-    assert str(sweep.PYTHON.relative_to(REPO)) in how["command"]
-    assert (
-        str(sweep.PYTHON.relative_to(REPO)) in how["needs_the_interpreter_it_invokes"]
-    )
+    assert how["command"].startswith("${PYTHON} ")
+    assert how["child_interpreter"] == "sys.executable"
+    assert sweep.PYTHON == Path(sweep.sys.executable)
 
 
-def test_the_sweep_refuses_a_tree_that_is_not_a_checkout(sweep, tmp_path) -> None:
+def test_the_sweep_refuses_a_tree_that_is_not_a_checkout(sweep) -> None:
     """Exercise the refusal the note promises, rather than grepping for its spelling.
 
     This assertion used to read the resolver's source for `.git` and `raise`, under a
@@ -454,4 +492,4 @@ def test_the_sweep_refuses_a_tree_that_is_not_a_checkout(sweep, tmp_path) -> Non
     assert sweep.repository_root(REPO / "npa/tests/workbench/anything.py") == REPO
 
     with pytest.raises(RuntimeError):
-        sweep.repository_root(tmp_path / "nowhere" / "deep")
+        sweep.repository_root(Path("/__npa_not_a_checkout__/nowhere/deep"))
