@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Test whether the commits named by capability records are reachable from any remote ref.
+"""Test advertised-ref containment and direct-SHA fetchability for named commits.
 
 `audit_record_provenance.py` already reports reachability, but it reports it *from the clone
 it happens to be run in*, and it says so. That turned out to matter. The records make the
-stronger claim -- "on ZERO remote refs", in ten files -- and the clone that produced it held
+stronger claim -- "on no advertised remote ref" -- and the clone that produced it held
 only `refs/heads/*` and was shallow. Most of what this remote advertises is under `refs/pull/`,
 so the original check consulted roughly a quarter of the refs a reader could resolve a commit
 from. The claim happens to be true. It was not established.
@@ -33,24 +33,30 @@ has fetched, and it closes the two holes that made the earlier answer unsound:
    commit is an ancestor of a graft point. That is checked per commit and reported, and a
    commit that could be concealed is reported as indeterminate rather than as stranded.
 
-Reachability is still not a correctness claim. A commit on no remote ref means no other reader
-can look it up; it says nothing about whether the measurements taken there were right.
+Reachability is still not a correctness claim. No advertised ref means only that no current ref
+contains the commit. Direct-SHA fetchability is probed separately, and neither result says whether
+the measurements taken there were right.
 
 Writes docs/evidence/open3d/commit-reachability-audit.json.
 """
 
 from __future__ import annotations
 
+import argparse
 import json
 import re
 import subprocess
 import sys
+import tempfile
+from datetime import UTC, datetime
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 EVIDENCE = HERE.parent
 REPO = EVIDENCE.parents[2]
 OUT = EVIDENCE / "commit-reachability-audit.json"
+SOURCE_REPO = REPO
+AUDIT_REPO = REPO
 
 # Namespaces this harness fetches into. Kept out of refs/remotes/origin/* so a run never
 # rewrites what the clone's own tracking refs mean.
@@ -58,16 +64,32 @@ AUDIT_NS = "refs/remotes/provenance-audit/"
 PR_NS = AUDIT_NS + "pr"
 MERGE_NS = AUDIT_NS + "merge"
 TAG_NS = AUDIT_NS + "tag"
+BRANCH_NS = AUDIT_NS + "branch"
 
 SHA_RE = re.compile(r"^[0-9a-f]{7,40}$")
 
 
 def git(*args: str, check: bool = True) -> str:
     done = subprocess.run(
-        ["git", "-C", str(REPO), *args], capture_output=True, text=True, check=False
+        ["git", "-C", str(AUDIT_REPO), *args],
+        capture_output=True,
+        text=True,
+        check=False,
     )
     if check and done.returncode != 0:
         raise RuntimeError(f"git {' '.join(args)} failed: {done.stderr.strip()}")
+    return done.stdout.strip()
+
+
+def source_git(*args: str, check: bool = True) -> str:
+    done = subprocess.run(
+        ["git", "-C", str(SOURCE_REPO), *args],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if check and done.returncode != 0:
+        raise RuntimeError(f"source git {' '.join(args)} failed: {done.stderr.strip()}")
     return done.stdout.strip()
 
 
@@ -89,6 +111,14 @@ def fetch_everything_resolvable(refs: dict[str, str]) -> dict[str, int]:
     merges = [r for r in refs if r.startswith("refs/pull/") and r.endswith("/merge")]
     tags = [r for r in refs if r.startswith("refs/tags/")]
     branches = [r for r in refs if r.startswith("refs/heads/")]
+    if branches:
+        git(
+            "fetch",
+            "--quiet",
+            "--no-write-fetch-head",
+            "origin",
+            f"+refs/heads/*:{BRANCH_NS}/*",
+        )
     if pulls:
         git(
             "fetch",
@@ -129,13 +159,16 @@ def fetch_everything_resolvable(refs: dict[str, str]) -> dict[str, int]:
         "fetched_tag_refs": len(
             git("for-each-ref", TAG_NS, "--format=%(refname)").splitlines()
         ),
+        "fetched_branch_refs": len(
+            git("for-each-ref", BRANCH_NS, "--format=%(refname)").splitlines()
+        ),
     }
 
 
 def graft_points() -> list[str]:
     shallow = Path(git("rev-parse", "--git-common-dir")) / "shallow"
     if not shallow.is_absolute():
-        shallow = REPO / shallow
+        shallow = AUDIT_REPO / shallow
     if not shallow.exists():
         return []
     return [ln.strip() for ln in shallow.read_text().splitlines() if ln.strip()]
@@ -150,7 +183,7 @@ def could_be_concealed(sha: str, grafts: list[str]) -> bool:
     """
     for graft in grafts:
         done = subprocess.run(
-            ["git", "-C", str(REPO), "merge-base", "--is-ancestor", sha, graft],
+            ["git", "-C", str(AUDIT_REPO), "merge-base", "--is-ancestor", sha, graft],
             capture_output=True,
             text=True,
             check=False,
@@ -162,7 +195,7 @@ def could_be_concealed(sha: str, grafts: list[str]) -> bool:
 
 def object_type(sha: str) -> str | None:
     done = subprocess.run(
-        ["git", "-C", str(REPO), "cat-file", "-t", sha],
+        ["git", "-C", str(AUDIT_REPO), "cat-file", "-t", sha],
         capture_output=True,
         text=True,
         check=False,
@@ -182,7 +215,7 @@ def named_commits() -> tuple[dict[str, list[str]], dict[str, str]]:
     """
     found: dict[str, list[str]] = {}
     kinds: dict[str, str] = {}
-    for record in sorted(EVIDENCE.glob("capability-record-*.json")):
+    for record in sorted(EVIDENCE.glob("capability-record*.json")):
         prov = json.loads(record.read_text()).get("provenance", {})
         shas = []
         for key, value in prov.items():
@@ -217,7 +250,7 @@ def evidence_outside_the_record_glob() -> dict[str, object]:
     """
     outside = []
     for path in sorted(EVIDENCE.glob("*.json")):
-        if path.name.startswith("capability-record-"):
+        if path.name.startswith("capability-record"):
             continue
         data = json.loads(path.read_text())
         # Not every evidence file is an object. Some are top-level arrays of readings, which
@@ -257,36 +290,67 @@ def evidence_outside_the_record_glob() -> dict[str, object]:
 
 
 def classify(sha: str, grafts: list[str]) -> dict[str, object]:
-    if (
-        git("cat-file", "-e", sha, check=False) == ""
-        and subprocess.run(
-            ["git", "-C", str(REPO), "cat-file", "-e", sha],
+    direct_fetch_attempted = False
+    if object_type(sha) != "commit":
+        direct_fetch_attempted = True
+        subprocess.run(
+            [
+                "git",
+                "-C",
+                str(AUDIT_REPO),
+                "fetch",
+                "--quiet",
+                "--no-write-fetch-head",
+                "origin",
+                sha,
+            ],
             capture_output=True,
+            text=True,
             check=False,
-        ).returncode
-        != 0
-    ):
+        )
+    object_available = object_type(sha) == "commit"
+    direct_fetch_succeeded = direct_fetch_attempted and object_available
+    if not object_available:
         return {
             "commit": sha,
             "verdict": "absent_from_this_clone",
             "remote_refs_containing": None,
-            "note": "The object is not here, so this clone cannot answer. It is not evidence "
-            "that the commit does not exist.",
+            "direct_sha_fetch_attempted": direct_fetch_attempted,
+            "direct_sha_fetchable": direct_fetch_succeeded,
+            "local_refs_containing": 0,
+            "shallow_clone_could_conceal_it": False,
+            "orphaned_tracking_refs_containing": 0,
+            "example_remote_refs": [],
+            "note": "The isolated audit repository could neither find the object through an "
+            "advertised ref nor fetch it directly by SHA at measurement time.",
         }
     containing = git(
         "for-each-ref", "--contains", sha, "--format=%(refname)"
     ).splitlines()
-    # Only refs that trace back to a configured remote count. This clone carries orphaned
-    # tracking refs -- refs/remotes/npabase627, refs/remotes/npapr607 and others left behind by
-    # remotes that were removed -- which live in the remotes namespace while being as local as
-    # any branch. Counting them inflated one commit's reachability to 684 refs. The direction
-    # is safe for the stranded verdict, since a wider net can only find more, but "another
-    # reader can resolve this" is a claim about the remote and must be scoped to it.
-    live = tuple(f"refs/remotes/{name}/" for name in git("remote").splitlines())
-    remote = [r for r in containing if r.startswith(live) or r.startswith(AUDIT_NS)]
-    orphaned = [
-        r for r in containing if r.startswith("refs/remotes/") and r not in remote
-    ]
+    # The audit repository is fresh and private. Every persistent ref in it is
+    # created from the current ls-remote result under AUDIT_NS, so stale local or
+    # orphaned tracking refs cannot be counted as remote evidence.
+    remote = [r for r in containing if r.startswith(AUDIT_NS)]
+    if not remote and not direct_fetch_attempted:
+        direct_fetch_attempted = True
+        fetched = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(AUDIT_REPO),
+                "fetch",
+                "--quiet",
+                "--no-write-fetch-head",
+                "origin",
+                sha,
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        direct_fetch_succeeded = (
+            fetched.returncode == 0 and object_type(sha) == "commit"
+        )
     concealable = could_be_concealed(sha, grafts)
     if remote:
         verdict = "resolvable_remotely"
@@ -298,9 +362,13 @@ def classify(sha: str, grafts: list[str]) -> dict[str, object]:
         "commit": sha,
         "verdict": verdict,
         "remote_refs_containing": len(remote),
-        "local_refs_containing": len(containing) - len(remote),
+        "direct_sha_fetch_attempted": direct_fetch_attempted,
+        "direct_sha_fetchable": (
+            direct_fetch_succeeded if direct_fetch_attempted else None
+        ),
+        "local_refs_containing": 0,
         "shallow_clone_could_conceal_it": concealable,
-        "orphaned_tracking_refs_containing": len(orphaned),
+        "orphaned_tracking_refs_containing": 0,
         "example_remote_refs": sorted(remote)[:3],
     }
 
@@ -323,9 +391,13 @@ def build() -> dict[str, object]:
     for r in results:
         tally[str(r["verdict"])] = tally.get(str(r["verdict"]), 0) + 1
     return {
-        "what_this_answers": "For every commit a capability record names, can another reader "
-        "resolve it from a ref this remote advertises?",
-        "why_it_exists": "The records claimed zero remote refs. The clone that checked held "
+        "measured_at_utc": datetime.now(UTC).isoformat(),
+        "source_repository_head": source_git("rev-parse", "HEAD^{commit}"),
+        "remote_name": "origin",
+        "audit_workspace": "fresh private bare repository removed after this run",
+        "what_this_answers": "For every commit a capability record names, does a current "
+        "advertised origin ref contain it, and if not can origin fetch the object by SHA?",
+        "why_it_exists": "The records claimed no advertised remote refs. The clone that checked held "
         "only refs/heads/* out of every ref this remote advertises, and was shallow. The "
         "claim was true and unestablished, which is its own kind of defect.",
         "ref_coverage": {
@@ -365,8 +437,34 @@ def build() -> dict[str, object]:
     }
 
 
-def main() -> int:
-    report = build()
+def _arguments(argv: list[str] | None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--repo", type=Path, default=REPO)
+    parser.add_argument("--evidence-dir", type=Path, default=EVIDENCE)
+    parser.add_argument("--out", type=Path, default=OUT)
+    parser.add_argument("--remote", default="origin")
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    global SOURCE_REPO, AUDIT_REPO, EVIDENCE, OUT
+    args = _arguments(argv)
+    SOURCE_REPO = args.repo.resolve()
+    EVIDENCE = args.evidence_dir.resolve()
+    OUT = args.out.resolve()
+    remote_url = source_git("remote", "get-url", args.remote)
+
+    with tempfile.TemporaryDirectory(prefix="open3d-reachability-") as temporary:
+        AUDIT_REPO = Path(temporary) / "audit.git"
+        subprocess.run(
+            ["git", "init", "--quiet", "--bare", str(AUDIT_REPO)], check=True
+        )
+        subprocess.run(
+            ["git", "-C", str(AUDIT_REPO), "remote", "add", "origin", remote_url],
+            check=True,
+        )
+        report = build()
+
     OUT.write_text(json.dumps(report, indent=2) + "\n")
     tally = report["tally"]
     assert isinstance(tally, dict)
@@ -377,10 +475,10 @@ def main() -> int:
     print(
         f"Consulted {coverage['total_refs_advertised_by_remote']} advertised refs "
         f"({coverage['fetched_pull_refs']} PR heads, {coverage['fetched_tag_refs']} tags). "
-        f"{stranded} commit(s) on zero remote refs, "
+        f"{stranded} commit(s) on zero advertised refs with the object available, "
         f"{tally.get('resolvable_remotely', 0)} resolvable, {unknown} indeterminate."
     )
-    print(f"Wrote {OUT.relative_to(REPO)}")
+    print(f"Wrote {OUT}")
     # Indeterminate is the only state that makes the report untrustworthy: it means the clone
     # could not tell stranded from reachable, and no record should rest on that.
     return 1 if unknown else 0

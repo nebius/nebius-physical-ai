@@ -9,11 +9,11 @@ reached yet.
 The shape required here is deliberately small:
 
     "provenance": {
-      "source_commit": "<bare hex sha, or null with a stated reason>",
-      "main_is_an_ancestor_of_this_commit": <bool, or null if unresolvable>
+      "source_commit": "<full 40-character hex commit sha, or null with a stated reason>",
+      "commit_is_an_ancestor_of_main": <bool, or null if unresolvable>
     }
 
-**Why the ancestry flag and not just the commit.** Five of the commits these records name are not
+**Why the ancestry flag and not just the commit.** Some commits these records name are not
 ancestors of `main`, and they are right to name them: they are commits on the retired Open3D lane
 branches, where the measurements were actually taken. PR 602 landed as its own commit, so those
 originals never became ancestors. Rewriting them to ancestors would falsify the records. The
@@ -28,8 +28,9 @@ resolves, the claim is compared against `git merge-base --is-ancestor`.
 present in any clone that has `main`, so a missing object cannot be an ancestor of it. Absence
 therefore confirms `false` and refutes `true`. That inference is what lets this guard give the same
 answer in CI, which fetches no lane branches, as on a machine that has them -- and it is the only
-reason the flag is worth recording, because **six of the commits these records name are on zero
-remote refs** and exist nowhere but the clones that made them. A shallow clone breaks the
+reason the flag is worth recording. Some were on no advertised remote ref when the separate
+reachability report was produced; that does not prove direct SHA fetchability or object lifetime.
+A shallow clone breaks the
 inference, since its history is truncated by design rather than by the commit's absence, so
 shallowness is detected and the comparison is skipped and reported instead of guessed at.
 
@@ -47,14 +48,16 @@ Reads committed json and queries git. No network.
 
 from __future__ import annotations
 
+import argparse
 import json
 import re
 import subprocess
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
-BARE_SHA = re.compile(r"\A[0-9a-f]{7,40}\Z")
+EVIDENCE = Path(__file__).resolve().parent.parent
+REPO = EVIDENCE.parents[2]
+BARE_SHA = re.compile(r"\A[0-9a-f]{40}\Z")
 
 # Where "main" is, tried in order. A PR checkout does not always have the remote ref, and a guard
 # that fails because of how CI fetched the repository is a guard people delete.
@@ -63,7 +66,7 @@ MAIN_CANDIDATES = ("origin/main", "refs/remotes/origin/main", "main")
 
 def _git(*args: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
-        ["git", "-C", str(ROOT), *args], capture_output=True, text=True, check=False
+        ["git", "-C", str(REPO), *args], capture_output=True, text=True, check=False
     )
 
 
@@ -131,7 +134,9 @@ def check_record(path: Path, main: str | None) -> tuple[list[str], str]:
 
     if not isinstance(sha, str) or not BARE_SHA.match(sha):
         findings.append(
-            f"{name}: `source_commit` is {sha!r}, which is not a bare hex sha. Prose belongs in a "
+            f"{name}: `source_commit` is {sha!r}, which is not a full 40-character hex sha. "
+            f"Abbreviations can be ambiguous and non-commit objects are rejected by the "
+            f"commit-typed lookup. Prose belongs in a "
             f"neighbouring key; a value no tool can parse is a value no tool will check."
         )
         return findings, "unparseable"
@@ -149,10 +154,10 @@ def check_record(path: Path, main: str | None) -> tuple[list[str], str]:
             )
             return findings, "self-inconsistent"
 
-    claimed = provenance.get("main_is_an_ancestor_of_this_commit", "absent")
+    claimed = provenance.get("commit_is_an_ancestor_of_main", "absent")
     if claimed == "absent":
         findings.append(
-            f"{name}: names {sha[:11]} without `main_is_an_ancestor_of_this_commit`. Five commits "
+            f"{name}: names {sha[:11]} without `commit_is_an_ancestor_of_main`. Some commits "
             f"in this set are deliberately not ancestors, so a reader cannot tell a deliberate "
             f"reference from a stale one unless the record says which it is."
         )
@@ -184,7 +189,7 @@ def check_record(path: Path, main: str | None) -> tuple[list[str], str]:
     actual = is_ancestor(sha, main)
     if claimed is not actual:
         findings.append(
-            f"{name}: claims `main_is_an_ancestor_of_this_commit` is {claimed!r} for {sha[:11]}, "
+            f"{name}: claims `commit_is_an_ancestor_of_main` is {claimed!r} for {sha[:11]}, "
             f"but against {main} it is {actual!r}."
         )
         return findings, "wrong"
@@ -192,10 +197,31 @@ def check_record(path: Path, main: str | None) -> tuple[list[str], str]:
     return findings, "verified" if actual else "verified-non-ancestor"
 
 
-def main() -> int:
-    records = sorted(ROOT.glob("capability-record*.json"))
+def _arguments(argv: list[str] | None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--evidence-dir",
+        type=Path,
+        default=EVIDENCE,
+        help="directory containing capability-record*.json",
+    )
+    parser.add_argument(
+        "--repo",
+        type=Path,
+        default=REPO,
+        help="repository whose commit graph validates the records",
+    )
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    global EVIDENCE, REPO
+    args = _arguments(argv)
+    EVIDENCE = args.evidence_dir.resolve()
+    REPO = args.repo.resolve()
+    records = sorted(EVIDENCE.glob("capability-record*.json"))
     if not records:
-        print(f"No capability records under {ROOT}", file=sys.stderr)
+        print(f"No capability records under {EVIDENCE}", file=sys.stderr)
         return 1
 
     main = main_ref()
@@ -220,8 +246,8 @@ def main() -> int:
     )
     if main is None:
         print(
-            "This clone knows no main ref, so stated ancestry was not compared against the "
-            "repository. Shape and resolvability were still checked.",
+            "This repository knows no main ref, so stated ancestry and commit resolvability "
+            "were NOT checked. Only record shape and self-consistency were checked.",
             file=sys.stderr,
         )
     skipped = outcomes.get("unresolvable-shallow-clone", [])
@@ -242,8 +268,9 @@ def main() -> int:
             f"  note: {name} names no commit, with its reason recorded in the record."
         )
 
-    # Not gated, because it depends on how the repository was fetched. Reported, because it is the
-    # thing a reader actually needs: a commit on no remote ref cannot be looked up by anyone else.
+    # Not gated, because it depends on how this clone was fetched. Reported only as local
+    # origin-tracking coverage; the separate isolated network audit checks advertised refs and
+    # direct-SHA fetchability.
     unpushed = sorted(
         {
             path.name: json.loads(path.read_text(encoding="utf-8"))["provenance"][
@@ -259,9 +286,10 @@ def main() -> int:
     ]
     if stranded:
         print(
-            f"\n{len(stranded)} record(s) name a commit on no remote ref in this clone, so another "
-            f"reader cannot resolve it. Not a failure -- it depends on the fetch -- but it is why "
-            f"each of these records also names the commit on main where its work landed:"
+            f"\n{len(stranded)} record(s) name a commit on no origin-tracking ref in this clone. "
+            f"This is local fetch coverage, not proof about the remote or direct-SHA fetchability; "
+            f"see commit-reachability-audit.json. Each record also names the commit on main where "
+            f"its work landed:"
         )
         for name, sha in stranded:
             print(f"  - {name}: {sha[:11]}")

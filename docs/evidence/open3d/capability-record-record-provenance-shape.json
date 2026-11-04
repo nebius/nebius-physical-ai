@@ -7,12 +7,12 @@
     "why_i_declined_to_stack_it_on_982": "It touches ten records and changes nothing about the frames, the gate or the binding. PROGRAM.md says not to stack unrelated changes onto the first PR."
   },
   "the_shape": {
-    "required": "A `provenance` object with `source_commit` (a bare hex sha, or null with `why_no_source_commit`) and `main_is_an_ancestor_of_this_commit`.",
+    "required": "A `provenance` object with `source_commit` (a full 40-character hex commit sha, or null with `why_no_source_commit`) and `commit_is_an_ancestor_of_main`.",
     "why_the_ancestry_flag": "Nine of the ten records name a commit that is not an ancestor of main, and they are right to. The problem was never the values -- it was that a reader could not distinguish a deliberate non-ancestor from a stale or mistyped reference. Stating it turns an ambiguity into a fact.",
     "why_i_did_not_do_what_was_asked": "The ask was to bind each record to a commit that is an ancestor of the head. That would have meant rewriting nine values to commits the measurements were not taken at, which is falsification, not provenance."
   },
   "the_finding_this_turned_up": {
-    "what": "Nine of the ten records that name a provenance commit name one that is on ZERO refs this remote advertises. Those nine records name seven distinct commits. They exist only in the clones that made them, so no other reader can resolve them -- and one, 77bff008fff, is on zero refs of any kind, local included, so it survives only until a garbage collection.",
+    "what": "At the recorded audit time, nine of ten records that name a provenance commit named one contained by no ref advertised by origin. Those nine records name seven distinct commits. This is a ref-containment result, not proof that GitHub cannot serve an unreferenced object by SHA or that the object exists only in one clone.",
     "why_it_matters_more_than_the_key_names": "A uniform key naming an unresolvable commit is tidier and no more auditable. This was not in the original finding and I would not have seen it by standardising key names alone.",
     "what_each_record_now_also_names": "The commit on main where that work landed, so a reader has something they can resolve.",
     "how_that_claim_was_checked_rather_than_asserted": "For each stranded commit, a symbol or source line it introduced under npa/ was searched at origin/main and traced with `git log -S`. All seven distinct commits resolve to the same merge.",
@@ -60,11 +60,11 @@
       "why_it_slipped": "Nine is the number the guard prints, because the guard iterates records. I copied the count into prose about commits without re-deriving it. Every per-record claim was correct; only the roll-up was wrong."
     },
     "how_the_zero_remote_refs_claim_was_actually_established": {
-      "the_problem_with_how_i_first_checked_it": "I asserted zero remote refs from a clone whose only fetch refspec is refs/heads/*, against a remote that advertises 1274 refs of which 933 are PR heads. I consulted roughly a quarter of the refs a reader could resolve a commit from, and the clone was shallow as well. The claim was true. It was not established, which is a defect of the same kind as the ones this change exists to fix.",
+      "the_problem_with_how_i_first_checked_it": "I asserted zero advertised refs from a clone whose only fetch refspec is refs/heads/*, against a remote that advertised 1274 refs of which 933 were PR heads. I consulted roughly a quarter of the advertised refs, and the clone was shallow as well. The ref-containment result was later established; direct object fetchability remains a separate question.",
       "what_the_test_does_now": "harness/audit_commit_reachability.py takes git ls-remote as the denominator, fetches every refs/pull/*/head and refs/tags/* into its own namespace, and asks reachability against all of them.",
       "coverage": "1274 advertised refs: 933 PR heads, 11 tags, the rest branches. 23 refs/pull/N/merge refs are skipped because a merge ref has the PR head as an ancestor and cannot contain a commit the head lacks.",
       "how_shallowness_was_ruled_out_rather_than_waved_at": "A shallow clone makes absence unsound, because a commit below the graft boundary is unreachable in the walk whether or not a ref contains it. This clone has one graft point. None of the ten named commits is an ancestor of it, so none can be concealed by the truncation -- tested per commit with merge-base --is-ancestor rather than argued from commit dates, which rebases make unreliable. A commit that could be concealed is now reported as indeterminate and fails the harness, rather than being reported as stranded.",
-      "result": "7 on zero remote refs, 3 resolvable, 0 indeterminate."
+      "result": "The fresh isolated audit names 12 distinct commits: 4 are contained by advertised origin refs, 6 are on no advertised ref but remain directly fetchable by SHA, and 2 are neither ref-contained nor directly fetchable at measurement time."
     },
     "two_defects_in_the_first_version_of_that_test": {
       "an_allowlist_that_under_covered": "I extracted provenance shas from three key names I expected, which found seven of the eleven object-shaped values the records carry and silently missed base_commit, built_on_main, candidate_commit and commit_on_main_carrying_this_source. It therefore reported zero resolvable commits, which should have been impossible given 15b0b11f0 is on main. The tell was that the answer was too clean. Any object-shaped value in provenance is now a candidate.",
@@ -73,8 +73,8 @@
     },
     "the_finding_broke_one_of_my_own_tests_in_ci": {
       "what_happened": "test_the_recovered_commits_are_the_ones_the_records_name traced each recovered commit with git log -S and asserted the named sha was found. It passed here and failed in CI from the first push, and I had reported the branch as red only on the queue-wide dependency gate, which was wrong.",
-      "why_it_failed": "Exactly the property this change documents. The commits are on zero remote refs, so a clone made by anyone else does not have the objects and git log -S has nothing to search. The test asserted something only the clone that made the commits can verify.",
-      "the_fix": "Split in two. The half every clone can check -- that the probe symbol is in the tree, which is what the record claims the commit contributed -- always runs. The trace skips with the absent shas named and a pointer to the reachability audit. Skipping where the objects are absent is honest; asserting a trace that cannot run is not, and silently passing would be worse than either.",
+      "why_it_failed": "The CI clone did not contain the unreferenced source objects, so git log -S over that clone could not reproduce the author's local trace.",
+      "the_fix": "The deterministic check now binds each record to its recovery-table probe and proves that probe exists under npa/ in the named main commit but not its parent. It cannot be self-satisfied by evidence prose or the test's own literals.",
       "what_i_should_have_noticed_sooner": "I read the shard results as one red check and did not open them. The failure had been there since the first push and moved shards when I added tests, which is what finally made me look."
     },
     "merge_refs_are_now_tested_rather_than_skipped_on_an_argument": {
@@ -130,7 +130,7 @@
   "what_this_does_not_establish": [
     "Nothing about whether any record's measurements are right. A correctly flagged commit can still be the wrong commit.",
     "No product behavior change: no file under npa/src/ is touched.",
-    "Not reachability. The guard reports which commits are on no remote ref and deliberately does not fail on it, because that depends on how CI fetched the repository and a guard that fails on a fetch flag gets deleted.",
+    "Not remote reachability. The offline guard reports only missing origin-tracking refs in its current clone and points to the isolated network audit for advertised-ref and direct-SHA evidence.",
     "Nothing about the three records whose provenance was already in the target shape; two are edited by open PRs and are left alone."
   ],
   "a_mistake_i_made_doing_this": "My first run wrote a 40-character sha for the 602 merge that I had produced by padding the abbreviation, rather than resolving it. The script's own assertion caught it on the first record. It is the exact failure this change is about -- a provenance value that looks authoritative and resolves to nothing -- and I made it while fixing it.",
@@ -138,19 +138,19 @@
     "source_commit": null,
     "why_no_source_commit": "The harness and the ten rewritten records are added by this change, so the record cannot name its own commit -- the hash does not exist until after the record is written. The guard accepts a null with a reason for exactly this case, and the file digest below is what a reader can recompute now.",
     "built_on_main": "d06e958462865af823b4f1479867df52421c8284",
-    "main_is_an_ancestor_of_this_commit": null,
+    "commit_is_an_ancestor_of_main": null,
     "harness_that_checks_this": [
       {
         "path": "harness/audit_record_provenance.py",
-        "sha256": "4ee0a79ac4cf6f36c8433294406422b21eb68be5fdaa79b9854721962776bfda"
+        "sha256": "9d11c5d9698106a1dee22db9ca25d32b798b9d9e034e349ee7d6577bd3788161"
       },
       {
         "path": "harness/audit_commit_reachability.py",
-        "sha256": "414bebeaf533cd4a659e8d83c868c545ff5e8e04c3952d992673cebd65959e51"
+        "sha256": "b59fdbd3bfcd40f22b1605912bdee40cd0c7702a03c387f38f98ca3e6c7bfa25"
       },
       {
         "path": "commit-reachability-audit.json",
-        "sha256": "90e340715cfbd0a7cceb04b62b66a52a5dfa20f47097e28a50e6fbb73111ea14"
+        "sha256": "7bfa7eb9fb07b4b3ed2b66d48c9319cffe17b027947f80393bf8d34672b04175"
       }
     ],
     "why_this_shape": "A review lane found provenance recorded six different ways across these records, so an auditor had to learn each file. This is the one shape. A record about provenance that carried none would have been the defect it complains about.",

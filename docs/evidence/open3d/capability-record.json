@@ -134,9 +134,9 @@
   },
   "provenance": {
     "source_commit": "3ae5a7a3c902214cb8415de1d06a2e224bd75e13",
-    "main_is_an_ancestor_of_this_commit": true,
+    "commit_is_an_ancestor_of_main": true,
     "what_source_commit_means_here": "The npa worktree HEAD at the time the image was built. That phrase used to sit inside the value itself, which made it unparseable as a commit; it is a sentence now and the value is a bare sha.",
-    "why_this_shape": "A review lane found provenance recorded six different ways across these records, so an auditor had to learn each file. This is the one shape: the commit the record attests to, whether main is an ancestor of it, and -- where the answer is no -- why that is deliberate and what a reader can resolve instead. harness/audit_record_provenance.py checks the ancestry claim against the repository rather than trusting it.",
+    "why_this_shape": "A review lane found provenance recorded six different ways across these records, so an auditor had to learn each file. This is the one shape: the commit the record attests to, whether the commit is an ancestor of main, and -- where the answer is no -- why that is deliberate and what a reader can resolve instead. harness/audit_record_provenance.py checks the ancestry claim against the repository rather than trusting it.",
     "this_key_replaced": "A top-level `source_commit` holding '3ae5a7a3c902214cb8415de1d06a2e224bd75e13 (npa worktree HEAD at build)'. Moved rather than dropped."
   }
 }

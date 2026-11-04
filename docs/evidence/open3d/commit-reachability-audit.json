@@ -1,35 +1,43 @@
 {
-  "what_this_answers": "For every commit a capability record names, can another reader resolve it from a ref this remote advertises?",
-  "why_it_exists": "The records claimed zero remote refs. The clone that checked held only refs/heads/* out of every ref this remote advertises, and was shallow. The claim was true and unestablished, which is its own kind of defect.",
+  "measured_at_utc": "2026-11-04T00:59:13.222317+00:00",
+  "source_repository_head": "2ca28e497d5b39e815e609313408ea1acd3cc44d",
+  "remote_name": "origin",
+  "audit_workspace": "fresh private bare repository removed after this run",
+  "what_this_answers": "For every commit a capability record names, does a current advertised origin ref contain it, and if not can origin fetch the object by SHA?",
+  "why_it_exists": "The records claimed no advertised remote refs. The clone that checked held only refs/heads/* out of every ref this remote advertises, and was shallow. The claim was true and unestablished, which is its own kind of defect.",
   "ref_coverage": {
-    "total_refs_advertised_by_remote": 1277,
-    "pull_heads_advertised": 934,
-    "pull_merges_advertised": 25,
+    "total_refs_advertised_by_remote": 1421,
+    "pull_heads_advertised": 987,
+    "pull_merges_advertised": 64,
     "tags_advertised": 11,
-    "branches_advertised": 306,
+    "branches_advertised": 358,
     "refs_in_no_other_category": 1,
-    "fetched_pull_refs": 934,
-    "fetched_merge_refs": 25,
+    "fetched_pull_refs": 987,
+    "fetched_merge_refs": 64,
     "fetched_tag_refs": 11,
+    "fetched_branch_refs": 358,
     "why_merge_refs_are_no_longer_skipped": "The first version skipped them, arguing a merge ref has its PR head as an ancestor and so cannot hold a commit the head lacks. A reviewer tested it on all of them and found one where the head had moved since the merge ref was computed, so the property held for a different reason than the one I gave. It was harmless, and a force-push is the case that would not be. They are now fetched and tested, so the audit rests on no argument about refs.",
     "counts_here_are_a_moment_not_a_constant": "This remote gains refs continuously. A count written into prose is stale almost immediately -- one of mine was wrong by the time it was published -- so the numbers live in this report and the prose points here."
   },
   "shallow_clone": {
-    "is_shallow": true,
-    "graft_points": 16,
+    "is_shallow": false,
+    "graft_points": 0,
     "why_this_does_not_invalidate_the_result": "Truncation removes the ancestors of a graft point. A named commit is hidden only if it is one of them, which is tested per commit rather than argued from commit dates.",
     "commits_that_could_be_concealed": 0
   },
   "tally": {
-    "on_zero_remote_refs": 7,
-    "resolvable_remotely": 3
+    "on_zero_remote_refs": 6,
+    "resolvable_remotely": 4,
+    "absent_from_this_clone": 2
   },
   "commits": [
     {
       "commit": "1441e211400cf7d07c8d832d3ad787ff71d7fad2",
       "verdict": "on_zero_remote_refs",
       "remote_refs_containing": 0,
-      "local_refs_containing": 5,
+      "direct_sha_fetch_attempted": true,
+      "direct_sha_fetchable": true,
+      "local_refs_containing": 0,
       "shallow_clone_could_conceal_it": false,
       "orphaned_tracking_refs_containing": 0,
       "example_remote_refs": []
@@ -37,21 +45,25 @@
     {
       "commit": "15b0b11f0bc137631954ac87076f44753c513976",
       "verdict": "resolvable_remotely",
-      "remote_refs_containing": 332,
-      "local_refs_containing": 26,
+      "remote_refs_containing": 496,
+      "direct_sha_fetch_attempted": false,
+      "direct_sha_fetchable": null,
+      "local_refs_containing": 0,
       "shallow_clone_could_conceal_it": false,
       "orphaned_tracking_refs_containing": 0,
       "example_remote_refs": [
-        "refs/remotes/origin/HEAD",
-        "refs/remotes/origin/codex/aloha-paidf-comparable-20261005",
-        "refs/remotes/origin/codex/antioch-local-workflow-20260916"
+        "refs/remotes/provenance-audit/branch/codex/aloha-paidf-comparable-20261005",
+        "refs/remotes/provenance-audit/branch/codex/antioch-local-workflow-20260916",
+        "refs/remotes/provenance-audit/branch/codex/ci-merge-fix-20261018-7f93a2"
       ]
     },
     {
       "commit": "16012b1088579569a8755a1483c4c260c6af3973",
       "verdict": "on_zero_remote_refs",
       "remote_refs_containing": 0,
-      "local_refs_containing": 5,
+      "direct_sha_fetch_attempted": true,
+      "direct_sha_fetchable": true,
+      "local_refs_containing": 0,
       "shallow_clone_could_conceal_it": false,
       "orphaned_tracking_refs_containing": 0,
       "example_remote_refs": []
@@ -60,34 +72,70 @@
       "commit": "256c26bc915080934814789be6a41bbc253f0d1c",
       "verdict": "on_zero_remote_refs",
       "remote_refs_containing": 0,
-      "local_refs_containing": 5,
-      "shallow_clone_could_conceal_it": false,
-      "orphaned_tracking_refs_containing": 0,
-      "example_remote_refs": []
-    },
-    {
-      "commit": "6e8cd115f1a9834cdc25c868eee1b4879d28e65f",
-      "verdict": "on_zero_remote_refs",
-      "remote_refs_containing": 0,
-      "local_refs_containing": 5,
-      "shallow_clone_could_conceal_it": false,
-      "orphaned_tracking_refs_containing": 0,
-      "example_remote_refs": []
-    },
-    {
-      "commit": "77bff008fff489b73ee2d8cd11466a105bf9d630",
-      "verdict": "on_zero_remote_refs",
-      "remote_refs_containing": 0,
+      "direct_sha_fetch_attempted": true,
+      "direct_sha_fetchable": true,
       "local_refs_containing": 0,
       "shallow_clone_could_conceal_it": false,
       "orphaned_tracking_refs_containing": 0,
       "example_remote_refs": []
     },
     {
+      "commit": "3ae5a7a3c902214cb8415de1d06a2e224bd75e13",
+      "verdict": "resolvable_remotely",
+      "remote_refs_containing": 807,
+      "direct_sha_fetch_attempted": false,
+      "direct_sha_fetchable": null,
+      "local_refs_containing": 0,
+      "shallow_clone_could_conceal_it": false,
+      "orphaned_tracking_refs_containing": 0,
+      "example_remote_refs": [
+        "refs/remotes/provenance-audit/branch/codex/aloha-paidf-comparable-20261005",
+        "refs/remotes/provenance-audit/branch/codex/antioch-local-workflow-20260916",
+        "refs/remotes/provenance-audit/branch/codex/antioch-workbench-integration-20260818T045316Z-ee5d404f"
+      ]
+    },
+    {
+      "commit": "46ae993d10e251913fc4942fa5cf0e4fa689dfe7",
+      "verdict": "absent_from_this_clone",
+      "remote_refs_containing": null,
+      "direct_sha_fetch_attempted": true,
+      "direct_sha_fetchable": false,
+      "local_refs_containing": 0,
+      "shallow_clone_could_conceal_it": false,
+      "orphaned_tracking_refs_containing": 0,
+      "example_remote_refs": [],
+      "note": "The isolated audit repository could neither find the object through an advertised ref nor fetch it directly by SHA at measurement time."
+    },
+    {
+      "commit": "6e8cd115f1a9834cdc25c868eee1b4879d28e65f",
+      "verdict": "on_zero_remote_refs",
+      "remote_refs_containing": 0,
+      "direct_sha_fetch_attempted": true,
+      "direct_sha_fetchable": true,
+      "local_refs_containing": 0,
+      "shallow_clone_could_conceal_it": false,
+      "orphaned_tracking_refs_containing": 0,
+      "example_remote_refs": []
+    },
+    {
+      "commit": "77bff008fff489b73ee2d8cd11466a105bf9d630",
+      "verdict": "absent_from_this_clone",
+      "remote_refs_containing": null,
+      "direct_sha_fetch_attempted": true,
+      "direct_sha_fetchable": false,
+      "local_refs_containing": 0,
+      "shallow_clone_could_conceal_it": false,
+      "orphaned_tracking_refs_containing": 0,
+      "example_remote_refs": [],
+      "note": "The isolated audit repository could neither find the object through an advertised ref nor fetch it directly by SHA at measurement time."
+    },
+    {
       "commit": "b18d7aef56bbe25a5b45290e0b705f20a59ad4da",
       "verdict": "on_zero_remote_refs",
       "remote_refs_containing": 0,
-      "local_refs_containing": 5,
+      "direct_sha_fetch_attempted": true,
+      "direct_sha_fetchable": true,
+      "local_refs_containing": 0,
       "shallow_clone_could_conceal_it": false,
       "orphaned_tracking_refs_containing": 0,
       "example_remote_refs": []
@@ -95,51 +143,58 @@
     {
       "commit": "d06e958462865af823b4f1479867df52421c8284",
       "verdict": "resolvable_remotely",
-      "remote_refs_containing": 22,
-      "local_refs_containing": 17,
+      "remote_refs_containing": 178,
+      "direct_sha_fetch_attempted": false,
+      "direct_sha_fetchable": null,
+      "local_refs_containing": 0,
       "shallow_clone_could_conceal_it": false,
       "orphaned_tracking_refs_containing": 0,
       "example_remote_refs": [
-        "refs/remotes/origin/HEAD",
-        "refs/remotes/origin/codex/sim2real-franka-cube-experimental-20261031",
-        "refs/remotes/origin/codex/sim2real-pi05-20261006"
+        "refs/remotes/provenance-audit/branch/codex/groot-offline-rl-271dec95",
+        "refs/remotes/provenance-audit/branch/codex/sim2real-franka-cube-experimental-20261031",
+        "refs/remotes/provenance-audit/branch/codex/sim2real-pi05-20261006"
       ]
     },
     {
       "commit": "d22893238d75efbb05a69eb75bca1b82eb5fe280",
       "verdict": "resolvable_remotely",
-      "remote_refs_containing": 617,
-      "local_refs_containing": 1098,
+      "remote_refs_containing": 781,
+      "direct_sha_fetch_attempted": false,
+      "direct_sha_fetchable": null,
+      "local_refs_containing": 0,
       "shallow_clone_could_conceal_it": false,
-      "orphaned_tracking_refs_containing": 71,
+      "orphaned_tracking_refs_containing": 0,
       "example_remote_refs": [
-        "refs/remotes/origin/HEAD",
-        "refs/remotes/origin/codex/aloha-paidf-comparable-20261005",
-        "refs/remotes/origin/codex/antioch-local-workflow-20260916"
+        "refs/remotes/provenance-audit/branch/codex/aloha-paidf-comparable-20261005",
+        "refs/remotes/provenance-audit/branch/codex/antioch-local-workflow-20260916",
+        "refs/remotes/provenance-audit/branch/codex/antioch-workbench-integration-20260818T045316Z-ee5d404f"
       ]
     },
     {
       "commit": "e8e12b12a367f1a1bc7ef7aca7ac68866e8e5e97",
       "verdict": "on_zero_remote_refs",
       "remote_refs_containing": 0,
-      "local_refs_containing": 11,
+      "direct_sha_fetch_attempted": true,
+      "direct_sha_fetchable": true,
+      "local_refs_containing": 0,
       "shallow_clone_could_conceal_it": false,
       "orphaned_tracking_refs_containing": 0,
       "example_remote_refs": []
     }
   ],
   "object_kinds": {
-    "1441e211400cf7d07c8d832d3ad787ff71d7fad2": "commit",
+    "1441e211400cf7d07c8d832d3ad787ff71d7fad2": "unknown_to_this_clone",
     "15b0b11f0bc137631954ac87076f44753c513976": "commit",
-    "16012b1088579569a8755a1483c4c260c6af3973": "commit",
-    "256c26bc915080934814789be6a41bbc253f0d1c": "commit",
-    "46ae993d10e251913fc4942fa5cf0e4fa689dfe7": "tree",
-    "6e8cd115f1a9834cdc25c868eee1b4879d28e65f": "commit",
-    "77bff008fff489b73ee2d8cd11466a105bf9d630": "commit",
-    "b18d7aef56bbe25a5b45290e0b705f20a59ad4da": "commit",
+    "16012b1088579569a8755a1483c4c260c6af3973": "unknown_to_this_clone",
+    "256c26bc915080934814789be6a41bbc253f0d1c": "unknown_to_this_clone",
+    "3ae5a7a3c902214cb8415de1d06a2e224bd75e13": "commit",
+    "46ae993d10e251913fc4942fa5cf0e4fa689dfe7": "unknown_to_this_clone",
+    "6e8cd115f1a9834cdc25c868eee1b4879d28e65f": "unknown_to_this_clone",
+    "77bff008fff489b73ee2d8cd11466a105bf9d630": "unknown_to_this_clone",
+    "b18d7aef56bbe25a5b45290e0b705f20a59ad4da": "unknown_to_this_clone",
     "d06e958462865af823b4f1479867df52421c8284": "commit",
     "d22893238d75efbb05a69eb75bca1b82eb5fe280": "commit",
-    "e8e12b12a367f1a1bc7ef7aca7ac68866e8e5e97": "commit"
+    "e8e12b12a367f1a1bc7ef7aca7ac68866e8e5e97": "unknown_to_this_clone"
   },
   "records_naming_them": {
     "capability-record-distance-bands.json": [
@@ -163,11 +218,9 @@
     ],
     "capability-record-support-crop.json": [
       "15b0b11f0bc137631954ac87076f44753c513976",
+      "46ae993d10e251913fc4942fa5cf0e4fa689dfe7",
       "77bff008fff489b73ee2d8cd11466a105bf9d630",
       "d22893238d75efbb05a69eb75bca1b82eb5fe280"
-    ],
-    "capability-record-support-crop.json#non-commit": [
-      "producing_tree_identity=tree"
     ],
     "capability-record-view-framing.json": [
       "15b0b11f0bc137631954ac87076f44753c513976",
@@ -184,12 +237,15 @@
     "capability-record-workflow-replay.json": [
       "15b0b11f0bc137631954ac87076f44753c513976",
       "b18d7aef56bbe25a5b45290e0b705f20a59ad4da"
+    ],
+    "capability-record.json": [
+      "3ae5a7a3c902214cb8415de1d06a2e224bd75e13"
     ]
   },
   "what_this_audits_glob_does_not_reach": {
-    "evidence_json_outside_this_audits_glob": 31,
-    "of_those_with_no_provenance_block_at_all": 30,
-    "of_those_that_also_carry_digests": 6,
+    "evidence_json_outside_this_audits_glob": 36,
+    "of_those_with_no_provenance_block_at_all": 32,
+    "of_those_that_also_carry_digests": 7,
     "why_three_numbers_and_not_one": "A reviewer measured this as seven files. That is the subset carrying digests and naming no resolvable commit; the broadest count here is every non-record evidence JSON. Different populations rather than a disagreement, and the digest-carrying count is the one that matters, because a digest with no declared origin is the case this change exists to close.",
     "files_carrying_digests_with_no_declared_provenance": [
       {
@@ -218,6 +274,12 @@
       },
       {
         "file": "pane-abstention-control.json",
+        "has_a_provenance_block": false,
+        "carries_digests": true,
+        "names_a_commit": false
+      },
+      {
+        "file": "register-seed-determinism.json",
         "has_a_provenance_block": false,
         "carries_digests": true,
         "names_a_commit": false
@@ -286,6 +348,12 @@
       },
       {
         "file": "consumer-recovery.json",
+        "has_a_provenance_block": false,
+        "carries_digests": false,
+        "names_a_commit": false
+      },
+      {
+        "file": "declared-reproducibility-causes.json",
         "has_a_provenance_block": false,
         "carries_digests": false,
         "names_a_commit": false
@@ -396,6 +464,12 @@
         "file": "poisson-procedure-and-overcall-audit.json",
         "has_a_provenance_block": false,
         "carries_digests": false,
+        "names_a_commit": false
+      },
+      {
+        "file": "register-seed-determinism.json",
+        "has_a_provenance_block": false,
+        "carries_digests": true,
         "names_a_commit": false
       },
       {

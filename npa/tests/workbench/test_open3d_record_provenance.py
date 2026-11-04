@@ -4,14 +4,15 @@ A review lane found that neither existing Open3D evidence harness was run by any
 both could have gone red on the committed set with nothing noticing. A new guard with no test is
 the same defect, one file along.
 
-Negative controls work on a copy of the evidence directory, so a test run never mutates the
-committed records. The copy keeps the real repository as its git context, because the guard asks
-git whether a commit resolves and whether main is an ancestor of it.
+Negative controls work under pytest's private temporary directory, so a test run never mutates or
+races a repository-wide walk of the committed source tree. The guard receives the evidence and
+repository roots explicitly.
 """
 
 from __future__ import annotations
 
 import importlib.util
+import hashlib
 import json
 import shutil
 import subprocess
@@ -27,7 +28,14 @@ GUARD = "harness/audit_record_provenance.py"
 
 def run(evidence: Path) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
-        [sys.executable, str(evidence / GUARD)],
+        [
+            sys.executable,
+            str(evidence / GUARD),
+            "--evidence-dir",
+            str(evidence),
+            "--repo",
+            str(ROOT),
+        ],
         capture_output=True,
         text=True,
         check=False,
@@ -36,13 +44,10 @@ def run(evidence: Path) -> subprocess.CompletedProcess[str]:
 
 @pytest.fixture
 def evidence(tmp_path: Path) -> Path:
-    """A copy of the evidence directory, inside the real repository so git still answers."""
-    copy = ROOT / "docs/evidence" / f"_provenance_test_{tmp_path.name}"
+    """A private copy outside the repository tree, with explicit git context."""
+    copy = tmp_path / "evidence"
     shutil.copytree(EVIDENCE, copy)
-    try:
-        yield copy
-    finally:
-        shutil.rmtree(copy, ignore_errors=True)
+    return copy
 
 
 def edit(evidence: Path, name: str, mutate) -> None:
@@ -81,6 +86,8 @@ def test_the_committed_records_pass() -> None:
     result = run(EVIDENCE)
     assert result.returncode == 0, result.stdout + result.stderr
     assert "in one shape" in result.stdout
+    assert "main-unknown" not in result.stdout + result.stderr
+    assert "unresolvable-shallow-clone" not in result.stdout + result.stderr
 
 
 def test_every_committed_record_carries_the_shape() -> None:
@@ -94,7 +101,7 @@ def test_every_committed_record_carries_the_shape() -> None:
         if provenance["source_commit"] is None:
             assert provenance.get("why_no_source_commit"), path.name
         else:
-            assert "main_is_an_ancestor_of_this_commit" in provenance, path.name
+            assert "commit_is_an_ancestor_of_main" in provenance, path.name
 
 
 def test_a_record_with_no_provenance_is_caught(evidence: Path) -> None:
@@ -119,7 +126,7 @@ def test_a_sha_with_prose_beside_it_is_caught(evidence: Path) -> None:
 
     result = run(evidence)
     assert result.returncode == 1, result.stdout
-    assert "not a bare hex sha" in result.stdout
+    assert "not a full 40-character hex sha" in result.stdout
 
 
 def test_a_commit_named_without_the_ancestry_flag_is_caught(evidence: Path) -> None:
@@ -133,30 +140,30 @@ def test_a_commit_named_without_the_ancestry_flag_is_caught(evidence: Path) -> N
     edit(
         evidence,
         "capability-record-standard-runtime.json",
-        lambda d: d["provenance"].pop("main_is_an_ancestor_of_this_commit"),
+        lambda d: d["provenance"].pop("commit_is_an_ancestor_of_main"),
     )
 
     result = run(evidence)
     assert result.returncode == 1, result.stdout
-    assert "without `main_is_an_ancestor_of_this_commit`" in result.stdout
+    assert "without `commit_is_an_ancestor_of_main`" in result.stdout
     assert "claims" not in result.stdout, (
         "reported as a false claim rather than a missing key"
     )
 
 
-def test_an_ancestry_claim_that_contradicts_the_repository_is_caught(
-    evidence: Path,
-) -> None:
-    """A wrong flag is worse than no flag, because it reads as verified."""
-    edit(
-        evidence,
-        "capability-record.json",
-        lambda d: d["provenance"].update({"main_is_an_ancestor_of_this_commit": False}),
-    )
+def test_an_ancestry_claim_that_contradicts_the_repository_is_caught(guard) -> None:
+    """A wrong flag is caught deterministically, independent of clone refs and depth."""
+    guard.resolves = lambda sha: True
+    guard.is_ancestor = lambda sha, main: True
 
-    result = run(evidence)
-    assert result.returncode == 1, result.stdout
-    assert "but against" in result.stdout
+    findings, outcome = guard.check_record(
+        _record_file(
+            {"source_commit": "1" * 40, "commit_is_an_ancestor_of_main": False}
+        ),
+        "origin/main",
+    )
+    assert outcome == "wrong", (findings, outcome)
+    assert "but against" in findings[0]
 
 
 def test_absence_from_a_full_clone_refutes_an_ancestor_claim(guard) -> None:
@@ -172,7 +179,7 @@ def test_absence_from_a_full_clone_refutes_an_ancestor_claim(guard) -> None:
 
     findings, outcome = guard.check_record(
         _record_file(
-            {"source_commit": "0" * 40, "main_is_an_ancestor_of_this_commit": True}
+            {"source_commit": "0" * 40, "commit_is_an_ancestor_of_main": True}
         ),
         "origin/main",
     )
@@ -192,7 +199,7 @@ def test_absence_from_a_full_clone_confirms_a_non_ancestor_claim(guard) -> None:
 
     findings, outcome = guard.check_record(
         _record_file(
-            {"source_commit": "0" * 40, "main_is_an_ancestor_of_this_commit": False}
+            {"source_commit": "0" * 40, "commit_is_an_ancestor_of_main": False}
         ),
         "origin/main",
     )
@@ -207,7 +214,7 @@ def test_a_shallow_clone_reports_the_ancestry_it_could_not_check(guard) -> None:
 
     findings, outcome = guard.check_record(
         _record_file(
-            {"source_commit": "0" * 40, "main_is_an_ancestor_of_this_commit": True}
+            {"source_commit": "0" * 40, "commit_is_an_ancestor_of_main": True}
         ),
         "origin/main",
     )
@@ -257,77 +264,53 @@ RECOVERED_PROBES = {
     "capability-record-viewer-reconciliation.json": (
         "test_a_cloud_only_run_offers_no_empty_surface_tab"
     ),
-    "capability-record-support-claim-correction.json": "FAR_BAND_AREA_SHARE",
+    "capability-record-support-claim-correction.json": (
+        "_assert_uneven_coverage_is_not_called_fabrication"
+    ),
 }
+RECOVERY_COMMIT = "15b0b11f0bc137631954ac87076f44753c513976"
 
 
-def test_the_recovered_probes_actually_reached_the_tree() -> None:
-    """The half of the recovery argument that every clone can check.
+def test_the_recovered_probes_entered_main_at_the_recorded_commit() -> None:
+    """Each probe appears in the named recovery commit and not in its parent.
 
-    The record's claim is that each recovered commit's contribution reached main, so the probe
-    symbol must be in the tree. This needs no history and no unreachable objects, which is why
-    it is split out from the trace below.
+    Restricting grep to ``npa/`` prevents the test's own string literals and evidence
+    prose from satisfying the check.
     """
     for name, probe in RECOVERED_PROBES.items():
-        found = subprocess.run(
-            ["git", "-C", str(ROOT), "grep", "--quiet", probe, "HEAD"],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        assert found.returncode == 0, (
-            f"{name} names probe {probe}, absent from the tree at HEAD"
-        )
+        for revision, expected in ((RECOVERY_COMMIT, 0), (RECOVERY_COMMIT + "^", 1)):
+            found = subprocess.run(
+                [
+                    "git",
+                    "-C",
+                    str(ROOT),
+                    "grep",
+                    "--quiet",
+                    "-F",
+                    probe,
+                    revision,
+                    "--",
+                    "npa/",
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            assert found.returncode == expected, (name, probe, revision, found.stderr)
 
 
 def test_the_recovered_commits_are_the_ones_the_records_name() -> None:
-    """Three records named no commit; each value was recovered from evidence, not chosen.
-
-    Pinned because a plausible-looking commit is the easiest thing in this change to get wrong,
-    and the recovery argument lives in prose that nothing else checks.
-
-    It cannot be pinned everywhere, and that is this change's own finding rather than a weakness
-    in the test. These commits are on zero remote refs, so a clone made by anyone else -- CI's
-    included -- does not have the objects, and `git log -S` has nothing to search. The first
-    version of this test asserted the trace unconditionally and failed in CI for exactly the
-    reason the record documents. Skipping where the objects are absent is honest; asserting a
-    trace that cannot run is not, and silently passing would be worse than either.
-    """
-    missing = [
-        sha
-        for name in RECOVERED_PROBES
-        if (
-            sha := json.loads((EVIDENCE / name).read_text())["provenance"][
-                "source_commit"
-            ]
-        )
-        and subprocess.run(
-            ["git", "-C", str(ROOT), "cat-file", "-e", sha],
-            capture_output=True,
-            check=False,
-        ).returncode
-        != 0
-    ]
-    if missing:
-        pytest.skip(
-            "This clone does not hold "
-            + ", ".join(sha[:11] for sha in missing)
-            + ". They are on zero remote refs, so only the clone that made them can trace "
-            "them; see commit-reachability-audit.json. The tree-level half of this claim is "
-            "checked by test_the_recovered_probes_actually_reached_the_tree."
-        )
-
+    """The per-record source pointers agree with the recovery table that names each probe."""
+    shape = json.loads(
+        (EVIDENCE / "capability-record-record-provenance-shape.json").read_text()
+    )
+    recovered = shape["the_finding_this_turned_up"]["the_probes"]
     for name, probe in RECOVERED_PROBES.items():
         sha = json.loads((EVIDENCE / name).read_text())["provenance"]["source_commit"]
-        found = subprocess.run(
-            ["git", "-C", str(ROOT), "log", "-S", probe, "--format=%H", "--all"],
-            capture_output=True,
-            text=True,
-            check=False,
-        ).stdout.split()
-        assert sha in found, (
-            f"{name} names {sha[:11]}, but no commit introducing {probe} matches it"
-        )
+        assert recovered[sha]["probe"] == probe, (name, sha, recovered.get(sha))
+        assert RECOVERY_COMMIT.startswith(recovered[sha]["entered_main_at"]), recovered[
+            sha
+        ]
 
 
 def test_the_reachability_audit_consulted_the_refs_the_remote_advertises() -> None:
@@ -346,6 +329,7 @@ def test_the_reachability_audit_consulted_the_refs_the_remote_advertises() -> No
     # was unsound. If they stop being consulted the audit is back to checking a quarter of them.
     assert coverage["fetched_pull_refs"] >= coverage["pull_heads_advertised"] - 1
     assert coverage["fetched_tag_refs"] == coverage["tags_advertised"]
+    assert coverage["fetched_branch_refs"] == coverage["branches_advertised"]
     # Merge refs were skipped on an argument until a reviewer found a ref the argument did not
     # describe. They are fetched and tested now, so the audit rests on no argument about refs.
     assert coverage["fetched_merge_refs"] >= coverage["pull_merges_advertised"] - 1
@@ -379,11 +363,11 @@ def test_reachability_is_scoped_to_the_remote_not_to_local_remote_shaped_refs() 
     and this clone has 71 refs that look remote and are not.
     """
     audit = json.loads((EVIDENCE / "commit-reachability-audit.json").read_text())
-    stranded = [c for c in audit["commits"] if c["verdict"] == "on_zero_remote_refs"]
+    stranded = [c for c in audit["commits"] if c["remote_refs_containing"] in (0, None)]
 
-    assert len(stranded) == 7, [c["commit"][:12] for c in stranded]
+    assert len(stranded) == 8, [c["commit"][:12] for c in stranded]
     for commit in stranded:
-        assert commit["remote_refs_containing"] == 0, commit
+        assert commit["direct_sha_fetch_attempted"] is True, commit
         assert commit["orphaned_tracking_refs_containing"] == 0, commit
 
 
@@ -397,19 +381,20 @@ def test_every_record_claiming_no_remote_ref_names_a_commit_the_audit_agrees_is_
     test on the records alone would have passed. This one joins them to the audit.
     """
     audit = json.loads((EVIDENCE / "commit-reachability-audit.json").read_text())
-    verdicts = {c["commit"]: c["verdict"] for c in audit["commits"]}
+    verdicts = {c["commit"]: c for c in audit["commits"]}
 
     claiming = []
-    for record in sorted(EVIDENCE.glob("capability-record-*.json")):
+    for record in sorted(EVIDENCE.glob("capability-record*.json")):
         provenance = json.loads(record.read_text()).get("provenance", {})
-        if "this_commit_is_on_no_remote_ref" not in provenance:
+        if "no_advertised_origin_ref_at_audit" not in provenance:
             continue
         sha = provenance.get("source_commit") or provenance.get("candidate_commit")
         claiming.append(record.name)
-        assert verdicts.get(sha) == "on_zero_remote_refs", (
+        result = verdicts.get(sha)
+        assert result and result["remote_refs_containing"] in (0, None), (
             record.name,
             sha,
-            verdicts.get(sha),
+            result,
         )
 
     assert len(claiming) == 9, claiming
@@ -429,12 +414,19 @@ def test_the_audit_reports_the_evidence_its_own_glob_cannot_reach() -> None:
 
     A reviewer measured the whole evidence directory rather than the records this change
     rewrote, and found files that carry digests, name no resolvable commit, and are not
-    `capability-record-*`, so no hardening inside the glob will ever reach them. Widening it
+    `capability-record*`, so no hardening inside the glob will ever reach them. Widening it
     means designing provenance for artifacts this change did not produce; reporting the count
     is what stops it being silent in the meantime.
     """
     audit = json.loads((EVIDENCE / "commit-reachability-audit.json").read_text())
     edge = audit["what_this_audits_glob_does_not_reach"]
+
+    current_outside = [
+        path
+        for path in EVIDENCE.glob("*.json")
+        if not path.name.startswith("capability-record")
+    ]
+    assert edge["evidence_json_outside_this_audits_glob"] == len(current_outside)
 
     assert edge["evidence_json_outside_this_audits_glob"] > 0
     # The digest-carrying subset is the one that matters: a digest with no declared origin is
@@ -449,4 +441,27 @@ def test_the_audit_reports_the_evidence_its_own_glob_cannot_reach() -> None:
     for entry in edge["files_carrying_digests_with_no_declared_provenance"]:
         assert entry["carries_digests"] is True, entry
         assert entry["has_a_provenance_block"] is False, entry
-        assert not entry["file"].startswith("capability-record-"), entry
+        assert not entry["file"].startswith("capability-record"), entry
+
+
+def test_the_reachability_report_names_when_and_where_it_was_measured() -> None:
+    audit = json.loads((EVIDENCE / "commit-reachability-audit.json").read_text())
+
+    assert audit["measured_at_utc"].endswith("+00:00")
+    assert len(audit["source_repository_head"]) == 40
+    assert audit["remote_name"] == "origin"
+    assert audit["audit_workspace"].startswith("fresh private bare repository")
+
+
+def test_every_provenance_harness_pin_matches_the_current_bytes() -> None:
+    record = json.loads(
+        (EVIDENCE / "capability-record-record-provenance-shape.json").read_text()
+    )
+    pins = record["provenance"]["harness_that_checks_this"]
+
+    assert len(pins) == 3
+    for pin in pins:
+        path = EVIDENCE / pin["path"]
+        assert path.is_file(), pin
+        actual = hashlib.sha256(path.read_bytes()).hexdigest()
+        assert actual == pin["sha256"], (path, actual, pin["sha256"])
