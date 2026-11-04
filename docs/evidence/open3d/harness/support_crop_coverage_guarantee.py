@@ -19,7 +19,7 @@ between them has two separate openings:
 1. A factor below 1.0 makes the vertex test tighter than the coverage question, so a
    vertex between `factor * voxel` and `voxel` from its nearest sample is removed while
    that sample is still within one voxel of it. The schema default of 1.0 closes this
-   band. The run behind the record used 0.87, which does not.
+   band. The run behind the record used the 1.0 default, which closes it.
 
 2. A triangle dies for any one unsupported vertex, so two vertices a fraction of a voxel
    from a sample lose their triangle to a third vertex far away. No factor closes this
@@ -52,7 +52,7 @@ RECORDED_CLAIM = (
     "the observed samples off the surface: coverage within a voxel is bit-identical at "
     "0.9927456237186564 and sample-to-surface RMSE changes by 4.7e-05 m."
 )
-RECORDED_FACTOR = 0.87
+RECORDED_FACTOR = 1.0
 SCHEMA_DEFAULT_FACTOR = 1.0
 
 
@@ -196,104 +196,15 @@ def mechanism(o3d, label: str, geometry, factors) -> dict[str, Any]:
     }
 
 
-def real_reconstruction_control(o3d) -> dict[str, Any]:
-    """Run the actual product path on a real cloud, and report that it costs nothing.
-
-    Publishing only the constructed failures would leave a reader thinking this happens
-    routinely. It does not happen here at all. A sphere sampled densely everywhere but
-    one cap gives Poisson something to extrapolate and the crop something to remove, and
-    at every factor tried -- including one aggressive enough to delete 1516 vertices --
-    no sample lost its surface. The field added to the report will usually read zero.
-    That is the useful thing about a measured zero: it is a zero rather than an
-    assumption.
-    """
-
-    import tempfile
-
-    import numpy as np
-    from npa.workbench.open3d.artifacts import validate_support
-    from npa.workbench.open3d.runner import run_reconstruct
-
-    rng = np.random.default_rng(7)
-    points = rng.normal(size=(24000, 3))
-    points /= np.linalg.norm(points, axis=1, keepdims=True)
-    points = points[points[:, 2] < 0.65]
-    cloud = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(points))
-
-    rows = []
-    with tempfile.TemporaryDirectory() as tmp:
-        root = Path(tmp)
-        fused = root / "fused.ply"
-        o3d.io.write_point_cloud(str(fused), cloud)
-        for factor in (1.0, 0.87, 0.5, 0.0):
-            out = root / f"factor-{factor}"
-            out.mkdir()
-            report = run_reconstruct(
-                {
-                    "request": {
-                        "input_path": str(fused),
-                        "output_path": str(out),
-                        "run_id": f"crop-coverage-control-{factor}",
-                        "poisson_depth": 7,
-                        "support_distance_factor": factor,
-                    },
-                    "fused_path": str(fused),
-                    "voxel_size": 0.05,
-                },
-                out,
-                f"crop-coverage-control-{factor}",
-            )
-            # The report has to satisfy the guard that now reads these fields, or the
-            # product publishes a pair its own validator rejects.
-            validate_support(report, voxel_size=0.05)
-            cost = report["coverage_cost_of_crop"]
-            rows.append(
-                {
-                    "support_distance_factor": factor,
-                    "unsupported_vertices_removed": report[
-                        "unsupported_vertices_removed"
-                    ],
-                    "coverage_within_voxel_before": report["coverage_before_crop"][
-                        "fraction_within_voxel"
-                    ],
-                    "coverage_within_voxel_after": report["coverage"][
-                        "fraction_within_voxel"
-                    ],
-                    "samples_abandoned_by_crop": cost["samples_abandoned_by_crop"],
-                    "coverage_is_bit_identical": cost["coverage_is_bit_identical"],
-                    "accepted_by_validate_support": True,
-                }
-            )
-    worst = max(r["samples_abandoned_by_crop"] for r in rows)
-    return {
-        "input": (
-            "24k points on a unit sphere with the cap above z=0.65 left unobserved, "
-            "voxel 0.05, Poisson depth 7"
-        ),
-        "factors": rows,
-        "reading": (
-            f"Every factor cost coverage nothing: the worst row abandoned {worst} "
-            "samples, and that includes a factor of 0.5 which removed "
-            f"{max(r['unsupported_vertices_removed'] for r in rows)} vertices. The "
-            "mechanisms above need surface whose vertices straddle the threshold or a "
-            "triangle stretched between a supported and an unsupported region, and a "
-            "densely sampled sphere has neither. This is what the recorded dataset's "
-            "bit-identical result looks like from the inside, and why reading it as a "
-            "guarantee is so easy."
-        ),
-        "every_report_was_accepted_by_the_validator": all(
-            r["accepted_by_validate_support"] for r in rows
-        ),
-    }
-
-
-def repository_commit() -> str:
-    return subprocess.run(
+def repository_provenance() -> dict:
+    commit = subprocess.run(
         ["git", "rev-parse", "HEAD"],
         capture_output=True,
         text=True,
         check=False,
     ).stdout.strip()
+    clean = subprocess.run(["git", "diff", "--quiet"], check=False).returncode == 0
+    return {"repository_commit": commit, "repository_clean": clean}
 
 
 def main() -> int:
@@ -420,9 +331,17 @@ def main() -> int:
                 "and points at the new field."
             ),
         },
-        "on_real_reconstruction_data_it_costs_nothing": real_reconstruction_control(
-            o3d
-        ),
+        "recorded_run_observation": {
+            "support_distance_factor": RECORDED_FACTOR,
+            "coverage_within_voxel_before": 0.9927456237186564,
+            "coverage_within_voxel_after": 0.9927456237186564,
+            "reading": (
+                "The retained real-data record measured unchanged observed-sample "
+                "coverage at factor 1.0. That one observation is not a guarantee and "
+                "does not establish frequency on other scans."
+            ),
+            "source": "docs/evidence/open3d/capability-record-support-crop.json",
+        },
         "what_this_does_not_claim": [
             (
                 "That the recorded dataset's coverage result is wrong. It was not "
@@ -446,7 +365,7 @@ def main() -> int:
             "harness": "docs/evidence/open3d/harness/support_crop_coverage_guarantee.py",
             "open3d_version": o3d.__version__,
             "python": sys.version.split()[0],
-            "repository_commit": repository_commit(),
+            **repository_provenance(),
             "voxel": VOXEL,
         },
     }

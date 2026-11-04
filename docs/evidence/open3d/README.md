@@ -350,15 +350,14 @@ The crop tests *vertices* against `voxel * support_distance_factor` and removes 
 each sample's distance to the nearest point of the remaining *surface*. Those are different questions,
 and the gap has two openings. A factor below 1.0 removes vertices between `factor * voxel` and `voxel`
 from their nearest sample, which are vertices that sample is still within one voxel of; the schema
-default of 1.0 closes that one, and the recorded run used 0.87. The second does not close at any
+default of 1.0 closes that one, and the recorded run used 1.0. The second does not close at any
 factor: a triangle dies for any one unsupported vertex, so two vertices a third of a voxel from a
 sample lose their triangle to a third vertex far away. Measured at 1.0, 1.5 and 2.0, each time leaving
 a sample eight voxels from any surface. The factor high enough to keep it removed nothing at all,
 which is not a crop.
 
-On a real reconstruction the cost is zero. A sphere sampled densely but for one cap, run through the
-shipped `run_reconstruct` at four factors including one that removed 1516 vertices, abandoned no
-sample at any of them. That is what the recorded dataset's result looks like from the inside. So the
+On the retained real-data record, coverage was unchanged at the 1.0 default. That observation is not
+a general guarantee or a frequency estimate for other scans. So the
 reconstruction now publishes `coverage_before_crop` and `coverage_cost_of_crop`, and `validate_support`
 checks them against each other, including the one direction the crop can move coverage: removing
 surface cannot bring a sample closer, so coverage can only fall and the abandonment count has to

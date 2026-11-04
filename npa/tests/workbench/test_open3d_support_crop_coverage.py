@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import ast
 import json
+import runpy
 from pathlib import Path
 
 import numpy as np
@@ -227,7 +228,7 @@ def test_the_record_does_not_dispute_the_measurement_it_reinterprets() -> None:
     """This lane did not re-measure the recorded dataset and must not imply it did."""
 
     examined = record()["the_claim_examined"]
-    assert examined["the_run_used_factor"] == 0.87
+    assert examined["the_run_used_factor"] == 1.0
     assert examined["the_schema_default_is"] == 1.0
     assert "re-measures" in examined["what_is_not_disputed"]
     claims = record()["what_this_does_not_claim"]
@@ -487,26 +488,43 @@ def test_the_functional_smoke_requires_the_pair_on_a_real_report() -> None:
     assert "validate_support" in text
 
 
-def test_the_real_data_control_reports_a_measured_zero() -> None:
-    """The constructed failures must be published beside a real run that costs nothing.
+def test_public_report_allowlist_covers_every_new_measurement_leaf() -> None:
+    """The fail-closed public report generator must accept the additive report block."""
 
-    Without this the record reads as though cropping routinely abandons samples. It
-    does not, on the one real reconstruction measured here, at any factor. The control
-    is what keeps the finding the size it actually is.
-    """
-
-    control = record()["on_real_reconstruction_data_it_costs_nothing"]
-    assert control["every_report_was_accepted_by_the_validator"] is True
-    assert control["factors"], "the control must actually run the product path"
-    assert all(r["samples_abandoned_by_crop"] == 0 for r in control["factors"])
-    assert all(r["coverage_is_bit_identical"] for r in control["factors"])
-    # And it has to include a factor that removed something, or it shows only that
-    # doing nothing costs nothing.
-    assert max(r["unsupported_vertices_removed"] for r in control["factors"]) > 0
-    assert any(
-        r["support_distance_factor"] == 1.0 and r["unsupported_vertices_removed"] >= 0
-        for r in control["factors"]
+    module = runpy.run_path(
+        str(REPO / "docs/evidence/open3d/harness/derive_public_run_report.py")
     )
+    allowed = module["ALLOWED"]["surface/result.json"]
+    expected = {
+        "coverage_before_crop.fraction_within_two_voxels",
+        "coverage_before_crop.fraction_within_voxel",
+        "coverage_before_crop.sample_to_surface_p95",
+        "coverage_before_crop.sample_to_surface_rmse",
+        "coverage_before_crop.samples",
+        "coverage_cost_of_crop.coverage_is_bit_identical",
+        "coverage_cost_of_crop.samples",
+        "coverage_cost_of_crop.samples_abandoned_by_crop",
+        "coverage_cost_of_crop.samples_covered_before_crop",
+        "coverage_cost_of_crop.worst_abandoned_sample_voxels_from_surface",
+    }
+    assert expected <= set(allowed)
+    assert (
+        allowed["coverage_cost_of_crop.worst_abandoned_sample_voxels_from_surface"]
+        == module["FLOAT_OR_NULL"]
+    )
+
+
+def test_the_real_data_observation_is_scoped_to_its_record() -> None:
+    """One retained real-data result is an observation, not a crop guarantee."""
+
+    observation = record()["recorded_run_observation"]
+    assert observation["support_distance_factor"] == 1.0
+    assert (
+        observation["coverage_within_voxel_before"]
+        == observation["coverage_within_voxel_after"]
+    )
+    assert "not a guarantee" in observation["reading"]
+    assert observation["source"].endswith("capability-record-support-crop.json")
 
 
 def test_the_record_does_not_generalise_the_control_into_a_guarantee_either() -> None:
