@@ -33,11 +33,14 @@ Or against a local bundle, with Open3D importable:
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
+from datetime import UTC, datetime
 from pathlib import Path
 
 import numpy as np
+import scipy
 from scipy import ndimage
 
 # Open3D is imported inside `main`, which is the only function that uses it. At module
@@ -51,11 +54,18 @@ BUNDLE = Path(os.environ.get("NPA_OPEN3D_BUNDLE", "/data/final-bundle"))
 PUBLISHED = Path(
     os.environ.get("NPA_OPEN3D_PUBLISHED", "/data/downstream-consumer.json")
 )
-OUT = Path(os.environ.get("NPA_OPEN3D_OUT", "/data/consumer-error-structure.json"))
+OUT = Path(
+    os.environ.get("NPA_OPEN3D_OUT", "/data/consumer-error-structure-reproduced.json")
+)
 
 CELL = 0.1
 SUPPORT_RADIUS_FACTOR = 0.87
 VARIANTS = {"baseline": "mesh-baseline/mesh.ply", "candidate": "mesh/mesh.ply"}
+INPUT_SHA256 = {
+    "multiway/fused.ply": "827049f2efb5ae5c7c301dbabbca7a00bafaa6ceea42e2a634a8124dd022ca52",
+    "mesh-baseline/mesh.ply": "6112bc2311caefa4c104ea5f145138dc31486acad1d1e96839accf7f848f6a0f",
+    "mesh/mesh.ply": "131e9963abfcb66968a0b299413ff2cba19f60ccd266d8e77e945a4a1e7cc6fd",
+}
 
 #: A residual error component spanning this many cells or more is "structured".
 #: At 0.1 m that is a 0.2 m cube's worth of volume -- object scale rather than
@@ -148,8 +158,34 @@ def classify(mask: np.ndarray) -> dict[str, object]:
     }
 
 
+def sha256(path: Path) -> str:
+    """Hash one retained input without loading it all into memory."""
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def published_count_tolerance(variant: str, key: str) -> int:
+    """Allow only the one-cell BVH wobble documented by the parent record."""
+    return 1 if variant == "baseline" and key == "occupied_cells" else 0
+
+
 def main() -> int:
     import open3d as o3d
+
+    input_sha256 = {relative: sha256(BUNDLE / relative) for relative in INPUT_SHA256}
+    input_mismatches = {
+        relative: {"expected": expected, "actual": input_sha256[relative]}
+        for relative, expected in INPUT_SHA256.items()
+        if input_sha256[relative] != expected
+    }
+    if input_mismatches:
+        print(
+            f"input identity mismatch: {json.dumps(input_mismatches, sort_keys=True)}"
+        )
+        return 1
 
     cloud = o3d.io.read_point_cloud(str(BUNDLE / "multiway/fused.ply"))
     box = cloud.get_axis_aligned_bounding_box()
@@ -169,6 +205,8 @@ def main() -> int:
     )
 
     report: dict[str, object] = {
+        "recorded_utc": datetime.now(UTC).isoformat(),
+        "recorded_utc_status": "recorded by the measurement harness",
         "question": (
             "The mapping consumer's residual errors are reported as counts. Are "
             "they scattered single cells at the grid's resolution limit, or "
@@ -178,6 +216,31 @@ def main() -> int:
         "support_radius_factor": SUPPORT_RADIUS_FACTOR,
         "structured_threshold_cells": STRUCTURED_CELLS,
         "structured_threshold_was_frozen_before_measuring": True,
+        "input_sha256": input_sha256,
+        "runtime_versions": {
+            "numpy": np.__version__,
+            "open3d": o3d.__version__,
+            "scipy": scipy.__version__,
+        },
+        "measurement_scope": {
+            "reference": (
+                "The same multiway/fused.ply point cloud used to construct and "
+                "crop the meshes."
+            ),
+            "establishes": (
+                "The spatial component structure of this retained synthetic "
+                "capture when both meshes are scored against that same cloud."
+            ),
+            "does_not_establish": [
+                "occupancy-mapping fitness",
+                "absence of holes over real structure missing from fused.ply",
+                "planner or collision safety",
+            ],
+            "held_out_evidence": (
+                "capability-record-support-crop.json G5 reports lower held-out "
+                "coverage after cropping; this record does not supersede it."
+            ),
+        },
         "labeller_validation": validate_labeller(),
         "variants": {},
     }
@@ -228,13 +291,12 @@ def main() -> int:
             "missed_structure_cells",
         ):
             was = published["variants"][name][key]
-            if row[key] != was:
+            tolerance = published_count_tolerance(name, key)
+            if abs(row[key] - was) > tolerance:
                 mismatches.append(f"{name}.{key}: published {was} -> here {row[key]}")
 
     report["reproduces_published_counts"] = not mismatches
     report["mismatches_against_published"] = mismatches
-
-    OUT.write_text(json.dumps(report, indent=2, sort_keys=True))
 
     print(f"grid {tuple(int(d) for d in dims)}, radius {radius:.4f} m")
     print(f"labeller valid: {report['labeller_validation']['labeller_is_valid']}")
@@ -259,6 +321,8 @@ def main() -> int:
         for line in mismatches:
             print(f"  {line}")
         return 1
+    OUT.write_text(json.dumps(report, indent=2, sort_keys=True))
+    print(f"wrote {OUT}")
     print("\nreproduces every published count it re-derives")
     return 0
 

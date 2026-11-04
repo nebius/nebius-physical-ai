@@ -24,6 +24,7 @@ import ast
 import importlib.util
 import json
 import math
+from datetime import datetime
 from pathlib import Path
 from types import ModuleType
 
@@ -32,8 +33,10 @@ import pytest
 EVIDENCE = Path(__file__).resolve().parents[3] / "docs/evidence/open3d"
 RECORD = EVIDENCE / "consumer-error-structure.json"
 CONSUMER = EVIDENCE / "downstream-consumer.json"
+SUPPORT_CROP = EVIDENCE / "capability-record-support-crop.json"
 HARNESS = EVIDENCE / "harness/consumer_error_structure.py"
 GENERATOR = EVIDENCE / "harness/build_consumer_error_record.py"
+MUTATION_HARNESS = EVIDENCE / "harness/consumer_error_guard_mutations.py"
 
 VARIANTS = ("baseline", "candidate")
 CLASSES = ("phantom_obstacle_structure", "missed_structure_structure")
@@ -84,6 +87,11 @@ def harness() -> ModuleType:
     """
     pytest.importorskip("scipy")
     return _load(HARNESS, "consumer_error_structure")
+
+
+@pytest.fixture()
+def mutation_harness() -> ModuleType:
+    return _load(MUTATION_HARNESS, "consumer_error_guard_mutations")
 
 
 def test_the_reproduction_gate_passed_before_anything_else_was_reported(record):
@@ -189,7 +197,7 @@ def test_the_record_admits_the_threshold_landed_on_the_boundary(record):
     """
     candidate = record["variants"]["candidate"]["phantom_obstacle_structure"]
     verdict = record["the_verdict"]
-    sentence = verdict["the_threshold_landed_exactly_on_the_boundary_and_was_not_moved"]
+    sentence = verdict["the_frozen_threshold_was_not_moved"]
 
     if candidate["largest_component_cells"] == FROZEN_THRESHOLD:
         assert "exactly the threshold" in sentence
@@ -200,20 +208,25 @@ def test_the_record_admits_the_threshold_landed_on_the_boundary(record):
     assert str(candidate["largest_component_min_thickness_cells"]) in sentence
 
 
-def test_the_safety_relevant_class_is_the_one_the_verdict_rests_on(record):
-    """No missed-structure component may be object-scale on either variant.
-
-    This is the asymmetry the published consumer record does not state: a
-    phantom obstacle makes a planner conservative, a missed one makes it
-    collide. The mapping verdict is only defensible while this holds, so it is
-    asserted directly rather than left to the prose.
-    """
+def test_same_cloud_missed_components_are_reported_without_a_safety_claim(record):
+    """Keep the measurement while refusing to turn it into planner evidence."""
     for variant in VARIANTS:
         missed = record["variants"][variant]["missed_structure_structure"]
         assert missed["structured_components"] == 0, variant
         assert missed["cells_in_structured_components"] == 0, variant
         assert missed["is_structured"] is False, variant
         assert missed["largest_component_cells"] < FROZEN_THRESHOLD, variant
+    scope = record["measurement_scope"]
+    assert "same multiway/fused.ply" in scope["reference"]
+    assert "occupancy-mapping fitness" in scope["does_not_establish"]
+    assert (
+        "absence of holes over real structure missing from fused.ply"
+        in scope["does_not_establish"]
+    )
+    assert "planner or collision safety" in scope["does_not_establish"]
+    verdict = record["the_verdict"]
+    assert "for_the_mapping_use" not in verdict
+    assert "does not establish occupancy-mapping" in verdict["what_this_does_not_say"]
 
 
 @pytest.mark.parametrize("variant", VARIANTS)
@@ -305,19 +318,104 @@ def test_the_labeller_was_controlled_against_the_case_that_would_merge_wrongly(r
     assert len(checks) >= 5
 
 
-def test_the_baseline_is_a_real_positive_control_for_the_negative_result(record):
-    """A method that sees nothing must be shown capable of seeing something.
-
-    The mapping verdict rests on a negative -- no object-scale missed structure
-    -- and the baseline variant of the same run is the evidence that this
-    analysis would have found one. It carries a genuinely object-scale
-    fabricated region, several times the threshold and thick in all three axes.
-    """
+def test_the_baseline_controls_only_the_phantom_component_instrument(record):
+    """The positive control must not be mislabelled as a missed-hole control."""
     base = record["variants"]["baseline"]["phantom_obstacle_structure"]
     assert base["largest_component_cells"] >= 4 * FROZEN_THRESHOLD
     assert min(base["largest_component_extent_cells"]) >= 2
     assert base["structured_components"] >= 2
     assert base["cells_in_structured_components"] > base["cells_total"] // 2
+    sentence = record["how_this_was_validated"][
+        "the_baseline_is_a_phantom_class_positive_control"
+    ]
+    assert "phantom-component labeller only" in sentence
+    assert "not a positive control" in sentence
+
+
+def test_inputs_are_bound_and_measurement_provenance_is_honest(record):
+    support = json.loads(SUPPORT_CROP.read_text())
+    expected = {
+        path: support["artifact_hashes"][path]
+        for path in (
+            "multiway/fused.ply",
+            "mesh-baseline/mesh.ply",
+            "mesh/mesh.ply",
+        )
+    }
+    assert record["input_sha256"] == expected
+    if record["recorded_utc"] is None:
+        assert record["recorded_utc_status"] == (
+            "not retained by the original measurement harness"
+        )
+    else:
+        assert datetime.fromisoformat(record["recorded_utc"])
+        assert record["recorded_utc_status"] == "recorded by the measurement harness"
+    versions = record["runtime_versions"]
+    if "status" in versions:
+        assert versions["status"] == "not retained by the original measurement harness"
+    else:
+        assert set(versions) == {"numpy", "open3d", "scipy"}
+
+
+def test_harness_records_provenance_and_never_defaults_to_the_committed_record():
+    source = HARNESS.read_text()
+    assert "consumer-error-structure-reproduced.json" in source
+    assert '"recorded_utc": datetime.now(UTC).isoformat()' in source
+    assert '"input_sha256": input_sha256' in source
+    assert '"runtime_versions"' in source
+    assert "if mismatches:" in source
+    assert source.index("if mismatches:") < source.index("OUT.write_text")
+
+
+def test_only_the_documented_baseline_occupied_count_has_tolerance(harness):
+    keys = ("occupied_cells", "phantom_obstacle_cells", "missed_structure_cells")
+    assert harness.published_count_tolerance("baseline", "occupied_cells") == 1
+    assert [
+        (variant, key)
+        for variant in VARIANTS
+        for key in keys
+        if harness.published_count_tolerance(variant, key)
+    ] == [("baseline", "occupied_cells")]
+
+
+def test_mutation_harness_rejects_a_noop(mutation_harness, tmp_path, monkeypatch):
+    record = tmp_path / "record.json"
+    record.write_text('{"value": 1}')
+    monkeypatch.setattr(mutation_harness, "RECORD", record)
+    monkeypatch.setattr(mutation_harness, "MUTATIONS", {"noop": lambda data: None})
+    monkeypatch.setattr(mutation_harness, "run_tests", lambda: (0, 1))
+
+    with pytest.raises(RuntimeError, match="did not change"):
+        mutation_harness.main()
+    assert record.read_text() == '{"value": 1}'
+
+
+def test_mutation_harness_restores_after_interruption(
+    mutation_harness, tmp_path, monkeypatch
+):
+    record = tmp_path / "record.json"
+    original = '{"value": 1}'
+    record.write_text(original)
+    calls = 0
+
+    def run_tests():
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return (0, 1)
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(mutation_harness, "RECORD", record)
+    monkeypatch.setattr(
+        mutation_harness,
+        "MUTATIONS",
+        {"change": lambda data: data.__setitem__("value", 2)},
+    )
+    monkeypatch.setattr(mutation_harness, "run_tests", run_tests)
+
+    with pytest.raises(KeyboardInterrupt):
+        mutation_harness.main()
+    assert record.read_text() == original
 
 
 def test_open3d_is_imported_by_the_one_function_that_uses_it() -> None:

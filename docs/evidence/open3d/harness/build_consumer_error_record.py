@@ -40,7 +40,7 @@ def narrative(measured: dict) -> dict:
     threshold = measured["structured_threshold_cells"]
 
     record: dict = {}
-    record["recorded_utc"] = "2026-11-01T16:05:00Z"
+    record["recorded_utc"] = measured.get("recorded_utc")
     record["what_this_closes"] = (
         "`downstream-consumer.json` reports the mapping consumer's residual "
         f"errors as counts: {cp['cells_total']} phantom cells and "
@@ -63,7 +63,9 @@ def narrative(measured: dict) -> dict:
             f"more, the largest {bp['largest_component_cells']} cells spanning "
             f"{bp['largest_component_extent_cells']} cells "
             f"({bp['largest_component_volume_m3']:.3f} m3 of invented solid). "
-            "The crop does not thin that region out, it removes it."
+            "For this self-scored capture the crop removes those cells from the "
+            "measured phantom mask; this is not independent evidence that the "
+            "remaining surface is accurate."
         ),
         "what_the_residual_error_is_instead": (
             f"The candidate's {cp['cells_total']} phantom cells are spread over "
@@ -73,52 +75,43 @@ def narrative(measured: dict) -> dict:
             f"threshold. That component's extent is "
             f"{cp['largest_component_extent_cells']} cells -- "
             f"{cp['largest_component_min_thickness_cells']} cell thick. A "
-            "one-cell-thick sheet is what a distance-band occupancy test "
-            "produces at the edge of a mesh that is in the right place, not a "
-            "lump of geometry that is not there."
+            "one-cell-thick sheet is an expected consequence of scoring a "
+            "distance-band crop against the same cloud used to construct it. "
+            "The shape describes this capture; it does not independently prove "
+            "that the mesh is in the right place."
         ),
         "the_error_class_that_would_actually_be_dangerous": (
-            "A phantom obstacle makes a planner conservative; a missed one makes "
-            "it collide. So the missed-structure class is the one worth being "
-            f"afraid of, and on both variants it is sampling noise: "
+            "A missed cell is the safety-relevant class for a mapping consumer. "
+            "Against this capture's own fused point cloud, both variants report: "
             f"{bm['cells_total']} cells in {bm['components']} components on the "
             f"baseline and {cm['cells_total']} in {cm['components']} on the "
-            f"candidate, largest {cm['largest_component_cells']} cells with "
-            f"extent {cm['largest_component_extent_cells']}, and "
+            "candidate. Their largest components are "
+            f"{bm['largest_component_cells']} cells with extent "
+            f"{bm['largest_component_extent_cells']} and "
+            f"{cm['largest_component_cells']} cells with extent "
+            f"{cm['largest_component_extent_cells']}; "
             f"{cm['structured_components']} components at or above the threshold "
-            "on either. Every missed cell's nearest surface lies within "
-            f"{cand['missed_distance_in_radii']['max']:.2f} support radii "
-            f"(median {cand['missed_distance_in_radii']['median']:.2f}), and "
+            "on either. Nearest-surface distances reach "
+            f"{base['missed_distance_in_radii']['max']:.2f} baseline and "
+            f"{cand['missed_distance_in_radii']['max']:.2f} candidate support "
+            "radii (medians "
+            f"{base['missed_distance_in_radii']['median']:.2f} and "
+            f"{cand['missed_distance_in_radii']['median']:.2f}); "
+            f"{base['missed_distance_in_radii']['beyond_five_radii']} and "
             f"{cand['missed_distance_in_radii']['beyond_five_radii']} lie beyond "
-            "five. These are cells whose mesh is right there, just outside the "
-            "quantisation boundary -- not holes."
+            "five. This only shows proximity to the training cloud. It cannot "
+            "detect holes over real structure absent from fused.ply."
         ),
         "the_recall_cost_of_the_crop_in_these_terms": (
-            f"The crop's recall cost is {cm['cells_total'] - bm['cells_total']} "
-            "cells. Both variants carry zero object-scale misses, so the cost is "
-            "paid entirely in boundary cells, against "
+            "Against the same-cloud reference, the crop's measured recall cost is "
+            f"{cm['cells_total'] - bm['cells_total']} cells. Neither variant has "
+            "an object-scale component in this mask, against "
             f"{bp['cells_in_structured_components'] - cp['cells_in_structured_components']} "
             "cells of structured fabrication removed."
         ),
     }
-    record["the_verdict"] = {
-        "for_the_mapping_use": (
-            "Fit for occupancy mapping at this cell size, with the residual "
-            "error characterised rather than bounded away. The structured "
-            f"fabrication a consumer would be misled by falls from "
-            f"{bp['cells_in_structured_components']} cells to "
-            f"{cp['cells_in_structured_components']}, and no missed-structure "
-            "component on either variant is object-scale."
-        ),
-        "what_this_does_not_say": (
-            "Nothing here revisits collision fitness. "
-            "`capability-record-collision-fitness.json` measured that "
-            "separately and the verdict there stands: the surface is not closed, "
-            "so inside/outside has no defined answer on it. Occupancy mapping is "
-            "the narrower use that does not need closedness, which is why it is "
-            "the use being assessed."
-        ),
-        "the_threshold_landed_exactly_on_the_boundary_and_was_not_moved": (
+    if cp["largest_component_cells"] == threshold:
+        threshold_reading = (
             f"The threshold of {threshold} cells was frozen in the claim before "
             "any component size was known. The candidate's largest phantom "
             f"component is {cp['largest_component_cells']} cells -- exactly the "
@@ -133,7 +126,36 @@ def narrative(measured: dict) -> dict:
             "so the two components the gate calls structured are not the same "
             "kind of error. A reader who wants one number should use the "
             "structured-cell count, not the component count."
+        )
+    else:
+        relation = "above" if cp["largest_component_cells"] > threshold else "below"
+        threshold_reading = (
+            f"The threshold of {threshold} cells was frozen before measurement. "
+            f"The candidate's largest phantom component is "
+            f"{cp['largest_component_cells']} cells, {relation} that threshold; "
+            f"the measured distribution therefore contains "
+            f"{cp['structured_components']} structured components totalling "
+            f"{cp['cells_in_structured_components']} cells."
+        )
+
+    record["the_verdict"] = {
+        "for_this_retained_capture": (
+            "The component structure is characterised for this retained "
+            "synthetic capture at this cell size. Against the same-cloud "
+            "reference, structured phantom cells fall from "
+            f"{bp['cells_in_structured_components']} cells to "
+            f"{cp['cells_in_structured_components']}, and neither variant's "
+            "same-cloud missed mask contains an object-scale component."
         ),
+        "what_this_does_not_say": (
+            "This record does not establish occupancy-mapping, navigation or "
+            "collision fitness. `capability-record-support-crop.json` already "
+            "records that the surface is not closed and that G5 held-out "
+            "coverage falls after cropping (0.883 to 0.851, 0.961 to 0.933 and "
+            "0.934 to 0.855). A same-cloud distance test cannot overrule that "
+            "independent limitation."
+        ),
+        "the_frozen_threshold_was_not_moved": threshold_reading,
     }
     record["how_this_was_validated"] = {
         "the_reproduction_gate_came_first": (
@@ -173,13 +195,12 @@ def narrative(measured: dict) -> dict:
             "caught by its own assertions, which is the reason to write "
             "them."
         ),
-        "the_baseline_is_the_positive_control": (
-            "A method that finds no object-scale error could be a method that "
-            "cannot see one. The baseline variant of the same run carries a real "
+        "the_baseline_is_a_phantom_class_positive_control": (
+            "The baseline variant of the same run carries a "
             f"{bp['largest_component_cells']}-cell fabricated region and this "
-            "analysis reports it at that size and shape, so the negative result "
-            "on the candidate's missed-structure class is informative rather "
-            "than an artifact of the instrument."
+            "analysis reports it at that size and shape. That controls the "
+            "phantom-component labeller only; it is not a positive control for "
+            "detecting missed real structure."
         ),
     }
     return record

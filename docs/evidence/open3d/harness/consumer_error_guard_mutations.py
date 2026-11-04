@@ -40,7 +40,7 @@ def move_the_threshold_past_the_awkward_result(data: dict) -> None:
 
 
 def drop_the_concession_from_the_prose(data: dict) -> None:
-    key = "the_threshold_landed_exactly_on_the_boundary_and_was_not_moved"
+    key = "the_frozen_threshold_was_not_moved"
     data["the_verdict"][key] = (
         "The threshold of 8 cells was frozen in the claim before any component "
         "size was known, and the candidate's residual error is a 1 cell thick "
@@ -139,17 +139,20 @@ def run_tests() -> tuple[int, int]:
         text=True,
         check=False,
     )
-    summary = "\n".join(
-        line
-        for line in result.stdout.splitlines()
-        if " passed" in line or " failed" in line
-    )
+    lines = [line for line in result.stdout.splitlines() if line.strip()]
+    summary = lines[-1] if lines else ""
     failed = re.search(r"(\d+) failed", summary)
     passed = re.search(r"(\d+) passed", summary)
-    return (
+    counts = (
         int(failed.group(1)) if failed else 0,
         int(passed.group(1)) if passed else 0,
     )
+    if result.returncode not in {0, 1} or sum(counts) == 0:
+        raise RuntimeError(
+            "guard pytest did not complete a test run: "
+            f"exit={result.returncode}\n{result.stdout[-2000:]}\n{result.stderr[-2000:]}"
+        )
+    return counts
 
 
 def restore(original: str) -> None:
@@ -180,10 +183,18 @@ def main() -> int:
     caught = 0
     for name, mutate in MUTATIONS.items():
         data = json.loads(original)
+        before = json.loads(original)
         mutate(data)
-        RECORD.write_text(json.dumps(data, indent=2, sort_keys=True))
-        failed, passed = run_tests()
-        restore(original)
+        if data == before:
+            raise RuntimeError(f"mutation did not change the record: {name}")
+        mutated = json.dumps(data, indent=2, sort_keys=True)
+        try:
+            RECORD.write_text(mutated)
+            failed, passed = run_tests()
+        finally:
+            restore(original)
+            if RECORD.read_text() != original:
+                raise RuntimeError(f"mutation was not restored: {name}")
         verdict = "caught" if failed else "MISSED"
         caught += bool(failed)
         print(f"  {verdict:7} by {failed} test(s): {name}")
