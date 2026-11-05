@@ -18,13 +18,12 @@ import os
 from collections import Counter
 from pathlib import Path
 
-from harness_io import output_path, read_cloud, read_mesh
-
 import numpy as np
 import open3d as o3d
+from harness_io import output_path, read_cloud, read_mesh
 
 BUNDLE = Path(os.environ.get("OPEN3D_BUNDLE", "/data/final-bundle"))
-OUT = output_path("/data/holes-and-outliers.json")
+DEFAULT_OUT = "/data/holes-and-outliers.json"
 VARIANTS = {"baseline": "mesh-baseline/mesh.ply", "candidate": "mesh/mesh.ply"}
 CLOUD = "multiway/fused.ply"
 NB_NEIGHBORS = 20
@@ -274,12 +273,15 @@ def publication(report: dict, out: Path) -> tuple[Path, bool]:
 
 
 def main() -> int:
+    # Validate the destination before opening any geometry or doing the measurement,
+    # while keeping the pure detector helpers importable for their offline controls.
+    out = output_path(DEFAULT_OUT)
     try:
         report = build()
     except (OSError, ValueError, RuntimeError) as exc:
         print(f"Measurement failed closed: {exc}")
         return 1
-    destination, published = publication(report, OUT)
+    destination, published = publication(report, out)
     destination.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
     if not published:
         print(f"Measurement controls failed; quarantined at {destination}")
