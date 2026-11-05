@@ -170,6 +170,7 @@ def test_loop_eval_installs_the_qualified_moviepy_closure_before_repair() -> Non
     repair = text.index("python /opt/npa/moviepy_pillow_compat.py")
     dependency_check = text.index("python -m pip check")
     assert "--only-binary=:all: --no-binary=imageio-ffmpeg --require-hashes" in text
+    assert "--extra-index-url https://download.pytorch.org/whl/cu130" in text
     assert "-r /opt/npa/sim2real-eval-requirements.lock" in text
     assert "IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg" in text
     assert "binaries/ffmpeg*" in text

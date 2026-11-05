@@ -44,6 +44,7 @@ RUN /usr/local/bin/install-workflow-runtime-prereqs "${UBUNTU_SNAPSHOT}" \
     && chmod a+r /opt/npa/pyproject.toml \
     && python -m pip uninstall -y transformers \
     && python -m pip install --no-cache-dir --no-deps --force-reinstall \
+      --extra-index-url https://download.pytorch.org/whl/cu130 \
       --only-binary=:all: --no-binary=imageio-ffmpeg --require-hashes \
       -r /opt/npa/sim2real-eval-requirements.lock \
     && python -c \
