@@ -276,9 +276,10 @@ def _publish_manifest(
         fragments=fragments,
         voxel_size=request.voxel_size,
         icp_estimation=request.icp_estimation,
+        agreement_seeds=request.agreement_seeds,
         demo_data_release=demo_release,
     )
-    body = canonical(manifest.model_dump(mode="json"))
+    body = canonical(manifest.canonical_document())
     _publish(uri_join(request.output_path, MANIFEST_FILENAME), body)
     return {
         "schema_version": "npa.open3d.prepared.v1",
@@ -288,6 +289,7 @@ def _publish_manifest(
         "fragment_ids": [fragment.id for fragment in fragments],
         "voxel_size": manifest.voxel_size,
         "icp_estimation": manifest.icp_estimation,
+        "agreement_seeds": manifest.agreement_seeds,
         "demo_data_release": demo_release,
     }
 
@@ -596,7 +598,7 @@ def _registration(kind: str, request: RunRequest) -> dict[str, Any]:
             )
         report["subprocess_wall_seconds"] = time.perf_counter() - started
         report["manifest_sha256"] = sha256_bytes(
-            canonical(manifest.model_dump(mode="json"))
+            canonical(manifest.canonical_document())
         )
         # Downstream stages need the scale the registration actually ran at and
         # the prefix its scans came from; re-deriving either from a spec would let
