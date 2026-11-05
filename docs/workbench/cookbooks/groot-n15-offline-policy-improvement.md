@@ -54,11 +54,22 @@ and project identity. A recoverable interruption must resume that run only after
 its durable ledger and checkpoint pointer are reconciled; do not submit a second
 run with the same output prefix.
 
+When a prior prepare wave has already written a complete prepare commit but the
+workflow cannot safely resume its immutable source identity, a sequential
+successor may keep its own `prefix` and set `prepared_prefix` to the prior
+prepared-input prefix. The prepare stage then downloads and hashes every durable
+prepared object plus its feedback, manifest, and provenance records before it
+returns; it fails closed if the pinned dataset revision, split, feedback mode,
+action horizon, codec, or native modality differs. This recovery path never
+overwrites a complete prior prepare artifact and is not a shortcut for partial
+outputs or a different dataset configuration.
+
 The typed YAML customization surface includes public data/source/model revisions,
 feedback mode and worker-readable feedback URI, episode split counts, action
 horizon, native modality and embodiment, `decord` backend, codec provenance,
 batch/learning-rate/seed/pass schedule, checkpoint cadence and root, output
-prefix, and held-out evidence clip selection. `outcome` and `progress` modes
+prefix, reusable prepared-input prefix, and held-out evidence clip selection.
+`outcome` and `progress` modes
 require supplied recorded labels/progress; uniform mode intentionally fabricates
 neither. The schedule computes `ceil(train_frames / batch_size)` per requested
 complete pass after the pinned data revision is materialized, rather than using a

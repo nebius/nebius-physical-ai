@@ -275,6 +275,147 @@ def test_native_runtime_rejects_an_incompatible_image_python(
         workflow._native_python()
 
 
+def test_complete_prepare_commit_is_read_back_before_reuse(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    modality = tmp_path / "modality.json"
+    modality.write_text('{"modalities": []}\n')
+    manifest_payload = {
+        "mode": "uniform",
+        "action_horizon": 16,
+        "temperature": 1.0,
+        "dataset_sha256": "dataset-digest",
+        "feedback_sha256": "feedback-digest",
+    }
+    provenance_payload = {
+        "source": {
+            "repository": workflow.DATASET_REPOSITORY_DEFAULT,
+            "revision": workflow.DATASET_REVISION_DEFAULT,
+            "license": workflow.PUBLIC_DATA_LICENSE,
+        },
+        "dataset": {
+            "grouping": "episode",
+            "split": "contiguous-tail",
+            "train_episodes": 64,
+            "eval_episodes": 16,
+            "train_frames": 12,
+            "eval_frames": 3,
+            "modality_sha256": workflow.sha256_file(modality),
+            "derivative_sha256": "dataset-digest",
+        },
+        "feedback": {"mode": "uniform", "feedback_sha256": "feedback-digest"},
+        "video_derivative": {
+            "sample_derivative_probe": {"codec_name": "h264"},
+            "source_video_count": 2,
+            "derivative_video_count": 2,
+        },
+    }
+    commit = {
+        "schema_version": workflow.SCHEMA_VERSION,
+        "kind": "prepare-commit",
+        "dataset_tree_sha256": "d" * 64,
+        "manifest_sha256": "m" * 64,
+        "outputs": {
+            "prepared_dataset": {"tree_sha256": "d" * 64},
+            "feedback": {"sha256": "f" * 64},
+            "manifest": {"sha256": "m" * 64},
+            "provenance": {"sha256": "p" * 64},
+        },
+    }
+
+    class Store:
+        def exists(self, _uri: str) -> bool:
+            return True
+
+        def get_json(self, _uri: str) -> dict[str, object]:
+            return commit
+
+    payloads = {
+        "s3://bucket/feedback.json": json.dumps({}),
+        "s3://bucket/manifest.json": json.dumps(manifest_payload),
+        "s3://bucket/provenance.json": json.dumps(provenance_payload),
+    }
+
+    def verify_object(_store: object, uri: str, digest: str, destination: Path) -> dict[str, object]:
+        destination.write_text(payloads[uri])
+        return {"sha256": digest, "bytes": destination.stat().st_size}
+
+    monkeypatch.setattr(workflow, "_verify_object", verify_object)
+    monkeypatch.setattr(
+        workflow,
+        "_verify_directory",
+        lambda *_args: {"tree_sha256": "d" * 64, "files": 7, "bytes": 99},
+    )
+    args = SimpleNamespace(
+        prepare_commit_uri="s3://bucket/commit.json",
+        prepared_dataset_uri="s3://bucket/prepared",
+        feedback_output_uri="s3://bucket/feedback.json",
+        manifest_uri="s3://bucket/manifest.json",
+        prepare_receipt_uri="s3://bucket/provenance.json",
+        dataset_repository=workflow.DATASET_REPOSITORY_DEFAULT,
+        dataset_revision=workflow.DATASET_REVISION_DEFAULT,
+        grouping="episode",
+        split_strategy="contiguous-tail",
+        train_episode_count=64,
+        eval_episode_count=16,
+        feedback_mode="uniform",
+        action_horizon=16,
+        feedback_temperature=1.0,
+        derivative_codec="h264",
+        groot_modality_path=modality,
+    )
+
+    stage = tmp_path / "stage"
+    stage.mkdir()
+    reused = workflow._reuse_prepared_inputs(args, Store(), stage)
+
+    assert reused == {
+        "status": "prepared",
+        "reused_prepared_inputs": True,
+        "manifest_sha256": "m" * 64,
+        "dataset_tree_sha256": "d" * 64,
+        "train_frames": 12,
+        "eval_frames": 3,
+        "readback_files": 7,
+        "readback_bytes": (
+            99
+            + len(payloads["s3://bucket/feedback.json"])
+            + len(payloads["s3://bucket/manifest.json"])
+            + len(payloads["s3://bucket/provenance.json"])
+        ),
+    }
+
+
+def test_reused_prepare_commit_rejects_a_different_dataset_revision(
+    tmp_path: Path,
+) -> None:
+    args = SimpleNamespace(
+        dataset_repository=workflow.DATASET_REPOSITORY_DEFAULT,
+        dataset_revision=workflow.DATASET_REVISION_DEFAULT,
+        grouping="episode",
+        split_strategy="contiguous-tail",
+        train_episode_count=64,
+        eval_episode_count=16,
+        feedback_mode="uniform",
+        action_horizon=16,
+        feedback_temperature=1.0,
+        derivative_codec="h264",
+        groot_modality_path=tmp_path / "missing-modality.json",
+    )
+
+    with pytest.raises(workflow.WorkflowArtifactError, match="dataset revision"):
+        workflow._validate_reused_prepare_inputs(
+            args,
+            {
+                "source": {"repository": workflow.DATASET_REPOSITORY_DEFAULT, "revision": "other"},
+                "dataset": {},
+                "feedback": {},
+                "video_derivative": {},
+            },
+            {},
+        )
+
+
 def test_checked_in_workflow_dispatches_every_compositional_stage() -> None:
     from npa.orchestration.npa_workflow.interpreter import build_plan
     from npa.orchestration.npa_workflow.spec import load_spec

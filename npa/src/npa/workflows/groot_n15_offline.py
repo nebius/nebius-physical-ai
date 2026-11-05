@@ -625,6 +625,93 @@ def _download_feedback(store: S3Store, uri: str, destination: Path) -> None:
     store.get_file(uri, destination)
 
 
+def _prepare_commit_outputs(commit: Mapping[str, Any]) -> Mapping[str, Mapping[str, Any]]:
+    """Return the complete durable-output records from a prepare commit."""
+
+    if commit.get("kind") != "prepare-commit" or commit.get("schema_version") != SCHEMA_VERSION:
+        raise WorkflowArtifactError("existing prepare commit is malformed")
+    outputs = commit.get("outputs")
+    if not isinstance(outputs, dict):
+        raise WorkflowArtifactError("existing prepare commit lacks output inventory")
+    required = ("prepared_dataset", "feedback", "manifest", "provenance")
+    if any(not isinstance(outputs.get(name), dict) for name in required):
+        raise WorkflowArtifactError("existing prepare commit has incomplete outputs")
+    return {name: outputs[name] for name in required}
+
+
+def _validate_reused_prepare_inputs(
+    args: argparse.Namespace, provenance: Mapping[str, Any], manifest: Mapping[str, Any]
+) -> None:
+    """Reject a complete prepare artifact that does not match this invocation."""
+
+    source = provenance.get("source")
+    dataset = provenance.get("dataset")
+    feedback = provenance.get("feedback")
+    video = provenance.get("video_derivative")
+    if not all(isinstance(value, dict) for value in (source, dataset, feedback, video)):
+        raise WorkflowArtifactError("existing prepare provenance is malformed")
+    if source.get("repository") != args.dataset_repository or source.get("revision") != args.dataset_revision:
+        raise WorkflowArtifactError("existing prepared input has a different public dataset revision")
+    if source.get("license") != PUBLIC_DATA_LICENSE:
+        raise WorkflowArtifactError("existing prepared input has an unexpected public-data license")
+    if dataset.get("grouping") != args.grouping or dataset.get("split") != args.split_strategy:
+        raise WorkflowArtifactError("existing prepared input has a different split configuration")
+    if dataset.get("train_episodes") != args.train_episode_count or dataset.get("eval_episodes") != args.eval_episode_count:
+        raise WorkflowArtifactError("existing prepared input has different episode counts")
+    if feedback.get("mode") != args.feedback_mode or manifest.get("mode") != args.feedback_mode:
+        raise WorkflowArtifactError("existing prepared input has a different feedback mode")
+    if manifest.get("action_horizon") != args.action_horizon:
+        raise WorkflowArtifactError("existing prepared input has a different action horizon")
+    if not math.isclose(float(manifest.get("temperature", 0.0)), args.feedback_temperature):
+        raise WorkflowArtifactError("existing prepared input has a different feedback temperature")
+    if manifest.get("dataset_sha256") != dataset.get("derivative_sha256"):
+        raise WorkflowArtifactError("existing prepared input has an unbound dataset manifest")
+    if manifest.get("feedback_sha256") != feedback.get("feedback_sha256"):
+        raise WorkflowArtifactError("existing prepared input has an unbound feedback manifest")
+    if video.get("sample_derivative_probe", {}).get("codec_name") != args.derivative_codec:
+        raise WorkflowArtifactError("existing prepared input has a different video codec")
+    if video.get("source_video_count") != video.get("derivative_video_count") or not video.get("source_video_count"):
+        raise WorkflowArtifactError("existing prepared input has incomplete derivative video evidence")
+    modality = Path(args.groot_modality_path)
+    if not modality.is_file() or dataset.get("modality_sha256") != sha256_file(modality):
+        raise WorkflowArtifactError("existing prepared input has a different native modality")
+
+
+def _reuse_prepared_inputs(
+    args: argparse.Namespace, store: S3Store, stage: Path
+) -> dict[str, Any] | None:
+    """Read back a matching complete prepare commit instead of overwriting it."""
+
+    if not store.exists(args.prepare_commit_uri):
+        return None
+    commit = store.get_json(args.prepare_commit_uri)
+    outputs = _prepare_commit_outputs(commit)
+    prepared = _verify_directory(
+        store,
+        args.prepared_dataset_uri,
+        str(outputs["prepared_dataset"].get("tree_sha256", "")),
+        stage / "reused-prepared-dataset",
+    )
+    feedback = _verify_object(store, args.feedback_output_uri, str(outputs["feedback"].get("sha256", "")), stage / "reused-feedback.json")
+    manifest = _verify_object(store, args.manifest_uri, str(outputs["manifest"].get("sha256", "")), stage / "reused-feedback-manifest.json")
+    provenance = _verify_object(store, args.prepare_receipt_uri, str(outputs["provenance"].get("sha256", "")), stage / "reused-provenance.json")
+    provenance_payload = json.loads((stage / "reused-provenance.json").read_text())
+    manifest_payload = json.loads((stage / "reused-feedback-manifest.json").read_text())
+    if commit.get("dataset_tree_sha256") != prepared["tree_sha256"] or commit.get("manifest_sha256") != manifest["sha256"]:
+        raise WorkflowArtifactError("existing prepare commit does not bind its readback outputs")
+    _validate_reused_prepare_inputs(args, provenance_payload, manifest_payload)
+    return {
+        "status": "prepared",
+        "reused_prepared_inputs": True,
+        "manifest_sha256": manifest["sha256"],
+        "dataset_tree_sha256": prepared["tree_sha256"],
+        "train_frames": int(provenance_payload["dataset"]["train_frames"]),
+        "eval_frames": int(provenance_payload["dataset"]["eval_frames"]),
+        "readback_files": prepared["files"],
+        "readback_bytes": prepared["bytes"] + feedback["bytes"] + manifest["bytes"] + provenance["bytes"],
+    }
+
+
 def _prepare(args: argparse.Namespace) -> dict[str, Any]:
     """Fetch public bytes, materialize the codec derivative, and bind feedback."""
 
@@ -636,6 +723,10 @@ def _prepare(args: argparse.Namespace) -> dict[str, Any]:
     )
 
     stage = _new_directory(Path(args.workspace).resolve() / "prepare")
+    store = S3Store()
+    reused = _reuse_prepared_inputs(args, store, stage)
+    if reused is not None:
+        return reused
     raw = stage / "raw-dataset"
     derivative = stage / "h264-dataset"
     snapshot_download(
@@ -741,7 +832,6 @@ def _prepare(args: argparse.Namespace) -> dict[str, Any]:
         },
         "video_derivative": conversion,
     }
-    store = S3Store()
     dataset_inventory = store.put_directory(derivative, args.prepared_dataset_uri)
     output_records = {
         "prepared_dataset": dataset_inventory,

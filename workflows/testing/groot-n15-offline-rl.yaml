@@ -15,6 +15,10 @@ metadata:
 config:
   bucket: example-bucket
   prefix: "groot-n15-offline-rl/{{run.id}}"
+  # Prepare outputs may be independently read back from a previous compatible
+  # run. Leave this at the current run by default; an explicit override is the
+  # fail-closed recovery mechanism after a transport interruption.
+  prepared_prefix: "groot-n15-offline-rl/{{run.id}}"
   source_overlay: true
   # This public CUDA build image is pinned by manifest digest. N1.5 source,
   # model weights, public data, and the Blackwell FlashAttention extension are
@@ -68,11 +72,12 @@ config:
   evidence_video_fps: "30"
 
   root_uri: "s3://{{config.bucket}}/{{config.prefix}}"
-  prepared_dataset_uri: "{{config.root_uri}}/prepared/dataset"
-  feedback_output_uri: "{{config.root_uri}}/prepared/feedback.json"
-  manifest_uri: "{{config.root_uri}}/prepared/feedback-manifest.json"
-  prepare_receipt_uri: "{{config.root_uri}}/prepared/provenance.json"
-  prepare_commit_uri: "{{config.root_uri}}/prepared/commit.json"
+  prepared_root_uri: "s3://{{config.bucket}}/{{config.prepared_prefix}}/prepared"
+  prepared_dataset_uri: "{{config.prepared_root_uri}}/dataset"
+  feedback_output_uri: "{{config.prepared_root_uri}}/feedback.json"
+  manifest_uri: "{{config.prepared_root_uri}}/feedback-manifest.json"
+  prepare_receipt_uri: "{{config.prepared_root_uri}}/provenance.json"
+  prepare_commit_uri: "{{config.prepared_root_uri}}/commit.json"
   checkpoint_root_uri: "{{config.root_uri}}/checkpoints"
   candidate_uri: "{{config.root_uri}}/candidate"
   training_receipt_uri: "{{config.root_uri}}/training/offline-training.json"
