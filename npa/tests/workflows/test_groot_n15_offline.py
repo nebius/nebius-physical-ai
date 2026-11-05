@@ -436,6 +436,115 @@ def test_missing_external_prepared_inputs_fail_before_public_download(
         workflow._prepare(args)
 
 
+def test_fresh_train_keeps_candidate_directory_new_for_native_trainer(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A fresh native Trainer owns creation of its otherwise-new output path."""
+
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "npa.groot-offline/v1",
+                "dataset_sha256": "d" * 64,
+                "feedback_sha256": "f" * 64,
+                "mode": "uniform",
+                "action_horizon": 16,
+                "temperature": 1.0,
+                "episodes": [
+                    {"episode_index": 0, "split": "train", "length": 4, "weights": [1.0] * 4},
+                    {"episode_index": 1, "split": "eval", "length": 2, "weights": [1.0] * 2},
+                ],
+            }
+        )
+    )
+    dataset = tmp_path / "dataset"
+    dataset.mkdir()
+    captured: dict[str, Path] = {}
+
+    class Store:
+        def put_directory(self, _path: Path, _uri: str) -> dict[str, object]:
+            return {"tree_sha256": "t" * 64}
+
+        def put_file(self, path: Path, _uri: str) -> dict[str, object]:
+            return {"sha256": workflow.sha256_file(path)}
+
+        def put_json(self, _value: object, _uri: str) -> dict[str, object]:
+            return {}
+
+    def fake_download_base(_args: object, destination: Path) -> None:
+        destination.mkdir()
+
+    def fake_restore(
+        _store: object,
+        _root: str,
+        output: Path,
+        _manifest_sha: str,
+        _identity: str,
+    ) -> None:
+        assert not output.exists()
+        return None
+
+    def fake_train_offline(**kwargs: object) -> dict[str, object]:
+        output = kwargs["output_dir"]
+        assert isinstance(output, Path)
+        assert not output.exists()
+        captured["output"] = output
+        output.mkdir()
+        (output / "weights.safetensors").write_bytes(b"candidate")
+        return {
+            "candidate_checkpoint_sha256": "c" * 64,
+            "optimizer_steps": 1,
+            "held_out_eval_loss": 1.0,
+        }
+
+    monkeypatch.setattr(workflow, "S3Store", Store)
+    monkeypatch.setattr(
+        workflow,
+        "_download_prepared_inputs",
+        lambda _args, _stage: (dataset, manifest_path, {"dataset": {"derivative_sha256": "d" * 64}}),
+    )
+    monkeypatch.setattr(workflow, "_download_base_model", fake_download_base)
+    monkeypatch.setattr(workflow, "_restore_checkpoint", fake_restore)
+    monkeypatch.setattr(workflow, "_resume_identity", lambda *_args, **_kwargs: "r" * 64)
+    monkeypatch.setattr(workflow, "_gpu_runtime_evidence", lambda: {"gpu": "test"})
+    monkeypatch.setattr(workflow, "_checkpoint_sync", lambda *_args: lambda *_args: None)
+    monkeypatch.setattr(
+        workflow,
+        "_action_decoder_hashes",
+        lambda path: {"tensor": "base" if path.name == "base-model" else "candidate"},
+    )
+    monkeypatch.setattr("npa.workbench.groot.offline_feedback.file_digest", lambda _path: "m" * 64)
+    monkeypatch.setattr("npa.workbench.groot.offline_training.checkpoint_digest", lambda _path: "b" * 64)
+    monkeypatch.setattr("npa.workbench.groot.offline_training.train_offline", fake_train_offline)
+
+    args = SimpleNamespace(
+        workspace=tmp_path / "workspace",
+        batch_size=4,
+        complete_train_passes=1,
+        checkpoint_root_uri="s3://bucket/checkpoints",
+        candidate_uri="s3://bucket/candidate",
+        training_receipt_uri="s3://bucket/training.json",
+        training_commit_uri="s3://bucket/training-commit.json",
+        groot_revision=workflow.GROOT_REVISION_DEFAULT,
+        groot_repository=workflow.GROOT_REPOSITORY_DEFAULT,
+        model_repository=workflow.MODEL_REPOSITORY_DEFAULT,
+        model_revision=workflow.MODEL_REVISION_DEFAULT,
+        data_config="so100_dualcam",
+        embodiment_tag="new_embodiment",
+        training_seed=42,
+        video_backend="decord",
+        checkpoint_interval_steps=1,
+        action_horizon=16,
+        learning_rate=1e-4,
+    )
+
+    result = workflow._train(args)
+
+    assert result["status"] == "trained"
+    assert captured["output"].is_dir()
+
+
 def test_checked_in_workflow_dispatches_every_compositional_stage() -> None:
     from npa.orchestration.npa_workflow.interpreter import build_plan
     from npa.orchestration.npa_workflow.spec import load_spec

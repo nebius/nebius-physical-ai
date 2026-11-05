@@ -1029,7 +1029,6 @@ def _train(args: argparse.Namespace) -> dict[str, Any]:
     base = stage / "base-model"
     _download_base_model(args, base)
     output = stage / "candidate"
-    output.mkdir()
     store = S3Store()
     manifest_sha = file_digest(manifest_path)
     base_checkpoint_sha = checkpoint_digest(base)
