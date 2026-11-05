@@ -30,6 +30,9 @@ BAKED_CONSTRAINTS = (
 WAN_DOCKERFILE = ROOT / "npa" / "docker" / "workbench" / "wan2-2" / "Dockerfile"
 WAN_SMOKE = ROOT / "npa" / "docker" / "workbench" / "wan2-2" / "smoke.sh"
 WAN_ENTRYPOINT = ROOT / "npa" / "docker" / "workbench" / "wan2-2" / "entrypoint.sh"
+ENSUREPIP_REFRESH = (
+    ROOT / "npa" / "docker" / "workbench" / "common" / "refresh_ensurepip.py"
+)
 
 
 def test_entrypoint_allows_skypilot_bootstrap_without_runtime_fetch() -> None:
@@ -75,6 +78,8 @@ def test_security_fixed_runtime_and_baked_image_are_fully_pinned() -> None:
     assert "peft==0.20.0" in baked
     assert "transformers==5.14.1" in baked
     assert "accelerate==1.15.0" in baked
+    assert "aiohttp==3.14.4" in baked
+    assert "yarl==1.25.1" in baked
     assert "sentencepiece==0.2.1" in baked
     assert "pip==26.2.1+npa.1" in baked
     assert "setuptools==84.2.1" in baked
@@ -84,6 +89,16 @@ def test_security_fixed_runtime_and_baked_image_are_fully_pinned() -> None:
         for line in baked.splitlines()
     )
     assert "pip install --no-cache-dir --no-deps" in dockerfile
+    assert (
+        dockerfile.count("/mnt/bootstrap-wheels/setuptools-84.2.1-py3-none-any.whl")
+        == 2
+    )
+    assert "setuptools-84.0.0-py3-none-any.whl" not in dockerfile
+    refresh = ENSUREPIP_REFRESH.read_text(encoding="utf-8")
+    assert "RUNTIME_PYTHON = (3, 11)" in refresh
+    assert 'SETUPTOOLS_VERSION = "84.2.1"' in refresh
+    assert "ca140b45d5325a9478f880e351484f62fef15f336462e449ca0c03c873d589c2" in refresh
+    assert "libnsl2 libtirpc3t64" in dockerfile
     assert "https://download.pytorch.org/whl/cpu" not in dockerfile
     assert "^(torch|torchvision|torchaudio|nvidia-)" in dockerfile
     assert "dependency_closure.py validate" in dockerfile
