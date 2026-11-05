@@ -11,6 +11,7 @@ from pathlib import Path
 import httpx
 from PIL import Image, ImageDraw
 import pytest
+import npa.workbench.vlm_eval as vlm_eval
 
 from npa.clients.token_factory import (
     DEFAULT_VISION_MODEL,
@@ -157,7 +158,7 @@ def _assert_disclosures(evidence, loop, benchmark, override, transports):
     assert "mean-score gate" in loop["limitations"][0]
     assert loop["task_success"] == (loop["mean_score"] >= 0.8)
     assert benchmark.independent_human_label_calibration_established is False
-    assert len(benchmark.limitations) == 3
+    assert benchmark.limitations == list(vlm_eval._BENCHMARK_REPORT_LIMITATIONS)
     assert override.evidence is None
     assert override.provider_call_made is False
     assert "no VLM call occurred" in override.limitations[-1]
@@ -165,7 +166,7 @@ def _assert_disclosures(evidence, loop, benchmark, override, transports):
         payload = json.loads(result.read_text())
         assert payload["independent_human_label_calibration_established"] is False
         assert payload["provider_call_made"] is True
-        assert len(payload["limitations"]) == 2
+        assert payload["limitations"] == list(vlm_eval._DIRECT_RESULT_LIMITATIONS)
         _assert_v2_sampling(payload["evidence"])
         provider = payload["evidence"]["provider"]
         assert (

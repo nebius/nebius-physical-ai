@@ -110,6 +110,7 @@ def _validate_evidence(
     provider = evidence["provider"]
     if not isinstance(request, dict) or not isinstance(provider, dict):
         raise _InvalidEvidence("schema_invalid")
+    _validate_parser_generation(report, provider)
     _validate_request(
         report, request, evidence["schema_version"], paired_audit=paired_audit
     )
@@ -120,6 +121,24 @@ def _validate_evidence(
     ):
         raise _InvalidEvidence("provider_parser_invalid")
     _validate_result(report, parsed)
+
+
+def _validate_parser_generation(
+    report: dict[str, Any], provider: dict[str, Any]
+) -> None:
+    """Classify retained verdicts from the superseded three-field contract."""
+
+    parser = provider.get("parser_version")
+    obsolete_base = (
+        "npa_vlm_eval_hosted_json_v1"
+        if report.get("backend") == "api"
+        else "npa_vlm_eval_compatible_json_v2"
+    )
+    if parser in {
+        obsolete_base,
+        obsolete_base + vlm_eval.MARKDOWN_FENCE_PARSER_SUFFIX,
+    }:
+        raise _InvalidEvidence("provider_parser_obsolete")
 
 
 def _validate_request(
@@ -441,6 +460,11 @@ def _validate_result(
         "rationale": parsed.rationale,
     }
     if any(report.get(key) != value for key, value in expected.items()):
+        raise _InvalidEvidence("result_mismatch")
+    support = report.get("provider_observable_support")
+    if not isinstance(support, list) or tuple(support) != (
+        parsed.provider_observable_support
+    ):
         raise _InvalidEvidence("result_mismatch")
     _require_literal(require_boolean, report.get("passed"), "passed", "result_invalid")
     _validate_optional_provider_success(report, parsed.success, passed)

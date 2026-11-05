@@ -16,6 +16,8 @@
   },
   "regression_tests": "npa/tests/workbench/test_open3d_holes_and_outliers.py",
   "provenance": {
+    "source_commit": "750a6fe97506f420c6a1e83f64b1a65d6279cf3b",
+    "commit_is_an_ancestor_of_main": false,
     "harness_sha256": "ff6792f278fb2c31e0b5e17f2352b5717b8f327fc170d95bc2fe6caa8ae87609",
     "withdrawal_report_sha256": "b1f3779f606bd6ace8f355817e6144875a58edd5eb4498edeea58a6747c50a4e"
   }

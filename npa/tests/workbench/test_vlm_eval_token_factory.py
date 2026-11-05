@@ -154,7 +154,7 @@ def test_hosted_model_switch_exists_only_in_shared_client_profile() -> None:
     assert "Qwen/Qwen3.8-27B" not in source
 
 
-def test_self_hosted_kimi_keeps_generic_request_shape(monkeypatch) -> None:
+def test_self_hosted_request_requires_complete_verdict_shape(monkeypatch) -> None:
     from npa.workbench import vlm_eval
 
     requests = []
@@ -175,7 +175,23 @@ def test_self_hosted_kimi_keeps_generic_request_shape(monkeypatch) -> None:
         timeout_s=120,
     )
     assert requests[0]["temperature"] == 0
-    assert requests[0]["response_format"] == {"type": "json_object"}
+    response_format = requests[0]["response_format"]
+    assert response_format["type"] == "json_schema"
+    assert response_format["json_schema"]["strict"] is True
+    schema = response_format["json_schema"]["schema"]
+    assert schema["additionalProperties"] is False
+    assert set(schema["required"]) == {
+        "success",
+        "score",
+        "rationale",
+        "provider_observable_support",
+    }
+    support = schema["properties"]["provider_observable_support"]
+    assert support["minItems"] == 1
+    assert support["maxItems"] == 16
+    assert support["items"]["minLength"] == 1
+    assert support["items"]["maxLength"] == 512
+    assert schema["properties"]["rationale"]["maxLength"] == 1024
     assert "reasoning_effort" not in requests[0]
 
 
@@ -200,7 +216,10 @@ def test_malformed_minimax_json_remains_an_error(monkeypatch) -> None:
         )
 
 
-_VALID_CONTENT = '{"success":true,"score":0.9,"rationale":"target reached"}'
+_VALID_CONTENT = (
+    '{"success":true,"score":0.9,"rationale":"target reached",'
+    '"provider_observable_support":["Frame 1 shows the target."]}'
+)
 
 
 def _completion(*, content=_VALID_CONTENT, model="MiniMaxAI/MiniMax-M3", finish="stop"):
@@ -266,7 +285,12 @@ def test_paired_results_preserve_effective_rubric_and_provider_disagreement(
 ):
     rubric = "Score only the visible green frame; do not infer any robot motion."
     content = json.dumps(
-        {"success": provider_success, "score": score, "rationale": "green frame"}
+        {
+            "success": provider_success,
+            "score": score,
+            "rationale": "green frame",
+            "provider_observable_support": ["Frame 1 is visibly green."],
+        }
     )
     report, requests, _frame = _run_judge_comparison(
         monkeypatch,
@@ -308,7 +332,10 @@ def test_compare_judges_uses_identical_request_except_model_and_fails_closed(
     primary["usage"] = {"prompt_tokens": 10, "completion_tokens": 5}
     secondary = _completion(
         model="openbmb/MiniCPM-V-4_5",
-        content='{"success":false,"score":0.2,"rationale":"not visible"}',
+        content=(
+            '{"success":false,"score":0.2,"rationale":"not visible",'
+            '"provider_observable_support":["Frame 1 lacks the target."]}'
+        ),
     )
     secondary["id"] = "secondary-request"
     secondary["usage"] = {"prompt_tokens": 11, "completion_tokens": 4}
@@ -692,7 +719,12 @@ def test_compare_judges_reports_agreement_without_escalation(
     monkeypatch, tmp_path, score, expected_status, expected_passed
 ) -> None:
     content = json.dumps(
-        {"success": expected_passed, "score": score, "rationale": "visible evidence"}
+        {
+            "success": expected_passed,
+            "score": score,
+            "rationale": "visible evidence",
+            "provider_observable_support": ["Frame 1 provides visible evidence."],
+        }
     )
     report, _requests, _frame = _run_judge_comparison(
         monkeypatch,
@@ -847,7 +879,7 @@ def test_api_judge_deframes_one_complete_markdown_json_block(
     assert result.evidence is not None
     assert (
         result.evidence.provider.parser_version
-        == "npa_vlm_eval_hosted_json_v1+markdown-fence-v1"
+        == "npa_vlm_eval_hosted_json_v2+markdown-fence-v1"
     )
 
 
@@ -932,7 +964,12 @@ def test_api_judge_rejects_model_mismatch(monkeypatch, model) -> None:
 @pytest.mark.parametrize("score", [0, 0.74, 1])
 def test_api_judge_preserves_valid_scores(monkeypatch, score) -> None:
     content = json.dumps(
-        {"success": False, "score": score, "rationale": "visible evidence"}
+        {
+            "success": False,
+            "score": score,
+            "rationale": "visible evidence",
+            "provider_observable_support": ["Frame 1 provides visible evidence."],
+        }
     )
     result = _call_completion(monkeypatch, _completion(content=content))
     assert result.success is False
@@ -948,7 +985,11 @@ def test_self_hosted_judge_keeps_legacy_parsing_for_completed_response(
             {
                 "finish_reason": "stop",
                 "message": {
-                    "content": '```json\n{"success":true,"score":0.7,"rationale":"legacy"}\n```'
+                    "content": (
+                        '```json\n{"success":true,"score":0.7,'
+                        '"rationale":"legacy","provider_observable_support":'
+                        '["Frame 1 is visible."]}\n```'
+                    )
                 },
             }
         ]
@@ -961,7 +1002,7 @@ def test_self_hosted_judge_keeps_legacy_parsing_for_completed_response(
     assert result.evidence is not None
     assert (
         result.evidence.provider.parser_version
-        == "npa_vlm_eval_compatible_json_v2+markdown-fence-v1"
+        == "npa_vlm_eval_compatible_json_v3+markdown-fence-v1"
     )
 
 
@@ -971,7 +1012,11 @@ def test_self_hosted_judge_keeps_legacy_parsing_for_completed_response(
         ("Explanation: " + _VALID_CONTENT, "stop", 0.9),
         ("```json\n" + _VALID_CONTENT, "stop", 0.9),
         (
-            '{"success":true,"score":0.1,"score":0.9,"rationale":"duplicate"}',
+            (
+                '{"success":true,"score":0.1,"score":0.9,'
+                '"rationale":"duplicate","provider_observable_support":'
+                '["Frame 1 is visible."]}'
+            ),
             "stop",
             0.9,
         ),
@@ -985,7 +1030,7 @@ def test_self_hosted_compatibility_retains_non_strict_verdicts(
     )
     assert result.score == score
     assert result.evidence.provider.finish_reason == finish
-    assert result.evidence.provider.parser_version == "npa_vlm_eval_compatible_json_v2"
+    assert result.evidence.provider.parser_version == "npa_vlm_eval_compatible_json_v3"
     with pytest.raises(VlmEvalError):
         _call_completion(monkeypatch, _completion(content=content, finish=finish))
 
@@ -1160,7 +1205,11 @@ def test_api_result_surfaces_provider_success_score_contradiction(
     frame = tmp_path / "blank.png"
     Image.new("RGB", (8, 8), "gray").save(frame)
     completion = _completion(
-        content='{"success":true,"score":0.0,"rationale":"No task evidence is visible."}'
+        content=(
+            '{"success":true,"score":0.0,'
+            '"rationale":"No task evidence is visible.",'
+            '"provider_observable_support":["Frame 1 is blank."]}'
+        )
     )
     monkeypatch.setattr(vlm_eval, "_resolve_api_key", lambda **kwargs: "test-key")
     monkeypatch.setattr(

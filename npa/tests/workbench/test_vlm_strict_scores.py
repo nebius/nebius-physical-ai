@@ -26,7 +26,14 @@ def test_self_hosted_invalid_scores_fail_without_repair(score):
 @pytest.mark.parametrize("score", [0, 0.0, 0.74, 1, 1.0])
 def test_self_hosted_valid_scores_are_preserved(score):
     result = vlm_eval.parse_structured_response(
-        json.dumps({"success": False, "score": score, "rationale": "visible"})
+        json.dumps(
+            {
+                "success": False,
+                "score": score,
+                "rationale": "visible",
+                "provider_observable_support": ["Frame 1 shows a visible object."],
+            }
+        )
     )
     assert result.score == score
     assert result.success is False
