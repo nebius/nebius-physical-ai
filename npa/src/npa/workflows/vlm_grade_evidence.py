@@ -172,7 +172,7 @@ def _validate_request(
     ):
         raise _InvalidEvidence("request_invalid")
     _validate_frames(report, request["frames"])
-    if schema != "npa_vlm_eval_evidence_v1":
+    if schema != "npa_vlm_eval_evidence_v1" or "sampling" in manifest:
         _validate_sampling(report, manifest)
     _validate_prompt(report, request, paired_audit=paired_audit)
 
