@@ -15,16 +15,20 @@ suite there. A GitHub-hosted runner is only used as an orchestrator.
 
 ## Setup
 
-Add these repository secrets under **Settings → Secrets and variables →
+Configure these repository inputs under **Settings → Secrets and variables →
 Actions**:
 
-| Secret | Purpose |
-| --- | --- |
-| `DEV_VM_SSH_HOST` | Hostname or IP of the dev VM |
-| `DEV_VM_SSH_USER` | SSH login user |
-| `DEV_VM_SSH_PRIVATE_KEY` | Private key (PEM) authorized on the dev VM |
-| `DEV_VM_SSH_KNOWN_HOSTS` | Required, independently verified SSH host key entry; non-default ports use `[hostname]:port` |
-| `DEV_VM_SSH_PORT` | Optional; defaults to `22` |
+| Kind | Name | Purpose |
+| --- | --- | --- |
+| Variable | `DEV_VM_PRIMARY_HOST` | Hostname or IP of the dedicated dev VM |
+| Variable | `DEV_VM_PRIMARY_PORT` | Optional SSH port; defaults to `22` |
+| Secret | `DEV_VM_SSH_USER` | SSH login user |
+| Secret | `DEV_VM_SSH_PRIVATE_KEY` | Private key (PEM) authorized on the dev VM |
+| Secret | `DEV_VM_SSH_KNOWN_HOSTS` | Required, independently verified SSH host key entry; non-default ports use `[hostname]:port` |
+
+`DEV_VM_SSH_HOST` and `DEV_VM_SSH_PORT` secrets remain supported only as
+transition overrides. Keep the account, key, and host-key values as secrets;
+the host and port variables identify routing only.
 
 The connection verifies the server's pinned host key and uses public-key
 authentication without interactive prompts. GitHub creates the private-key file
@@ -78,7 +82,7 @@ network to the approved external pool, restart it, and verify that the new
 allocation belongs to that pool. Preserve the pool selection in the deployment's
 private Terraform configuration and state. Reverify the instance
 identity and its existing trusted SSH host key at the new address, then update
-`DEV_VM_SSH_HOST` and `DEV_VM_SSH_KNOWN_HOSTS`. Coordinate shared networks and
+`DEV_VM_PRIMARY_HOST` and `DEV_VM_SSH_KNOWN_HOSTS`. Coordinate shared networks and
 static allocations separately; do not release another workload's address.
 
 The workflow probes TCP reachability before creating its private-key file. On
@@ -89,8 +93,9 @@ Provision the VM with a dedicated CI public key, disable password and root
 login, and expose only the SSH port needed by this workflow. Keep application
 ports closed. Obtain its SSH host key through authenticated provider serial
 logs or another independently trusted connection before setting
-`DEV_VM_SSH_KNOWN_HOSTS`. Store all connection values in the secrets above;
-never commit live addresses, private keys, or project identifiers.
+`DEV_VM_SSH_KNOWN_HOSTS`. Store sensitive connection values in the secrets
+above and the route only in the designated repository variables; never commit
+live addresses, private keys, or project identifiers.
 
 Install `git`, `python3-venv`, and `make`, plus `skopeo` (or another supported
 registry inspector). Initialize the dedicated checkout at `~/npa-ci-daily`

@@ -8,13 +8,13 @@ import math
 import os
 from pathlib import Path
 import re
-import shutil
 import subprocess
-import sys
 import tempfile
 from typing import Any
 
 import numpy as np
+
+from npa.rerun_cli import resolve_rerun_cli
 
 from .benchmark_inventory import benchmark_identities
 from .schemas import DATASET_REVISION, SOURCE_REVISION
@@ -674,10 +674,10 @@ def _decode_rrd_to(
     rows: list[dict[str, Any]],
     run_id: str,
 ) -> dict[str, Any]:
-    sibling = Path(sys.executable).with_name("rerun")
-    rerun = str(sibling) if sibling.is_file() else shutil.which("rerun")
-    if not rerun:
-        raise CuroboError("Rerun CLI is unavailable")
+    try:
+        rerun = resolve_rerun_cli()
+    except RuntimeError as exc:
+        raise CuroboError(str(exc)) from exc
     verified = subprocess.run(
         [rerun, "rrd", "verify", str(path)], capture_output=True, check=False
     )

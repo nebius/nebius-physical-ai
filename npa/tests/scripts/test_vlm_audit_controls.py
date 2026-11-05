@@ -280,6 +280,30 @@ def test_scheduled_lane_preserves_branch_policy_and_uploads_only_receipts():
     assert not any("SSH" in key or "GPU" in key or "IAM" in key for key in step["env"])
 
 
+def test_credentialed_live_lane_requires_private_sim2real_storage() -> None:
+    workflow = yaml.safe_load(
+        (ROOT / ".github/workflows/token-factory-live.yml").read_text()
+    )
+    steps = workflow["jobs"]["token-factory-live"]["steps"]
+    storage = next(
+        row for row in steps if row.get("name") == "Require private Sim2Real S3 scope"
+    )
+    storage_env = {
+        "NPA_SIM2REAL_EVALUATION_LIVE_S3_PREFIX": "${{ secrets.NPA_SIM2REAL_EVALUATION_LIVE_S3_PREFIX }}",
+        "AWS_ENDPOINT_URL": "${{ secrets.NPA_SIM2REAL_EVALUATION_LIVE_S3_ENDPOINT }}",
+        "AWS_ACCESS_KEY_ID": "${{ secrets.NPA_SIM2REAL_EVALUATION_LIVE_S3_ACCESS_KEY_ID }}",
+        "AWS_SECRET_ACCESS_KEY": "${{ secrets.NPA_SIM2REAL_EVALUATION_LIVE_S3_SECRET_ACCESS_KEY }}",
+    }
+    assert storage["env"] == storage_env
+    assert "Missing required private Sim2Real S3 setting(s)" in storage["run"]
+    credentialed = next(
+        row
+        for row in steps
+        if row.get("name") == "Run credentialed suites and Kimi provenance contracts"
+    )
+    assert {key: credentialed["env"][key] for key in storage_env} == storage_env
+
+
 def test_public_receipt_cannot_contain_private_identifier(tmp_path):
     runner = _module("npa/scripts/vlm_audit_live_recheck.py")
     path = tmp_path / "receipt.json"

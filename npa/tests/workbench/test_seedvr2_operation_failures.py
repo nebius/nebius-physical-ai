@@ -18,7 +18,7 @@ from typer.testing import CliRunner
 from npa.cli.main import app
 from npa.clients.storage import StorageClient
 from npa.sdk.workbench import seedvr2 as sdk
-from npa.workbench.seedvr2 import artifacts, runtime
+from npa.workbench.seedvr2 import artifacts, quality, runtime
 from npa.workbench.seedvr2.service import create_app
 
 
@@ -69,22 +69,32 @@ def _wire_storage(monkeypatch, tmp_path, verb, failure, boundary="input"):
     provider = _Provider(failure, boundary)
     storage = object.__new__(StorageClient)
     storage._s3 = provider
-    module = runtime if verb == "restore" else artifacts
+    module, operation = _module_operation(verb)
     # Bind only the factory; the production operation and its wrappers still run.
     monkeypatch.setattr(
-        module, verb, partial(getattr(module, verb), storage_factory=lambda: storage)
+        module,
+        operation,
+        partial(getattr(module, operation), storage_factory=lambda: storage),
     )
     monkeypatch.setenv("NPA_SEEDVR2_WORK_DIR", str(tmp_path / "runs"))
     payload = {
         "input_path": "s3://example-bucket/input."
         + ("mp4" if verb in {"probe", "restore"} else "json"),
         "output_path": "s3://example-bucket/output."
-        + ("json" if verb in {"probe", "verify"} else "prefix"),
+        + ("json" if verb in {"probe", "verify", "quality-boundary"} else "prefix"),
         "run_id": "operation-failure",
     }
     if verb == "restore":
         payload["probe_path"] = "s3://example-bucket/probe.json"
     return provider, payload
+
+
+def _module_operation(verb):
+    if verb == "restore":
+        return runtime, "restore"
+    if verb == "quality-boundary":
+        return quality, "assess"
+    return artifacts, verb
 
 
 def _assert_failed(provider, failure):
@@ -93,7 +103,9 @@ def _assert_failed(provider, failure):
     return 400 if failure == "denied" else 503
 
 
-@pytest.mark.parametrize("verb", ["probe", "restore", "verify", "review"])
+@pytest.mark.parametrize(
+    "verb", ["probe", "restore", "verify", "review", "quality-boundary"]
+)
 @pytest.mark.parametrize("failure", ["endpoint", "truncated", "denied"])
 def test_actual_input_download_service_failure(monkeypatch, tmp_path, verb, failure):
     provider, payload = _wire_storage(monkeypatch, tmp_path, verb, failure)
@@ -116,7 +128,9 @@ def test_actual_input_download_service_failure(monkeypatch, tmp_path, verb, fail
         assert json.loads(retained[0].read_text())["error"] == expected
 
 
-@pytest.mark.parametrize("verb", ["probe", "restore", "verify", "review"])
+@pytest.mark.parametrize(
+    "verb", ["probe", "restore", "verify", "review", "quality-boundary"]
+)
 @pytest.mark.parametrize("failure", ["endpoint", "truncated", "denied"])
 def test_actual_input_download_cli_failure(monkeypatch, tmp_path, verb, failure):
     provider, payload = _wire_storage(monkeypatch, tmp_path, verb, failure)
@@ -133,14 +147,16 @@ def test_actual_input_download_cli_failure(monkeypatch, tmp_path, verb, failure)
     assert not provider.writes
 
 
-@pytest.mark.parametrize("verb", ["probe", "restore", "verify", "review"])
+@pytest.mark.parametrize(
+    "verb", ["probe", "restore", "verify", "review", "quality-boundary"]
+)
 @pytest.mark.parametrize("failure", ["endpoint", "truncated", "denied"])
 def test_actual_input_download_sdk_preserves_class_and_cause(
     monkeypatch, tmp_path, verb, failure
 ):
     provider, payload = _wire_storage(monkeypatch, tmp_path, verb, failure)
     with pytest.raises(runtime.SeedVR2Error) as caught:
-        getattr(sdk, verb)(**payload)
+        getattr(sdk, verb.replace("-", "_"))(**payload)
     assert isinstance(caught.value, runtime.SeedVR2StorageUnavailable) == (
         failure != "denied"
     )

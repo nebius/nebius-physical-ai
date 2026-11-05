@@ -137,6 +137,21 @@ def _assert_support_crop_kept_the_observations(report) -> None:
     loosen them to hide a real regression.
     """
 
+    # `validate_support` checks the coverage-cost pair only when the report carries it,
+    # so that older records still validate. That leaves the join between the writer and
+    # the validator unpinned: a change that stopped emitting the pair would be accepted
+    # by design. This eval runs the real pipeline, so it is the place that can require
+    # the pair to be there, and the lines below are what make the invariant mandatory
+    # for anything this image produces.
+    for block in ("coverage_before_crop", "coverage_cost_of_crop"):
+        assert block in report, (
+            f"the reconstruction stopped publishing {block}, so validate_support no "
+            "longer checks what the crop cost coverage"
+        )
+    cost = report["coverage_cost_of_crop"]
+    assert cost["samples"] == report["coverage"]["samples"]
+    assert cost["samples_abandoned_by_crop"] >= 0
+
     before = report["support_before_crop"]["unsupported_area_fraction"]
     after = report["support"]["unsupported_area_fraction"]
     coverage = report["coverage"]

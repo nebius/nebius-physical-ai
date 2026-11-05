@@ -32,7 +32,27 @@ def test_groot_uses_vendor_python312_separate_from_python311_npa_control() -> No
 
     assert "uv sync --python 3.12" in text
     assert "NPA_BAKED_PYTHON=/opt/isaac-lab/venv/bin/python" in text
-    assert '"pillow>=13.0.0,<14.0"' in text
+    assert text.count('"pillow==13.0.0"') == 1
+    assert '"pillow>=13.0.0,<14.0"' not in text
+    assert text.count('"cffi>=2.0.0"') == 2
+    assert text.count("from cryptography.hazmat.bindings._rust import exceptions") == 2
+    isaac_control_overlay = text.split(
+        "RUN /opt/isaac-lab/venv/bin/python -m pip install --no-deps --upgrade",
+        maxsplit=1,
+    )[1]
+    for requirement in (
+        '"bcrypt==5.0.0"',
+        '"annotated-types==0.8.0"',
+        '"invoke==3.0.3"',
+        '"paramiko==5.0.0"',
+        '"pydantic==2.13.5"',
+        '"pydantic-core==2.46.5"',
+        '"pyarrow==25.0.1"',
+        '"PyNaCl==1.6.2"',
+        '"typing-inspection==0.4.4"',
+        '"zstandard==0.25.0"',
+    ):
+        assert requirement in isaac_control_overlay
     assert 'uv pip install --python "${NPA_BAKED_PYTHON}" --no-deps -e /opt/npa' in text
     assert (
         'uv pip install --python "${GROOT_VENV}/bin/python" --no-deps -e /opt/npa'
