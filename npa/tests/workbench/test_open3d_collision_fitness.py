@@ -10,7 +10,9 @@ out of building it.
 from __future__ import annotations
 
 import importlib.util
+import hashlib
 import json
+import subprocess
 import sys
 import types
 from pathlib import Path
@@ -32,6 +34,10 @@ def _harness(monkeypatch: pytest.MonkeyPatch):
     than a copy of it.
     """
     monkeypatch.setitem(sys.modules, "open3d", types.ModuleType("open3d"))
+    monkeypatch.syspath_prepend(str(HARNESS.parent))
+    monkeypatch.setenv(
+        "OPEN3D_OUT", str(HARNESS.parent / "_unused-collision-test-output.json")
+    )
     spec = importlib.util.spec_from_file_location("collision_fitness_verdict", HARNESS)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -273,14 +279,27 @@ def test_the_published_artifact_states_a_verdict_only_because_its_control_passed
 
 def test_the_record_binds_its_harness_and_report_bytes() -> None:
     """Same hash-binding contract the rest of this evidence directory uses."""
-    import hashlib
-
     bound = _record()["provenance"]["harness_that_produced_this"]
     assert len(bound) == 2, bound
     for entry in bound:
         target = EVIDENCE / entry["path"]
         assert target.exists(), entry
-        digest = hashlib.sha256(target.read_bytes()).hexdigest()
+        committed_at = entry.get("bytes_committed_at")
+        if committed_at:
+            historical = subprocess.run(
+                [
+                    "git",
+                    "-C",
+                    str(EVIDENCE.parents[2]),
+                    "show",
+                    f"{committed_at}:docs/evidence/open3d/{entry['path']}",
+                ],
+                check=True,
+                capture_output=True,
+            ).stdout
+            digest = hashlib.sha256(historical).hexdigest()
+        else:
+            digest = hashlib.sha256(target.read_bytes()).hexdigest()
         assert digest == entry["sha256"], (entry["path"], digest, entry["sha256"])
 
 

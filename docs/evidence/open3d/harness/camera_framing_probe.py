@@ -12,22 +12,22 @@ network, no Rerun.
 
 from __future__ import annotations
 
+import argparse
 import json
 import sys
 from pathlib import Path
 
 import numpy as np
+from harness_io import read_cloud, read_mesh
 
 
 def _load_points(path: Path) -> np.ndarray:
-    import open3d as o3d
-
     head = path.read_bytes()[:2048].decode("latin-1")
     if "element face" in head and "\nelement face 0\n" not in head:
-        mesh = o3d.io.read_triangle_mesh(str(path))
+        mesh = read_mesh(path)
         if len(mesh.triangles) > 0:
             return np.asarray(mesh.vertices)
-    return np.asarray(o3d.io.read_point_cloud(str(path)).points)
+    return np.asarray(read_cloud(path).points)
 
 
 def worst_reach(points: np.ndarray, camera: dict, aspect: float) -> dict:
@@ -60,10 +60,14 @@ def worst_reach(points: np.ndarray, camera: dict, aspect: float) -> dict:
 
 
 def main() -> int:
-    artifacts = Path(sys.argv[1])
-    out = Path(sys.argv[2])
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("artifacts", type=Path, help="directory holding the run PLYs")
+    parser.add_argument("output", type=Path, help="where to write the report JSON")
+    parser.add_argument("repo", type=Path, help="repo root, whose src/ has the runner")
+    args = parser.parse_args()
+    artifacts, out = args.artifacts, args.output
 
-    sys.path.insert(0, str(Path(sys.argv[3]) / "src"))
+    sys.path.insert(0, str(args.repo / "src"))
     from npa.workbench.open3d.runner import (
         CAMERA_ASPECT,
         REMOVED_VIEW,

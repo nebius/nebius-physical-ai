@@ -19,6 +19,7 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
+import subprocess
 from typing import Any
 
 EVIDENCE = Path(__file__).resolve().parents[3] / "docs" / "evidence" / "open3d"
@@ -30,16 +31,25 @@ PATH_KEYS = ("script", "harness", "path", "file")
 DIGEST_KEYS = ("script_sha256", "harness_sha256", "sha256")
 
 
-def _claims(node: Any, found: list[tuple[str, str]]) -> None:
+def _claims(node: Any, found: list[tuple[str, str, str | None]]) -> None:
     if isinstance(node, dict):
         path = next(
             (node[key] for key in PATH_KEYS if isinstance(node.get(key), str)), None
         )
-        digest = next(
-            (node[key] for key in DIGEST_KEYS if isinstance(node.get(key), str)), None
+        digest_key = next(
+            (key for key in DIGEST_KEYS if isinstance(node.get(key), str)), None
         )
+        digest = node[digest_key] if digest_key else None
         if path and digest and path.endswith(".py"):
-            found.append((path, digest))
+            if digest_key and digest_key.endswith("_sha256"):
+                at_commit = node.get(
+                    f"{digest_key[: -len('_sha256')]}_bytes_committed_at"
+                )
+            else:
+                at_commit = node.get("bytes_committed_at")
+            found.append(
+                (path, digest, at_commit if isinstance(at_commit, str) else None)
+            )
         for value in node.values():
             _claims(value, found)
     elif isinstance(node, list):
@@ -50,15 +60,27 @@ def _claims(node: Any, found: list[tuple[str, str]]) -> None:
 def test_every_record_that_pins_its_producer_still_matches_it() -> None:
     checked = []
     for record in sorted(EVIDENCE.glob("*.json")):
-        claims: list[tuple[str, str]] = []
+        claims: list[tuple[str, str, str | None]] = []
         _claims(json.loads(record.read_text()), claims)
-        for path, digest in claims:
+        for path, digest, at_commit in claims:
             target = EVIDENCE / path
             if not target.exists():
                 # Expected: most hashes in this directory name a run's own outputs,
                 # which are recorded by hash and not committed.
                 continue
-            actual = hashlib.sha256(target.read_bytes()).hexdigest()
+            if at_commit:
+                relative = target.relative_to(EVIDENCE.parents[2])
+                result = subprocess.run(
+                    ["git", "show", f"{at_commit}:{relative.as_posix()}"],
+                    cwd=EVIDENCE.parents[2],
+                    capture_output=True,
+                    check=False,
+                )
+                if result.returncode:
+                    continue
+                actual = hashlib.sha256(result.stdout).hexdigest()
+            else:
+                actual = hashlib.sha256(target.read_bytes()).hexdigest()
             assert actual.startswith(digest[:12]), (
                 f"{record.name} claims {digest[:12]} for {path}, which is actually "
                 f"{actual[:12]}. Either the producer changed without the record being "

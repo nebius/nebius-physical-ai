@@ -28,6 +28,8 @@ import itertools
 import json
 from pathlib import Path
 
+from harness_io import output_path
+
 import numpy as np
 import open3d as o3d
 from npa.workbench.open3d.runner import (
@@ -35,7 +37,7 @@ from npa.workbench.open3d.runner import (
     _support,
 )
 
-OUT = Path("/data/floor-vs-resolution.json")
+OUT = output_path("/data/floor-vs-resolution.json")
 
 SAMPLES = 60000
 #: Subdivision levels. A first pass used 2 to 5 and never reached the review lane's regime:

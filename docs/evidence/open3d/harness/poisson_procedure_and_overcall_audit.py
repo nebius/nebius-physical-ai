@@ -22,11 +22,13 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from harness_io import output_path
+
 import numpy as np
 import open3d as o3d
 from npa.workbench.open3d.runner import _crop_justification, _support
 
-OUT = Path("/data/poisson-procedure-and-overcall-audit.json")
+OUT = output_path("/data/poisson-procedure-and-overcall-audit.json")
 
 SAMPLES = 60000
 INIT_FACTOR = 3
