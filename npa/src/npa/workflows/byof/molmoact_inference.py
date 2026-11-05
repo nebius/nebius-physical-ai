@@ -1575,7 +1575,16 @@ def _validate_record_row(
     # PEP 376 permits generated .pyc rows to omit both hash and size. They are
     # still included in the canonical projection, but cannot be byte-verified
     # from RECORD and must not make every ordinary pip/uv environment invalid.
-    if not digest and not size and path.endswith(".pyc") and not external_path:
+    is_venv_console_bytecode = (
+        external_path
+        and external_parts[:2] == ["bin", "__pycache__"]
+        and path.endswith(".pyc")
+    )
+    if (
+        not digest
+        and not size
+        and ((path.endswith(".pyc") and not external_path) or is_venv_console_bytecode)
+    ):
         return
     if not digest or not size:
         raise ValueError("non-RECORD row lacks hash or size")

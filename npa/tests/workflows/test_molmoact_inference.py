@@ -603,6 +603,25 @@ def test_gate_a_rejects_a_distribution_without_its_own_record(
         contract.gate_a_distribution_projection()
 
 
+def test_gate_a_accepts_unhashed_venv_console_bytecode_record() -> None:
+    contract._validate_record_row(
+        "../../../bin/__pycache__/jp.cpython-312.pyc",
+        "",
+        "",
+        "jmespath-1.1.0.dist-info/RECORD",
+    )
+
+
+def test_gate_a_rejects_unhashed_external_non_console_bytecode() -> None:
+    with pytest.raises(ValueError, match="non-RECORD row lacks hash or size"):
+        contract._validate_record_row(
+            "../../../share/__pycache__/jp.cpython-312.pyc",
+            "",
+            "",
+            "jmespath-1.1.0.dist-info/RECORD",
+        )
+
+
 def test_canonical_json_rejects_nonfinite_values() -> None:
     with pytest.raises(ValueError):
         contract.canonical_json_bytes({"value": float("nan")})
