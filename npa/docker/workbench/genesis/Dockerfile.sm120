@@ -42,6 +42,7 @@ USER root
 RUN id -u ubuntu >/dev/null 2>&1 || useradd -m -s /bin/bash -u 1000 ubuntu; \
     install -d -m 0755 -o ubuntu -g ubuntu \
       /opt/genesis \
+      /opt/genesis/compat \
       /opt/genesis/outputs \
       /opt/npa/src/npa \
       /opt/npa/docker/workbench/genesis; \

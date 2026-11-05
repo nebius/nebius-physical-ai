@@ -278,6 +278,12 @@ def test_genesis_build_time_sanitizers_are_readable_by_the_runtime_user(
     dockerfile, _, __
 ):
     text = (GENESIS / dockerfile).read_text()
+    provisioning = next(
+        body
+        for kind, body in _instructions(text)
+        if kind == "RUN" and "id -u ubuntu" in body
+    )
+    assert "/opt/genesis/compat" in provisioning
     for source, destination in (
         (
             "docker/workbench/curobo/remove_scikit_image_recipe.py",
