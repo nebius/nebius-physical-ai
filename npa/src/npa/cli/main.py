@@ -189,9 +189,40 @@ def destroy_project_cmd(
         "--delete-project",
         help="Also delete an exact, empty project with durable NPA creation proof.",
     ),
+    retain_project: bool = typer.Option(
+        False,
+        "--retain-project",
+        help="Close one failed project-deletion journal after explicit project-retention authorization.",
+    ),
+    operation_id: str = typer.Option(
+        "",
+        "--operation-id",
+        help="Exact failed project-deletion operation to retain; requires --retain-project.",
+    ),
     output_json: bool = typer.Option(False, "--json", help="Emit JSON."),
 ) -> None:
     """Plan or execute project-scoped teardown through guarded NPA commands."""
+
+    if retain_project:
+        if all_resources or delete_project or receipt.strip():
+            raise typer.BadParameter(
+                "--retain-project cannot be combined with --all, --delete-project, or --receipt."
+            )
+        if not yes:
+            raise typer.BadParameter("--retain-project requires --yes.")
+        if not project.strip() or not operation_id.strip():
+            raise typer.BadParameter(
+                "--retain-project requires exact --project and --operation-id."
+            )
+        from npa.project_destroy import retain_recovery_required_project_teardown
+
+        result = retain_recovery_required_project_teardown(
+            project=project.strip(), operation_id=operation_id.strip()
+        )
+        typer.echo(json.dumps(result, indent=2, sort_keys=True) if output_json else result["status"])
+        return
+    if operation_id.strip():
+        raise typer.BadParameter("--operation-id is valid only with --retain-project.")
 
     if not all_resources:
         raise typer.BadParameter("Full project teardown requires --all.")
