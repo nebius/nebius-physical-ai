@@ -31,6 +31,11 @@ _DIRECT_NO_CALL_LIMITATIONS = [
     "A score from one model, rubric, threshold, and frame sample does not "
     "establish physical correctness or safety.",
     (
+        "When present, provider_observable_support is provider-authored text; NPA "
+        "checks only its required shape and retention, not semantic truth or pixel "
+        "grounding."
+    ),
+    (
         "This score is a stub or caller-supplied dry-validation input; no VLM "
         "call occurred, so it is not model or policy evidence."
     ),
@@ -42,6 +47,11 @@ _BENCHMARK_FIXTURE_LIMITATIONS = [
     "this caller-labeled dataset and do not establish generalization, physical "
     "correctness, safety, or an operational error rate.",
     "Selected frames cannot verify unobserved intervals or continuous task stability.",
+    (
+        "When present, provider_observable_support is provider-authored text; NPA "
+        "checks only its required shape and retention, not semantic truth or pixel "
+        "grounding."
+    ),
     (
         "Cases with score_source 'fixture' use caller-provided dry-validation "
         "inputs; those cases are not VLM or policy evidence."
@@ -256,7 +266,9 @@ def test_workbench_vlm_eval_compare_judges_writes_distinct_report(
                     "message": {
                         "content": (
                             '{"success":true,"score":0.9,'
-                            '"rationale":"visible evidence"}'
+                            '"rationale":"visible evidence",'
+                            '"provider_observable_support":'
+                            '["Frame 1 visibly contains the rollout."]}'
                         )
                     },
                 }
@@ -310,6 +322,9 @@ def test_workbench_vlm_eval_compare_judges_writes_distinct_report(
         assert retained[role]["result"]["rubric"] == retained["rubric"]
         assert retained[role]["result"]["provider_success"] is True
         assert retained[role]["result"]["provider_success_matches_score_gate"] is True
+        assert retained[role]["result"]["provider_observable_support"] == [
+            "Frame 1 visibly contains the rollout."
+        ]
         manifest = retained[role]["result"]["evidence"]["request"]["request_manifest"]
         assert manifest["sampling"]["strategy"] == "sequence"
         assert manifest["sampling"]["max_frames"] == 7

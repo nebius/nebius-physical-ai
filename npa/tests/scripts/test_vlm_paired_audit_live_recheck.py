@@ -119,7 +119,14 @@ def _synthetic_response(model):
                 "finish_reason": "stop",
                 "message": {
                     "content": json.dumps(
-                        {"success": False, "score": 0, "rationale": "synthetic"}
+                        {
+                            "success": False,
+                            "score": 0,
+                            "rationale": "synthetic",
+                            "provider_observable_support": [
+                                "Frame 1 is visibly synthetic."
+                            ],
+                        }
                     )
                 },
             }

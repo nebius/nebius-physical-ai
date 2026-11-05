@@ -1,0 +1,674 @@
+{
+  "measured_at_utc": "2026-11-05T03:52:46.580167+00:00",
+  "source_repository_head": "a6ba62b8007e2d2c30619d1ad989b81fdfc6cbe0",
+  "remote_name": "origin",
+  "audit_workspace": "fresh private bare repository removed after this run",
+  "what_this_answers": "For every commit a capability record names, does a current advertised origin ref contain it, and if not can origin fetch the object by SHA?",
+  "why_it_exists": "The records claimed no advertised remote refs. The clone that checked held only refs/heads/* out of every ref this remote advertises, and was shallow. The claim was true and unestablished, which is its own kind of defect.",
+  "ref_coverage": {
+    "total_refs_advertised_by_remote": 1392,
+    "pull_heads_advertised": 991,
+    "pull_merges_advertised": 27,
+    "tags_advertised": 11,
+    "branches_advertised": 362,
+    "refs_in_no_other_category": 1,
+    "fetched_pull_refs": 991,
+    "fetched_merge_refs": 27,
+    "fetched_tag_refs": 11,
+    "fetched_branch_refs": 362,
+    "why_merge_refs_are_no_longer_skipped": "The first version skipped them, arguing a merge ref has its PR head as an ancestor and so cannot hold a commit the head lacks. A reviewer tested it on all of them and found one where the head had moved since the merge ref was computed, so the property held for a different reason than the one I gave. It was harmless, and a force-push is the case that would not be. They are now fetched and tested, so the audit rests on no argument about refs.",
+    "counts_here_are_a_moment_not_a_constant": "This remote gains refs continuously. A count written into prose is stale almost immediately -- one of mine was wrong by the time it was published -- so the numbers live in this report and the prose points here."
+  },
+  "shallow_clone": {
+    "is_shallow": false,
+    "graft_points": 0,
+    "why_this_does_not_invalidate_the_result": "Truncation removes the ancestors of a graft point. A named commit is hidden only if it is one of them, which is tested per commit rather than argued from commit dates.",
+    "commits_that_could_be_concealed": 0
+  },
+  "tally": {
+    "on_zero_remote_refs": 6,
+    "resolvable_remotely": 8,
+    "absent_from_this_clone": 2
+  },
+  "commits": [
+    {
+      "commit": "1441e211400cf7d07c8d832d3ad787ff71d7fad2",
+      "verdict": "on_zero_remote_refs",
+      "remote_refs_containing": 0,
+      "direct_sha_fetch_attempted": true,
+      "direct_sha_fetchable": true,
+      "local_refs_containing": 0,
+      "shallow_clone_could_conceal_it": false,
+      "orphaned_tracking_refs_containing": 0,
+      "example_remote_refs": []
+    },
+    {
+      "commit": "15b0b11f0",
+      "verdict": "resolvable_remotely",
+      "remote_refs_containing": 467,
+      "direct_sha_fetch_attempted": false,
+      "direct_sha_fetchable": null,
+      "local_refs_containing": 0,
+      "shallow_clone_could_conceal_it": false,
+      "orphaned_tracking_refs_containing": 0,
+      "example_remote_refs": [
+        "refs/remotes/provenance-audit/branch/codex/aloha-paidf-comparable-20261005",
+        "refs/remotes/provenance-audit/branch/codex/antioch-local-workflow-20260916",
+        "refs/remotes/provenance-audit/branch/codex/ci-merge-fix-20261018-7f93a2"
+      ]
+    },
+    {
+      "commit": "15b0b11f0bc137631954ac87076f44753c513976",
+      "verdict": "resolvable_remotely",
+      "remote_refs_containing": 467,
+      "direct_sha_fetch_attempted": false,
+      "direct_sha_fetchable": null,
+      "local_refs_containing": 0,
+      "shallow_clone_could_conceal_it": false,
+      "orphaned_tracking_refs_containing": 0,
+      "example_remote_refs": [
+        "refs/remotes/provenance-audit/branch/codex/aloha-paidf-comparable-20261005",
+        "refs/remotes/provenance-audit/branch/codex/antioch-local-workflow-20260916",
+        "refs/remotes/provenance-audit/branch/codex/ci-merge-fix-20261018-7f93a2"
+      ]
+    },
+    {
+      "commit": "16012b1088579569a8755a1483c4c260c6af3973",
+      "verdict": "on_zero_remote_refs",
+      "remote_refs_containing": 0,
+      "direct_sha_fetch_attempted": true,
+      "direct_sha_fetchable": true,
+      "local_refs_containing": 0,
+      "shallow_clone_could_conceal_it": false,
+      "orphaned_tracking_refs_containing": 0,
+      "example_remote_refs": []
+    },
+    {
+      "commit": "256c26bc915080934814789be6a41bbc253f0d1c",
+      "verdict": "on_zero_remote_refs",
+      "remote_refs_containing": 0,
+      "direct_sha_fetch_attempted": true,
+      "direct_sha_fetchable": true,
+      "local_refs_containing": 0,
+      "shallow_clone_could_conceal_it": false,
+      "orphaned_tracking_refs_containing": 0,
+      "example_remote_refs": []
+    },
+    {
+      "commit": "3ae5a7a3c902214cb8415de1d06a2e224bd75e13",
+      "verdict": "resolvable_remotely",
+      "remote_refs_containing": 778,
+      "direct_sha_fetch_attempted": false,
+      "direct_sha_fetchable": null,
+      "local_refs_containing": 0,
+      "shallow_clone_could_conceal_it": false,
+      "orphaned_tracking_refs_containing": 0,
+      "example_remote_refs": [
+        "refs/remotes/provenance-audit/branch/codex/aloha-paidf-comparable-20261005",
+        "refs/remotes/provenance-audit/branch/codex/antioch-local-workflow-20260916",
+        "refs/remotes/provenance-audit/branch/codex/antioch-workbench-integration-20260818T045316Z-ee5d404f"
+      ]
+    },
+    {
+      "commit": "46ae993d10e251913fc4942fa5cf0e4fa689dfe7",
+      "verdict": "absent_from_this_clone",
+      "remote_refs_containing": null,
+      "direct_sha_fetch_attempted": true,
+      "direct_sha_fetchable": false,
+      "local_refs_containing": 0,
+      "shallow_clone_could_conceal_it": false,
+      "orphaned_tracking_refs_containing": 0,
+      "example_remote_refs": [],
+      "note": "The isolated audit repository could neither find the object through an advertised ref nor fetch it directly by SHA at measurement time."
+    },
+    {
+      "commit": "6e8cd115f1a9834cdc25c868eee1b4879d28e65f",
+      "verdict": "on_zero_remote_refs",
+      "remote_refs_containing": 0,
+      "direct_sha_fetch_attempted": true,
+      "direct_sha_fetchable": true,
+      "local_refs_containing": 0,
+      "shallow_clone_could_conceal_it": false,
+      "orphaned_tracking_refs_containing": 0,
+      "example_remote_refs": []
+    },
+    {
+      "commit": "750a6fe97506f420c6a1e83f64b1a65d6279cf3b",
+      "verdict": "resolvable_remotely",
+      "remote_refs_containing": 2,
+      "direct_sha_fetch_attempted": false,
+      "direct_sha_fetchable": null,
+      "local_refs_containing": 0,
+      "shallow_clone_could_conceal_it": false,
+      "orphaned_tracking_refs_containing": 0,
+      "example_remote_refs": [
+        "refs/remotes/provenance-audit/branch/cursor/open3d-holes-and-outliers",
+        "refs/remotes/provenance-audit/pr/995"
+      ]
+    },
+    {
+      "commit": "77bff008fff489b73ee2d8cd11466a105bf9d630",
+      "verdict": "absent_from_this_clone",
+      "remote_refs_containing": null,
+      "direct_sha_fetch_attempted": true,
+      "direct_sha_fetchable": false,
+      "local_refs_containing": 0,
+      "shallow_clone_could_conceal_it": false,
+      "orphaned_tracking_refs_containing": 0,
+      "example_remote_refs": [],
+      "note": "The isolated audit repository could neither find the object through an advertised ref nor fetch it directly by SHA at measurement time."
+    },
+    {
+      "commit": "b18d7aef56bbe25a5b45290e0b705f20a59ad4da",
+      "verdict": "on_zero_remote_refs",
+      "remote_refs_containing": 0,
+      "direct_sha_fetch_attempted": true,
+      "direct_sha_fetchable": true,
+      "local_refs_containing": 0,
+      "shallow_clone_could_conceal_it": false,
+      "orphaned_tracking_refs_containing": 0,
+      "example_remote_refs": []
+    },
+    {
+      "commit": "d06e95846",
+      "verdict": "resolvable_remotely",
+      "remote_refs_containing": 149,
+      "direct_sha_fetch_attempted": false,
+      "direct_sha_fetchable": null,
+      "local_refs_containing": 0,
+      "shallow_clone_could_conceal_it": false,
+      "orphaned_tracking_refs_containing": 0,
+      "example_remote_refs": [
+        "refs/remotes/provenance-audit/branch/codex/groot-offline-rl-271dec95",
+        "refs/remotes/provenance-audit/branch/codex/sim2real-franka-cube-experimental-20261031",
+        "refs/remotes/provenance-audit/branch/codex/sim2real-pi05-20261006"
+      ]
+    },
+    {
+      "commit": "d06e958462865af823b4f1479867df52421c8284",
+      "verdict": "resolvable_remotely",
+      "remote_refs_containing": 149,
+      "direct_sha_fetch_attempted": false,
+      "direct_sha_fetchable": null,
+      "local_refs_containing": 0,
+      "shallow_clone_could_conceal_it": false,
+      "orphaned_tracking_refs_containing": 0,
+      "example_remote_refs": [
+        "refs/remotes/provenance-audit/branch/codex/groot-offline-rl-271dec95",
+        "refs/remotes/provenance-audit/branch/codex/sim2real-franka-cube-experimental-20261031",
+        "refs/remotes/provenance-audit/branch/codex/sim2real-pi05-20261006"
+      ]
+    },
+    {
+      "commit": "d22893238d75efbb05a69eb75bca1b82eb5fe280",
+      "verdict": "resolvable_remotely",
+      "remote_refs_containing": 752,
+      "direct_sha_fetch_attempted": false,
+      "direct_sha_fetchable": null,
+      "local_refs_containing": 0,
+      "shallow_clone_could_conceal_it": false,
+      "orphaned_tracking_refs_containing": 0,
+      "example_remote_refs": [
+        "refs/remotes/provenance-audit/branch/codex/aloha-paidf-comparable-20261005",
+        "refs/remotes/provenance-audit/branch/codex/antioch-local-workflow-20260916",
+        "refs/remotes/provenance-audit/branch/codex/antioch-workbench-integration-20260818T045316Z-ee5d404f"
+      ]
+    },
+    {
+      "commit": "e4efc6602ab0e2de558365efccd877fdc84cd4e0",
+      "verdict": "resolvable_remotely",
+      "remote_refs_containing": 5,
+      "direct_sha_fetch_attempted": false,
+      "direct_sha_fetchable": null,
+      "local_refs_containing": 0,
+      "shallow_clone_could_conceal_it": false,
+      "orphaned_tracking_refs_containing": 0,
+      "example_remote_refs": [
+        "refs/remotes/provenance-audit/branch/cursor/open3d-declare-unbindable-hashes",
+        "refs/remotes/provenance-audit/branch/cursor/open3d-evidence-hash-binding",
+        "refs/remotes/provenance-audit/merge/1032"
+      ]
+    },
+    {
+      "commit": "e8e12b12a367f1a1bc7ef7aca7ac68866e8e5e97",
+      "verdict": "on_zero_remote_refs",
+      "remote_refs_containing": 0,
+      "direct_sha_fetch_attempted": true,
+      "direct_sha_fetchable": true,
+      "local_refs_containing": 0,
+      "shallow_clone_could_conceal_it": false,
+      "orphaned_tracking_refs_containing": 0,
+      "example_remote_refs": []
+    }
+  ],
+  "object_kinds": {
+    "1441e211400cf7d07c8d832d3ad787ff71d7fad2": "unknown_to_this_clone",
+    "15b0b11f0": "commit",
+    "15b0b11f0bc137631954ac87076f44753c513976": "commit",
+    "16012b1088579569a8755a1483c4c260c6af3973": "unknown_to_this_clone",
+    "256c26bc915080934814789be6a41bbc253f0d1c": "unknown_to_this_clone",
+    "3ae5a7a3c902214cb8415de1d06a2e224bd75e13": "commit",
+    "46ae993d10e251913fc4942fa5cf0e4fa689dfe7": "unknown_to_this_clone",
+    "6e8cd115f1a9834cdc25c868eee1b4879d28e65f": "unknown_to_this_clone",
+    "750a6fe97506f420c6a1e83f64b1a65d6279cf3b": "commit",
+    "77bff008fff489b73ee2d8cd11466a105bf9d630": "unknown_to_this_clone",
+    "b18d7aef56bbe25a5b45290e0b705f20a59ad4da": "unknown_to_this_clone",
+    "d06e95846": "commit",
+    "d06e958462865af823b4f1479867df52421c8284": "commit",
+    "d22893238d75efbb05a69eb75bca1b82eb5fe280": "commit",
+    "e4efc6602ab0e2de558365efccd877fdc84cd4e0": "commit",
+    "e8e12b12a367f1a1bc7ef7aca7ac68866e8e5e97": "unknown_to_this_clone"
+  },
+  "records_naming_them": {
+    "capability-record-distance-bands.json": [
+      "15b0b11f0bc137631954ac87076f44753c513976",
+      "e8e12b12a367f1a1bc7ef7aca7ac68866e8e5e97"
+    ],
+    "capability-record-evidence-hash-binding.json": [
+      "d06e958462865af823b4f1479867df52421c8284",
+      "e4efc6602ab0e2de558365efccd877fdc84cd4e0"
+    ],
+    "capability-record-frame-property-gate.json": [
+      "15b0b11f0",
+      "d06e95846",
+      "d06e958462865af823b4f1479867df52421c8284"
+    ],
+    "capability-record-holes-and-outliers.json": [
+      "750a6fe97506f420c6a1e83f64b1a65d6279cf3b"
+    ],
+    "capability-record-provenance-bound-preview.json": [
+      "1441e211400cf7d07c8d832d3ad787ff71d7fad2",
+      "15b0b11f0bc137631954ac87076f44753c513976"
+    ],
+    "capability-record-record-provenance-shape.json": [
+      "d06e958462865af823b4f1479867df52421c8284"
+    ],
+    "capability-record-standard-runtime.json": [
+      "15b0b11f0bc137631954ac87076f44753c513976",
+      "256c26bc915080934814789be6a41bbc253f0d1c"
+    ],
+    "capability-record-support-claim-correction.json": [
+      "15b0b11f0bc137631954ac87076f44753c513976",
+      "16012b1088579569a8755a1483c4c260c6af3973"
+    ],
+    "capability-record-support-crop.json": [
+      "15b0b11f0bc137631954ac87076f44753c513976",
+      "46ae993d10e251913fc4942fa5cf0e4fa689dfe7",
+      "77bff008fff489b73ee2d8cd11466a105bf9d630",
+      "d22893238d75efbb05a69eb75bca1b82eb5fe280"
+    ],
+    "capability-record-view-framing.json": [
+      "15b0b11f0bc137631954ac87076f44753c513976",
+      "256c26bc915080934814789be6a41bbc253f0d1c"
+    ],
+    "capability-record-viewer-reconciliation.json": [
+      "15b0b11f0bc137631954ac87076f44753c513976",
+      "6e8cd115f1a9834cdc25c868eee1b4879d28e65f"
+    ],
+    "capability-record-viewer-ui-capture.json": [
+      "15b0b11f0bc137631954ac87076f44753c513976",
+      "256c26bc915080934814789be6a41bbc253f0d1c"
+    ],
+    "capability-record-workflow-replay.json": [
+      "15b0b11f0bc137631954ac87076f44753c513976",
+      "b18d7aef56bbe25a5b45290e0b705f20a59ad4da"
+    ],
+    "capability-record.json": [
+      "3ae5a7a3c902214cb8415de1d06a2e224bd75e13"
+    ]
+  },
+  "what_this_audits_glob_does_not_reach": {
+    "evidence_json_outside_this_audits_glob": 51,
+    "of_those_with_no_provenance_block_at_all": 44,
+    "of_those_that_also_carry_digests": 13,
+    "why_three_numbers_and_not_one": "A reviewer measured this as seven files. That is the subset carrying digests and naming no resolvable commit; the broadest count here is every non-record evidence JSON. Different populations rather than a disagreement, and the digest-carrying count is the one that matters, because a digest with no declared origin is the case this change exists to close.",
+    "files_carrying_digests_with_no_declared_provenance": [
+      {
+        "file": "background-choice-sweep-refit.json",
+        "has_a_provenance_block": false,
+        "carries_digests": true,
+        "names_a_commit": false
+      },
+      {
+        "file": "consumer-error-structure.json",
+        "has_a_provenance_block": false,
+        "carries_digests": true,
+        "names_a_commit": false
+      },
+      {
+        "file": "delivered-frame-property-gate.json",
+        "has_a_provenance_block": false,
+        "carries_digests": true,
+        "names_a_commit": false
+      },
+      {
+        "file": "delivered-frames-manifest.json",
+        "has_a_provenance_block": false,
+        "carries_digests": true,
+        "names_a_commit": false
+      },
+      {
+        "file": "derived-report-controls.json",
+        "has_a_provenance_block": false,
+        "carries_digests": true,
+        "names_a_commit": false
+      },
+      {
+        "file": "frame-edge-audit-after.json",
+        "has_a_provenance_block": false,
+        "carries_digests": true,
+        "names_a_commit": false
+      },
+      {
+        "file": "image-payload-scan.json",
+        "has_a_provenance_block": false,
+        "carries_digests": true,
+        "names_a_commit": false
+      },
+      {
+        "file": "independent-verification.json",
+        "has_a_provenance_block": false,
+        "carries_digests": true,
+        "names_a_commit": false
+      },
+      {
+        "file": "irregular-density-counterexample.json",
+        "has_a_provenance_block": false,
+        "carries_digests": true,
+        "names_a_commit": false
+      },
+      {
+        "file": "pane-abstention-control.json",
+        "has_a_provenance_block": false,
+        "carries_digests": true,
+        "names_a_commit": false
+      },
+      {
+        "file": "register-seed-determinism.json",
+        "has_a_provenance_block": false,
+        "carries_digests": true,
+        "names_a_commit": false
+      },
+      {
+        "file": "registration-ambiguity.json",
+        "has_a_provenance_block": false,
+        "carries_digests": true,
+        "names_a_commit": false
+      },
+      {
+        "file": "replay-b18d-public-report.json",
+        "has_a_provenance_block": false,
+        "carries_digests": true,
+        "names_a_commit": false
+      }
+    ],
+    "files": [
+      {
+        "file": "audit-view-occlusion.json",
+        "has_a_provenance_block": false,
+        "carries_digests": false,
+        "names_a_commit": false
+      },
+      {
+        "file": "background-choice-sweep-refit.json",
+        "has_a_provenance_block": false,
+        "carries_digests": true,
+        "names_a_commit": false
+      },
+      {
+        "file": "band-false-negative-sweep.json",
+        "has_a_provenance_block": false,
+        "carries_digests": false,
+        "names_a_commit": false
+      },
+      {
+        "file": "band-measurement-demo-scan.json",
+        "has_a_provenance_block": false,
+        "carries_digests": false,
+        "names_a_commit": false
+      },
+      {
+        "file": "band-profile-across-scenes.json",
+        "has_a_provenance_block": false,
+        "carries_digests": false,
+        "names_a_commit": false
+      },
+      {
+        "file": "band-validity-sweep.json",
+        "has_a_provenance_block": false,
+        "carries_digests": false,
+        "names_a_commit": false
+      },
+      {
+        "file": "camera-framing-probe.json",
+        "has_a_provenance_block": false,
+        "carries_digests": false,
+        "names_a_commit": false
+      },
+      {
+        "file": "collision-fitness-verdict.json",
+        "has_a_provenance_block": false,
+        "carries_digests": false,
+        "names_a_commit": false
+      },
+      {
+        "file": "commit-reachability-audit.json",
+        "has_a_provenance_block": false,
+        "carries_digests": false,
+        "names_a_commit": false
+      },
+      {
+        "file": "complete-capture-control.json",
+        "has_a_provenance_block": false,
+        "carries_digests": false,
+        "names_a_commit": false
+      },
+      {
+        "file": "complete-capture-threshold-sweep.json",
+        "has_a_provenance_block": false,
+        "carries_digests": false,
+        "names_a_commit": false
+      },
+      {
+        "file": "consumer-error-structure.json",
+        "has_a_provenance_block": false,
+        "carries_digests": true,
+        "names_a_commit": false
+      },
+      {
+        "file": "consumer-recovery.json",
+        "has_a_provenance_block": false,
+        "carries_digests": false,
+        "names_a_commit": false
+      },
+      {
+        "file": "declared-reproducibility-causes.json",
+        "has_a_provenance_block": false,
+        "carries_digests": false,
+        "names_a_commit": false
+      },
+      {
+        "file": "delivered-frame-property-gate.json",
+        "has_a_provenance_block": false,
+        "carries_digests": true,
+        "names_a_commit": false
+      },
+      {
+        "file": "delivered-frames-manifest.json",
+        "has_a_provenance_block": false,
+        "carries_digests": true,
+        "names_a_commit": false
+      },
+      {
+        "file": "derived-report-controls.json",
+        "has_a_provenance_block": false,
+        "carries_digests": true,
+        "names_a_commit": false
+      },
+      {
+        "file": "downstream-consumer-reproduced.json",
+        "has_a_provenance_block": false,
+        "carries_digests": false,
+        "names_a_commit": false
+      },
+      {
+        "file": "downstream-consumer.json",
+        "has_a_provenance_block": false,
+        "carries_digests": false,
+        "names_a_commit": false
+      },
+      {
+        "file": "floor-across-geometry-and-sampling.json",
+        "has_a_provenance_block": false,
+        "carries_digests": false,
+        "names_a_commit": false
+      },
+      {
+        "file": "floor-vs-resolution.json",
+        "has_a_provenance_block": false,
+        "carries_digests": false,
+        "names_a_commit": false
+      },
+      {
+        "file": "floor-vs-voxel-multiple.json",
+        "has_a_provenance_block": false,
+        "carries_digests": false,
+        "names_a_commit": false
+      },
+      {
+        "file": "frame-edge-audit-after.json",
+        "has_a_provenance_block": false,
+        "carries_digests": true,
+        "names_a_commit": false
+      },
+      {
+        "file": "frame-edge-audit-before.json",
+        "has_a_provenance_block": false,
+        "carries_digests": false,
+        "names_a_commit": false
+      },
+      {
+        "file": "gate-zoom-sweep.json",
+        "has_a_provenance_block": false,
+        "carries_digests": false,
+        "names_a_commit": false
+      },
+      {
+        "file": "hardening-overlay-threshold.json",
+        "has_a_provenance_block": false,
+        "carries_digests": false,
+        "names_a_commit": false
+      },
+      {
+        "file": "hardening-truncated-read.json",
+        "has_a_provenance_block": false,
+        "carries_digests": false,
+        "names_a_commit": false
+      },
+      {
+        "file": "holes-and-outliers.json",
+        "has_a_provenance_block": false,
+        "carries_digests": false,
+        "names_a_commit": false
+      },
+      {
+        "file": "image-payload-scan.json",
+        "has_a_provenance_block": false,
+        "carries_digests": true,
+        "names_a_commit": false
+      },
+      {
+        "file": "independent-verification.json",
+        "has_a_provenance_block": false,
+        "carries_digests": true,
+        "names_a_commit": false
+      },
+      {
+        "file": "irregular-density-counterexample.json",
+        "has_a_provenance_block": false,
+        "carries_digests": true,
+        "names_a_commit": false
+      },
+      {
+        "file": "live-runtime-attempt.json",
+        "has_a_provenance_block": false,
+        "carries_digests": false,
+        "names_a_commit": false
+      },
+      {
+        "file": "occlusion-repeat-spread.json",
+        "has_a_provenance_block": false,
+        "carries_digests": false,
+        "names_a_commit": false
+      },
+      {
+        "file": "ordinary-window-audit.json",
+        "has_a_provenance_block": false,
+        "carries_digests": false,
+        "names_a_commit": false
+      },
+      {
+        "file": "overlay-isolation-controls.json",
+        "has_a_provenance_block": false,
+        "carries_digests": false,
+        "names_a_commit": false
+      },
+      {
+        "file": "pane-abstention-control.json",
+        "has_a_provenance_block": false,
+        "carries_digests": true,
+        "names_a_commit": false
+      },
+      {
+        "file": "pane-fit-window-aspect-sweep.json",
+        "has_a_provenance_block": false,
+        "carries_digests": false,
+        "names_a_commit": false
+      },
+      {
+        "file": "poisson-procedure-and-overcall-audit.json",
+        "has_a_provenance_block": false,
+        "carries_digests": false,
+        "names_a_commit": false
+      },
+      {
+        "file": "register-seed-determinism.json",
+        "has_a_provenance_block": false,
+        "carries_digests": true,
+        "names_a_commit": false
+      },
+      {
+        "file": "registration-ambiguity.json",
+        "has_a_provenance_block": false,
+        "carries_digests": true,
+        "names_a_commit": false
+      },
+      {
+        "file": "replay-b18d-public-report.json",
+        "has_a_provenance_block": false,
+        "carries_digests": true,
+        "names_a_commit": false
+      },
+      {
+        "file": "spread-floor-margin.json",
+        "has_a_provenance_block": false,
+        "carries_digests": false,
+        "names_a_commit": false
+      },
+      {
+        "file": "support-crop-coverage-guarantee.json",
+        "has_a_provenance_block": false,
+        "carries_digests": false,
+        "names_a_commit": false
+      },
+      {
+        "file": "viewer-wgpu-error-diagnosis.json",
+        "has_a_provenance_block": false,
+        "carries_digests": false,
+        "names_a_commit": false
+      }
+    ],
+    "why_this_is_reported_instead_of_fixed": "Widening the glob means designing provenance for artifacts this change did not produce, on a base well behind main. Reported so the enforcement edge is a number a reader can see rather than an absence they have to notice."
+  },
+  "what_this_does_not_establish": "That any measurement taken at these commits is correct. Reachability is about whether a reader can look the commit up, nothing more."
+}

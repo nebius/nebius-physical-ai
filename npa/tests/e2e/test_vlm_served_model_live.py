@@ -167,9 +167,13 @@ def _assert_provider_evidence(provider: dict, config: dict) -> None:
     fence = re.fullmatch(
         r"```(?:json)?\s*(.*?)\s*```", content, re.DOTALL | re.IGNORECASE
     )
-    expected_parser = "npa_vlm_eval_compatible_json_v2"
+    expected_parser = "npa_vlm_eval_compatible_json_v3"
     if fence:
         content = fence.group(1)
         expected_parser += "+markdown-fence-v1"
     assert provider["parser_version"] == expected_parser
-    assert isinstance(json.loads(content), dict)
+    verdict = json.loads(content)
+    assert isinstance(verdict, dict)
+    support = verdict["provider_observable_support"]
+    assert isinstance(support, list) and support
+    assert all(isinstance(item, str) and item.strip() for item in support)

@@ -127,12 +127,18 @@
     }
   },
   "run_id": "open3d-proof-20260918T234410Z",
-  "source_commit": "3ae5a7a3c902214cb8415de1d06a2e224bd75e13 (npa worktree HEAD at build)",
   "upstream": {
     "hashes_that_name_no_file_here": "wheel_sha256 is of the upstream wheel this run installed, which is fetched at build time and not committed here.",
     "demo_data": "open3d.data.DemoICPPointClouds, isl-org/open3d_downloads release 20220301-data",
     "package": "open3d==0.20.0 (PyPI, MIT)",
     "wheel": "open3d-0.20.0-cp311-cp311-manylinux_2_35_x86_64.whl",
     "wheel_sha256": "18ae25cbc9f8fcabc06bad71e00cca3cd0ff0a762ce0fbec093f2e2a4d05eddf"
+  },
+  "provenance": {
+    "source_commit": "3ae5a7a3c902214cb8415de1d06a2e224bd75e13",
+    "commit_is_an_ancestor_of_main": true,
+    "what_source_commit_means_here": "The npa worktree HEAD at the time the image was built. That phrase used to sit inside the value itself, which made it unparseable as a commit; it is a sentence now and the value is a bare sha.",
+    "why_this_shape": "A review lane found provenance recorded six different ways across these records, so an auditor had to learn each file. This is the one shape: the commit the record attests to, whether the commit is an ancestor of main, and -- where the answer is no -- why that is deliberate and what a reader can resolve instead. harness/audit_record_provenance.py checks the ancestry claim against the repository rather than trusting it.",
+    "this_key_replaced": "A top-level `source_commit` holding '3ae5a7a3c902214cb8415de1d06a2e224bd75e13 (npa worktree HEAD at build)'. Moved rather than dropped."
   }
 }

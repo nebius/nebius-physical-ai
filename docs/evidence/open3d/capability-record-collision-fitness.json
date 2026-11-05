@@ -1,0 +1,57 @@
+{
+  "capability": "Collision-fitness verdict for the reconstructed Open3D surface",
+  "recorded_utc": "2026-11-01T04:52:00Z",
+  "what_this_closes": "The lane brief asks for a verdict: if the mesh is not fit for collision use, state that and give an honest narrower output. Every record in this chain had instead abstained -- 'no claim is made about watertightness, collision fitness, or mesh readiness', 'Not collision safety'. Abstention was honest while nothing had been measured. It is now measured, so the verdict is stated: not fit for collision use.",
+  "the_verdict": {
+    "verdict": "not fit for collision use",
+    "the_question_a_collision_checker_actually_asks": "Is this point inside the obstacle, and how deep. Both are defined only for a closed surface, so the test is not whether the mesh looks solid but whether it answers inside/outside consistently at all.",
+    "measured": "The delivered surface is not watertight and not edge-manifold: 1256 boundary edges across 6 components. Ray parity disagrees across directions on 10982 of 11520 probed cells (0.953299), which is where a collision query would silently return whichever answer the ray direction produced.",
+    "interior_distance_diagnostic_not_corroboration": "Resolving every undefined cell in the mesh's favour by majority vote leaves 785 of 1490 inferred-solid cells farther than one support radius from an observed surface sample. That includes ordinary interior a surface sensor cannot observe, so it is not fabricated volume and does not corroborate the collision verdict.",
+    "what_is_fit_instead": "Occupancy-band mapping, which is what downstream-consumer.json measures and where the candidate is the better artifact: a cell is called occupied when it lies within one support radius of the surface, a question an open surface answers perfectly well. The phantom-obstacle rate there falls from 0.3245 to 0.0708. That is the narrower useful output, and it is not a workaround for this verdict -- it is a different question that does not need a closed solid."
+  },
+  "my_first_instrument_was_broken_and_a_control_caught_it": {
+    "what_it_reported": "Both variants undefined in essentially every cell, which looked like a strong finding.",
+    "why_it_was_wrong": "Axis-aligned rays against an axis-aligned probe grid graze shared edges and vertices, where count_intersections returns two hits or none. Parity then flips for a reason unrelated to holes, so every cell looked undefined and both real variants looked equally unfit. Off-axis directions remove the degeneracy, and this control is how the error surfaced before it was published.",
+    "how_it_surfaced": "A positive control: a sphere Open3D constructs is closed by construction, so the parity test must find zero undefined cells in it. The first version found 521. That is the whole reason the error did not reach a published verdict.",
+    "the_instrument_now_passes_its_gated_control": "Zero undefined cells and a non-zero inside count on the closed sphere; parity agrees with compute_signed_distance (1237 vs 1237), and the count is within the gated 5% tolerance of the independent analytic cell estimate 1241.1. Signed distance is another Open3D ray-count path, not an independent instrument.",
+    "the_general_lesson_this_is_the_second_instance_of": "A measurement that makes every candidate fail is not a finding, it is an untested instrument. The earlier instance in this lane was a report that declared its own band height and was checked against itself.",
+    "the_guard_is_behavioural_not_declarative": "Verified by mutation rather than asserted. Reverting DIRECTIONS to the original axis-aligned set makes the harness fail its own closed-mesh control, print 'Instrument failed its closed-mesh control; no verdict is published' and exit 1 without a verdict. A second mutation, editing the published report to claim the control failed, is caught by the control test and by the hash binding. The point of checking both is that a report asserting its own validity is the failure mode this lane already hit once.",
+    "the_control_itself_was_independently_recomputed": "Review recomputed the analytic term rather than taking it: 1241.1, with the discrete count 0.33% below it. The closed-form tolerance is now part of instrument_is_valid rather than a test-only observation."
+  },
+  "two_assumptions_i_checked_instead_of_repeating": {
+    "the_baseline_is_not_the_closed_variant": "Both variants are open. Baseline is not watertight either: 156 boundary edges, not edge-manifold, 6 components. So the verdict is not 'the candidate lost closedness to gain mapping quality' -- neither variant ever had a defined interior, and the synthetic sphere above is the only real control in this report. I had assumed otherwise from an existing docstring and checked it instead of repeating it.",
+    "an_existing_justification_named_the_weaker_reason": "consumer_occupancy.py explains its choice of a distance band over an enclosed volume by saying 'one of the two meshes being compared is deliberately not closed', which invites the reading that the other one is. Measured: neither is. The decision to avoid compute_occupancy was right, and right for a stronger reason than the one recorded -- it was not a fairness adjustment between a closed and an open mesh, it was the only defined option for either."
+  },
+  "a_counterintuitive_number_explained_rather_than_buried": "Baseline has 156 boundary edges against the candidate's 1256, yet a higher undefined fraction (0.979253 vs 0.953299). That is not a contradiction: once a surface is open at all, parity stops tracking hole count and starts tracking how much surface a ray can cross. Baseline carries 36660 triangles to the candidate's 28208, so more directions find an odd count. Neither number should be read as a hole metric, and the undefined fraction is reported here only as evidence that the query is undefined, not as a quality score.",
+  "what_this_does_not_claim": "Nothing about accuracy against ground truth, which no artifact in this chain carries. A watertight mesh can be confidently wrong; closedness is necessary for a collision query to be defined and nowhere near sufficient for it to be safe. The historical report lacks input hashes, so it does not prove it measured the same candidate bytes as the occupancy record.",
+  "regression_tests": {
+    "file": "npa/tests/workbench/test_open3d_collision_fitness.py",
+    "path_is_relative_to": "the repository root, unlike the provenance paths below, which are relative to this evidence directory",
+    "sha256": "2fae9bf747f8dd74b77255a701b362f2660575e39184e0b104e434365775a53f",
+    "what_they_pin": "That the verdict is stated rather than abstained on; that the instrument's closed-mesh control is present and passes, since without it the verdict is worthless; that parity and signed distance agree on the control; that the record does not present the baseline as a closed control; and that the narrower fit output is named with its measured figures."
+  },
+  "provenance": {
+    "source_commit": null,
+    "why_no_source_commit": "The historical report did not bind a repository commit, and the original retained input bundle is unavailable; naming the later repair commit would misstate where the historical measurement was produced.",
+    "harness_that_produced_this": [
+      {
+        "path": "harness/collision_fitness_verdict.py",
+        "sha256": "0560da386ec4229febaae9a624c506a108fe95d33f9cb354e1b59c1d519a29d8"
+      },
+      {
+        "path": "collision-fitness-verdict.json",
+        "sha256": "8ee1972fd41760a1c1e2443add6b408424495b5a3a771a22ac10f009705c5ec5"
+      }
+    ],
+    "inputs": "The historical report did not bind the retained input bytes and the original bundle is unavailable in this checkout. Its exact cross-record identity is therefore unknown. The repaired harness records SHA-256 for the fused cloud and both mesh variants on every future run.",
+    "open3d_version": "Historical record says 0.20.0 but the report did not record it; future runs bind o3d.__version__ in input_provenance."
+  },
+  "a_defect_review_found_in_the_gate_itself": {
+    "what_they_found": "The control was excellent and the thing guarding it was not. main() wrote the report three lines before consulting the control, and the failure branch printed 'no verdict is published' immediately followed by 'Wrote <path>'. Worse, the verdict field did not depend on the control at all: it came from the candidate's watertightness and parity alone. So a quarantined run left a file at the published path stating a fitness verdict produced by an instrument that had just been proven invalid.",
+    "why_it_mattered_more_than_a_wrong_message": "The consumers of these records are tests that read the JSON. A test asserting on 'verdict' would have passed identically on a quarantined artifact, so the quarantine protected nothing that reads these files.",
+    "and_my_mutation_evidence_did_not_persist": "I verified the refusal by reverting DIRECTIONS once, by hand. No committed test executed main(), so the guard was protected by my having checked it rather than by anything in the repository. My eleven tests asserted instrument_is_valid is True, which is a property of today's data and not of the gate.",
+    "the_fix": "The check now precedes the write; an invalid run can only take a quarantined filename, and the published name stays absent. The verdict field is produced by verdict_for(validation, fit), which returns the withheld string whenever the control failed, so the gate is in the field a reader looks at rather than in a sibling two levels down.",
+    "verified_by_mutation_and_now_by_committed_tests": "Three new tests execute the real main() and verdict_for with a forced-invalid control. Reinstating review's exact defect -- writing before the check -- fails test_a_failed_control_writes_no_verdict_to_the_published_path. Making verdict_for ignore the control fails that one and test_the_verdict_field_itself_depends_on_the_control. Both fitness outcomes are covered, because a gate that only withholds the unfavourable answer is not a gate.",
+    "the_pattern_this_is_the_fourth_instance_of": "I validated the measurement and did not validate the thing that acts on it. Same shape as the report that declared its own band height: the check existed and nothing independent exercised it."
+  }
+}

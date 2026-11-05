@@ -14,8 +14,16 @@
     "the_defect": "A cloud-only run opened a 'Supported surface only' tab with nothing in it, because the tab was appended unconditionally and borrowed the scene camera when its own was missing. An empty tab is worse than a missing one: it tells the reader the surface was computed and came out empty.",
     "the_fix": "VIEW_GEOMETRY entries now carry both the geometry keys the camera frames and the entity paths the view draws. _blueprint iterates the table and builds a view only when cameras has an entry for it, which happens only when the view's defining geometry was logged. The separate has_removed flag is gone, since it duplicated what the camera dictionary already knew -- the same drift class one level up.",
     "measured_on_the_real_workflow_output": {
-      "full_run_views": ["Scene: observed scan and supported surface", "Observed scan only", "Supported surface only", "Removed: unsupported surface"],
-      "cloud_only_views": ["Scene: observed scan and supported surface", "Observed scan only"],
+      "full_run_views": [
+        "Scene: observed scan and supported surface",
+        "Observed scan only",
+        "Supported surface only",
+        "Removed: unsupported surface"
+      ],
+      "cloud_only_views": [
+        "Scene: observed scan and supported surface",
+        "Observed scan only"
+      ],
       "empty_surface_tab_in_cloud_only_run": false
     },
     "why_my_earlier_test_missed_it": "It asserted the camera dictionary and never built the blueprint, so it could not see a tab the blueprint added on its own. The new tests walk the real Rerun object graph from Blueprint.root_container down through each container's contents, so they assert what the viewer would be handed."
@@ -53,5 +61,14 @@
   "still_not_proven": {
     "rerun_ui": "No Rerun web-viewer screenshot was captured. The layout is asserted by walking the blueprint object the viewer is handed, and the colour by inspecting the array passed to rr.Mesh3D, which is stronger than a screenshot for these two properties but is still not a capture of the viewer. Root's point that the UI capture matters for the operator's original complaint stands, and it remains open.",
     "accuracy": "Unchanged. The crop still leaves holes and thin disconnected fragments, and no accuracy, collision or safe-planning acceptance follows from either fix."
+  },
+  "provenance": {
+    "source_commit": "6e8cd115f1a9834cdc25c868eee1b4879d28e65f",
+    "commit_is_an_ancestor_of_main": false,
+    "no_advertised_origin_ref_at_audit": "PR 602 was squashed when it merged, so this commit never became an ancestor of main and was on no advertised origin ref at audit time -- the audit found no advertised origin ref containing it at the recorded time; that does not establish whether the object is fetchable directly by SHA. 15b0b11f0 is where its work reached main: a symbol or source line this commit introduced is present at main and `git log -S` traces it to that merge. That is a check on this commit's contribution reaching main, not a claim that the two trees are identical. The per-commit probes are in capability-record-record-provenance-shape.json.",
+    "commit_on_main_carrying_this_source": "15b0b11f0bc137631954ac87076f44753c513976",
+    "how_this_commit_was_recovered": "The record named no commit. `git log -S` for the regression test it lists, test_a_cloud_only_run_offers_no_empty_surface_tab, finds one commit: 6e8cd115f, 'Make the view table drive the layout, and stop discarding the mesh's colour', whose message matches this record's capability line and whose timestamp is four minutes before the record's own recorded_at. Recovered rather than asserted.",
+    "the_predecessor_this_record_is_careful_about": "provenance_boundary already states that the completed six-state run and its artifacts were produced by 256c26bc915 and are not relabelled as this change's. That distinction is the point of the field and is unchanged.",
+    "why_this_shape": "A review lane found provenance recorded six different ways across these records, so an auditor had to learn each file. This is the one shape: the commit the record attests to, whether the commit is an ancestor of main, and -- where the answer is no -- why that is deliberate and what a reader can resolve instead. harness/audit_record_provenance.py checks the ancestry claim against the repository rather than trusting it."
   }
 }

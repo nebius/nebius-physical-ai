@@ -194,7 +194,8 @@
     "cd npa && .venv/bin/python -m pytest tests/workbench/test_open3d_frame_properties.py -q"
   ],
   "provenance": {
-    "source_commit": "d06e95846",
+    "source_commit": "d06e958462865af823b4f1479867df52421c8284",
+    "commit_is_an_ancestor_of_main": true,
     "built_on_main": "d06e95846",
     "main_is_an_ancestor_of_this_commit": true,
     "why_harness_digests_and_not_only_a_commit": "The harness that produced these numbers is added by this change, so the record cannot name its own commit -- the hash does not exist until after the record is written. The file digests are knowable now and are what a reader actually needs to recompute.",
