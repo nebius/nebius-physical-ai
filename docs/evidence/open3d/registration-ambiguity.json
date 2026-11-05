@@ -10,6 +10,7 @@
     "registration": "the shipped _register_pair, unmodified"
   },
   "cases": {
+    "hashes_that_name_no_file_here": "Each source_digest identifies the generated point set supplied to that ambiguity case. The generated source arrays are not committed as files; the case parameters and measured outcomes are retained here.",
     "continuous_symmetry": {
       "why_this_case": "A cylinder band is invariant under any rotation about z, so a whole family of alignments fits and RANSAC has no reason to prefer the true one. This is the case the measurement is for.",
       "source_points": 4000,

@@ -1,6 +1,7 @@
 {
   "cell_size": 0.1,
   "input_sha256": {
+    "hashes_that_name_no_file_here": "these are generated mesh artifacts from the retained measurement run; their bytes are not committed in this evidence directory",
     "mesh-baseline/mesh.ply": "6112bc2311caefa4c104ea5f145138dc31486acad1d1e96839accf7f848f6a0f",
     "mesh/mesh.ply": "131e9963abfcb66968a0b299413ff2cba19f60ccd266d8e77e945a4a1e7cc6fd",
     "multiway/fused.ply": "827049f2efb5ae5c7c301dbabbca7a00bafaa6ceea42e2a634a8124dd022ca52"

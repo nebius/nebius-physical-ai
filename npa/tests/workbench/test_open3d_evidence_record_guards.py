@@ -322,7 +322,7 @@ def test_canonical_reference_auditor_accepts_every_record(loaded: dict) -> None:
             data.get("artifacts_committed_under") if isinstance(data, dict) else None
         )
         bound, _unbound = auditor.bound_pairs(data)
-        for _where, named, claimed, at_commit in bound:
+        for _where, named, claimed, _declared, at_commit in bound:
             if at_commit:
                 actual = auditor.digest_at_commit(at_commit, named)
                 if actual is None:

@@ -149,6 +149,7 @@
   "passed": true,
   "stranding_is_gated_on_spread_not_extent_because": "every frame carries a fixed bottom-left scale bar, which pins the content bounding box and makes the extent reading partly a measurement of the annotation. At the matched-pair-certified overlay boundary, exclusion changes the extent by as much as 52.26% and the spread by at most 0.0021 (1.96%). The gate reads that masked spread.",
   "thresholds": {
+    "hashes_that_name_no_file_here": "scale_label_sha256 identifies the measured pixel rectangle inside each retained frame; it is not the digest of a standalone file",
     "max_border_content_pixels": 0,
     "max_low_contrast_content_fraction": 0.3,
     "min_median_contrast": 60.0,

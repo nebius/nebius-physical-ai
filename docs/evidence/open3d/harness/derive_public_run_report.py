@@ -510,15 +510,27 @@ def build(artifacts: Path) -> dict:
                 "The unmodified artifacts are retained in access-controlled lane "
                 "evidence, not in this repository."
             ),
-            "hashes_are_of_the_originals": (
-                "Each sha256 below is of the artifact as the run wrote it, so it "
-                "identifies those bytes and deliberately matches no file here. The "
-                "hash of this derived file is recorded separately, in "
-                "capability-record-workflow-replay.json."
-            ),
             "artifacts": originals,
         },
         "derived_fields": derived,
+        # The key name is the one `audit_evidence_references.py` reads. This report said
+        # the same thing all along under a name of its own, so the audit counted all
+        # twenty-two of its hashes as undeclared: a declaration nothing can find is prose.
+        #
+        # At the record root because it is true of the whole record rather than one branch
+        # of it. This file is a sanitized copy of a run's result documents, so every hash
+        # in it is of bytes the run wrote, and there is no branch where that stops holding.
+        # It exempts nothing -- a hash that names a file is bound and compared whatever
+        # this says -- and the alternative of a note per branch meant putting prose into
+        # mappings whose keys are artifact paths, which is where the control harness reads
+        # filenames.
+        "hashes_that_name_no_file_here": (
+            "Every sha256 in this report is of bytes the run wrote: either an artifact as "
+            "it was produced, hashed under retained_originals, or a hash the run's own "
+            "result documents carried, quoted under derived_fields. None of them name a "
+            "file committed here, by construction. The hash of this derived file is "
+            "recorded separately, in capability-record-workflow-replay.json."
+        ),
     }
 
 

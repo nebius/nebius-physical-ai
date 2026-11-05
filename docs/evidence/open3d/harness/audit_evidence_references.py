@@ -19,6 +19,12 @@ to -- a `<name>` and `<name>_sha256` pair in the same object, or a `sha256` besi
 that name no file cannot be bound, and the summary says how many there were instead of counting
 them as checked.
 
+Some of those are still checkable without a file: an equality claim a record makes side by side,
+or an input two records both hash. Those are checked. What is left over is genuinely beyond this
+directory's reach -- a run's artifacts, a module mounted from a dirty tree -- and has to say so
+in a `hashes_that_name_no_file_here` note, because a count nobody has to justify is a count that
+drifts. Declaring never substitutes for either check above.
+
 Run from the repository root:
     python3 docs/evidence/open3d/harness/audit_evidence_references.py
 
@@ -35,10 +41,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-#: Overridable so the provenance behaviour below can be tested against a purpose-built
-#: repository. It needs a checkout with history, and CI checks out without any, so tests
-#: that pointed this at the real catalogue either crashed or skipped -- and a test that
-#: skips in CI is the defect a sibling branch spent today removing.
 ROOT = Path(os.environ.get("NPA_EVIDENCE_ROOT", Path(__file__).resolve().parent.parent))
 
 #: Paths inside a record that refer to files *produced by a workflow run* rather than to
@@ -80,6 +82,23 @@ EQUALITY_TRANSFORMS = (
 #: with legitimately different values, so a general "same leaf name must match" rule would invent
 #: findings. These two containers key their children by the input's own name.
 INPUT_HASH_CONTAINERS = ("input_hashes", "inputs.fragments")
+
+#: How a record declares that a hash deliberately names no file committed here and is not an
+#: equality claim either -- the bytes of a run's own artifact, or of a source file pinned at a
+#: commit the working tree has moved past. The key may sit beside the hash or at any ancestor
+#: and covers everything beneath it.
+#:
+#: Declaring never overrides binding or an equality claim: those are checked whatever a note
+#: says, so this cannot be used to excuse a stale digest. It only takes a hash out of the
+#: "nothing could check this" count, and only by saying what the bytes are.
+#:
+#: The twelve equality claims above came out of that count by being *checked*, which is the
+#: better outcome and the one to reach for first. What remains cannot be checked here at all,
+#: and was being reported as a number on a passing run: a review lane asked for it to be
+#: reduced or justified, one record was justified in prose that nothing read, and the rest
+#: stayed as they were for a month inside a count that never moved. A category nothing
+#: enforces drifts, so an undeclared one is now a finding.
+DECLARATION_KEY = "hashes_that_name_no_file_here"
 
 REFERENCE = re.compile(r"\b((?:harness|viewer-ui)/[\w./-]+)\b")
 SHA256 = re.compile(r"\A[0-9a-f]{64}\Z")
@@ -123,38 +142,26 @@ def resolve(value: str, run_dir: str | None) -> Path | None:
 
 
 def bound_pairs(
-    node: object, where: str = ""
-) -> tuple[list[tuple[str, str, str, str | None]], list[str]]:
+    node: object, where: str = "", declared: bool = False
+) -> tuple[list[tuple[str, str, str, bool, str | None]], list[tuple[str, bool]]]:
     """Split every hash in a record into those bound to a named file and those not.
 
-    Returns (bound, unbound) where each bound entry is
-    (json path, named file, claimed hash, commit the bytes are claimed to be at).
+    Returns (bound, unbound). A bound entry is (json path, named file, claimed hash,
+    whether a `DECLARATION_KEY` note covers it, commit holding historical bytes); an
+    unbound entry is (json path, whether a note covers it).
 
-    That fourth element is the difference between two claims this check used to treat
-    as one. `capture.frame_sha256` says *this committed PNG has these bytes*, and the
-    working tree is the right place to look. `generator.script_sha256` says *the
-    artifact was produced by a script with these bytes*, which is a statement about
-    history, and the working tree is only the right place to look until someone
-    improves the generator.
-
-    Conflating them pushes in a bad direction. A record here attests to a viewer
-    capture whose input clouds were never committed and which cannot be regenerated
-    from a checkout; editing its generator made this check report the true provenance
-    hash as a mismatch, and the way to clear the report is to overwrite a correct
-    historical claim with bytes that post-date the artifact. That record's own
-    `supersedes` block documents an earlier capture that invented provenance to
-    satisfy required fields. A gate that makes doing it again the path of least
-    resistance has the wrong rule, not the wrong data.
-
-    So a record may say where the bytes live, with `<name>_bytes_committed_at` beside
-    `<name>_sha256`, or `bytes_committed_at` beside a bare `sha256`. That is a
-    redirection, never an exemption: the hash is still verified, against the file at
-    that commit.
+    Both sides carry the note because naming a file is not the same as the file being
+    here. A hash whose named file does not resolve is exactly as uncheckable as one
+    that named nothing, and until the note was threaded through this side too, adding
+    a path key that resolves to nothing moved a hash out of the gated bucket and into
+    the ungated one -- same hash, same unverifiability, no justification demanded.
     """
 
-    bound: list[tuple[str, str, str, str | None]] = []
-    unbound: list[str] = []
+    bound: list[tuple[str, str, str, bool, str | None]] = []
+    unbound: list[tuple[str, bool]] = []
     if isinstance(node, dict):
+        note = node.get(DECLARATION_KEY)
+        declared = declared or bool(isinstance(note, str) and note.strip())
         for key, value in node.items():
             here = f"{where}.{key}" if where else key
             if isinstance(value, str) and SHA256.match(value):
@@ -177,29 +184,25 @@ def bound_pairs(
                     # `artifact_hashes: {"multiway/fused.ply": "<sha>"}`. The key is the binding.
                     named = key
                 if isinstance(named, str) and named:
-                    declared = at_commit if isinstance(at_commit, str) else None
-                    bound.append((here, named, value, declared))
+                    historical = at_commit if isinstance(at_commit, str) else None
+                    bound.append((here, named, value, declared, historical))
                 else:
-                    unbound.append(here)
+                    unbound.append((here, declared))
             else:
-                sub_bound, sub_unbound = bound_pairs(value, here)
+                sub_bound, sub_unbound = bound_pairs(value, here, declared)
                 bound += sub_bound
                 unbound += sub_unbound
     elif isinstance(node, list):
         for index, value in enumerate(node):
-            sub_bound, sub_unbound = bound_pairs(value, f"{where}[{index}]")
+            sub_bound, sub_unbound = bound_pairs(value, f"{where}[{index}]", declared)
             bound += sub_bound
             unbound += sub_unbound
     return bound, unbound
 
 
 def digest_at_commit(commit: str, path: str) -> str | None:
-    """Hash a file as it was at a commit, or None when this checkout lacks that commit.
+    """Hash a named evidence file at a declared commit; None means unavailable history."""
 
-    A missing commit is reported rather than treated as a mismatch. A shallow clone
-    is a property of the checkout, and a check that turns one into a finding about
-    the evidence is describing the wrong thing.
-    """
     try:
         present = subprocess.run(
             ["git", "cat-file", "-e", f"{commit}^{{commit}}"],
@@ -208,14 +211,9 @@ def digest_at_commit(commit: str, path: str) -> str | None:
             check=False,
         )
     except OSError:
-        # No git at all, which some containers are. Same answer as a shallow clone:
-        # this checkout cannot decide, and saying so beats raising inside a gate.
         return None
     if present.returncode != 0:
         return None
-    # Where ROOT sits under the git toplevel, asked for rather than hardcoded, so this
-    # works against the real catalogue and against a test repository where the evidence
-    # root *is* the toplevel.
     prefix = subprocess.run(
         ["git", "rev-parse", "--show-prefix"],
         cwd=ROOT,
@@ -315,11 +313,12 @@ def main() -> int:
     verified_at_a_commit = 0
     equalities = 0
     unresolvable: list[str] = []
-    #: Kept apart from `unresolvable`, whose label says "mostly a run's own artifacts".
-    #: A commit this checkout does not have is a different reason, and filing it under
-    #: that label would describe it wrongly to the one reader who needs to act on it.
+    # A missing commit is a limitation of this checkout, not a mismatch and not a
+    # declaration exemption. Keep it separate so a shallow CI checkout says exactly
+    # which historical claims it could not adjudicate.
     commit_missing: list[str] = []
     unbound_total: list[str] = []
+    undeclared: list[str] = []
     #: input name -> (digest, "record:path"), for the cross-record agreement check.
     inputs_seen: dict[str, list[tuple[str, str, str]]] = {}
 
@@ -346,10 +345,11 @@ def main() -> int:
         bound, unbound = bound_pairs(data)
         # An equality claim is verifiable without a file, so it no longer counts as something
         # nothing could check.
-        unbound_total += [f"{record.name}:{w}" for w in unbound if w not in covered]
-        for where, named, claimed, at_commit in bound:
+        uncovered = [(w, d) for w, d in unbound if w not in covered]
+        unbound_total += [f"{record.name}:{w}" for w, _ in uncovered]
+        undeclared += [f"{record.name}:{w}" for w, d in uncovered if not d]
+        for where, named, claimed, declared, at_commit in bound:
             if at_commit:
-                # The claim is about bytes at a commit, so that is the tree to read.
                 actual = digest_at_commit(at_commit, named)
                 if actual is None:
                     commit_missing.append(
@@ -377,6 +377,16 @@ def main() -> int:
                 unresolvable.append(
                     f"{record.name}:{where} -> {named} (not found here)"
                 )
+                # And it needs the same note as a hash that named nothing at all. A name
+                # the directory does not hold is not a binding: nothing reads those bytes,
+                # so the claim rests on the record's word either way. Leaving this subset
+                # ungated made the gate avoidable by adding a path key -- which is also
+                # how an accident presents, when a record cites a committed file that is
+                # later moved and is silently reclassified from verified to held
+                # elsewhere. The `(run artifact)` subset above stays exempt because its
+                # name is itself the description, which is what the note would say.
+                if not declared:
+                    undeclared.append(f"{record.name}:{where} -> {named}")
                 continue
             actual = digest(target)
             if actual != claimed:
@@ -401,11 +411,21 @@ def main() -> int:
                 )
         if all(claimed == first for claimed, _, _ in seen):
             equalities += len(seen)
-        unbound_total = [
-            item
-            for item in unbound_total
-            if item not in {f"{r}:{p}" for _, r, p in seen}
-        ]
+        checked_here = {f"{r}:{p}" for _, r, p in seen}
+        unbound_total = [item for item in unbound_total if item not in checked_here]
+        # A hash two records agree about is checked, so it needs no note. Dropping it from
+        # both counts and not just the printed one is the difference between a gate and a
+        # label: left in `undeclared` it would demand a declaration for something the audit
+        # had just verified.
+        undeclared = [item for item in undeclared if item not in checked_here]
+
+    findings += [
+        f"{one} is a hash this directory cannot check -- it names no file here, or "
+        "names one the directory does not hold -- is not an equality claim, and no "
+        f"enclosing object declares why; add a {DECLARATION_KEY!r} note saying what "
+        "these bytes are"
+        for one in undeclared
+    ]
 
     if findings:
         print(f"{len(findings)} finding(s):")
@@ -419,28 +439,51 @@ def main() -> int:
         f"checked, as equality claims the records make side by side."
     )
     if verified_at_a_commit:
-        # Named separately because it is a different claim: not "this file has these
-        # bytes" but "the thing this record describes was produced by these bytes",
-        # checked against the commit the record says they are at.
         one = verified_at_a_commit == 1
         print(
             f"{verified_at_a_commit} of those "
             f"{'is a provenance claim' if one else 'are provenance claims'}, verified "
-            f"against the commit the record names rather than the working tree."
+            "against the commit the record names rather than the working tree."
         )
     # Said out loud rather than folded into the word "checkable", which is how the first version
     # of this guard overstated what it had done. Counts by default, names on request, because a
     # gate that prints seventy lines on success stops being read.
     verbose = "--verbose" in sys.argv
-    held_elsewhere = "name a file this directory does not hold, mostly a run's own artifacts recorded by hash"
-    commit_missing_label = (
-        "claim bytes at a commit this checkout does not have, so they could not be "
-        "checked either way"
-    )
+    if commit_missing:
+        count = len(commit_missing)
+        print(
+            f"{count} hash(es) claim bytes at a commit this checkout does not have, "
+            "so they could not be checked either way."
+            + ("" if verbose else " Pass --verbose to list.")
+        )
+        if verbose:
+            for item in commit_missing:
+                print(f"  - {item}")
+    # Split by which of the two exemptions applies, because they are now enforced
+    # differently and one printed number covering both said less than it appeared to.
+    # A run-artifact name describes itself; a name this directory simply does not hold
+    # has to be declared, exactly like a hash that named nothing.
+    run_artifacts = [one for one in unresolvable if one.endswith("(run artifact)")]
+    not_held_here = [one for one in unresolvable if one not in set(run_artifacts)]
     for label, items in (
-        (held_elsewhere, unresolvable),
-        (commit_missing_label, commit_missing),
-        ("name no file and so cannot be bound to anything", unbound_total),
+        (
+            (
+                "name a run's own artifact by a name this directory does not hold, which is "
+                "what those names are"
+            ),
+            run_artifacts,
+        ),
+        (
+            (
+                f"name a file this directory does not hold and are declared as such by a "
+                f"{DECLARATION_KEY!r} note"
+            ),
+            not_held_here,
+        ),
+        (
+            f"name no file here and are declared as such by a {DECLARATION_KEY!r} note",
+            unbound_total,
+        ),
     ):
         if items:
             count = len(items)
