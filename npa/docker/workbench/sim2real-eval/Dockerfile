@@ -27,6 +27,8 @@ COPY docker/workbench/common/sim2real-control-requirements.txt \
     /opt/npa/sim2real-control-requirements.txt
 COPY docker/workbench/common/sim2real-genesis-requirements.txt \
     /opt/npa/sim2real-genesis-requirements.txt
+COPY docker/workbench/common/moviepy-pillow311-requirements.lock \
+    /opt/npa/moviepy-pillow311-requirements.lock
 COPY --chmod=0755 docker/workbench/common/moviepy_pillow_compat.py \
     /opt/npa/moviepy_pillow_compat.py
 COPY --chmod=0755 docker/workbench/common/workflow_runtime_entrypoint.sh \
@@ -47,6 +49,9 @@ RUN /usr/local/bin/install-workflow-runtime-prereqs "${UBUNTU_SNAPSHOT}" \
     && python -m pip install --no-deps \
       -r /opt/npa/sim2real-control-requirements.txt \
       -r /opt/npa/sim2real-genesis-requirements.txt \
+    && python -m pip install --no-cache-dir --no-deps --force-reinstall \
+      --only-binary=:all: --require-hashes \
+      -r /opt/npa/moviepy-pillow311-requirements.lock \
     && python /opt/npa/moviepy_pillow_compat.py \
     && python -m pip check \
     && python -c 'import importlib.metadata as m; assert not any(d.metadata["Name"].lower() == "transformers" for d in m.distributions())' \

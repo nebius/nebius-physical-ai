@@ -117,6 +117,25 @@ def test_envgen_requires_a_source_attested_non_genesis_parent() -> None:
     assert "/opt/genesis/venv" not in text
 
 
+def test_loop_eval_installs_the_qualified_moviepy_closure_before_repair() -> None:
+    """Keep the Pillow metadata repair bound to its hash-locked closure."""
+    text = (WORKBENCH / "sim2real-eval/Dockerfile").read_text(encoding="utf-8")
+    lock = (WORKBENCH / "common/moviepy-pillow311-requirements.lock").read_text(
+        encoding="utf-8"
+    )
+    assert "moviepy==2.2.1" in lock
+    assert "pillow==13.0.0" in lock
+    assert "COPY docker/workbench/common/moviepy-pillow311-requirements.lock" in text
+    install = text.index(
+        "python -m pip install --no-cache-dir --no-deps --force-reinstall"
+    )
+    repair = text.index("python /opt/npa/moviepy_pillow_compat.py")
+    dependency_check = text.index("python -m pip check")
+    assert "--only-binary=:all: --require-hashes" in text
+    assert "-r /opt/npa/moviepy-pillow311-requirements.lock" in text
+    assert install < repair < dependency_check
+
+
 def test_cosmos_reason_replaces_parent_npa_metadata_before_pip_check() -> None:
     text = (WORKBENCH / "cosmos3-reason/Dockerfile").read_text(encoding="utf-8")
     assert text.index("python -m pip uninstall -y npa") < text.index(
