@@ -34,12 +34,11 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import numpy as np
 from harness_io import output_path, read_cloud, read_mesh
 
-import numpy as np
-
 BUNDLE = Path("/data/final-bundle")
-OUT = output_path("/data/downstream-consumer-reproduced.json")
+DEFAULT_OUT = "/data/downstream-consumer-reproduced.json"
 
 CELL = 0.1
 #: Support radius as a multiple of the cell. 0.87 is the rounded value of the
@@ -155,6 +154,7 @@ def differences(expected, actual, path: str = "") -> list[tuple[str, object, obj
 
 
 def main() -> int:
+    out = output_path(DEFAULT_OUT)
     cloud = read_cloud(BUNDLE / "multiway/fused.ply")
     centres, dims = probe_grid(cloud, CELL)
     radius = SUPPORT_RADIUS_FACTOR * CELL
@@ -185,7 +185,7 @@ def main() -> int:
         - base["recall_of_observed_cells"],
     }
 
-    OUT.write_text(json.dumps(report, indent=2, sort_keys=True))
+    out.write_text(json.dumps(report, indent=2, sort_keys=True))
 
     original = json.loads(Path("/data/downstream-consumer.json").read_text())
     mismatches = differences(original, report)

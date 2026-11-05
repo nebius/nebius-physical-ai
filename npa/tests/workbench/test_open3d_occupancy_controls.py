@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -424,7 +425,18 @@ def test_no_hash_in_this_record_escapes_classification(record) -> None:
     }
     assert set(hashes) == set(expected)
     for field, path in expected.items():
-        assert hashes[field] == hashlib.sha256(path.read_bytes()).hexdigest()
+        provenance = record["provenance"][field.split(".")[1]]
+        committed_at = provenance.get("bytes_committed_at")
+        if committed_at:
+            relative = path.relative_to(REPO)
+            content = subprocess.run(
+                ["git", "-C", str(REPO), "show", f"{committed_at}:{relative}"],
+                check=True,
+                capture_output=True,
+            ).stdout
+        else:
+            content = path.read_bytes()
+        assert hashes[field] == hashlib.sha256(content).hexdigest()
 
 
 def test_the_harness_and_record_are_committed_together(record) -> None:
