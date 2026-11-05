@@ -1,19 +1,19 @@
 {
-  "measured_at_utc": "2026-11-05T08:10:12.812980+00:00",
-  "source_repository_head": "a3d82be6048743a623ec826785cf9d79ec33611c",
+  "measured_at_utc": "2026-11-05T09:20:03.553551+00:00",
+  "source_repository_head": "87fcd6c1887677bd8178fe4742db41cf4457bd65",
   "remote_name": "origin",
   "audit_workspace": "fresh private bare repository removed after this run",
   "what_this_answers": "For every commit a capability record names, does a current advertised origin ref contain it, and if not can origin fetch the object by SHA?",
   "why_it_exists": "The records claimed no advertised remote refs. The clone that checked held only refs/heads/* out of every ref this remote advertises, and was shallow. The claim was true and unestablished, which is its own kind of defect.",
   "ref_coverage": {
-    "total_refs_advertised_by_remote": 1397,
+    "total_refs_advertised_by_remote": 1396,
     "pull_heads_advertised": 996,
-    "pull_merges_advertised": 22,
+    "pull_merges_advertised": 21,
     "tags_advertised": 11,
     "branches_advertised": 367,
     "refs_in_no_other_category": 1,
     "fetched_pull_refs": 996,
-    "fetched_merge_refs": 22,
+    "fetched_merge_refs": 21,
     "fetched_tag_refs": 11,
     "fetched_branch_refs": 367,
     "why_merge_refs_are_no_longer_skipped": "The first version skipped them, arguing a merge ref has its PR head as an ancestor and so cannot hold a commit the head lacks. A reviewer tested it on all of them and found one where the head had moved since the merge ref was computed, so the property held for a different reason than the one I gave. It was harmless, and a force-push is the case that would not be. They are now fetched and tested, so the audit rests on no argument about refs.",
@@ -26,7 +26,7 @@
     "commits_that_could_be_concealed": 0
   },
   "tally": {
-    "resolvable_remotely": 12,
+    "resolvable_remotely": 13,
     "on_zero_remote_refs": 6,
     "absent_from_this_clone": 2
   },
@@ -34,7 +34,7 @@
     {
       "commit": "024bd3d442c791c16de0adf6445b722eb5032857",
       "verdict": "resolvable_remotely",
-      "remote_refs_containing": 6,
+      "remote_refs_containing": 5,
       "direct_sha_fetch_attempted": false,
       "direct_sha_fetchable": null,
       "local_refs_containing": 0,
@@ -43,7 +43,7 @@
       "example_remote_refs": [
         "refs/remotes/provenance-audit/branch/cursor/open3d-reference-free-fabrication-20261101",
         "refs/remotes/provenance-audit/branch/cursor/open3d-signed-fabrication-measure",
-        "refs/remotes/provenance-audit/merge/1006"
+        "refs/remotes/provenance-audit/merge/1007"
       ]
     },
     {
@@ -60,7 +60,7 @@
     {
       "commit": "15b0b11f0",
       "verdict": "resolvable_remotely",
-      "remote_refs_containing": 472,
+      "remote_refs_containing": 471,
       "direct_sha_fetch_attempted": false,
       "direct_sha_fetchable": null,
       "local_refs_containing": 0,
@@ -75,7 +75,7 @@
     {
       "commit": "15b0b11f0bc137631954ac87076f44753c513976",
       "verdict": "resolvable_remotely",
-      "remote_refs_containing": 472,
+      "remote_refs_containing": 471,
       "direct_sha_fetch_attempted": false,
       "direct_sha_fetchable": null,
       "local_refs_containing": 0,
@@ -110,9 +110,24 @@
       "example_remote_refs": []
     },
     {
+      "commit": "356e0714804c181292ad9b5b75398ff718c87b95",
+      "verdict": "resolvable_remotely",
+      "remote_refs_containing": 3,
+      "direct_sha_fetch_attempted": false,
+      "direct_sha_fetchable": null,
+      "local_refs_containing": 0,
+      "shallow_clone_could_conceal_it": false,
+      "orphaned_tracking_refs_containing": 0,
+      "example_remote_refs": [
+        "refs/remotes/provenance-audit/branch/cursor/open3d-reference-free-fabrication-20261101",
+        "refs/remotes/provenance-audit/merge/1007",
+        "refs/remotes/provenance-audit/pr/1007"
+      ]
+    },
+    {
       "commit": "3ae5a7a3c902214cb8415de1d06a2e224bd75e13",
       "verdict": "resolvable_remotely",
-      "remote_refs_containing": 783,
+      "remote_refs_containing": 782,
       "direct_sha_fetch_attempted": false,
       "direct_sha_fetchable": null,
       "local_refs_containing": 0,
@@ -127,7 +142,7 @@
     {
       "commit": "42427aa71b2eaa6b01fa1ca66a3394afe5470bab",
       "verdict": "resolvable_remotely",
-      "remote_refs_containing": 10,
+      "remote_refs_containing": 9,
       "direct_sha_fetch_attempted": false,
       "direct_sha_fetchable": null,
       "local_refs_containing": 0,
@@ -154,7 +169,7 @@
     {
       "commit": "632ccc9d5cf7d7e5cab922558e9ba4b9ae8b5079",
       "verdict": "resolvable_remotely",
-      "remote_refs_containing": 8,
+      "remote_refs_containing": 7,
       "direct_sha_fetch_attempted": false,
       "direct_sha_fetchable": null,
       "local_refs_containing": 0,
@@ -217,7 +232,7 @@
     {
       "commit": "c3e5ff17bb1189754cde408167231eeaed068fe6",
       "verdict": "resolvable_remotely",
-      "remote_refs_containing": 6,
+      "remote_refs_containing": 5,
       "direct_sha_fetch_attempted": false,
       "direct_sha_fetchable": null,
       "local_refs_containing": 0,
@@ -226,13 +241,13 @@
       "example_remote_refs": [
         "refs/remotes/provenance-audit/branch/cursor/open3d-reference-free-fabrication-20261101",
         "refs/remotes/provenance-audit/branch/cursor/open3d-signed-fabrication-measure",
-        "refs/remotes/provenance-audit/merge/1006"
+        "refs/remotes/provenance-audit/merge/1007"
       ]
     },
     {
       "commit": "d06e95846",
       "verdict": "resolvable_remotely",
-      "remote_refs_containing": 154,
+      "remote_refs_containing": 153,
       "direct_sha_fetch_attempted": false,
       "direct_sha_fetchable": null,
       "local_refs_containing": 0,
@@ -247,7 +262,7 @@
     {
       "commit": "d06e958462865af823b4f1479867df52421c8284",
       "verdict": "resolvable_remotely",
-      "remote_refs_containing": 154,
+      "remote_refs_containing": 153,
       "direct_sha_fetch_attempted": false,
       "direct_sha_fetchable": null,
       "local_refs_containing": 0,
@@ -262,7 +277,7 @@
     {
       "commit": "d22893238d75efbb05a69eb75bca1b82eb5fe280",
       "verdict": "resolvable_remotely",
-      "remote_refs_containing": 757,
+      "remote_refs_containing": 756,
       "direct_sha_fetch_attempted": false,
       "direct_sha_fetchable": null,
       "local_refs_containing": 0,
@@ -308,6 +323,7 @@
     "15b0b11f0bc137631954ac87076f44753c513976": "commit",
     "16012b1088579569a8755a1483c4c260c6af3973": "unknown_to_this_clone",
     "256c26bc915080934814789be6a41bbc253f0d1c": "unknown_to_this_clone",
+    "356e0714804c181292ad9b5b75398ff718c87b95": "commit",
     "3ae5a7a3c902214cb8415de1d06a2e224bd75e13": "commit",
     "42427aa71b2eaa6b01fa1ca66a3394afe5470bab": "commit",
     "46ae993d10e251913fc4942fa5cf0e4fa689dfe7": "unknown_to_this_clone",
@@ -359,6 +375,9 @@
     "capability-record-record-provenance-shape.json": [
       "d06e958462865af823b4f1479867df52421c8284"
     ],
+    "capability-record-reference-free-fabrication.json": [
+      "356e0714804c181292ad9b5b75398ff718c87b95"
+    ],
     "capability-record-standard-runtime.json": [
       "15b0b11f0bc137631954ac87076f44753c513976",
       "256c26bc915080934814789be6a41bbc253f0d1c"
@@ -394,8 +413,8 @@
     ]
   },
   "what_this_audits_glob_does_not_reach": {
-    "evidence_json_outside_this_audits_glob": 54,
-    "of_those_with_no_provenance_block_at_all": 46,
+    "evidence_json_outside_this_audits_glob": 55,
+    "of_those_with_no_provenance_block_at_all": 47,
     "of_those_that_also_carry_digests": 13,
     "why_three_numbers_and_not_one": "A reviewer measured this as seven files. That is the subset carrying digests and naming no resolvable commit; the broadest count here is every non-record evidence JSON. Different populations rather than a disagreement, and the digest-carrying count is the one that matters, because a digest with no declared origin is the case this change exists to close.",
     "files_carrying_digests_with_no_declared_provenance": [
@@ -715,6 +734,12 @@
       },
       {
         "file": "poisson-procedure-and-overcall-audit.json",
+        "has_a_provenance_block": false,
+        "carries_digests": false,
+        "names_a_commit": false
+      },
+      {
+        "file": "reference-free-fabrication.json",
         "has_a_provenance_block": false,
         "carries_digests": false,
         "names_a_commit": false
