@@ -1,0 +1,106 @@
+{
+  "capability": "A measured answer to whether any reference-free reading separates invented surface from sparse correct coverage. It does not, and the runner's withdrawal of that claim stands.",
+  "why": "_crop_justification reports which side of FAR_BAND_AREA_SHARE the removed area fell on and states its own limit: thin coverage and surface that does not belong both read the same way, and deciding fabrication needs a reference surface. a828e58fd3 withdrew the stronger reading on that basis. The last clause is an argument, and it is cheap enough to test that leaving it untested is a choice.",
+  "source_commit": "356e0714804c181292ad9b5b75398ff718c87b95 (measurement/report head reviewed here; later repair commits narrow claims without relabeling execution)",
+  "hardware": "CPU only. Open3D's registration and reconstruction APIs have no CUDA path.",
+  "what_was_measured": {
+    "candidate_a": "A far triangle is invented if its own normal disagrees by more than 60 degrees with the plane fitted to its ten nearest samples.",
+    "candidate_b": "A far triangle is invented if no sample within twelve voxels has an orientation agreeing with it. Reference-free: the cloud's normals are estimated from the cloud.",
+    "denominator": "Unsupported area, the same denominator the product's own far reading uses, so the three readings are directly comparable."
+  },
+  "acceptance_was_frozen_first": {
+    "where": "program/claims/open3d-reference-free-fabrication/CLAIM.md (not retained in this repository)",
+    "when": "historically claimed as before measurement, but not independently verifiable from retained repository bytes",
+    "why_it_matters_here": "The result is negative. Without a gate fixed in advance, a negative result is one sentence away from being reported as a promising direction.",
+    "result": "Candidate A meets 1 of 5 criteria; candidate B meets 2 of 5. Both rejected."
+  },
+  "gate_1_passed_so_the_rest_counts": "The product's own counterexample reproduces: the cube sampled densely on five faces and sparsely on the sixth reads 0.3252 unsupported area, 0.1313 past three voxels and a far share of 0.4037, against the recorded 0.3157 / 0.1316 / 0.4169. Largest difference 0.0132, inside the 0.02 the claim allowed.",
+  "the_decisive_case": "The retained 0.03-wide slot rows report unlocalized invented area while both candidates read 0.0000, producing an inversion against clean sparse-cube rows. The harness does not localize that area to the slot, and the 8000-sample row has an empty far band, so no roof/floor mechanism or same-geometry opposite-reading claim is made.",
+  "why_each_fails": {
+    "candidate_a": "Nearest samples need not be samples of the thing being judged. On the cube's sparse face near an edge, all ten nearest samples lie on the adjacent dense perpendicular face: planarity 0.0000, neighbourhood radius 0.0697 against a voxel of 0.0148. The samples are right and the mesh is right, and they correspond to nothing in common. My first explanation of this was the opposite -- mixed neighbourhoods spanning two faces -- and the measurement said 14 percent for the false alarms against 73 percent for the correct readings.",
+    "candidate_b": "Requiring an orientation-agreeing sample nearby improves the cube control from 0.0812 to 0.0090 but rises to 0.1508 as correct coverage thins. Its zero slot readings have no localized mechanism, and the 0.40-deep floor is outside the 12-voxel radius in both rows.",
+    "shared": "Both climb as correct coverage thins, which makes them partly density detectors. That is the error the product already removed once, so it is the failure that settles it."
+  },
+  "constructions_that_failed_to_exercise_the_effect": {
+    "kept_because": "A construction that fails to exercise an effect is not evidence the effect is absent. Three of five attempts here produced nothing to detect.",
+    "sphere_with_a_cap_of_samples_removed": "Invents 0.0004 of its area. Poisson closing a cap of a sphere reproduces the sphere.",
+    "thin_torus": "Invents exactly nothing; Poisson reconstructs it correctly.",
+    "slot_at_wider_settings": "Earlier wider slot settings reported no invented area. The retained 0.03-wide rows report unlocalized invented area; the harness does not establish that Poisson roofed the slot."
+  },
+  "a_broken_construction_that_produced_a_plausible_number": {
+    "what_it_was": "The first slotted reference was three boxes added with `+=`, which concatenates triangles without a boolean union. The base's top face and the teeth's bottom faces survive inside the solid, sample_points_poisson_disk draws samples on them, and distance-to-reference then measures against a surface soup.",
+    "what_it_cost": "A whole conclusion. It read 0.1041 invented, both candidates read about zero on it, and I was one step from publishing that as the decisive negative. The number was plausible and the mechanism was not: the area it called invented was a band just above the internal face, spanning the full width, only 2 percent of it inside the slot.",
+    "how_it_was_caught": "By checking the mechanism I had asserted rather than the fraction I had measured. Nothing in the reading itself distinguished it.",
+    "the_instrument_limit": "Share of reference-surface samples with solid on both sides is applied to retained measured references. The 0.2203, 0.0125 and plain-box 0.0000 controls are historical literals, not constructions recomputed by this harness, so they are not presented as a repository-reproducible positive-control run."
+  },
+  "what_changes_in_the_product": "Nothing. No threshold, no default, no accepted number.",
+  "this_does_not_contradict_1006": "The integrated #1006 evidence is a synthetic vertex-area diagnostic and is explicitly not an exact rescore of the committed instrument. This PR asks a different reference-free question; neither result is used to overstate the other.",
+  "regression_guards": {
+    "file": "npa/tests/workbench/test_open3d_reference_free_fabrication.py",
+    "count": 23,
+    "what_they_hold": "The verdict is recomputed from the published rows and compared against the recorded pass counts, so the report never asserts its own validity. The overlap, the inversion, the climb with sparsity, gate 1's margin, and the validity of every reference actually measured are each recomputed.",
+    "mutations_caught": [
+      "the narrow slot suddenly reads 0.6: 4 tests fail",
+      "the sparsity sweep stops climbing: 3 fail",
+      "the recorded pass count inflated to 5 of 5: 1 fails",
+      "gate 1 drifts past the frozen 0.02: 1 fails",
+      "a reference with internal faces is used: 1 fails",
+      "the construction instrument loses its validating positive: 1 fails",
+      "the distinction from #1006 is dropped: 1 fails"
+    ],
+    "a_gap_review_found_and_how_it_was_closed": {
+      "the_gap": "This record states each candidate's verdict twice: a summary count under criteria_met, and a per-criterion `met` flag inside each candidate block. The guard recomputed the summary from the readings and never looked at the flags.",
+      "demonstrated_not_argued": "Review set candidate A's criterion 1 flag to true, making the record claim that a reading of 0.081198 satisfies `< 0.05`, and all fifteen tests passed. The flags were correct; nothing held them to the readings.",
+      "the_fix": "All ten flags are now recomputed from the rows, the per-criterion flags are held to agree with the summary they sum to, and the reading each criterion quotes is held to the row it came from -- a third copy of the same fact, one level down.",
+      "why_not_delete_one_representation": "The per-criterion detail is the useful part for a reader and the summary is the useful part for a scanner. Asserting both is cheaper than choosing.",
+      "mutations_now_caught": [
+        "review's exact mutation, candidate A criterion 1 flagged met: fails",
+        "a true flag flipped to false on candidate B: fails",
+        "a flag flipped and the summary adjusted to match it: fails twice",
+        "the reading a criterion quotes drifting from its row: fails",
+        "a criterion renamed so the block no longer matches: fails twice"
+      ]
+    },
+    "what_these_tests_do_not_do": "Re-run the geometry. They validate the committed record, which is the right split while Open3D is not installable everywhere, but it means the suite protects the document's integrity rather than reproducing the measurement. Review raised this and I agree with the framing; the harness is the reproduction path and it takes five minutes on CPU.",
+    "what_count_means": "collected test cases, not test functions",
+    "a_fourth_copy_review_found_in_this_record": {
+      "the_gap": "After the three copies inside reference-free-fabrication.json were bound, the verdict still existed a fourth time as prose in this record: \"Candidate A meets 1 of 5 criteria; candidate B meets 2 of 5. Both rejected.\" Nothing read it.",
+      "demonstrated_not_argued": "Review replaced it with \"4 of 5 ... 5 of 5. Both accepted.\" and all 137 tests across the three Open3D test files passed. Reproduced here before fixing: 137 passed.",
+      "why_it_is_worse_than_the_others": "This is the artifact a reader opens first, so a rejection silently becoming an acceptance here misleads more people than the same drift inside the report.",
+      "the_fix": "The numerals in the sentence are parsed and compared against the counts recomputed from the published rows, and the verdict word is held to them. The class is closed too: every figure this record quotes with four or more decimals is checked against the report, with the three that come from measurements the report does not carry pinned as a named exception set rather than waved through by a count.",
+      "a_near_miss_in_the_fix_itself": "The guard-count test first counted `^def test_` and read 17, which matched the record's 17 and passed. The record's number means collected cases; three tests are parametrized over the two candidates, so the file held 14 functions and ran 17 cases. The guard agreed for the wrong reason. It now expands parametrize and its count was checked against pytest's own collection.",
+      "mutations_now_caught": [
+        "review's exact inversion, 1 of 5 and 2 of 5 to 4 of 5 and 5 of 5 with both accepted: fails",
+        "only the numerals inverted, leaving the word rejected: fails",
+        "only the word changed from rejected to accepted: fails",
+        "a figure the prose quotes drifting from the report row it came from: fails",
+        "a guard added or removed without updating the stated count: fails"
+      ]
+    }
+  },
+  "limitations": "Two candidate readings, three inventing geometries, two sampling densities, Poisson depth 7 with KNN normals rather than product-default depth 9 with hybrid-radius normals, and one normal-agreement cutoff. The density-response criterion rejects these candidates on these constructions. The slot failure mechanism remains unlocalized, and this does not prove no reference-free reading can work.",
+  "visual_evaluation": {
+    "status": "not_applicable",
+    "reason": "Every reading is a scalar area share computed from geometry. There is no frame and nothing for a vision model to see; attaching one would be decoration. EXPANDED-REVIEW-CONTRACT.md allows this for nonvisual work with a reason."
+  },
+  "independent_review": "requested on the PR",
+  "provenance": {
+    "source_commit": "356e0714804c181292ad9b5b75398ff718c87b95",
+    "commit_is_an_ancestor_of_main": false,
+    "how_this_commit_was_recovered": "This is the retained measurement/report head named by the record's source_commit field; later commits narrow claims and bind review contracts without relabeling execution.",
+    "harness_that_produced_this": [
+      {
+        "path": "harness/reference_free_fabrication.py",
+        "sha256": "43dae8a1c31a46e6bb23d3cf9dd4d7c74e685852b4e64864567a39e46c17e573"
+      },
+      {
+        "path": "reference-free-fabrication.json",
+        "sha256": "72970ca66f650247fd1805fba8b02558aa76e5dee42b29112b4f768ddc42b968"
+      }
+    ],
+    "inputs": "No external geometry. The harness constructs its measured geometries analytically, but its broken-construction and boolean-difference control figures are retained literals rather than reconstructed controls.",
+    "reproduce": "OPEN3D_OUT_DIR=<existing scratch dir> npa/.venv/bin/python docs/evidence/open3d/harness/reference_free_fabrication.py  (about five minutes, CPU only; emits raw measurements, not the hand-annotated committed report)",
+    "open3d_version": "0.20.0",
+    "numpy_seed": 7
+  }
+}
