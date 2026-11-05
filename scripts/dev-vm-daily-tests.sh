@@ -206,7 +206,7 @@ run_agent_eval_gate() {
       tests/agent_eval/test_agent_eval_scorecard.py \
       tests/cli/test_agent_backend_render.py \
       tests/guardrails/test_agent_no_hardcoded_data.py \
-      -q
+      -q -n auto
   )
 }
 
