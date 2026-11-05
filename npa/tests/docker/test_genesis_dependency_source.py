@@ -109,6 +109,10 @@ def test_genesis_recipes_enforce_the_fsspec_security_floor(dockerfile, _, __):
         if kind == "RUN" and '"genesis-world==' in body
     )
     assert '"fsspec==2026.6.0"' in installation
+    assert (
+        "fsspec[http]>=2026.6.0,<2027.0.0"
+        in (GENESIS / "prepare_public_runtime.py").read_text()
+    )
     assert "pip check" in installation
 
 
