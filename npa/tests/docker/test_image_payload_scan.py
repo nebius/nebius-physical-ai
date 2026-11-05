@@ -220,6 +220,20 @@ def test_openpi_uses_system_ffmpeg_without_bundled_payload() -> None:
 
     assert "IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg" in dockerfile
     assert "      ca-certificates ffmpeg git" in dockerfile
+    assert (
+        "ARG OPENPI_PIP_WHEEL_URL=https://files.pythonhosted.org/packages/"
+        "07/25/ee8c38ae72d66b844ce8eb9711ba905dba21ca1a8a0c960057c41cd23337/"
+        "pip-26.3-py3-none-any.whl" in dockerfile
+    )
+    assert (
+        "ARG OPENPI_PIP_WHEEL_SHA256="
+        "f3b60b20ffaadd4415ed7957212a38ac63fa4c5fa375bd0f4a797777940fad13"
+        in dockerfile
+    )
+    assert "--no-deps --upgrade" in dockerfile
+    assert "${OPENPI_PIP_WHEEL_URL}#sha256=${OPENPI_PIP_WHEEL_SHA256}" in dockerfile
+    assert 'pip.__version__ == "26.3"' in dockerfile
+    assert 'certifi.__version__ == "2026.10.23"' in dockerfile
     assert "*/imageio_ffmpeg/binaries/ffmpeg*" in dockerfile
     assert "-delete" in dockerfile
     assert "imageio_ffmpeg.get_ffmpeg_exe()" in dockerfile

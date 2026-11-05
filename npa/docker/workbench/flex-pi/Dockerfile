@@ -77,6 +77,7 @@ RUN patch --directory=/opt/flex-pi --strip=1 --input=/tmp/dino-checkpoint.patch 
     && rm -f /opt/conda/lib/python3.11/site-packages/imageio_ffmpeg/binaries/ffmpeg-linux-x86_64-v7.0.2 \
     && python -c 'import imageio_ffmpeg; assert imageio_ffmpeg.get_ffmpeg_exe() == "/opt/conda/bin/ffmpeg"' \
     && pip check \
+    && python -c "from importlib.metadata import version; assert version('Brotli') == '1.2.1'; assert version('Pillow') == '13.0.0'" \
     && test -z "$(find /opt/flex-pi -type f \( -iname '*.safetensors' -o -iname '*.ckpt' -o -iname '*.pt' -o -iname '*.mp4' -o -iname '*.parquet' \) -print -quit)" \
     && python - <<'PY'
 import torch

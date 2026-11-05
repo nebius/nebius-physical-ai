@@ -1,6 +1,14 @@
 diff --git a/pyproject.toml b/pyproject.toml
 --- a/pyproject.toml
 +++ b/pyproject.toml
+@@ -11,6 +11,7 @@ dependencies = [
+   "accelerate==1.12.0",
+   "av==16.0.1",
+   "boto3==1.35.99",
++  "brotli==1.2.1",
+   "datasets==3.6.0",
+   # Imports as `decord`, not `decord2` -- video_utils.py decodes both the
+   # libx264rgb depth pair and AV1 video through it, and it is the default
 @@ -18,7 +18,7 @@ dependencies = [
    "decord2==3.3.0",
    "deepspeed==0.18.5",
@@ -11,6 +19,15 @@ diff --git a/pyproject.toml b/pyproject.toml
 -  "hydra-core==1.3.2",
 +  "hydra-core==1.3.8",
    "imageio==2.37.0",
+@@ -29,7 +30,7 @@ dependencies = [
+   "omegaconf==2.3.0",
+   "packaging==25.0",
+   "pandas==2.2.3",
+-  "pillow==12.0.0",
++  "pillow==13.0.0",
+   "pyarrow==23.0.0",
+   "regex==2025.11.3",
+   "rich==14.2.0",
 @@ -42,5 +42,5 @@ dependencies = [
    "timm==1.0.26",
    "transformers==4.49.0",
