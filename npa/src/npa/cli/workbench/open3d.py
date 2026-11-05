@@ -60,6 +60,15 @@ def prepare_cmd(
         "--icp-estimation",
         help="ICP estimation method: point_to_plane or point_to_point.",
     ),
+    agreement_seeds: int = typer.Option(
+        0,
+        "--agreement-seeds",
+        help=(
+            "Extra RANSAC seeds to re-register each pair under, to measure whether "
+            "the alignment is the only one that fits. 0 (default) measures nothing "
+            "and costs nothing; each seed costs one more registration per pair."
+        ),
+    ),
     output_format: OutputFormat = typer.Option(
         OutputFormat.json, "--output-format", help="Output format."
     ),
@@ -72,6 +81,7 @@ def prepare_cmd(
             output_path=output_path,
             voxel_size=voxel_size,
             icp_estimation=icp_estimation,
+            agreement_seeds=agreement_seeds,
         ),
     )
 
@@ -94,6 +104,15 @@ def stage_demo_cmd(
         "--icp-estimation",
         help="ICP estimation method: point_to_plane or point_to_point.",
     ),
+    agreement_seeds: int = typer.Option(
+        0,
+        "--agreement-seeds",
+        help=(
+            "Extra RANSAC seeds to re-register each pair under, to measure whether "
+            "the alignment is the only one that fits. 0 (default) measures nothing "
+            "and costs nothing; each seed costs one more registration per pair."
+        ),
+    ),
     output_format: OutputFormat = typer.Option(
         OutputFormat.json, "--output-format", help="Output format."
     ),
@@ -105,6 +124,7 @@ def stage_demo_cmd(
             output_path=output_path,
             voxel_size=voxel_size,
             icp_estimation=icp_estimation,
+            agreement_seeds=agreement_seeds,
         ),
     )
 

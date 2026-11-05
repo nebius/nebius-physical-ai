@@ -44,7 +44,7 @@ def verify_registration(
     ]:
         raise Open3dError("pose graph fragment identities do not match the manifest")
     manifest_hash = verify_digest(
-        canonical(manifest.model_dump(mode="json")),
+        canonical(manifest.canonical_document()),
         report.get("manifest_sha256"),
         what="registration manifest",
     )
