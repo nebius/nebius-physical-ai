@@ -476,7 +476,7 @@ def test_the_declarations_cover_every_hash_the_directory_cannot_check() -> None:
     ]
     assert len(declared_lines) == 2, result.stdout
     assert "58 hash(es)" in declared_lines[0], declared_lines
-    assert "46 hash(es)" in declared_lines[1], declared_lines
+    assert "48 hash(es)" in declared_lines[1], declared_lines
 
 
 def test_the_control_record_is_bound_to_the_report_it_calls_current(
