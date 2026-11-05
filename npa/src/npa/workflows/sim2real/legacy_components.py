@@ -14,7 +14,6 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-
 from npa.clients.storage import StorageClient
 from npa.workflows.sim2real.artifact_upload import (
     upload_run_artifacts,  # noqa: F401 - public engine import surface
@@ -32,9 +31,11 @@ from npa.workflows.sim2real.constants import (
     SCHEMA_RL_SIGNAL,
     SCHEMA_VLM_EVAL,
 )
+from npa.workflows.sim2real import feedback_validation as fv
 from npa.workflows.sim2real.models import (
     Sim2RealLoopConfig,
     Sim2RealLoopError,
+    require_sim2real_boolean,
 )
 from npa.workflows.sim2real.gpu_fallback import (
     GpuCapacityExhausted,
@@ -1266,8 +1267,7 @@ def _apply_reference_adapter_heldout_gate(
     base = _inner_loop_progress_score(inner_evidence)
     for index, (item, env) in enumerate(zip(per_env, envs, strict=False)):
         cal_score = _reference_adapter_env_score(base, env, index)
-        sim_success = bool(item.get("success"))
-        sim_score = float(item.get("score", 0.0))
+        sim_success, sim_score = fv.strict_reference_adapter_feedback(item, index=index)
         details = dict(item.get("details") or {})
         details["sim_success"] = sim_success
         details["sim_score"] = round(sim_score, 6)
@@ -1359,8 +1359,11 @@ def _normalize_vlm_evaluation(
 ) -> dict[str, Any]:
     if "score" not in payload:
         raise Sim2RealLoopError("VLM component output must include score")
-    score = max(0.0, min(1.0, float(payload["score"])))
-    success = bool(payload.get("success", score >= config.threshold))
+    score = fv.bounded_feedback_score(payload["score"])
+    success = require_sim2real_boolean(
+        payload.get("success", score >= config.threshold),
+        field="VLM component output success",
+    )
     raw_steps = payload.get("per_step") or payload.get("steps") or []
     if not raw_steps and payload.get("critique_text"):
         raw_steps = [
@@ -1389,6 +1392,10 @@ def _normalize_vlm_evaluation(
         malformed = not critique
         if malformed:
             critique = "Malformed model-local critique rejected; simulator state only."
+        model_disagreement = require_sim2real_boolean(
+            raw.get("model_disagreement", False),
+            field=f"VLM component output per_step[{step}].model_disagreement",
+        )
         camera = raw.get("camera_observation")
         if not camera and 0 <= step < len(observations):
             camera = observations[step]
@@ -1401,13 +1408,15 @@ def _normalize_vlm_evaluation(
                     "action", (action_items.get(step) or {}).get("action", [])
                 ),
                 "camera_observation": str(camera or f"camera-{step:03d}.ppm"),
-                "confidence": 0.0 if malformed else float(raw.get("confidence", 0.65)),
+                "confidence": 0.0
+                if malformed
+                else fv.bounded_feedback_score(raw.get("confidence", 0.65)),
                 "critique_source": str(
                     "model_malformed"
                     if malformed
                     else raw.get("critique_source") or "model_per_step"
                 ),
-                "model_disagreement": bool(raw.get("model_disagreement")),
+                "model_disagreement": model_disagreement,
                 "reason2_critique": str(raw.get("reason2_critique") or ""),
                 "cosmos3_critique": str(
                     raw.get("cosmos3_critique")

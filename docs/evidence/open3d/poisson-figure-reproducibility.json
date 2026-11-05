@@ -1,0 +1,149 @@
+{
+  "schema": "npa.evidence.open3d.poisson-figure-reproducibility/v0.0.1",
+  "provenance": {
+    "source_commit": "14715bc1ba3b038e73dd3530016e7c09c72ae034",
+    "clean_tree_before_write": true,
+    "harness_sha256": "5b65dc6b4697ac247e8d8a7c8cb9a68352484d5a4e9f0418e6df13757815fbc6"
+  },
+  "what_this_measures": "Whether the ray-cast occlusion figures in `audit-view-occlusion.json` are reproducible, and if not, to what precision they are.",
+  "why": "A reviewer flagged the ray-cast path as unverified and suspected it might share the one-pixel environment dependence they measured in the z-buffer footprint path. It does not. The z-buffer path reproduced exactly on this host; this one does not reproduce against itself.",
+  "subject_availability": "The audit-view record and harness are supplied by PR 1014 and are not in this merge target. Values are pinned to commit 04aacfcf89; the causal attribution here is inferred from a different fixed Eagle input.",
+  "environment": {
+    "open3d": "0.20.0",
+    "numpy": "2.5.4",
+    "python": "3.12.14",
+    "input": "Open3D's own EaglePointCloud, a fixed dataset with no sampling",
+    "input_points": 796825,
+    "poisson_depth": 9
+  },
+  "the_published_figures": {
+    "transcribed_from": "docs/evidence/open3d/audit-view-occlusion.json @ 04aacfcf89",
+    "values": {
+      "visible_with_retained_surface_shown": 0.3521503113541809,
+      "visible_with_only_its_own_self_occlusion": 0.7848810005123376
+    },
+    "one_rerun_gave": {
+      "visible_with_retained_surface_shown": 0.3521360294407621,
+      "visible_with_only_its_own_self_occlusion": 0.7848528993182663
+    },
+    "absolute_difference_on_the_headline": 2.810119407126166e-05
+  },
+  "cause": {
+    "claim": "`create_from_point_cloud_poisson` is not deterministic in Open3D 0.20.0.",
+    "how_it_was_established": "Identical input, one process, same depth, repeated. Vertex and triangle counts repeat exactly while total surface area does not. Counts alone do not establish identical mesh connectivity.",
+    "why_an_earlier_experiment_here_was_void": {
+      "binary": "pybind.cpython-312-x86_64-linux-gnu.so",
+      "ldd_returncode": 0,
+      "nm_returncode": 0,
+      "openmp_runtime_linked": false,
+      "openmp_symbols_present": false,
+      "omp_num_threads_was_inert_in_this_build": true
+    },
+    "conditions": {
+      "default": {
+        "repeats": 4,
+        "seeded_before_each_call": false,
+        "vertex_and_triangle_counts_are_stable": true,
+        "vertices": 563112,
+        "triangles": 1126072,
+        "surface_area": {
+          "values": [
+            157.34143530648424,
+            157.34156199208246,
+            157.34148744501468,
+            157.3415078925616
+          ],
+          "identical": false,
+          "absolute_spread": 0.00012668559821804593,
+          "relative_spread": 8.051636110429268e-07
+        },
+        "wall_seconds": [
+          8.499961774999974,
+          8.165502834017389,
+          8.380870813998627,
+          8.618736097007059
+        ],
+        "poisson_n_threads": -1,
+        "label": "default"
+      },
+      "seeded_before_each_call": {
+        "repeats": 4,
+        "seeded_before_each_call": true,
+        "vertex_and_triangle_counts_are_stable": true,
+        "vertices": 563112,
+        "triangles": 1126072,
+        "surface_area": {
+          "values": [
+            157.3414200388005,
+            157.34152050962246,
+            157.34149483734205,
+            157.34151573040387
+          ],
+          "identical": false,
+          "absolute_spread": 0.00010047082196251722,
+          "relative_spread": 6.38552912117744e-07
+        },
+        "wall_seconds": [
+          8.14684112399118,
+          8.043563765997533,
+          8.337092545989435,
+          9.259965735982405
+        ],
+        "poisson_n_threads": -1,
+        "label": "seeded"
+      },
+      "poisson_n_threads_1": {
+        "repeats": 4,
+        "seeded_before_each_call": false,
+        "vertex_and_triangle_counts_are_stable": true,
+        "vertices": 563112,
+        "triangles": 1126072,
+        "surface_area": {
+          "values": [
+            157.34151843469294,
+            157.34151843469294,
+            157.34151843469294,
+            157.34151843469294
+          ],
+          "identical": true,
+          "absolute_spread": 0.0,
+          "relative_spread": 0.0
+        },
+        "wall_seconds": [
+          13.4182006320043,
+          12.377800271991873,
+          13.40079176198924,
+          12.611301023018314
+        ],
+        "poisson_n_threads": 1,
+        "label": "poisson_n_threads_1"
+      }
+    }
+  },
+  "what_the_remedies_do": {
+    "seeding": "Does not help. The `SAMPLING_SEED` already in `audit_view_occlusion.py` is real and does bind the armadillo's sampling -- but Poisson's variation is not drawn from Open3D's generator, so seeding before the call leaves the spread where it was. Measured, not reasoned: see `cause.conditions.seeded_before_each_call`.",
+    "limiting_threads": "Made surface area exact across 4 observations in this run: the spread went from 8.05e-07 to 0 with the Poisson call's documented n_threads=1. This is an observed bounded result, not a general determinism guarantee; the per-call value and wall times are recorded.",
+    "so_the_record_should": "State the precision the figures hold instead of publishing sixteen digits that do not survive a second run."
+  },
+  "does_this_change_any_conclusion": {
+    "conclusion_changed": false,
+    "explanation": "The record's conclusion is that the removed surface is visible from the shipped camera well above the 50% criterion. The margin is 0.2849 and the observed run-to-run difference is 2.81e-05, four orders of magnitude smaller.",
+    "margin_against_the_threshold": 0.28488100051233756,
+    "observed_difference": 2.810119407126166e-05,
+    "ratio": 10137.683110187754
+  },
+  "guard_scope": {
+    "files": "tracked Python files from git ls-files",
+    "covered": [
+      "exact comparisons and membership",
+      "pytest.approx including its default tolerance",
+      "math.isclose and assert_allclose"
+    ],
+    "known_limit": "Values obtained through arbitrary function returns are not followed."
+  },
+  "what_this_does_not_claim": [
+    "That the figures are wrong. One rerun agreed to four significant figures; that single pair is not a general precision bound.",
+    "That Poisson is wrong. A non-deterministic surface reconstruction is a normal consequence of parallel floating-point accumulation; the defect is publishing sixteen digits of it without saying so.",
+    "That the z-buffer footprint path shares this. It reproduced exactly on this host, and the reviewer's one-pixel difference there came from a second environment, which is a different question this does not answer."
+  ]
+}

@@ -8,19 +8,20 @@ import pytest
 from typer.testing import CliRunner
 
 from npa.cli.main import app
-from npa.workbench.seedvr2 import artifacts, runtime
+from npa.workbench.seedvr2 import artifacts, quality, runtime
 
 
 @pytest.mark.parametrize(
-    ("verb", "module"),
+    ("verb", "module", "operation"),
     [
-        ("probe", artifacts),
-        ("restore", runtime),
-        ("verify", artifacts),
-        ("review", artifacts),
+        ("probe", artifacts, "probe"),
+        ("restore", runtime, "restore"),
+        ("verify", artifacts, "verify"),
+        ("review", artifacts, "review"),
+        ("quality-boundary", quality, "assess"),
     ],
 )
-def test_commands_invoke_shared_operations(verb, module, monkeypatch):
+def test_commands_invoke_shared_operations(verb, module, operation, monkeypatch):
     runner = CliRunner()
     result = runner.invoke(app, ["workbench", "seedvr2", verb, "--help"])
     assert result.exit_code == 0
@@ -29,7 +30,7 @@ def test_commands_invoke_shared_operations(verb, module, monkeypatch):
     seen = []
     monkeypatch.setattr(
         module,
-        verb,
+        operation,
         lambda request: (
             seen.append(request)
             or {

@@ -15,7 +15,7 @@ from npa.cli.path_contract import (
     validate_write_path,
 )
 from npa.lifecycle_intent import OperationIntent, intent_boundary, json_stdout_contract
-from npa.workbench.seedvr2 import artifacts, runtime
+from npa.workbench.seedvr2 import artifacts, quality, runtime
 from npa.workbench.seedvr2.schemas import (
     MODEL_FILES,
     MODEL_REPOSITORY,
@@ -198,6 +198,28 @@ def review_cmd(
     )
 
 
+@app.command("quality-boundary")
+@resolve_typer_defaults
+@json_stdout_contract
+@intent_boundary(OperationIntent.MUTATE)
+def quality_boundary_cmd(
+    input_path: str = typer.Option(..., "--input-path"),
+    output_path: str = typer.Option(..., "--output-path"),
+    run_id: str = typer.Option(..., "--run-id"),
+    output_format: OutputFormat = typer.Option(OutputFormat.json, "--output-format"),
+) -> None:
+    """Publish advisory diagnostics and a fail-closed review-only boundary."""
+
+    input_path, output_path = _paths(input_path, output_path)
+    _run(
+        quality.assess,
+        lambda: VideoArtifactRequest(
+            input_path=input_path, output_path=output_path, run_id=run_id
+        ),
+        output_format,
+    )
+
+
 @app.command("status")
 @resolve_typer_defaults
 @intent_boundary(OperationIntent.OBSERVE)
@@ -243,7 +265,15 @@ def list_cmd() -> None:
 
     typer.echo(
         json.dumps(
-            {"capabilities": ["probe", "restore", "verify", "review"]},
+            {
+                "capabilities": [
+                    "probe",
+                    "restore",
+                    "verify",
+                    "review",
+                    "quality-boundary",
+                ]
+            },
             sort_keys=True,
         )
     )

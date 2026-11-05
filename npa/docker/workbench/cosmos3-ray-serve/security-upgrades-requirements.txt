@@ -206,6 +206,11 @@ attrs==26.1.0 \
     #   aiohttp
     #   jsonschema
     #   referencing
+audioop-lts==0.2.2 ; python_version >= "3.13" \
+    --hash=sha256:51c916108c56aa6e426ce611946f901badac950ee2ddaf302b7ed35d9958970d
+    # via
+    #   -r npa/docker/workbench/cosmos3-ray-serve/security-upgrades-requirements.in
+    #   gradio
 brotli==1.2.1 \
     --hash=sha256:0023348c448140a6ea71615eba331835c971d38ae8acf8a89b4e963b1f38f131 \
     --hash=sha256:00a50d063aae2e69c2eb28818ccf6dc3e51f2ea5b74e3c2082a47943ee23f399 \
@@ -2244,9 +2249,9 @@ py-spy==0.4.2 \
     --hash=sha256:a0e6f6810ccf0fc5e64e85e0182a5b626c4496eec01b14fb8755154b363a4831 \
     --hash=sha256:aeb0323409199c785f730645e9f4bb7a7b9ca2c481f2c331a55642b5d13fa52f
     # via ray
-pyasn1==0.6.4 \
-    --hash=sha256:9c447d8431c947fe4c8febc4ed9e760bc29011a5b01e5c74b67025bd9fb8ce81 \
-    --hash=sha256:deda9277cfd454080ec40b207fb6df82206a3a2688735233cdcd8d3d565f088b
+pyasn1==0.6.5 \
+    --hash=sha256:4017b0fce125096b8573b39c989fdb1a4b19cf761e683398184550fea0e66587 \
+    --hash=sha256:6b11616a6bcf3a40e635f082bb232fa57b5e0dd7f517bd7ddd69ec3794508a47
     # via
     #   -r npa/docker/workbench/cosmos3-ray-serve/security-upgrades-requirements.in
     #   pyasn1-modules

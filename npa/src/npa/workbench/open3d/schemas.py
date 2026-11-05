@@ -66,7 +66,14 @@ class RegistrationManifest(StrictModel):
     # downsampled clouds, and a tight one for ICP on the full-resolution clouds.
     distance_factor: float = Field(default=1.5, gt=0.0, le=100.0)
     icp_distance_factor: float = Field(default=0.4, gt=0.0, le=100.0)
-    #: `open3d.utility.random.seed` value, so a rerun repeats the same RANSAC.
+    #: `open3d.utility.random.seed` value. It does not make a rerun repeat the
+    #: same RANSAC: on fixed downsampled clouds and fixed features, sixteen seeded
+    #: repeats of the RANSAC call returned 2 distinct results on an ambiguous
+    #: construction and 4 on the upstream demo scan, measured in
+    #: `docs/evidence/open3d/register-seed-determinism.json`. Holding it fixed
+    #: removes the seed as a source of variation and nothing else; the remaining
+    #: variation is parallel accumulation, which Open3D's thread count reaches and
+    #: this manifest does not expose.
     random_seed: int = Field(default=0, ge=0, le=2**31 - 1)
     ransac_max_iteration: int = Field(default=100_000, ge=1_000, le=10_000_000)
     ransac_confidence: float = Field(default=0.999, gt=0.0, lt=1.0)

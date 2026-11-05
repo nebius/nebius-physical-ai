@@ -50,8 +50,8 @@ RUN apt-get update \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives \
     && rm -rf /opt/nvidia/nsight-compute \
-    && mkdir -p /outputs /tmp/ray \
-    && chown ubuntu:ubuntu /outputs /tmp/ray
+    && install -d -o ubuntu -g ubuntu -m 0755 /outputs /tmp/ray \
+       /tmp/gradio-source /tmp/gradio-derivative
 USER ubuntu
 
 # Replace only NPA's thin control/client layer. The model implementation and
@@ -90,7 +90,6 @@ RUN export UV_CACHE_DIR=/tmp/uv-cache \
     && uv sync --frozen --inexact \
        --extra guardrail --extra serve --group cu130-torch213 \
     && uv pip uninstall --python .venv/bin/python flash-attn flash-attn-3-nv \
-    && mkdir -p /tmp/gradio-derivative \
     && .venv/bin/python /opt/cosmos3-ray-serve/build_gradio_pillow13_wheel.py \
        /tmp/gradio-source/gradio-6.16.0-py3-none-any.whl \
        /tmp/gradio-derivative \

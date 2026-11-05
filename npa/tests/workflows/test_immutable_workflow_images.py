@@ -1,7 +1,5 @@
 """Keep exact workflow-image declarations consistent through native consumers."""
 
-from typing import Annotated
-
 from pydantic import TypeAdapter
 import pytest
 
@@ -13,8 +11,7 @@ from npa.workflows.navigation.contract import Recipe
 
 def _navigation_recipe_image(reference):
     image = Recipe.model_fields["image"]
-    annotation = Annotated.__class_getitem__((str, *image.metadata))
-    TypeAdapter(annotation).validate_python(reference, strict=True)
+    TypeAdapter(image.rebuild_annotation()).validate_python(reference, strict=True)
 
 
 def _field_failure_image(reference):
