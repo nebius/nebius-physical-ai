@@ -47,17 +47,16 @@ npa/.venv/bin/npa workbench workflow submit "$SPEC" --runtime \
   --project "$PROJECT_ALIAS" --run-id "$RUN_ID" \
   --var bucket="$BUCKET" --var prefix="groot-n15-offline-rl/$RUN_ID" \
   --secret-env AWS_ACCESS_KEY_ID --secret-env AWS_SECRET_ACCESS_KEY \
-  --secret-env HF_TOKEN \
   --output-format json
 ```
 
 `--secret-env` forwards only the named values from the selected project's
 credential store (or the operator environment); it never places their values in
 the YAML, rendered plan, logs, or source tree. The two AWS names are needed by
-every stage that reads or writes the run-owned durable prefix, and `HF_TOKEN`
-authorizes the pinned runtime model fetch when the selected model requires it.
-A run that reuses a prepared prefix from a compatible earlier run needs the same
-read scope.
+every stage that reads or writes the run-owned durable prefix. Preflight the
+selected model with `npa workbench health access --capability groot` rather than
+placing a model token in the YAML. A run that reuses a prepared prefix from a
+compatible earlier run needs the same read scope.
 
 Use the generic `status`, `logs`, and `artifacts` operations with the same run
 and project identity. A recoverable interruption must resume that run only after
