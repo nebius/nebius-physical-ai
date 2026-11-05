@@ -201,6 +201,9 @@ def test_confusion_uses_serialized_score_not_provider_claim(
                             "success": provider_success,
                             "score": 0.79996,
                             "rationale": "fixture",
+                            "provider_observable_support": [
+                                "Frame 1 visibly contains the fixture."
+                            ],
                         }
                     )
                 },

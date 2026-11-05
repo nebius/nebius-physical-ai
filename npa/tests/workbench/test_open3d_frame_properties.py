@@ -28,6 +28,7 @@ from __future__ import annotations
 import importlib.util
 import hashlib
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -1099,10 +1100,26 @@ def test_every_file_hash_in_the_capability_record_matches_the_file_it_names() ->
     for entry in entries:
         named = EVIDENCE / entry["path"]
         assert named.is_file(), f"{entry['path']} is pinned but absent"
-        actual = hashlib.sha256(named.read_bytes()).hexdigest()
+        committed_at = entry.get("bytes_committed_at")
+        if committed_at:
+            historical = subprocess.run(
+                [
+                    "git",
+                    "-C",
+                    str(EVIDENCE.parents[2]),
+                    "show",
+                    f"{committed_at}:docs/evidence/open3d/{entry['path']}",
+                ],
+                check=True,
+                capture_output=True,
+            ).stdout
+            actual = hashlib.sha256(historical).hexdigest()
+        else:
+            actual = hashlib.sha256(named.read_bytes()).hexdigest()
         assert actual == entry["sha256"], (
             f"{entry['path']} is pinned at {entry['sha256'][:12]} and is actually "
-            f"{actual[:12]}, so the record describes bytes this tree does not have"
+            f"{actual[:12]} at {committed_at or 'the current tree'}, so the record "
+            "describes bytes that do not exist at its declared identity"
         )
 
 

@@ -4,8 +4,9 @@
       "path": "harness/occupancy_instrument_controls.py",
       "sha256": "3f87e683f15ca688072c7e0fa0e328e4cb94fbb8b50545f121ff1b234f56761a"
     },
-    "instrument": {
-      "path": "harness/consumer_occupancy.py",
+  "instrument": {
+    "bytes_committed_at": "c512452716e6deb4e1b898876e6ceab84044dfc6",
+    "path": "harness/consumer_occupancy.py",
       "sha256": "eee3d658dadbb576c2c5f4331ee67d33d35743628697e5acb82a9c7bdaaa43b6"
     },
     "environment": {

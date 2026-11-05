@@ -7,6 +7,19 @@ a versioned heading when a release is cut.
 
 ## Unreleased
 
+### Provider-reported VLM observable support
+
+- Require every real hosted or self-hosted scalar VLM verdict to return a
+  nonempty `provider_observable_support` array of nonblank strings. Retain its
+  exact decoded text and order in direct, paired, loop, benchmark, and
+  promotion evidence; stub and score-override paths never fabricate it.
+- Treat the field as provider-authored text, not verified pixel grounding.
+  Superseded three-field parser evidence now requires reevaluation and receives
+  the stable `provider_parser_obsolete` promotion diagnostic.
+- The additional required judge output changes every real judge prompt and its
+  hash. Rubric thresholds, benchmark choices, and terminal-evidence acceptance
+  calibrated with the earlier three-field prompt are stale and must be
+  recalibrated before they are reused.
 ### Sim2Real verdict and promotion proofs require JSON booleans
 
 - Legacy BYO evaluation and VLM payloads must encode `success` as a literal JSON
@@ -16,7 +29,6 @@ a versioned heading when a release is cut.
   `loaded_for_inference`, `stock_or_scripted_policy`, and `exact_digest_match`.
   BYO producers that emitted `0`/`1` or `"true"`/`"false"` must migrate to JSON
   `true`/`false`.
-
 ### Paired VLM judge shared-failure boundary
 
 - Reject the exact MiniCPM-V-4_5 plus gemma-3-27b-it `compare-judges` pair
@@ -64,6 +76,12 @@ a versioned heading when a release is cut.
   improved the declared labels, and one rationale hallucinated absent objects.
   This result remains a failed model-improvement gate, separately from the
   sampler's deterministic source/provenance contract.
+
+### VLM sampling evidence validation
+
+- Validate declared sampling metadata even when a retained request manifest
+  carries the legacy v1 schema label. Historical v1 evidence without a sampling
+  member remains compatible.
 
 ### VLM sample frame-count disclosure
 

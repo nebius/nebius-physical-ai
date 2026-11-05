@@ -25,6 +25,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from harness_io import output_path, read_cloud, read_mesh
+
 import numpy as np
 import open3d as o3d
 from npa.workbench.open3d.runner import (
@@ -34,7 +36,7 @@ from npa.workbench.open3d.runner import (
 )
 
 BUNDLE = Path("/data/final-bundle")
-OUT = Path("/data/band-profile-across-scenes.json")
+OUT = output_path("/data/band-profile-across-scenes.json")
 
 #: Quantile of Poisson density discarded before anything else, matching the tool.
 DENSITY_QUANTILE = 0.02
@@ -107,8 +109,8 @@ def truth_distance(mesh, reference) -> dict[str, float]:
 
 
 def scene_demo():
-    cloud = o3d.io.read_point_cloud(str(BUNDLE / "multiway/fused.ply"))
-    mesh = o3d.io.read_triangle_mesh(str(BUNDLE / "mesh-baseline/mesh.ply"))
+    cloud = read_cloud(BUNDLE / "multiway/fused.ply")
+    mesh = read_mesh(BUNDLE / "mesh-baseline/mesh.ply")
     return cloud, mesh, cloud, 0.05, None
 
 

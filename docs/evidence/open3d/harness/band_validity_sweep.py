@@ -26,15 +26,17 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from harness_io import output_path
+
 import numpy as np
 import open3d as o3d
 from npa.workbench.open3d.runner import (
-    FABRICATION_AREA_SHARE,
+    FAR_BAND_AREA_SHARE,
     _crop_justification,
     _support,
 )
 
-OUT = Path("/data/band-validity-sweep.json")
+OUT = output_path("/data/band-validity-sweep.json")
 
 #: Sample counts, densest first. The densest fixes the voxel; the rest are the same
 #: surface observed more sparsely, so spacing rises against a voxel that does not move.
@@ -150,7 +152,7 @@ def main() -> int:
             "spacing rises against it. The tool's default ties the voxel to the spacing, "
             "which pins this ratio near 0.5 and hides the effect entirely."
         ),
-        "reading_boundary": FABRICATION_AREA_SHARE,
+        "reading_boundary": FAR_BAND_AREA_SHARE,
         "fabrication_definition": (
             "Reconstructed area whose vertices lie further than one voxel from the "
             "watertight reference surface, area-weighted to match how the support metric "
@@ -166,7 +168,7 @@ def main() -> int:
     }
     OUT.write_text(json.dumps(report, indent=2, sort_keys=True))
 
-    print(f"voxel {voxel:.5f} held fixed; reading boundary {FABRICATION_AREA_SHARE}")
+    print(f"voxel {voxel:.5f} held fixed; reading boundary {FAR_BAND_AREA_SHARE}")
     print(
         f"{'samples':>8} {'space/vox':>10} {'unsup':>8} {'>3v':>8} {'share':>8} "
         f"{'fabricated':>11} {'maxtruth':>9}  reading"

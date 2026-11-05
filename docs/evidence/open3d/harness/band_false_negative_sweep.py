@@ -25,12 +25,14 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from harness_io import output_path
+
 import numpy as np
 import open3d as o3d
 
 from npa.workbench.open3d.runner import _crop_justification, _support
 
-OUT = Path("/data/band-false-negative-sweep.json")
+OUT = output_path("/data/band-false-negative-sweep.json")
 
 SAMPLES = 300000
 DENSITY_QUANTILE = 0.02

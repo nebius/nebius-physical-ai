@@ -1450,6 +1450,8 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.open3d_voxel_size}}",
             "--icp-estimation",
             "{{config.open3d_icp_estimation}}",
+            "--agreement-seeds",
+            "{{config.open3d_agreement_seeds}}",
         ],
     ),
     "workbench.open3d.prepare": ToolEntry(
@@ -1471,6 +1473,8 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.open3d_voxel_size}}",
             "--icp-estimation",
             "{{config.open3d_icp_estimation}}",
+            "--agreement-seeds",
+            "{{config.open3d_agreement_seeds}}",
         ],
     ),
     "workbench.open3d.register": ToolEntry(

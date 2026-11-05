@@ -96,6 +96,11 @@ rationale can still describe operator data.
 `evidence: null` means no provider call occurred, as with `stub` or `--score`.
 It cannot support a visual claim. Hosted `api` evaluation rejects provider
 refusal, truncation, filtering, malformed JSON, and any served-model mismatch.
+Every real verdict also requires a nonempty ordered
+`provider_observable_support` array of nonblank strings. NPA retains decoded
+text and order but does not verify semantic truth, relevance, completeness,
+frame identity, or correspondence to submitted pixels. Stub and score-override
+results keep the array empty.
 Single results, loop rows, and benchmark cases disclose requested/served identity
 and `served_model_match_enforced`. All current hosted profiles require exact
 identity; self-hosted responses and non-provider scores report false. Never
@@ -128,16 +133,20 @@ reports remain authoritative and fail closed, without favorable legacy fallback.
 The `self-hosted` backend preserves legacy JSON framing, including embedded
 objects and duplicate keys, while requiring literal boolean `success`, a finite
 numeric `score` in [0, 1], and a nonempty string `rationale`. Invalid verdict
-fields fail without coercion or clamping. Its parser version is
-`npa_vlm_eval_compatible_json_v2`, with the framing suffix when applicable.
-Retained self-hosted reports tagged `npa_vlm_eval_compatible_json_v1` (including
-its framing suffix) no longer satisfy the current promotion parser contract,
-even if their content has valid literal fields. The gate returns `loop_back`
-with `provider_metadata_mismatch`; this can mean a superseded parser, not
-tampering. Preserve the old artifact and obtain a new evaluated report when
-promotion is needed; never edit its parser tag to simulate new execution.
-Malformed score/type/success verdicts also abort the whole loop/sweep; no score
-is manufactured. Correct the serving output contract before a new evaluation.
+fields fail without coercion or clamping. Both real parsers also require the
+provider-support array and preserve it without trimming, normalization,
+deduplication, or synthesis. Each member must contain a code point that is
+neither whitespace under `str.isspace()` nor Unicode general category `Cf`;
+members containing only whitespace and format controls are rejected, while
+embedded format controls in otherwise nonblank text are retained unchanged.
+This narrow machine rule is not an exhaustive rendering or semantic-substance
+check. Current parser versions are
+`npa_vlm_eval_hosted_json_v2` and `npa_vlm_eval_compatible_json_v3`, with the
+framing suffix when applicable. Retained hosted-v1 and self-hosted-v2 reports
+predate this contract and return `loop_back` with
+`provider_parser_obsolete`; preserve them and obtain a new evaluation rather
+than editing an old response or parser tag. Malformed verdicts abort the whole
+loop or sweep; no score or support is manufactured.
 Completion evidence does not certify promotion eligibility. The operator
 provenance lane separately requires HTTP
 200, `finish_reason=stop`, expected served identity and verifiable framing.

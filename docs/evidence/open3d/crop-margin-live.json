@@ -141,6 +141,7 @@
   "provenance": {
     "harness": "harness/crop_margin_live.py",
     "harness_sha256": "092ff183c0481905f67bb8088504c6783292caafd82c9e714e20de702ca66e8d",
+    "harness_bytes_committed_at": "f0a1702b52b70e344bce59f86e4819c1340c6aba",
     "path_is_relative_to": "this evidence directory",
     "interpreter": "/home/ubuntu/npa-worktrees/cursor-open3d-occlusion/npa/.venv/bin/python",
     "python": "3.14.7",

@@ -193,15 +193,17 @@
     "cd npa && .venv/bin/python -m pytest tests/workbench/test_open3d_frame_properties.py -q"
   ],
   "provenance": {
-    "source_commit": "d06e95846",
+    "source_commit": "d06e958462865af823b4f1479867df52421c8284",
+    "commit_is_an_ancestor_of_main": true,
     "built_on_main": "d06e95846",
     "main_is_an_ancestor_of_this_commit": true,
     "why_harness_digests_and_not_only_a_commit": "The harness that produced these numbers is added by this change, so the record cannot name its own commit -- the hash does not exist until after the record is written. The file digests are knowable now and are what a reader actually needs to recompute.",
     "pr_602_merge_is_an_ancestor": "15b0b11f0",
     "harness_that_produced_this": [
       {
+        "bytes_committed_at": "c512452716e6deb4e1b898876e6ceab84044dfc6",
         "path": "harness/frame_edge_audit.py",
-        "sha256": "b2fbbf2e9e902342498d064dade0397c5f48c5b4ab3f014c8944cd7b87330b8e"
+        "sha256": "82da39227c093490eff87c78e9f5adf48272bda8d240747908f29564148585d5"
       },
       {
         "path": "harness/frame_property_gate.py",

@@ -10,8 +10,8 @@ narrative strings here are formatted from the measured values.
 
 from __future__ import annotations
 
+import argparse
 import json
-import sys
 from pathlib import Path
 
 #: Stated in the record and bound to the committed suite by a test, which counts
@@ -207,8 +207,12 @@ def narrative(measured: dict) -> dict:
 
 
 def main() -> int:
-    measured = json.loads(Path(sys.argv[1]).read_text())
-    out = Path(sys.argv[2])
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("measurement", type=Path, help="measurement report JSON")
+    parser.add_argument("output", type=Path, help="record JSON to write")
+    args = parser.parse_args()
+    measured = json.loads(args.measurement.read_text())
+    out = args.output
     record = {**measured, **narrative(measured)}
     out.write_text(json.dumps(record, indent=2, sort_keys=True))
     print(f"wrote {out}")

@@ -643,3 +643,49 @@ def test_migration_agent_defaults_match_shared_client():
     assert agent_routing.VISION_MODEL == DEFAULT_VISION_MODEL
     assert agent_routing.REASONING_MODEL == DEFAULT_REASONER_MODEL
     assert tuple(DEFAULT_LLM_MODELS) == (DEFAULT_TEXT_MODEL, DEFAULT_REASONER_MODEL)
+
+
+@pytest.mark.parametrize("base_prefix", ["fixture-prefix", "fixture-prefix/"])
+def test_workflow_keeps_receipts_within_a_distinct_run_and_attempt(
+    tmp_path, base_prefix
+):
+    import yaml
+
+    root = Path(__file__).resolve().parents[3]
+    workflow = yaml.safe_load(
+        (root / ".github/workflows/token-factory-live.yml").read_text()
+    )
+    live = next(
+        step
+        for step in workflow["jobs"]["token-factory-live"]["steps"]
+        if step.get("name") == "Run credentialed suites and Kimi provenance contracts"
+    )
+    interpreter = tmp_path / "npa/.venv/bin/python"
+    interpreter.parent.mkdir(parents=True)
+    interpreter.write_text(
+        '#!/bin/sh\nprintf "%s\\n" "$NPA_SIM2REAL_EVALUATION_LIVE_S3_PREFIX"\n'
+    )
+    interpreter.chmod(0o755)
+    prefixes = []
+    for run_id, attempt in [("101", "1"), ("101", "2"), ("102", "1")]:
+        environment = dict(
+            os.environ,
+            NPA_SIM2REAL_EVALUATION_LIVE_S3_PREFIX=base_prefix,
+            GITHUB_RUN_ID=run_id,
+            GITHUB_RUN_ATTEMPT=attempt,
+            RUNNER_TEMP=str(tmp_path),
+        )
+        result = subprocess.run(
+            ["bash", "-eu", "-c", live["run"]],
+            cwd=tmp_path,
+            env=environment,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        prefixes.append(result.stdout.strip())
+    assert prefixes == [
+        "fixture-prefix/101/1",
+        "fixture-prefix/101/2",
+        "fixture-prefix/102/1",
+    ]

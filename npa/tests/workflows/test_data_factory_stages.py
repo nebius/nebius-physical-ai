@@ -1673,6 +1673,9 @@ def _provider_completion(*, success: bool, metadata: bool) -> dict:
                             "score": 0.9,
                             "success": success,
                             "rationale": "Visible unit-test evidence.",
+                            "provider_observable_support": [
+                                "Frame 1 visibly shows the unit-test image."
+                            ],
                         }
                     )
                 },
@@ -1809,6 +1812,15 @@ def _as_v2_report(report: dict) -> None:
         "coverage_complete": True,
         "timestamps_complete": None,
     }
+    request["request_manifest_sha256"] = vlm_eval._sha256_json(manifest)
+
+
+def _label_report_as_v1_with_sampling(report: dict) -> None:
+    evidence = report["evidence"]
+    request = evidence["request"]
+    manifest = request["request_manifest"]
+    assert "sampling" in manifest
+    evidence["schema_version"] = manifest["schema_version"] = "npa_vlm_eval_evidence_v1"
     request["request_manifest_sha256"] = vlm_eval._sha256_json(manifest)
 
 
@@ -2578,9 +2590,9 @@ def test_grade_gate_pins_retained_parser_version_contract(
     )
     if superseded:
         report["evidence"]["provider"]["parser_version"] = (
-            "npa_vlm_eval_compatible_json_v1" + suffix
+            "npa_vlm_eval_compatible_json_v2" + suffix
         )
-        _assert_completion_blocked(tmp_path, report, "provider_metadata_mismatch")
+        _assert_completion_blocked(tmp_path, report, "provider_parser_obsolete")
     else:
         (tmp_path / RESULT_FILENAME).write_text(json.dumps(report))
         assert (
@@ -2815,6 +2827,37 @@ def test_grade_gate_accepts_retained_v1_inference_evidence(
         dfs.grade_gate(str(tmp_path), str(tmp_path / "decision.json"))
         == "promote_checkpoint"
     )
+
+
+def test_grade_gate_validates_declared_v1_sampling(tmp_path: Path, monkeypatch) -> None:
+    report = json.loads(json.dumps(_provider_vlm_report(monkeypatch, tmp_path)))
+    _label_report_as_v1_with_sampling(report)
+    (tmp_path / RESULT_FILENAME).write_text(json.dumps(report))
+
+    assert (
+        dfs.grade_gate(str(tmp_path), str(tmp_path / "decision.json"))
+        == "promote_checkpoint"
+    )
+
+    request = report["evidence"]["request"]
+    manifest = request["request_manifest"]
+    manifest["sampling"]["strategy"] = "final"
+    request["request_manifest_sha256"] = vlm_eval._sha256_json(manifest)
+    _assert_completion_blocked(tmp_path, report, "sampling_mismatch")
+
+
+@pytest.mark.parametrize("sampling", [None, {}])
+def test_grade_gate_rejects_falsey_declared_v1_sampling(
+    tmp_path: Path, monkeypatch, sampling: object
+) -> None:
+    report = json.loads(json.dumps(_provider_vlm_report(monkeypatch, tmp_path)))
+    _label_report_as_v1_with_sampling(report)
+    request = report["evidence"]["request"]
+    manifest = request["request_manifest"]
+    manifest["sampling"] = sampling
+    request["request_manifest_sha256"] = vlm_eval._sha256_json(manifest)
+
+    _assert_completion_blocked(tmp_path, report, "sampling_invalid")
 
 
 def test_grade_gate_does_not_treat_unidentified_vlm_named_result_as_cosmos(

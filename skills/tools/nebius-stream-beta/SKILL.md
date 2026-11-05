@@ -96,6 +96,13 @@ Do not infer speech-to-text, text-to-speech, arbitrary reference audio, arbitrar
 shapes, full-source preservation, or action fidelity from a model name. An
 example is a schema illustration, not proof that a deployment serves it.
 
+For multiple camera angles, read [camera-view support and spatial evidence](references/camera-views.md).
+Eleven structural-control combinations are not eleven cameras. NVIDIA's separate
+Transfer-Auto checkpoint documents eleven physical camera identities; use it
+through this API only if authenticated discovery exposes a qualified multiview
+contract. A spatial-accuracy demo needs matched camera inputs and real outputs,
+calibration and measured geometry checks, in addition to playable video.
+
 Generated output requires a server-verified Nebius connection. A customer
 provider label or S3-compatible input does not establish output eligibility.
 The server verifies canonical endpoint identity and actual bucket region with
