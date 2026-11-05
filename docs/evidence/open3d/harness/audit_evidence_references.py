@@ -310,8 +310,13 @@ def input_hashes(data: object, where: str = "") -> dict[str, tuple[str, str]]:
 def main() -> int:
     findings: list[str] = []
     verified = 0
+    verified_at_a_commit = 0
     equalities = 0
     unresolvable: list[str] = []
+    # A missing commit is a limitation of this checkout, not a mismatch and not a
+    # declaration exemption. Keep it separate so a shallow CI checkout says exactly
+    # which historical claims it could not adjudicate.
+    commit_missing: list[str] = []
     unbound_total: list[str] = []
     undeclared: list[str] = []
     #: input name -> (digest, "record:path"), for the cross-record agreement check.
@@ -347,9 +352,9 @@ def main() -> int:
             if at_commit:
                 actual = digest_at_commit(at_commit, named)
                 if actual is None:
-                    # The checkout cannot adjudicate a historical claim it does not contain.
-                    # This is distinct from declaring an artifact unavailable in the evidence
-                    # directory: the claim remains a binding and is checked when history exists.
+                    commit_missing.append(
+                        f"{record.name}:{where} -> {named} at {at_commit[:12]}"
+                    )
                     continue
                 if actual != claimed:
                     findings.append(
@@ -359,6 +364,7 @@ def main() -> int:
                     )
                 else:
                     verified += 1
+                    verified_at_a_commit += 1
                 continue
             # Resolve before exempting: a run's artifacts are often not committed here, but when
             # a run directory *is* committed its hashes are checkable like anything else, and the
@@ -432,10 +438,27 @@ def main() -> int:
         f"here and match its bytes, and {equalities} hash(es) that name no file were still "
         f"checked, as equality claims the records make side by side."
     )
+    if verified_at_a_commit:
+        one = verified_at_a_commit == 1
+        print(
+            f"{verified_at_a_commit} of those "
+            f"{'is a provenance claim' if one else 'are provenance claims'}, verified "
+            "against the commit the record names rather than the working tree."
+        )
     # Said out loud rather than folded into the word "checkable", which is how the first version
     # of this guard overstated what it had done. Counts by default, names on request, because a
     # gate that prints seventy lines on success stops being read.
     verbose = "--verbose" in sys.argv
+    if commit_missing:
+        count = len(commit_missing)
+        print(
+            f"{count} hash(es) claim bytes at a commit this checkout does not have, "
+            "so they could not be checked either way."
+            + ("" if verbose else " Pass --verbose to list.")
+        )
+        if verbose:
+            for item in commit_missing:
+                print(f"  - {item}")
     # Split by which of the two exemptions applies, because they are now enforced
     # differently and one printed number covering both said less than it appeared to.
     # A run-artifact name describes itself; a name this directory simply does not hold
