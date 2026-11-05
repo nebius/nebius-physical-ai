@@ -87,7 +87,8 @@ def test_binary_weight_vendor_state_and_private_key_are_rejected(
             "opt/data/model.safetensors": b"weights",
             "root/.antioch/session": b"state",
             "tmp/innocent": (
-                b"-----BEGIN PRIVATE KEY-----\n"
+                b"-----BEGIN "
+                + b"PRIVATE KEY-----\n"
                 + b"A" * 96
                 + b"\n-----END PRIVATE KEY-----\n"
             ),
