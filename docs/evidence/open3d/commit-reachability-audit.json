@@ -1,21 +1,21 @@
 {
-  "measured_at_utc": "2026-11-05T03:52:46.580167+00:00",
-  "source_repository_head": "a6ba62b8007e2d2c30619d1ad989b81fdfc6cbe0",
+  "measured_at_utc": "2026-11-05T08:10:12.812980+00:00",
+  "source_repository_head": "a3d82be6048743a623ec826785cf9d79ec33611c",
   "remote_name": "origin",
   "audit_workspace": "fresh private bare repository removed after this run",
   "what_this_answers": "For every commit a capability record names, does a current advertised origin ref contain it, and if not can origin fetch the object by SHA?",
   "why_it_exists": "The records claimed no advertised remote refs. The clone that checked held only refs/heads/* out of every ref this remote advertises, and was shallow. The claim was true and unestablished, which is its own kind of defect.",
   "ref_coverage": {
-    "total_refs_advertised_by_remote": 1392,
-    "pull_heads_advertised": 991,
-    "pull_merges_advertised": 27,
+    "total_refs_advertised_by_remote": 1397,
+    "pull_heads_advertised": 996,
+    "pull_merges_advertised": 22,
     "tags_advertised": 11,
-    "branches_advertised": 362,
+    "branches_advertised": 367,
     "refs_in_no_other_category": 1,
-    "fetched_pull_refs": 991,
-    "fetched_merge_refs": 27,
+    "fetched_pull_refs": 996,
+    "fetched_merge_refs": 22,
     "fetched_tag_refs": 11,
-    "fetched_branch_refs": 362,
+    "fetched_branch_refs": 367,
     "why_merge_refs_are_no_longer_skipped": "The first version skipped them, arguing a merge ref has its PR head as an ancestor and so cannot hold a commit the head lacks. A reviewer tested it on all of them and found one where the head had moved since the merge ref was computed, so the property held for a different reason than the one I gave. It was harmless, and a force-push is the case that would not be. They are now fetched and tested, so the audit rests on no argument about refs.",
     "counts_here_are_a_moment_not_a_constant": "This remote gains refs continuously. A count written into prose is stale almost immediately -- one of mine was wrong by the time it was published -- so the numbers live in this report and the prose points here."
   },
@@ -26,11 +26,26 @@
     "commits_that_could_be_concealed": 0
   },
   "tally": {
+    "resolvable_remotely": 12,
     "on_zero_remote_refs": 6,
-    "resolvable_remotely": 8,
     "absent_from_this_clone": 2
   },
   "commits": [
+    {
+      "commit": "024bd3d442c791c16de0adf6445b722eb5032857",
+      "verdict": "resolvable_remotely",
+      "remote_refs_containing": 6,
+      "direct_sha_fetch_attempted": false,
+      "direct_sha_fetchable": null,
+      "local_refs_containing": 0,
+      "shallow_clone_could_conceal_it": false,
+      "orphaned_tracking_refs_containing": 0,
+      "example_remote_refs": [
+        "refs/remotes/provenance-audit/branch/cursor/open3d-reference-free-fabrication-20261101",
+        "refs/remotes/provenance-audit/branch/cursor/open3d-signed-fabrication-measure",
+        "refs/remotes/provenance-audit/merge/1006"
+      ]
+    },
     {
       "commit": "1441e211400cf7d07c8d832d3ad787ff71d7fad2",
       "verdict": "on_zero_remote_refs",
@@ -45,7 +60,7 @@
     {
       "commit": "15b0b11f0",
       "verdict": "resolvable_remotely",
-      "remote_refs_containing": 467,
+      "remote_refs_containing": 472,
       "direct_sha_fetch_attempted": false,
       "direct_sha_fetchable": null,
       "local_refs_containing": 0,
@@ -60,7 +75,7 @@
     {
       "commit": "15b0b11f0bc137631954ac87076f44753c513976",
       "verdict": "resolvable_remotely",
-      "remote_refs_containing": 467,
+      "remote_refs_containing": 472,
       "direct_sha_fetch_attempted": false,
       "direct_sha_fetchable": null,
       "local_refs_containing": 0,
@@ -97,7 +112,7 @@
     {
       "commit": "3ae5a7a3c902214cb8415de1d06a2e224bd75e13",
       "verdict": "resolvable_remotely",
-      "remote_refs_containing": 778,
+      "remote_refs_containing": 783,
       "direct_sha_fetch_attempted": false,
       "direct_sha_fetchable": null,
       "local_refs_containing": 0,
@@ -107,6 +122,21 @@
         "refs/remotes/provenance-audit/branch/codex/aloha-paidf-comparable-20261005",
         "refs/remotes/provenance-audit/branch/codex/antioch-local-workflow-20260916",
         "refs/remotes/provenance-audit/branch/codex/antioch-workbench-integration-20260818T045316Z-ee5d404f"
+      ]
+    },
+    {
+      "commit": "42427aa71b2eaa6b01fa1ca66a3394afe5470bab",
+      "verdict": "resolvable_remotely",
+      "remote_refs_containing": 10,
+      "direct_sha_fetch_attempted": false,
+      "direct_sha_fetchable": null,
+      "local_refs_containing": 0,
+      "shallow_clone_could_conceal_it": false,
+      "orphaned_tracking_refs_containing": 0,
+      "example_remote_refs": [
+        "refs/remotes/provenance-audit/branch/cursor/open3d-harness-reproducibility",
+        "refs/remotes/provenance-audit/branch/cursor/open3d-reference-free-fabrication-20261101",
+        "refs/remotes/provenance-audit/branch/cursor/open3d-restore-decayed-readings"
       ]
     },
     {
@@ -120,6 +150,21 @@
       "orphaned_tracking_refs_containing": 0,
       "example_remote_refs": [],
       "note": "The isolated audit repository could neither find the object through an advertised ref nor fetch it directly by SHA at measurement time."
+    },
+    {
+      "commit": "632ccc9d5cf7d7e5cab922558e9ba4b9ae8b5079",
+      "verdict": "resolvable_remotely",
+      "remote_refs_containing": 8,
+      "direct_sha_fetch_attempted": false,
+      "direct_sha_fetchable": null,
+      "local_refs_containing": 0,
+      "shallow_clone_could_conceal_it": false,
+      "orphaned_tracking_refs_containing": 0,
+      "example_remote_refs": [
+        "refs/remotes/provenance-audit/branch/cursor/open3d-reference-free-fabrication-20261101",
+        "refs/remotes/provenance-audit/branch/cursor/open3d-restore-decayed-readings",
+        "refs/remotes/provenance-audit/branch/cursor/open3d-signed-fabrication-measure"
+      ]
     },
     {
       "commit": "6e8cd115f1a9834cdc25c868eee1b4879d28e65f",
@@ -170,39 +215,54 @@
       "example_remote_refs": []
     },
     {
-      "commit": "d06e95846",
+      "commit": "c3e5ff17bb1189754cde408167231eeaed068fe6",
       "verdict": "resolvable_remotely",
-      "remote_refs_containing": 149,
+      "remote_refs_containing": 6,
       "direct_sha_fetch_attempted": false,
       "direct_sha_fetchable": null,
       "local_refs_containing": 0,
       "shallow_clone_could_conceal_it": false,
       "orphaned_tracking_refs_containing": 0,
       "example_remote_refs": [
+        "refs/remotes/provenance-audit/branch/cursor/open3d-reference-free-fabrication-20261101",
+        "refs/remotes/provenance-audit/branch/cursor/open3d-signed-fabrication-measure",
+        "refs/remotes/provenance-audit/merge/1006"
+      ]
+    },
+    {
+      "commit": "d06e95846",
+      "verdict": "resolvable_remotely",
+      "remote_refs_containing": 154,
+      "direct_sha_fetch_attempted": false,
+      "direct_sha_fetchable": null,
+      "local_refs_containing": 0,
+      "shallow_clone_could_conceal_it": false,
+      "orphaned_tracking_refs_containing": 0,
+      "example_remote_refs": [
+        "refs/remotes/provenance-audit/branch/codex/full-length-controls-6095c317",
         "refs/remotes/provenance-audit/branch/codex/groot-offline-rl-271dec95",
-        "refs/remotes/provenance-audit/branch/codex/sim2real-franka-cube-experimental-20261031",
-        "refs/remotes/provenance-audit/branch/codex/sim2real-pi05-20261006"
+        "refs/remotes/provenance-audit/branch/codex/sim2real-franka-cube-experimental-20261031"
       ]
     },
     {
       "commit": "d06e958462865af823b4f1479867df52421c8284",
       "verdict": "resolvable_remotely",
-      "remote_refs_containing": 149,
+      "remote_refs_containing": 154,
       "direct_sha_fetch_attempted": false,
       "direct_sha_fetchable": null,
       "local_refs_containing": 0,
       "shallow_clone_could_conceal_it": false,
       "orphaned_tracking_refs_containing": 0,
       "example_remote_refs": [
+        "refs/remotes/provenance-audit/branch/codex/full-length-controls-6095c317",
         "refs/remotes/provenance-audit/branch/codex/groot-offline-rl-271dec95",
-        "refs/remotes/provenance-audit/branch/codex/sim2real-franka-cube-experimental-20261031",
-        "refs/remotes/provenance-audit/branch/codex/sim2real-pi05-20261006"
+        "refs/remotes/provenance-audit/branch/codex/sim2real-franka-cube-experimental-20261031"
       ]
     },
     {
       "commit": "d22893238d75efbb05a69eb75bca1b82eb5fe280",
       "verdict": "resolvable_remotely",
-      "remote_refs_containing": 752,
+      "remote_refs_containing": 757,
       "direct_sha_fetch_attempted": false,
       "direct_sha_fetchable": null,
       "local_refs_containing": 0,
@@ -217,7 +277,7 @@
     {
       "commit": "e4efc6602ab0e2de558365efccd877fdc84cd4e0",
       "verdict": "resolvable_remotely",
-      "remote_refs_containing": 5,
+      "remote_refs_containing": 4,
       "direct_sha_fetch_attempted": false,
       "direct_sha_fetchable": null,
       "local_refs_containing": 0,
@@ -226,7 +286,7 @@
       "example_remote_refs": [
         "refs/remotes/provenance-audit/branch/cursor/open3d-declare-unbindable-hashes",
         "refs/remotes/provenance-audit/branch/cursor/open3d-evidence-hash-binding",
-        "refs/remotes/provenance-audit/merge/1032"
+        "refs/remotes/provenance-audit/pr/1032"
       ]
     },
     {
@@ -242,17 +302,21 @@
     }
   ],
   "object_kinds": {
+    "024bd3d442c791c16de0adf6445b722eb5032857": "commit",
     "1441e211400cf7d07c8d832d3ad787ff71d7fad2": "unknown_to_this_clone",
     "15b0b11f0": "commit",
     "15b0b11f0bc137631954ac87076f44753c513976": "commit",
     "16012b1088579569a8755a1483c4c260c6af3973": "unknown_to_this_clone",
     "256c26bc915080934814789be6a41bbc253f0d1c": "unknown_to_this_clone",
     "3ae5a7a3c902214cb8415de1d06a2e224bd75e13": "commit",
+    "42427aa71b2eaa6b01fa1ca66a3394afe5470bab": "commit",
     "46ae993d10e251913fc4942fa5cf0e4fa689dfe7": "unknown_to_this_clone",
+    "632ccc9d5cf7d7e5cab922558e9ba4b9ae8b5079": "commit",
     "6e8cd115f1a9834cdc25c868eee1b4879d28e65f": "unknown_to_this_clone",
     "750a6fe97506f420c6a1e83f64b1a65d6279cf3b": "commit",
     "77bff008fff489b73ee2d8cd11466a105bf9d630": "unknown_to_this_clone",
     "b18d7aef56bbe25a5b45290e0b705f20a59ad4da": "unknown_to_this_clone",
+    "c3e5ff17bb1189754cde408167231eeaed068fe6": "commit",
     "d06e95846": "commit",
     "d06e958462865af823b4f1479867df52421c8284": "commit",
     "d22893238d75efbb05a69eb75bca1b82eb5fe280": "commit",
@@ -260,6 +324,12 @@
     "e8e12b12a367f1a1bc7ef7aca7ac68866e8e5e97": "unknown_to_this_clone"
   },
   "records_naming_them": {
+    "capability-record-band-validity-rescore.json": [
+      "024bd3d442c791c16de0adf6445b722eb5032857"
+    ],
+    "capability-record-decayed-readings.json": [
+      "632ccc9d5cf7d7e5cab922558e9ba4b9ae8b5079"
+    ],
     "capability-record-distance-bands.json": [
       "15b0b11f0bc137631954ac87076f44753c513976",
       "e8e12b12a367f1a1bc7ef7aca7ac68866e8e5e97"
@@ -268,10 +338,16 @@
       "d06e958462865af823b4f1479867df52421c8284",
       "e4efc6602ab0e2de558365efccd877fdc84cd4e0"
     ],
+    "capability-record-fabrication-measure.json": [
+      "c3e5ff17bb1189754cde408167231eeaed068fe6"
+    ],
     "capability-record-frame-property-gate.json": [
       "15b0b11f0",
       "d06e95846",
       "d06e958462865af823b4f1479867df52421c8284"
+    ],
+    "capability-record-harness-usage.json": [
+      "42427aa71b2eaa6b01fa1ca66a3394afe5470bab"
     ],
     "capability-record-holes-and-outliers.json": [
       "750a6fe97506f420c6a1e83f64b1a65d6279cf3b"
@@ -318,8 +394,8 @@
     ]
   },
   "what_this_audits_glob_does_not_reach": {
-    "evidence_json_outside_this_audits_glob": 52,
-    "of_those_with_no_provenance_block_at_all": 44,
+    "evidence_json_outside_this_audits_glob": 54,
+    "of_those_with_no_provenance_block_at_all": 46,
     "of_those_that_also_carry_digests": 13,
     "why_three_numbers_and_not_one": "A reviewer measured this as seven files. That is the subset carrying digests and naming no resolvable commit; the broadest count here is every non-record evidence JSON. Different populations rather than a disagreement, and the digest-carrying count is the one that matters, because a digest with no declared origin is the case this change exists to close.",
     "files_carrying_digests_with_no_declared_provenance": [
@@ -434,6 +510,12 @@
         "names_a_commit": false
       },
       {
+        "file": "band-validity-rescore.json",
+        "has_a_provenance_block": false,
+        "carries_digests": false,
+        "names_a_commit": false
+      },
+      {
         "file": "band-validity-sweep.json",
         "has_a_provenance_block": false,
         "carries_digests": false,
@@ -513,6 +595,12 @@
       },
       {
         "file": "downstream-consumer.json",
+        "has_a_provenance_block": false,
+        "carries_digests": false,
+        "names_a_commit": false
+      },
+      {
+        "file": "fabrication-measure-leniency.json",
         "has_a_provenance_block": false,
         "carries_digests": false,
         "names_a_commit": false

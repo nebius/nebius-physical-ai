@@ -38,7 +38,8 @@
   "scope": "Harness usage, early input/output validation, and evidence-audit provenance. No measurement, threshold, or report field changed. Positional argument order remains compatible. The evidence audit now verifies reachable historical generator bytes, reports unavailable history separately, supports an isolated NPA_EVIDENCE_ROOT fixture, and gates the real catalogue.",
   "regression_tests": {
     "file": "npa/tests/workbench/test_open3d_harness_usage.py",
-    "count": 31,
+    "count": 32,
+    "what_count_means": "collected test cases, not test functions",
     "what_they_cover": [
       "Seven harnesses, each run with no arguments, must exit 2 with a usage message naming the missing argument and containing no IndexError, KeyError, ValueError or traceback.",
       "The fault injector must name INJECT_MODE, INJECT_LOG and the three valid modes, and must not raise KeyError.",
@@ -58,6 +59,26 @@
     "interpreter": "the worktree's own npa/.venv/bin/python, 3.14.7",
     "harnesses_inventoried": 22,
     "harnesses_changed": 18,
+    "changed_harnesses": [
+      "audit_evidence_references.py",
+      "background_choice_sweep.py",
+      "band_false_negative_sweep.py",
+      "band_profile_across_scenes.py",
+      "band_validity_sweep.py",
+      "camera_framing_probe.py",
+      "consumer_occupancy.py",
+      "floor_across_geometry_and_sampling.py",
+      "floor_vs_resolution.py",
+      "floor_vs_voxel_multiple.py",
+      "frame_edge_audit.py",
+      "harness_io.py",
+      "inject_truncation.py",
+      "pane_fit_window_aspect_sweep.py",
+      "poisson_procedure_and_overcall_audit.py",
+      "preview_from_retained_plys.py",
+      "render_views.py",
+      "verify_run.py"
+    ],
     "reproduce": "npa/.venv/bin/python -m pytest npa/tests/workbench/test_open3d_harness_usage.py"
   },
   "i_had_overstated_this_and_measuring_it_corrected_me": {
@@ -106,5 +127,12 @@
     "why_my_first_check_missed_it": "I validated with ast.parse, which accepts it. The rule is enforced by the compiler, not the parser. Lint found it, not my check.",
     "the_guard_added": "test_every_harness_compiles uses compile() rather than ast.parse, and the mutation that displaces a __future__ import fails it.",
     "scope_discipline": "Converting the reads orphaned three Open3D imports and moved one import block out of order. Those are cleaned up, and every file I touched now reports the same ruff findings as before my change, compared rule by rule rather than by count."
+  },
+  "a_stale_count_this_record_published": {
+    "the_claim": "regression_tests.count said 12.",
+    "what_pytest_collects_now": 31,
+    "why_it_was_neither_reading": "Twelve was neither the collected case count nor the test-function count, so it was stale rather than an ambiguity about what to count.",
+    "how_it_surfaced": "Binding published counts to pytest collection made the stale figure fail immediately.",
+    "the_guard_that_now_holds_it": "npa/tests/workbench/test_open3d_capability_record_binding.py compares the published count against pytest collection for every file whose count this PR publishes."
   }
 }

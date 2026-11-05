@@ -49,7 +49,8 @@
   "what_this_does_not_claim": "That the committed evidence is wrong, or that it should be regenerated. Those are accepted bytes bound by hash in other records, and regenerating them under the restored reading would also destroy the oracle that made this diagnosis possible -- so the firing counts are pinned in the contract test. Whether band_validity_sweep's false-positive conclusion survives the weakened reading at all is a question this raises and does not settle: the runner now says a far reading cannot distinguish sparse coverage of correct geometry from invented surface, which is most of what that conclusion rested on. Review's and root's call.",
   "tests": {
     "file": "npa/tests/workbench/test_open3d_reading_contract.py",
-    "count": 10,
+    "count": 12,
+    "what_count_means": "collected test cases, not test functions",
     "mutations_applied": {
       "all_four_harnesses_back_to_the_withdrawn_literal": "8 of 10 failed -- this is the actual historical defect, so the suite catches the thing that happened",
       "one_harness_reverted": "4 failed",
