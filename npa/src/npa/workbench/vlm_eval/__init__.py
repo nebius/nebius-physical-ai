@@ -3120,11 +3120,20 @@ def _self_hosted_response_format() -> dict[str, Any]:
                 "properties": {
                     "success": {"type": "boolean"},
                     "score": {"type": "number", "minimum": 0, "maximum": 1},
-                    "rationale": {"type": "string", "minLength": 1},
+                    "rationale": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 1024,
+                    },
                     "provider_observable_support": {
                         "type": "array",
                         "minItems": 1,
-                        "items": {"type": "string", "minLength": 1},
+                        "maxItems": 16,
+                        "items": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 512,
+                        },
                     },
                 },
             },

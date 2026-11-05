@@ -130,7 +130,9 @@ boolean `success`, a finite numeric `score` in [0, 1], and a nonempty string
 `rationale`, plus a nonempty `provider_observable_support` array containing only
 nonblank strings. Its OpenAI-compatible request uses strict JSON-schema output,
 so the server must support `response_format.type=json_schema`; the parser still
-validates every returned field and does not synthesize omitted support. A support
+validates every returned field and does not synthesize omitted support. The
+schema bounds rationale length and support count/length so a small model cannot
+turn a machine-readable verdict into an unbounded generation. A support
 member is machine-blank exactly when every code point
 is whitespace according to `str.isspace()` or has Unicode general category `Cf`;
 format controls embedded in otherwise nonblank text are accepted and retained

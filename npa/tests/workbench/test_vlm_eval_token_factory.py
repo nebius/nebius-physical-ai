@@ -188,7 +188,10 @@ def test_self_hosted_request_requires_complete_verdict_shape(monkeypatch) -> Non
     }
     support = schema["properties"]["provider_observable_support"]
     assert support["minItems"] == 1
+    assert support["maxItems"] == 16
     assert support["items"]["minLength"] == 1
+    assert support["items"]["maxLength"] == 512
+    assert schema["properties"]["rationale"]["maxLength"] == 1024
     assert "reasoning_effort" not in requests[0]
 
 
