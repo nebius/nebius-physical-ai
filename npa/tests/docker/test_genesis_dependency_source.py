@@ -85,6 +85,7 @@ def test_genesis_recipes_select_their_supported_python_and_bind_source(
     assert "GENESIS_VENV=/opt/genesis/venv" in text
     assert "NPA_BAKED_PYTHON=/opt/genesis/venv/bin/python" in text
     assert "PATH=/opt/genesis/venv/bin:/opt/npa/venv/bin:$PATH" in text
+    assert "PYTHONPATH=/opt/npa/src" in text
     expected_venv = (
         "RUN python3.12 -m venv /opt/genesis/venv"
         if dockerfile == "Dockerfile"
@@ -109,6 +110,10 @@ def test_genesis_recipes_enforce_the_fsspec_security_floor(dockerfile, _, __):
         if kind == "RUN" and '"genesis-world==' in body
     )
     assert '"fsspec==2026.6.0"' in installation
+    assert (
+        "fsspec[http]>=2026.6.0,<2027.0.0"
+        in (GENESIS / "prepare_public_runtime.py").read_text()
+    )
     assert "pip check" in installation
 
 
@@ -127,6 +132,24 @@ def test_canonical_genesis_recipe_uses_a_pinned_cuda_base_and_output_attestation
     assert "FROM nvidia/cuda:12.4.1-devel-ubuntu22.04@sha256:" in text
     assert "FROM ${BASE_IMAGE}" not in text
     assert 'org.opencontainers.image.revision="${NPA_SOURCE_SHA}"' in text
+
+
+def test_canonical_genesis_source_launcher_is_checked_in_and_bound_to_the_image():
+    """The source-attested runtime cannot copy a launcher that is absent from context."""
+
+    launcher = ROOT / "npa/docker/workbench/common/install_npa_source_launcher.py"
+    text = (GENESIS / "Dockerfile").read_text()
+    assert launcher.is_file()
+    assert (
+        "COPY --chown=ubuntu:ubuntu "
+        "docker/workbench/common/install_npa_source_launcher.py "
+        "/opt/npa/install_npa_source_launcher.py"
+    ) in text
+    assert "python /opt/npa/install_npa_source_launcher.py /opt/npa/src" in text
+    source = launcher.read_text()
+    assert "NPA source entrypoint is absent" in source
+    assert "sys.path.insert(0," in source
+    assert "from npa.cli.entry import main" in source
 
 
 def test_sm120_genesis_recipe_keeps_its_source_attested_parent_contract():
@@ -255,6 +278,12 @@ def test_genesis_build_time_sanitizers_are_readable_by_the_runtime_user(
     dockerfile, _, __
 ):
     text = (GENESIS / dockerfile).read_text()
+    provisioning = next(
+        body
+        for kind, body in _instructions(text)
+        if kind == "RUN" and "id -u ubuntu" in body
+    )
+    assert "/opt/genesis/compat" in provisioning
     for source, destination in (
         (
             "docker/workbench/curobo/remove_scikit_image_recipe.py",
@@ -296,7 +325,10 @@ def test_genesis_recipes_apply_the_same_public_act_runtime_boundary(
     assert "pip uninstall -y tetgen diffusers wandb torchcodec" in installation
     assert "public-runtime-dependencies.json" in installation
     assert "public-policy-source.json" in installation
-    assert "npa-genesis-compat.pth" in installation
+    assert "install -m 0644 /opt/genesis/compat/tetgen.py" in installation
+    assert f"{site_packages}/tetgen.py" in installation
+    assert "import tetgen" in installation
+    assert f'Path("{site_packages}/tetgen.py")' in installation
 
 
 @pytest.mark.parametrize("dockerfile,version,site_packages", VARIANTS)

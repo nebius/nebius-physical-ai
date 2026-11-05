@@ -1,4 +1,4 @@
-ARG BASE_IMAGE=ghcr.io/nebius/nebius-physical-ai/npa-envgen@sha256:55f1541c1a86e9d865963753cfa38fa1dbf88928c8d28d9ee30e2851a5604b88
+ARG BASE_IMAGE=ghcr.io/nebius/nebius-physical-ai/npa-envgen@sha256:38a9c229218600dca1e4071561e51c50a76cb0c538e60c9a70b80e81f06fc726
 FROM ${BASE_IMAGE}
 
 ARG LEROBOT_VLM_RL_VERSION=0.1.1
@@ -17,6 +17,11 @@ WORKDIR /workspace
 
 USER root
 
+# The immutable EnvGen base registers this source root via a ``.pth`` file.
+# Remove it before copying the child so an omitted/renamed module cannot be
+# imported from an earlier parent revision.
+RUN rm -rf /opt/npa/src/npa
+
 COPY --chown=ubuntu:ubuntu pyproject.toml /opt/npa/pyproject.toml
 COPY --chown=ubuntu:ubuntu src/npa /opt/npa/src/npa
 COPY --chown=ubuntu:ubuntu workflows /opt/npa/workflows
@@ -31,15 +36,20 @@ RUN test "$(printf %s "${NPA_SOURCE_SHA}" | wc -c)" -eq 40 \
     && env -u PYTHONPATH python -c \
       'from npa.workbench.lerobot.policy_container import parse_vlm_signal_batch; assert callable(parse_vlm_signal_batch)' \
     && python -c 'import importlib.metadata as m; names = {d.metadata["Name"].lower() for d in m.distributions()}; assert names.isdisjoint({"datasets", "lerobot", "genesis-world", "torch"})' \
-    && python - <<'PY'
-from npa.workbench.lerobot.policy_container import parse_vlm_signal_batch
+    && env -u PYTHONPATH python - <<'PY'
+from pathlib import Path
+
+import npa.workbench.lerobot.policy_container as policy_container
 
 payload = {
     "schema": "npa.sim2real.rl_signal.v1",
     "rollout_id": "build-smoke",
     "per_step": [{"step": 0, "reward": 0.5, "advantage": 0.0}],
 }
-assert parse_vlm_signal_batch(payload)[0].rollout_id == "build-smoke"
+assert Path(policy_container.__file__).resolve() == Path(
+    "/opt/npa/src/npa/workbench/lerobot/policy_container.py"
+)
+assert policy_container.parse_vlm_signal_batch(payload)[0].rollout_id == "build-smoke"
 PY
 
 RUN chown -R ubuntu:ubuntu /workspace /opt/npa/src /opt/npa/pyproject.toml

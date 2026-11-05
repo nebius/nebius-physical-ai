@@ -33,23 +33,33 @@ def test_seedvr2_workflow_validates_and_reaches_every_real_operation() -> None:
         "restore",
         "verify",
         "review",
+        "quality_boundary",
     ]
     assert [step.argv[3] for step in plan.steps] == [
         "probe",
         "restore",
         "verify",
         "review",
+        "quality-boundary",
     ]
     assert spec.states["restore"].resources == "gpu"
     assert spec.states["verify"].resources == "gpu"
-    assert spec.states["review"].terminal is True
+    assert spec.states["review"].terminal is False
+    assert spec.states["quality_boundary"].resources == "cpu"
+    assert spec.states["quality_boundary"].terminal is True
     restore_argv = plan.steps[1].argv
     assert restore_argv[restore_argv.index("--probe-path") + 1].endswith("/probe.json")
 
 
 def test_seedvr2_toolrefs_share_the_cli_and_path_contract() -> None:
-    for verb in ("probe", "restore", "verify", "review"):
-        entry = TOOL_CATALOG[f"workbench.seedvr2.{verb}"]
+    for tool_name, verb in (
+        ("probe", "probe"),
+        ("restore", "restore"),
+        ("verify", "verify"),
+        ("review", "review"),
+        ("quality_boundary", "quality-boundary"),
+    ):
+        entry = TOOL_CATALOG[f"workbench.seedvr2.{tool_name}"]
         assert entry.argv_template[:4] == ["npa", "workbench", "seedvr2", verb]
         assert "--input-path" in entry.argv_template
         assert "--output-path" in entry.argv_template
@@ -82,7 +92,7 @@ def test_seedvr2_workflow_binds_every_stage_to_the_exact_image_digest() -> None:
     )
     tasks = [item for item in yaml.safe_load_all(rendered) if item and "envs" in item]
 
-    assert len(tasks) == 4
+    assert len(tasks) == 5
     assert {task["resources"]["image_id"] for task in tasks} == {"docker:" + image}
     assert {task["envs"]["NPA_TASK_IMAGE"] for task in tasks} == {image}
 
@@ -117,7 +127,7 @@ def test_workflow_defaults_remain_h100_sample():
     assert spec.config["seedvr2_conditioning_mode"] == "sample"
 
 
-@pytest.mark.parametrize("stage", range(4))
+@pytest.mark.parametrize("stage", range(5))
 @pytest.mark.parametrize("default_setup", [True, False])
 @pytest.mark.parametrize(
     "source",
@@ -163,7 +173,7 @@ def test_seedvr2_does_not_stage_source_or_install_dependencies(monkeypatch):
         ),
     )
     tasks = [task for task in yaml.safe_load_all(rendered) if task and "envs" in task]
-    assert len(tasks) == 4
+    assert len(tasks) == 5
     for task in tasks:
         assert "NPA_SRC_S3_URI" not in task["envs"]
         assert "NPA_SRC_OVERLAY" not in task["envs"]

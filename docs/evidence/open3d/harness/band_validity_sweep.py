@@ -24,12 +24,10 @@ Run inside the Open3D image:
 from __future__ import annotations
 
 import json
-from pathlib import Path
-
-from harness_io import FAR_READING, output_path, seed_sampling
 
 import numpy as np
 import open3d as o3d
+from harness_io import FAR_READING, output_path, seed_sampling
 from npa.workbench.open3d.runner import (
     FAR_BAND_AREA_SHARE,
     _crop_justification,

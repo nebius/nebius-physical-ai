@@ -33,6 +33,19 @@ _DEFAULT_POD = {
         {"key": "nvidia.com/gpu", "operator": "Exists", "effect": "NoSchedule"}
     ],
 }
+_PLACEMENT_FIELDS = frozenset(
+    {
+        "accelerator",
+        "cpus",
+        "memory",
+        "ephemeral_storage",
+        "allowed_nodes",
+        "pod_spec",
+    }
+)
+_REQUIRED_PLACEMENT_FIELDS = frozenset(
+    {"accelerator", "cpus", "memory", "allowed_nodes", "pod_spec"}
+)
 
 
 def _pod_spec(kubernetes):
@@ -210,37 +223,73 @@ def _placement_node(node):
     )
 
 
-def node_can_host_isaac(node, placements=None):
+def _validated_placements(placements):
+    if not isinstance(placements, (list, tuple)) or not placements:
+        raise ValueError("effective Isaac stage placements are required")
+    for placement in placements:
+        if not isinstance(placement, Mapping):
+            raise ValueError("effective Isaac stage placement is malformed")
+        fields = set(placement)
+        if fields - _PLACEMENT_FIELDS or _REQUIRED_PLACEMENT_FIELDS - fields:
+            raise ValueError("effective Isaac stage placement is malformed")
+        accelerator = placement["accelerator"]
+        pod_spec = placement["pod_spec"]
+        allowed_nodes = placement["allowed_nodes"]
+        if not isinstance(accelerator, str) or not accelerator.strip():
+            raise ValueError("effective Isaac stage placement is malformed")
+        if not isinstance(pod_spec, Mapping):
+            raise ValueError("effective Isaac stage placement is malformed")
+        if allowed_nodes is not None and (
+            not isinstance(allowed_nodes, (list, tuple))
+            or not all(isinstance(name, str) and name.strip() for name in allowed_nodes)
+        ):
+            raise ValueError("effective Isaac stage placement is malformed")
+        if (
+            cpu_millicores(placement["cpus"]) <= 0
+            or memory_bytes(placement["memory"]) <= 0
+        ):
+            raise ValueError("effective Isaac stage placement is malformed")
+    return tuple(placements)
+
+
+def _placement_inventory(node):
+    record = _placement_node(node)
+    return KubernetesGpuInventory(
+        context="driver-preflight",
+        ready_nodes=1,
+        eligible_gpu_nodes=1,
+        capacity=record.capacity,
+        allocatable=record.allocatable,
+        products=record.products,
+        node_labels={},
+        nodes=(record,),
+    )
+
+
+def node_can_host_isaac(node, placements):
     """Check allocatable placement without claiming or reserving free capacity.
 
     Args:
         node: Authoritative Kubernetes node record.
-        placements: Effective Isaac stage placements; None uses canonical defaults.
+        placements: Nonempty effective Isaac stage placements from the resolved spec.
     Returns:
         Whether any Isaac task can be scheduled on this node.
     Raises:
-        ValueError: Node placement evidence is missing or malformed.
+        ValueError: Placement authority or node evidence is missing or malformed.
         RuntimeError: Placement constraints cannot be evaluated authoritatively.
     """
-    if placements is None:
-        placements = [{"accelerator": "RTXPRO6000:1", "pod_spec": _DEFAULT_POD}]
-    for placement in placements:
-        if not _node_available(node, placement["pod_spec"]):
+    checked = _validated_placements(placements)
+    inventory = None
+    can_host = False
+    for placement in checked:
+        available = _node_available(node, placement["pod_spec"])
+        if not available:
             continue
-        record = _placement_node(node)
-        inventory = KubernetesGpuInventory(
-            context="driver-preflight",
-            ready_nodes=1,
-            eligible_gpu_nodes=1,
-            capacity=record.capacity,
-            allocatable=record.allocatable,
-            products=record.products,
-            node_labels={},
-            nodes=(record,),
-        )
+        if inventory is None:
+            inventory = _placement_inventory(node)
         try:
             preflight_kubernetes_gpu_gang(inventory, node_count=1, **placement)
         except UnsatisfiableAcceleratorError:
             continue
-        return True
-    return False
+        can_host = True
+    return can_host

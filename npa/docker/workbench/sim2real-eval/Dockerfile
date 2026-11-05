@@ -1,9 +1,9 @@
-ARG BASE_IMAGE=ghcr.io/nebius/nebius-physical-ai/npa-envgen@sha256:55f1541c1a86e9d865963753cfa38fa1dbf88928c8d28d9ee30e2851a5604b88
+ARG BASE_IMAGE=ghcr.io/nebius/nebius-physical-ai/npa-envgen@sha256:38a9c229218600dca1e4071561e51c50a76cb0c538e60c9a70b80e81f06fc726
 FROM ${BASE_IMAGE}
 
 ARG SIM2REAL_EVAL_VERSION=cuda13-b300-0.1.3-sm80-sm90-sm100-sm103-sm120-20260803T034152Z
 ARG NPA_SOURCE_SHA
-ARG UBUNTU_SNAPSHOT=20261002T000000Z
+ARG UBUNTU_SNAPSHOT=20261103T000000Z
 
 LABEL npa.tool="loop-eval" \
       npa.version="${SIM2REAL_EVAL_VERSION}" \
@@ -27,6 +27,8 @@ COPY docker/workbench/common/sim2real-control-requirements.txt \
     /opt/npa/sim2real-control-requirements.txt
 COPY docker/workbench/common/sim2real-genesis-requirements.txt \
     /opt/npa/sim2real-genesis-requirements.txt
+COPY --chmod=0755 docker/workbench/common/moviepy_pillow_compat.py \
+    /opt/npa/moviepy_pillow_compat.py
 COPY --chmod=0755 docker/workbench/common/workflow_runtime_entrypoint.sh \
     /usr/local/bin/npa-workflow-entrypoint
 COPY --chmod=0755 docker/workbench/common/configure_ubuntu_snapshot.sh \
@@ -45,6 +47,7 @@ RUN /usr/local/bin/install-workflow-runtime-prereqs "${UBUNTU_SNAPSHOT}" \
     && python -m pip install --no-deps \
       -r /opt/npa/sim2real-control-requirements.txt \
       -r /opt/npa/sim2real-genesis-requirements.txt \
+    && python /opt/npa/moviepy_pillow_compat.py \
     && python -m pip check \
     && python -c 'import importlib.metadata as m; assert not any(d.metadata["Name"].lower() == "transformers" for d in m.distributions())' \
     && python -m py_compile /opt/npa/src/npa/workflows/sim2real_loop.py \

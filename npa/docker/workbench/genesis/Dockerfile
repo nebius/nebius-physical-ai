@@ -8,7 +8,7 @@ ARG LEROBOT_VERSION=0.4.4
 ARG RSL_RL_VERSION=5.5.1
 ARG TORCH_VERSION=2.6.0
 ARG TORCHVISION_VERSION=0.21.0
-ARG UBUNTU_SNAPSHOT=20261002T000000Z
+ARG UBUNTU_SNAPSHOT=20261103T000000Z
 
 LABEL npa.tool="genesis" \
       npa.version="${GENESIS_VERSION}" \
@@ -68,6 +68,7 @@ USER root
 RUN id -u ubuntu >/dev/null 2>&1 || useradd -m -s /bin/bash -u 1000 ubuntu; \
     install -d -m 0755 -o ubuntu -g ubuntu \
       /opt/genesis \
+      /opt/genesis/compat \
       /opt/genesis/outputs \
       /opt/npa/src/npa \
       /opt/npa/docker/workbench/genesis; \
@@ -131,8 +132,10 @@ RUN python3.12 -m venv /opt/genesis/venv \
     && /opt/genesis/venv/bin/python /opt/genesis/prepare-public-policies.py \
       --site-packages /opt/genesis/venv/lib/python3.12/site-packages \
       > /opt/genesis/public-policy-source.json \
-    && printf '%s\n' /opt/genesis/compat \
-      > /opt/genesis/venv/lib/python3.12/site-packages/npa-genesis-compat.pth \
+    && install -m 0644 /opt/genesis/compat/tetgen.py \
+      /opt/genesis/venv/lib/python3.12/site-packages/tetgen.py \
+    && /opt/genesis/venv/bin/python -c \
+      'from pathlib import Path; import tetgen; assert Path(tetgen.__file__).resolve() == Path("/opt/genesis/venv/lib/python3.12/site-packages/tetgen.py")' \
     && /opt/genesis/venv/bin/pip check \
     && test -z "$(find /opt/genesis/venv -type f \
       -path '*/imageio_ffmpeg/binaries/ffmpeg*' -print -quit)" \

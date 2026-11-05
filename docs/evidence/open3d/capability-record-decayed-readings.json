@@ -87,5 +87,10 @@
     "how_widespread": "Five of eight worktree venvs in this lane resolve the package to another worktree: collision and holes to frame-gate, determinism and signed to reproducibility.",
     "what_it_did_not_affect": "No published result. None of the eight branches modifies npa/src at all, and the whole product tree is byte-identical across all four cross-linked pairs (4f46f0d45ade). The only casualty was that one mutation attempt, and reading the threshold from source rather than importing it removes the dependence entirely.",
     "the_general_lesson": "A mutation that fails to fire is evidence about the harness before it is evidence about the test. I had the same correction earlier in this lane from the other direction, when a construction that failed to exercise an effect was not evidence the effect was absent."
+  },
+  "provenance": {
+    "source_commit": "632ccc9d5cf7d7e5cab922558e9ba4b9ae8b5079",
+    "commit_is_an_ancestor_of_main": false,
+    "how_this_commit_was_recovered": "This is the first commit in the file's own --follow history, titled 'open3d: restore four evidence readings that stopped firing when the product withdrew a claim'. The later commits in that history add the retained validation and review repairs recorded above; the source commit deliberately remains the commit where this record and repair were introduced."
   }
 }

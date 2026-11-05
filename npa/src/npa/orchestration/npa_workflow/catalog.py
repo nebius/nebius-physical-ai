@@ -74,8 +74,8 @@ PUBLIC_REUSABLE_TOOLREFS: dict[str, str] = {
     "workbench.openvla.eval": "public OpenVLA evaluation primitive (upstream argv planning; eval plan-only)",
     "workbench.newton.generate_demos": "public Newton physics simulation primitive (config validation; train/eval plan-only)",
     "workbench.newton.eval": "public Newton physics simulation primitive (config validation; train/eval plan-only)",
-    "workbench.gemini_robotics.plan": "public Gemini Robotics planning primitive (provisional adapter: API base URL and model id supplied explicitly; no live access validated)",
-    "workbench.gemini_robotics.eval": "public Gemini Robotics evaluation primitive (provisional adapter: API base URL and model id supplied explicitly; no live access validated)",
+    "workbench.gemini_robotics.plan": "public Gemini Robotics planning primitive (endpoint and model defaults live-validated 2026-10-10; optional overrides; advisory output)",
+    "workbench.gemini_robotics.eval": "public Gemini Robotics evaluation primitive (endpoint and model defaults live-validated 2026-10-10; optional overrides; advisory output)",
     "workbench.ros2.preflight": "public ROS 2 preflight primitive (checks Jazzy prerequisites; bridge/bag/fleet not implemented)",
 }
 
@@ -1414,6 +1414,25 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{run.id}}",
         ],
     ),
+    "workbench.seedvr2.quality_boundary": ToolEntry(
+        name="workbench.seedvr2.quality_boundary",
+        description=(
+            "Publish advisory source-relative diagnostics and an explicit "
+            "review-only, not-quality-qualified SeedVR2 boundary."
+        ),
+        argv_template=[
+            "npa",
+            "workbench",
+            "seedvr2",
+            "quality-boundary",
+            "--input-path",
+            "{{config.seedvr2_result_uri}}",
+            "--output-path",
+            "{{config.seedvr2_quality_boundary_uri}}",
+            "--run-id",
+            "{{run.id}}",
+        ],
+    ),
     "workbench.open3d.stage_demo": ToolEntry(
         name="workbench.open3d.stage_demo",
         description=(
@@ -1431,6 +1450,8 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.open3d_voxel_size}}",
             "--icp-estimation",
             "{{config.open3d_icp_estimation}}",
+            "--agreement-seeds",
+            "{{config.open3d_agreement_seeds}}",
         ],
     ),
     "workbench.open3d.prepare": ToolEntry(
@@ -1452,6 +1473,8 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.open3d_voxel_size}}",
             "--icp-estimation",
             "{{config.open3d_icp_estimation}}",
+            "--agreement-seeds",
+            "{{config.open3d_agreement_seeds}}",
         ],
     ),
     "workbench.open3d.register": ToolEntry(
@@ -2227,7 +2250,8 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
     "workbench.vlm_eval.compare_judges": ToolEntry(
         name="workbench.vlm_eval.compare_judges",
         description=(
-            "Retain two hosted VLM outcomes over one shared prompt and frame set."
+            "Retain two hosted VLM outcomes while rejecting the measured "
+            "MiniCPM plus Gemma shared-failure pair."
         ),
         config_defaults={
             "primary_vlm_model": "MiniMaxAI/MiniMax-M3",
@@ -3153,9 +3177,11 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
         name="workbench.gemini_robotics.plan",
         description=(
             "Run ER embodied-reasoning planning via the Gemini API "
-            "(provisional adapter: API base URL and model id must be supplied "
-            "explicitly; no live access has been validated)."
+            "(endpoint and model defaults live-validated 2026-10-10; "
+            "workflow overrides are optional; output remains advisory)."
         ),
+        config_defaults={"api_base_url": "", "model_id": ""},
+        omit_flags_when_empty=("--api-base-url", "--model"),
         argv_template=[
             *_GEMINI_ROBOTICS_PIPELINE,
             "--api-base-url",
@@ -3173,9 +3199,11 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
         name="workbench.gemini_robotics.eval",
         description=(
             "Evaluate a plan against a rubric via the Gemini API "
-            "(provisional adapter: API base URL and model id must be supplied "
-            "explicitly; no live access has been validated)."
+            "(endpoint and model defaults live-validated 2026-10-10; "
+            "workflow overrides are optional; output remains advisory)."
         ),
+        config_defaults={"api_base_url": "", "model_id": ""},
+        omit_flags_when_empty=("--api-base-url", "--model"),
         argv_template=[
             *_GEMINI_ROBOTICS_PIPELINE,
             "--api-base-url",

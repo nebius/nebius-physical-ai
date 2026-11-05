@@ -48,6 +48,7 @@ COPY --chown=ubuntu:ubuntu workflows /opt/npa/workflows
 COPY --chmod=0755 docker/workbench/common/isaac_bootstrap.sh /opt/npa/bin/isaac-bootstrap
 COPY docker/workbench/isaac-arena/npa-cli-requirements.txt /opt/npa/docker/workbench/isaac-arena/npa-cli-requirements.txt
 COPY docker/workbench/isaac-arena/runtime-requirements.txt /opt/npa/docker/workbench/isaac-arena/runtime-requirements.txt
+COPY docker/workbench/isaac-arena/security-upgrades-requirements.txt /opt/npa/docker/workbench/isaac-arena/security-upgrades-requirements.txt
 COPY --chmod=0755 docker/workbench/common/workflow_runtime_entrypoint.sh /usr/local/bin/npa-workflow-entrypoint
 COPY --chmod=0755 docker/workbench/common/configure_ubuntu_snapshot.sh /usr/local/bin/configure-ubuntu-snapshot
 COPY --chmod=0755 docker/workbench/common/install_workflow_runtime_prereqs.sh /usr/local/bin/install-workflow-runtime-prereqs
@@ -120,8 +121,10 @@ RUN /usr/local/bin/install-workflow-runtime-prereqs "${UBUNTU_SNAPSHOT}" "${LINU
       --require-hashes -r /opt/npa/docker/workbench/isaac-arena/npa-cli-requirements.txt \
     && /opt/npa/sim/venv/bin/python -m pip install --no-cache-dir \
       --require-hashes -r /opt/npa/docker/workbench/isaac-arena/runtime-requirements.txt \
+    && /opt/npa/sim/venv/bin/python -m pip install --no-cache-dir --no-deps \
+      --require-hashes -r /opt/npa/docker/workbench/isaac-arena/security-upgrades-requirements.txt \
     && /opt/npa/sim/venv/bin/python -c \
-      "import importlib.metadata as m; import lightwheel_sdk.loader; import onnxruntime, pinocchio, pink; expected={'pin':'4.0.0','pin-pink':'3.3.0','onnxruntime':'1.27.0','daqp':'0.8.5','qpsolvers':'4.12.0','lightwheel-sdk':'1.0.3','termcolor':'3.3.0'}; actual={name:m.version(name) for name in expected}; assert actual == expected, (expected, actual); metadata=m.distribution('lightwheel-sdk').read_text('METADATA') or ''; assert 'Licensed under the Apache License, Version 2.0' in metadata" \
+      "import importlib.metadata as m; import lightwheel_sdk.loader; import onnxruntime, pinocchio, pink; expected={'certifi':'2026.10.23','Pillow':'13.0.0','pin':'4.0.0','pin-pink':'3.3.0','onnxruntime':'1.27.0','daqp':'0.8.5','qpsolvers':'4.12.0','lightwheel-sdk':'1.0.3','termcolor':'3.3.0'}; actual={name:m.version(name) for name in expected}; assert actual == expected, (expected, actual); metadata=m.distribution('lightwheel-sdk').read_text('METADATA') or ''; assert 'Licensed under the Apache License, Version 2.0' in metadata" \
     && /opt/npa/sim/venv/bin/python /tmp/verify_license_evidence.py \
       /opt/npa/docker/workbench/isaac-arena/license-evidence.json \
     && rm -f /tmp/verify_license_evidence.py \

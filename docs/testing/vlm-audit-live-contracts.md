@@ -150,6 +150,14 @@ Install this checkout's `npa[dev,adapter]` in `npa/.venv` on Python 3.12. Select
 two distinct exact hosted model IDs and a stable image, video, array, or rollout
 directory whose visible control you have labeled before inference. Blank and
 unrelated controls should use the same task and rubric as positive controls.
+Do not select MiniCPM-V-4_5 together with gemma-3-27b-it: a retained
+six-family calibration found shared false-pass modes in three of six retained
+adversarial families, so the
+runner rejects that exact unordered pair before input or credential work.
+Other compatible pairs remain valid. This measured deny rule neither qualifies
+an accepted pair nor covers unseen attacks. The sanitized retained-evidence
+index is
+[`vlm-paired-shared-failure-calibration-20261101`](../workbench/evidence/vlm-paired-shared-failure-calibration-20261101/README.md).
 Use separate invocations and new evidence directories for each control. A
 synthetic image can test a visible property, but cannot establish robotics
 performance. A fixture score or model listing is never inference evidence.

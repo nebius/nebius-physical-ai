@@ -1,0 +1,86 @@
+{
+  "what_this_closes": "Three review findings against the merged Open3D evidence set, all of the same shape: a measurement that reads as though it is backed by something checkable and is not.",
+  "recorded_utc": "2026-11-01T01:16:33Z",
+  "recorded_utc_correction": "The earlier 00:10:43Z value predated the source commit this record cites. This value is the timestamp of the branch commit that finalized the record; source_commit below identifies the measured source.",
+  "base": "d06e958462865af823b4f1479867df52421c8284",
+  "note_on_timing": "PR 602 merged as 15b0b11f0 on 2026-10-03 with these rows still open, so this is a follow-up against main rather than a change to that PR. The rows were cleared on review and CI and never resolved.",
+  "finding_1_the_delivered_frames_were_bound_to_nothing": {
+    "row": "B266 (P2)",
+    "as_found": "Nine frames under frames-refit/ carry this evidence set's entire visual argument. A review lane hashed all nine and searched every evidence record: zero of the nine digests appeared in any committed file, and there were eighteen places where a frame was named and its digest absent. The measurements were tied to the frames by filename alone.",
+    "independently_reproduced": "I recomputed all nine digests from the bytes in main and searched every committed json, md, txt, py and yaml file in the repository. 0 of 9 were present. The finding is exact.",
+    "fix": "delivered-frames-manifest.json gives each frame one row holding its path, its digest, and the measurements taken from those bytes. The digest sits beside a `path` key because that is the pairing the existing evidence guard already understands, so these hashes are now checked by that gate as well without teaching it a new convention.",
+    "why_measurements_are_copied_not_recomputed": "Copying them from the record that measured them means the two files cannot drift apart while both look healthy. A mismatch is a failure in --verify rather than a difference nobody reads."
+  },
+  "finding_2_a_sentence_claiming_a_manifest_that_did_not_exist": {
+    "as_found": "capability-record-view-framing.json stated '9 frames re-rendered in the container from the delivered PLY bytes; frame hashes recorded in the capture manifest.' No capture or manifest record in the set contained those hashes, because nothing did.",
+    "fix": "The sentence now names the manifest that actually holds them, and the record carries a field saying plainly that it was wrong until that manifest existed, and that the binding was added after the fact rather than written at capture time.",
+    "why_that_matters": "The nine frames are the PR's visual argument. A reader who checked the claim found nothing and had no way to tell whether the frames had been measured at all."
+  },
+  "finding_3_prose_contradicting_its_own_numbers": {
+    "as_found": "background-choice-sweep-refit.json read 'a median luminance near 177 and only about 1% below 33' while its own percentile block recorded 174.2888 and 33.6636. A review lane reproduced the metric independently and matched every recorded number to four decimals, so the measurements were right and only the sentence was wrong.",
+    "fix": "The sentence now quotes the figures beside it, and the record keeps the correction. The argument is unchanged; the one number a reader would take away is no longer the only number in the file that nothing supports."
+  },
+  "finding_4_a_guard_blind_to_its_cheapest_checks": {
+    "row": "B239 (P3)",
+    "as_found": "audit_evidence_references.py classified 37 hashes as naming no file and therefore checked none of them. Twelve of the 37 were equality claims between two values the records already place side by side, needing no file at all -- including image.byte_verified_not_label_trusted, whose entire purpose is to be an equality check. 'Cannot be bound to a file' and 'cannot be verified' are different predicates and the guard conflated them.",
+    "fix": "The guard now derives the partner of an equality claim from the key name (`_at_commit`/`_inside_image`, `committed_`/`regenerated_`), checks a record's own stated conclusion against its values, and requires two records that both hash the same run input to agree about it. 12 hashes that named no file are now checked and the uncheckable count fell from 37 to 25.",
+    "deliberately_narrow": "Cross-record agreement is scoped to the two containers that key their children by the input's own name. A general 'same leaf name must match' rule would invent findings, because digests called sha256 or original_sha256 appear all over this set with legitimately different values.",
+    "not_a_live_defect": "All twelve claims hold today. This is a ratchet: it stops a stale or swapped value in any of them from passing in silence."
+  },
+  "finding_5_occupancy_measured_and_deliberately_ungated": {
+    "row": "B237 (P3), answered rather than implemented",
+    "the_ask": "Gate content_fraction, which the harness already measures.",
+    "what_i_did_instead": "Recorded it beside each frame digest and wrote down why it is not floored. Every delivered frame sits at or below the occupancy that prompted the original complaint and five are under 13%, so a minimum-occupancy gate would be a gate the evidence fails. The cheapest way to pass one is to crop in, and what gets cropped is the sparse incomplete geometry these views exist to show. The value is a byte-bound measurement, not a cross-regeneration threshold.",
+    "honest_state": "Measured, published, and ungated on purpose, with the reason recorded. If review wants a floor anyway, that is a product decision about framing, not an evidence fix."
+  },
+  "finding_6_the_binding_stopped_one_link_short": {
+    "row": "B304 (P2), found by review against this branch",
+    "as_found": "The manifest hashes every frame and copies its measurements from the record that took them, so a changed frame is caught and a drifted copy is caught. Neither establishes that the record which produced a measurement had measured these bytes. Review stated the sequence plainly: regenerate the frames, re-run the binder, and you get freshly correct digests paired with stale measurements, and --verify passes, because it only ever checked digest against bytes.",
+    "i_agree_it_was_real": "Copying stops the manifest and the audit record from drifting apart. It does not stop the audit record from describing different pixels. I had closed one link of bytes -> digest -> measurement and written prose that reads as though I had closed both.",
+    "not_a_live_defect": "The published numbers were correct; regenerating the audit record changed no measurement and left delivered-frames-manifest.json byte-identical. That is the evidence that nothing had actually drifted, and it is also exactly why the gap was invisible.",
+    "fix": "frame_edge_audit.py records the sha256 of each file it measures, and the binder refuses to copy a row whose recorded source digest is not the digest it just computed. Review called this a comparison rather than new machinery, since the binder already hashes every PNG, and that is what it turned out to be.",
+    "the_control_that_matters": "A re-rendered frame rebound against stale measurements. That is the sequence review described, it used to produce a healthy-looking manifest, and it now refuses.",
+    "mutation_testing_found_a_gap_in_my_own_tests": "Four mutations of the binder died immediately. A fifth -- the audit harness stops recording which bytes it read -- survived, because every one of those tests feeds the binder a committed audit record that still carries digests. The hole would have opened only at the next regeneration, which is the same delayed quiet failure this evidence set has been corrected for twice. A test now pins the harness contract directly, and both that mutation and a wrong-digest mutation die."
+  },
+  "the_gates_were_not_gates": {
+    "found_while_doing_this": "Neither harness was run by any test or CI job, and no CI job references docs/evidence at all. Both guards could have gone red on the committed set without anything noticing.",
+    "fix": "npa/tests/workbench/test_open3d_evidence_binding.py runs both against the committed evidence and then breaks each thing they claim to catch. Negative controls work on a copy, so a test run never mutates the committed set."
+  },
+  "negative_controls_that_fire": [
+    "One byte appended to a delivered frame: caught, naming the frame and both digests.",
+    "Two frames' digests swapped in the manifest: caught by the manifest verifier and independently by the shared evidence guard. This is the case a membership check passes and a binding check fails, which this set was already corrected for once.",
+    "A copied measurement drifting from the record that took it: caught.",
+    "A tenth frame delivered with no binding: caught.",
+    "An equality claim that stops holding: caught.",
+    "A record whose stated conclusion contradicts its own values: caught.",
+    "Two records disagreeing about one input's digest: caught."
+  ],
+  "i_mutation_tested_my_own_tests": {
+    "why": "A review lane previously found a test of mine that passed when the thing it claimed to check was mutated. Asserting coverage is not evidence of it.",
+    "results": [
+      "Emptying EQUALITY_TRANSFORMS kills 2 tests.",
+      "Emptying INPUT_HASH_CONTAINERS kills 1 test.",
+      "Making the frame verifier always pass kills 4 tests."
+    ],
+    "my_first_mutation_was_wrong": "I initially mutated the tuple to `() or (...)`, which in Python evaluates to the second operand, so the feature was never removed and the suite passed. I nearly recorded that as a surviving mutant and a test defect. The mutation was broken, not the test; recorded because the failure mode is mine and not obvious."
+  },
+  "what_this_does_not_establish": [
+    "Nothing about whether the frames are good, the mesh is usable, or the reconstruction is accurate. This binds measurements to bytes.",
+    "No product behavior change: no file under npa/src/ is touched.",
+    "Not a guarantee that a measurement is correct, only that it was taken from the bytes that are delivered. A harness bug produces a wrong number bound to the right pixels, and nothing here would catch that.",
+    "The nine pre-existing ruff findings in other harness files predate this branch and are left alone; they sit outside CI's scope because no job lints docs/evidence. Two ISC004 findings inside bind_delivered_frames.py are mine and are fixed."
+  ],
+  "still_open_and_deliberately_not_in_this_change": {
+    "provenance_conventions": "A review lane found provenance recorded five different ways across ten capability records, and asked for one key plus binding each record to a commit that is an ancestor of the head. The key standardisation is worth doing. Blind ancestor-binding is not: three records name a source_commit that is deliberately not an ancestor because they attest to builds from a different line of development, and rewriting those to ancestors would falsify them. The honest form is one key name plus an explicit statement of whether the commit is an ancestor. That is a separate coherent change, not a stack on this one."
+  },
+  "provenance": {
+    "source_commit": "e4efc6602ab0e2de558365efccd877fdc84cd4e0",
+    "commit_is_an_ancestor_of_main": false,
+    "built_on_main": "d06e958462865af823b4f1479867df52421c8284",
+    "main_is_an_ancestor_of_this_commit": true,
+    "why_this_field_exists": "A review lane found provenance recorded five different ways across these records, so an auditor cannot read the set mechanically. This is the uniform shape: which commit the record attests to, and whether that commit sits on the line of development it claims to. The second part matters because three records in this set name a commit that is deliberately not an ancestor -- they attest to builds from a different line -- and a reader cannot currently tell that apart from a stale reference.",
+    "standardising_the_other_records_is_a_separate_change": "Only this record is given the shape here. Rewriting the other ten belongs in its own change, and binding them all to ancestor commits would falsify the three that are non-ancestors on purpose.",
+    "what_source_commit_means_here": "e4efc6602 is the commit whose source this evidence was produced from -- the harnesses, the manifest and the tests as they ran. It is deliberately not this record's own commit, which cannot be known before the record is written. Nothing in the later commit changes a measurement; it adds this record's own text.",
+    "a_digest_this_change_invalidates_elsewhere": "A sibling branch's record (capability-record-frame-property-gate.json, PR 983) pins harness/frame_edge_audit.py by sha256, and this change edits that file. Whichever lands second must re-read that digest. Recorded here rather than left for a reader to discover, because a stale pinned hash looks identical to a tampered one."
+  }
+}

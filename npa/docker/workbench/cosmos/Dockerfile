@@ -168,9 +168,13 @@ COPY --chown=ubuntu:ubuntu docker/workbench/cosmos/smoke_functional.py /opt/npa/
 # deliberately CPython 3.10, while NPA itself now requires Python 3.11, so an
 # editable install here would produce an unusable mixed runtime.  Generate the
 # server, then remove the staging source so this image has no NPA runtime.
+USER root
+
 RUN python /opt/npa/docker/workbench/cosmos/build_server.py \
     && test -s /opt/cosmos/server.py \
     && rm -rf /opt/npa/src /opt/npa/pyproject.toml
+
+USER ubuntu
 
 RUN python -m py_compile /opt/cosmos/server.py /opt/npa/docker/workbench/cosmos/build_server.py /opt/npa/docker/workbench/cosmos/smoke_env.py /opt/npa/docker/workbench/cosmos/smoke_functional.py
 

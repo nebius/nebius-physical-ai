@@ -58,5 +58,10 @@
   "visual_evaluation": {
     "status": "not_applicable",
     "reason": "No renderable artifact. The result is a table of area fractions under four definitions, and the evidence that it is right is a control that stays at 0.0001 while the test case moves to 0.0046."
+  },
+  "provenance": {
+    "source_commit": "c3e5ff17bb1189754cde408167231eeaed068fe6",
+    "commit_is_an_ancestor_of_main": false,
+    "how_this_commit_was_recovered": "This is the first commit in this file's retained --follow history, where the fabrication-leniency measurement record was introduced; later commits bind and repair its review contracts."
   }
 }

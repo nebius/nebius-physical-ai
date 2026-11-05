@@ -5,7 +5,10 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import os
+import shutil
 import subprocess
+import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -13,6 +16,10 @@ from typing import Any
 
 class VerificationError(RuntimeError):
     """Raised when live artifacts do not prove the benchmark predicate."""
+
+
+class VerifierUnavailableError(RuntimeError):
+    """Raised when the independent verifier cannot be executed."""
 
 
 @dataclass(frozen=True)
@@ -207,15 +214,45 @@ def _verify_mcap(path: Path) -> dict[str, Any]:
     }
 
 
+def _resolve_rerun_binary(rerun_bin: str) -> str:
+    if not rerun_bin:
+        raise VerifierUnavailableError(
+            "Rerun executable must be a non-empty command or path"
+        )
+    command = Path(rerun_bin)
+    if command.name != rerun_bin:
+        if command.is_file() and os.access(command, os.X_OK):
+            return rerun_bin
+        raise VerifierUnavailableError(
+            f"Rerun executable is missing or not executable: {rerun_bin}"
+        )
+    sibling = Path(sys.executable).with_name(rerun_bin)
+    if sibling.is_file() and os.access(sibling, os.X_OK):
+        return str(sibling)
+    discovered = shutil.which(rerun_bin)
+    if discovered:
+        return discovered
+    raise VerifierUnavailableError(
+        f"Rerun executable {rerun_bin!r} was not found beside the active Python "
+        "or on PATH; install rerun-sdk in the NPA environment or pass an explicit path"
+    )
+
+
 def _verify_rrd(path: Path, *, rerun_bin: str) -> dict[str, Any]:
     if not path.is_file() or path.stat().st_size <= 0:
         raise VerificationError(f"Rerun recording is empty or missing: {path}")
-    completed = subprocess.run(
-        [rerun_bin, "rrd", "print", str(path)],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
+    executable = _resolve_rerun_binary(rerun_bin)
+    try:
+        completed = subprocess.run(
+            [executable, "rrd", "print", str(path)],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except OSError as exc:
+        raise VerifierUnavailableError(
+            f"Rerun executable could not be launched: {executable}"
+        ) from exc
     if completed.returncode != 0:
         raise VerificationError(
             f"Rerun could not decode {path}: {completed.stderr.strip()[:500]}"

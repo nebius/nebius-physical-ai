@@ -92,7 +92,10 @@ def main() -> int:
     print(json.dumps(report, indent=2))
 
     if negative["divider_found"] is not None:
-        print("flat control found a divider; it is not a no-divider control", file=sys.stderr)
+        print(
+            "flat control found a divider; it is not a no-divider control",
+            file=sys.stderr,
+        )
         return 1
     if negative["audit"].get("pane_detection") != "failed":
         print("flat control did not reach the declared abstention", file=sys.stderr)

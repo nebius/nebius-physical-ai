@@ -118,7 +118,7 @@ SETUPTOOLS_DISTUTILS_PATH_FILE = (
 )
 ALLOWED_PYTHON_PATH_FILES = {
     (
-        "usr/share/python-wheels/setuptools-84.0.0-py3-none-any.whl!/"
+        "usr/share/python-wheels/setuptools-84.2.1-py3-none-any.whl!/"
         "distutils-precedence.pth"
     ): SETUPTOOLS_DISTUTILS_PATH_FILE,
     (
@@ -227,6 +227,9 @@ def _clean_root_findings(
     return findings
 
 
+MAX_JSON_NESTING = 100
+
+
 def _strict_json(payload: bytes) -> object:
     def object_pairs(pairs: list[tuple[str, object]]) -> dict[str, object]:
         result: dict[str, object] = {}
@@ -239,11 +242,25 @@ def _strict_json(payload: bytes) -> object:
     def reject_constant(value: str) -> object:
         raise ValueError(f"non-finite JSON value: {value}")
 
-    return json.loads(
-        payload,
-        object_pairs_hook=object_pairs,
-        parse_constant=reject_constant,
-    )
+    try:
+        result = json.loads(
+            payload,
+            object_pairs_hook=object_pairs,
+            parse_constant=reject_constant,
+        )
+    except RecursionError as exc:
+        raise RuntimeError("excessively nested structural data") from exc
+
+    pending = [(result, 0)]
+    while pending:
+        value, depth = pending.pop()
+        if depth > MAX_JSON_NESTING:
+            raise RuntimeError("excessively nested structural data")
+        if isinstance(value, dict):
+            pending.extend((child, depth + 1) for child in value.values())
+        elif isinstance(value, list):
+            pending.extend((child, depth + 1) for child in value)
+    return result
 
 
 def _is_application_content(name: str) -> bool:

@@ -60,6 +60,11 @@ _DIRECT_LIMITATIONS = (
     "Selected frames cannot verify unobserved intervals or continuous task stability.",
     "A score from one model, rubric, threshold, and frame sample does not "
     "establish physical correctness or safety.",
+    (
+        "When present, provider_observable_support is provider-authored text; NPA "
+        "checks only its required shape and retention, not semantic truth or pixel "
+        "grounding."
+    ),
 )
 _DIRECT_NO_CALL_LIMITATION = (
     "This score is a stub or caller-supplied dry-validation input; no VLM call "
@@ -72,6 +77,11 @@ _BENCHMARK_LIMITATIONS = (
     "this caller-labeled dataset and do not establish generalization, physical "
     "correctness, safety, or an operational error rate.",
     "Selected frames cannot verify unobserved intervals or continuous task stability.",
+    (
+        "When present, provider_observable_support is provider-authored text; NPA "
+        "checks only its required shape and retention, not semantic truth or pixel "
+        "grounding."
+    ),
 )
 _BENCHMARK_FIXTURE_LIMITATION = (
     "Cases with score_source 'fixture' use caller-provided dry-validation inputs; "
@@ -195,6 +205,7 @@ def test_golden_set_scores_known_good_and_bad_rollouts(
             success=score >= 0.8,
             score=score,
             rationale="golden-set fixture",
+            provider_observable_support=("Frame 1 visibly contains the fixture.",),
         )
 
     monkeypatch.setattr(vlm_eval, "_call_openai_compatible", fake_vlm_call)
@@ -347,7 +358,8 @@ def test_write_result_preserves_explicit_path_and_uses_canonical_s3_name(
 
 def test_parse_structured_response_preserves_valid_score() -> None:
     parsed = parse_structured_response(
-        '{"success": true, "score": 0.93, "rationale": "clear completion"}'
+        '{"success": true, "score": 0.93, "rationale": "clear completion",'
+        '"provider_observable_support":["Frame 1 shows clear completion."]}'
     )
 
     assert parsed.success is True
@@ -390,6 +402,9 @@ def test_mocked_self_hosted_endpoint_returns_structured_score(
             success=True,
             score=0.74,
             rationale="mocked endpoint saw the expected frame sequence",
+            provider_observable_support=(
+                "Frames 1 and 2 visibly show the expected sequence.",
+            ),
         )
 
     monkeypatch.setattr(vlm_eval, "_call_openai_compatible", fake_vlm_call)
@@ -408,6 +423,9 @@ def test_mocked_self_hosted_endpoint_returns_structured_score(
         "success": True,
         "score": 0.74,
         "rationale": "mocked endpoint saw the expected frame sequence",
+        "provider_observable_support": (
+            "Frames 1 and 2 visibly show the expected sequence.",
+        ),
     }
     assert 0.0 <= structured["score"] <= 1.0
     assert result.independent_human_label_calibration_established is False
@@ -542,12 +560,19 @@ def test_live_gpu_self_hosted_vlm_eval_returns_structured_score(
     print(f"NPA_VLM_LIVE_EVAL_OUTPUT={structured}")
     print(f"NPA_VLM_LIVE_VLLM_STARTUP={live_gpu_endpoint.startup_log[-1000:]}")
 
-    assert set(structured) == {"success", "score", "rationale"}
+    assert set(structured) == {
+        "success",
+        "score",
+        "rationale",
+        "provider_observable_support",
+    }
     assert isinstance(structured["success"], bool)
     assert isinstance(structured["score"], float)
     assert 0.0 <= structured["score"] <= 1.0
     assert isinstance(structured["rationale"], str)
     assert structured["rationale"].strip()
+    assert isinstance(structured["provider_observable_support"], tuple)
+    assert structured["provider_observable_support"]
     assert result.backend == "self-hosted"
     assert result.model == DEFAULT_MODEL
     assert result.frame_count in {2, 3, 4}
@@ -579,6 +604,131 @@ def test_select_rollout_frames_retains_numpy_sampling_coverage(tmp_path: Path) -
     assert [frame.source_index for frame in selected] == [0, 4, 5]
     assert [frame.source_count for frame in selected] == [6, 6, 6]
     assert all(frame.source_kind == "numpy-episode" for frame in selected)
+
+
+def _write_private_video_frame_outputs(output_dir: Path, count: int) -> None:
+    output_dir.mkdir()
+    for ordinal in range(count):
+        Image.new("RGB", (2, 2), (ordinal, 0, 0)).save(
+            output_dir / f"frame-{ordinal + 1:03d}.png"
+        )
+
+
+def test_selected_video_frames_rejects_indices_without_known_count(
+    tmp_path: Path,
+) -> None:
+    output_dir = tmp_path / "frames"
+    _write_private_video_frame_outputs(output_dir, 3)
+
+    with pytest.raises(
+        vlm_eval.VlmEvalError,
+        match="source indices require a known source frame count",
+    ):
+        vlm_eval._selected_video_frames(
+            tmp_path / "rollout.mp4",
+            output_dir,
+            source_count=None,
+            source_indices=[0, 2, 5, 9],
+            timestamps=[0.0, 0.5, 1.5],
+        )
+
+
+@pytest.mark.parametrize("source_count", [0, -1], ids=["zero", "negative"])
+def test_selected_video_frames_rejects_nonpositive_known_count(
+    tmp_path: Path, source_count: int
+) -> None:
+    output_dir = tmp_path / "frames"
+    _write_private_video_frame_outputs(output_dir, 1)
+
+    with pytest.raises(
+        vlm_eval.VlmEvalError,
+        match="source frame count must be positive when known",
+    ):
+        vlm_eval._selected_video_frames(
+            tmp_path / "rollout.mp4",
+            output_dir,
+            source_count=source_count,
+            source_indices=[],
+            timestamps=[None],
+        )
+
+
+@pytest.mark.parametrize(
+    "source_indices",
+    [[-1, 1, 2], [0, 1, 3]],
+    ids=["negative", "equal-to-count"],
+)
+def test_selected_video_frames_rejects_out_of_bounds_indices(
+    tmp_path: Path, source_indices: list[int]
+) -> None:
+    output_dir = tmp_path / "frames"
+    _write_private_video_frame_outputs(output_dir, 3)
+
+    with pytest.raises(
+        vlm_eval.VlmEvalError,
+        match="source frame index falls outside the known source frame count",
+    ):
+        vlm_eval._selected_video_frames(
+            tmp_path / "rollout.mp4",
+            output_dir,
+            source_count=3,
+            source_indices=source_indices,
+            timestamps=[0.0, 0.5, 1.0],
+        )
+
+
+@pytest.mark.parametrize(
+    "source_indices",
+    [[1, 0], [0, 0]],
+    ids=["descending", "duplicate"],
+)
+def test_selected_video_frames_rejects_nonincreasing_indices(
+    tmp_path: Path, source_indices: list[int]
+) -> None:
+    output_dir = tmp_path / "frames"
+    _write_private_video_frame_outputs(output_dir, 2)
+
+    with pytest.raises(
+        vlm_eval.VlmEvalError,
+        match="source frame indices must be strictly increasing and unique",
+    ):
+        vlm_eval._selected_video_frames(
+            tmp_path / "rollout.mp4",
+            output_dir,
+            source_count=3,
+            source_indices=source_indices,
+            timestamps=[0.0, 0.5],
+        )
+
+
+def test_selected_video_frames_preserves_valid_provenance_modes(
+    tmp_path: Path,
+) -> None:
+    unknown_dir = tmp_path / "unknown"
+    _write_private_video_frame_outputs(unknown_dir, 2)
+    unknown = vlm_eval._selected_video_frames(
+        tmp_path / "unknown.mp4",
+        unknown_dir,
+        source_count=None,
+        source_indices=[],
+        timestamps=[],
+    )
+    assert [frame.source_index for frame in unknown] == [None, None]
+    assert [frame.source_count for frame in unknown] == [None, None]
+    assert [frame.source_timestamp_s for frame in unknown] == [None, None]
+
+    known_dir = tmp_path / "known"
+    _write_private_video_frame_outputs(known_dir, 3)
+    known = vlm_eval._selected_video_frames(
+        tmp_path / "known.mp4",
+        known_dir,
+        source_count=10,
+        source_indices=[0, 5, 9],
+        timestamps=[0.0, 0.5, 0.9],
+    )
+    assert [frame.source_index for frame in known] == [0, 5, 9]
+    assert [frame.source_count for frame in known] == [10, 10, 10]
+    assert [frame.source_timestamp_s for frame in known] == [0.0, 0.5, 0.9]
 
 
 @pytest.mark.skipif(
@@ -864,6 +1014,7 @@ def _structured_eval_payload(result) -> dict[str, object]:
         "success": bool(result.passed),
         "score": float(result.score),
         "rationale": result.rationale,
+        "provider_observable_support": result.provider_observable_support,
     }
 
 
@@ -1177,11 +1328,11 @@ def test_sample_benchmark_fixture_reports_best_threshold() -> None:
     assert isinstance(report.limitations, tuple)
     assert report.dataset_evidence_scope == "illustrative_only"
     assert report.dataset_limitations == (
-        "These synthetic fixtures include four 2x2 color-swatch rollouts and a "
-        "tiny truncated-progress sequence; they do not validate the stated "
-        "physical tasks.",
-        "The first four caller labels are color-correlated; the additional "
-        "omitted-terminal label is also a wiring-only fixture.",
+        "These synthetic fixtures include four single-frame 2x2 color-swatch "
+        "rollouts and one separate three-frame 4x2 truncated-progress sequence; "
+        "they do not validate the stated physical tasks.",
+        "The four single-frame caller labels are color-correlated; the "
+        "omitted-terminal sequence label is also a wiring-only fixture.",
         "Its metrics exercise benchmark wiring and are not task-validation or "
         "operational error-rate evidence.",
     )
@@ -1326,6 +1477,9 @@ def test_benchmark_metrics_expose_ordered_false_positive_and_negative_cases() ->
     assert matrix.actual_positive.predicted_negative == metrics.false_negatives == 2
     assert matrix.actual_negative.predicted_positive == metrics.false_positives == 1
     assert matrix.actual_negative.predicted_negative == metrics.true_negatives == 3
+    assert metrics.precision == 0.6667
+    assert metrics.recall == 0.5
+    assert metrics.precision != metrics.recall
     assert metrics.false_positive_rate == 0.25
     assert metrics.false_negative_rate == 0.5
     assert (
@@ -1756,7 +1910,10 @@ _OK_PAYLOAD = {
         {
             "finish_reason": "stop",
             "message": {
-                "content": '{"success": true, "score": 0.9, "rationale": "ok"}'
+                "content": (
+                    '{"success": true, "score": 0.9, "rationale": "ok",'
+                    '"provider_observable_support":["Frame 1 is visible."]}'
+                )
             },
         }
     ]

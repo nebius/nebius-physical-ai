@@ -1,0 +1,24 @@
+{
+  "record_type": "measurement_withdrawal",
+  "status": "withdrawn",
+  "recorded_utc": "2026-11-04T00:15:00Z",
+  "scope": "Open3D boundary-topology and statistical-outlier evidence only; no CLI, SDK, workflow, image, or robotics capability is delivered.",
+  "disposition": {
+    "quantitative_claims": "withdrawn",
+    "why": "The retained values were produced from unidentified input bytes by a boundary walker that did not prove closed edge-exact loops on non-vertex-manifold meshes. The source bundle was lost, so regeneration is impossible.",
+    "documented_tradeoff": "The existing support-crop record already states that cropping trades invented coverage for honest holes. This record does not claim that trade was previously hidden."
+  },
+  "replacement_method": {
+    "path": "harness/holes_and_outliers.py",
+    "report_path": "holes-and-outliers.json",
+    "publication_policy": "A future result may publish only with passing closed/two-loop/bowtie/open-fragment controls and SHA-256 identities for the cloud and both meshes.",
+    "outcome_semantics": "Boundary topology and descriptive distances only. Interior-hole classification, hole surface area, and fitted/rejected causality remain unestablished."
+  },
+  "regression_tests": "npa/tests/workbench/test_open3d_holes_and_outliers.py",
+  "provenance": {
+    "source_commit": "750a6fe97506f420c6a1e83f64b1a65d6279cf3b",
+    "commit_is_an_ancestor_of_main": false,
+    "harness_sha256": "8cd7d2027c60106f4ca2ca5bb2be7462a215cdd3f6f40e790dfdc6f61ec9a12f",
+    "withdrawal_report_sha256": "b1f3779f606bd6ace8f355817e6144875a58edd5eb4498edeea58a6747c50a4e"
+  }
+}
