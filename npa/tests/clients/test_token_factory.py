@@ -635,7 +635,7 @@ _EXPECTED_POLICY_AST_HASHES = {
     "thinking-chat-extra": "8f60504724b3af000f4c2207bfaae367e4ad85300b72b0aea460cb08ebe21ddc",
     "client-payload": "9398a00f57375892b9be1844e07a5bb38eb532298382b618e19dbd3df4dcf813",
     "client-entrypoint": "e71d1c6e9c6ec18770a044ead9a7f668a3682ec14fbb435a3c504d7d85b60459",
-    "hosted-request": "9183ee81e359c6abd170bc9ea51fcdd1aa380552d6e7651c9ba6232aab32ae8a",
+    "hosted-request": "82b5f193476a1356cd5499a54b1111d7e8f400760a38c5e49783117f26e682e7",
     # Reviewed completion/enforcement changes preserve shared-profile dispatch.
     "hosted-response": "356c3bacc9440618b641d716940bc4569b77e6ebdfa42126531470bb83e325da",
     # Sampling context is forwarded only to evidence, not profile dispatch.
