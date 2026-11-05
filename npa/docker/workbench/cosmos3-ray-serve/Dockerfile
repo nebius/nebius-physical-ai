@@ -2,9 +2,10 @@
 # The digest-pinned parent contains OpenMDW-1.1 cosmos-framework at commit
 # 5e67049cd94acb667786f1e6dd0dab821cb90c97 and its frozen CUDA 13 inference
 # environment. No model or guardrail weights are present in either image.
-# Built from main source 6462f27f98e1ded31d17b00944f943db3381ac35 after the
-# package-generated SSH identities and inference TLS dependency were repaired.
-ARG BASE_IMAGE=ghcr.io/nebius/nebius-physical-ai/npa-cosmos3@sha256:1aa6c473d95863709766f02d3e199cf8cf860adbe585b409a23a82bae4a2c37e
+# Built from the immutable public development candidate at main source
+# 67d8c43bc35627f7b71fc233dbd7be2c1aec582d. Its qualification evidence is
+# recorded in public_release_manifest.json; it remains separate from a release.
+ARG BASE_IMAGE=ghcr.io/nebius/nebius-physical-ai/npa-cosmos3@sha256:c5e6b6e087d7593d08c199736eda97deb6dd0954b0f23b8d51e896790cc78524
 FROM ${BASE_IMAGE}
 
 ARG NPA_SOURCE_SHA
@@ -105,6 +106,7 @@ RUN export UV_CACHE_DIR=/tmp/uv-cache \
     && /opt/npa/install_hardened_nltk.sh .venv/bin/python \
     && .venv/bin/python -c 'from pathlib import Path; import ray; p=Path(ray.__file__).parent / "jars" / "ray_dist.jar"; p.unlink(missing_ok=True)' \
     && uv pip check --python .venv/bin/python \
+    && test "$(.venv/bin/uv --version | awk '{print $2}')" = "0.13.4" \
     && .venv/bin/python -c 'from pathlib import Path; import subprocess; interpreters=sorted({p.resolve() for p in Path("/opt/uv/python").glob("*/bin/python3")}); assert interpreters; [subprocess.run(["uv","pip","install","--break-system-packages","--python",str(p),"--no-deps","--require-hashes","-r","/tmp/cosmos3-packaging-requirements.txt"],check=True) for p in interpreters]' \
     && rm -f /tmp/cosmos3-packaging-requirements.txt \
     && test "$(.venv/bin/python -c 'import ray; print(ray.__version__)')" = "${COSMOS3_RAY_VERSION}" \

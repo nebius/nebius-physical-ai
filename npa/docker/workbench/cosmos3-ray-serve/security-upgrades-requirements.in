@@ -53,3 +53,7 @@ brotli==1.2.1
 # The secure shared role bootstrap must not reintroduce pip's stale vendored
 # certificate bundle into the framework venv.
 pip==26.2.2
+# cosmos-framework declares an unbounded uv dependency. The frozen upstream
+# lock therefore installs a standalone uv executable into this venv; keep that
+# executable on the fixed release as part of the hash-verified overlay.
+uv==0.13.4

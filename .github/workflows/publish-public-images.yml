@@ -489,6 +489,12 @@ jobs:
 
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
         with:
+          # The containerized builder retains a complete construction cache while
+          # exporting --load, which exceeds the hosted root volume for GR00T.
+          # Docker's direct driver places the exact resulting image in the
+          # daemon store without a second BuildKit-to-Docker import; every
+          # runtime, complete-byte, and security gate below still reads it.
+          driver: ${{ matrix.tool == 'groot' && 'docker' || 'docker-container' }}
           version: ${{ matrix.tool == 'gymnasium-robotics' && 'v0.30.1' || '' }}
           driver-opts: ${{ matrix.tool == 'gymnasium-robotics' && 'image=moby/buildkit:v0.32.2@sha256:28a898719c18a33f4e8000685287fa36fd0dd9560c6440227d3a732d79bb41d8' || '' }}
 

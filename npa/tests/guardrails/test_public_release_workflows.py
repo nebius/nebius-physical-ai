@@ -336,6 +336,32 @@ def test_hosted_builds_reclaim_only_unused_runner_sdks_before_local_export() -> 
     assert names.index("Reclaim unused hosted-runner SDK space") < build
 
 
+def test_groot_build_uses_direct_driver_without_removing_local_byte_gates() -> None:
+    spec = _spec(PUBLISH)
+    steps = spec["jobs"]["build-development"]["steps"]
+    buildx = next(
+        step
+        for step in steps
+        if step.get("uses", "").startswith("docker/setup-buildx-action@")
+    )
+    names = [str(step.get("name") or "") for step in steps]
+
+    assert buildx["with"]["driver"] == (
+        "${{ matrix.tool == 'groot' && 'docker' || 'docker-container' }}"
+    )
+    assert (
+        "--load"
+        in steps[names.index("Build immutable development image locally")]["run"]
+    )
+    assert (
+        names.index("Build immutable development image locally")
+        < names.index(
+            "Enforce runtime, revision, bootstrap, config, and history contracts"
+        )
+        < names.index("Pre-publication vulnerability, secret, and license scan")
+    )
+
+
 def test_large_image_scan_reclaims_only_disposable_build_cache_and_tar() -> None:
     spec = _spec(PUBLISH)
     step = next(

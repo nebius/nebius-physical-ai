@@ -177,6 +177,8 @@ def test_security_upgrades_requirements_file_has_hash_pinned_cves() -> None:
     assert not re.search(r"^nltk==", content, re.M)
     assert "ray-haproxy==2.8.25" in content
     assert "pillow==13.0.0" in content
+    assert "uv==0.13.4" in content
+    assert "uv==0.13.4" in req_file.with_suffix(".in").read_text()
     assert "gradio==6.16.0+npa.pillow13.1" in content
     assert (
         "--hash=sha256:2523b8b34006626382b2afa315c229c3ef4515b17c6925b766308f32e161c749"
@@ -381,6 +383,7 @@ def test_dockerfile_copies_security_requirements_and_verifies_versions() -> None
     assert ".venv/bin/python /opt/npa/verify_hardened_nltk.py" in text
     assert "${COSMOS3_RAY_VERSION}" in text
     assert "--find-links /tmp/gradio-derivative" in text
+    assert 'test "$(.venv/bin/uv --version | awk \'{print $2}\')" = "0.13.4"' in text
     # Must verify the Ray version matches the ARG value post-install
     assert (
         "test \"$(.venv/bin/python -c 'import ray; print(ray.__version__)')\""

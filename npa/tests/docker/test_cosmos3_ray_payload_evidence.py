@@ -283,6 +283,101 @@ def test_public_ray_review_catalog_covers_the_validated_child_closure():
     } == expected
 
 
+def test_public_ray_review_catalog_covers_repaired_cosmos3_parent_closure():
+    reviews = SCANNER.load_reviews()
+    expected = {
+        "42c1162038e21c8bd94a500008e0801914fc19176b94b106b24ea12774d9c67c": (
+            67672,
+            "aws_access_key_id",
+            "PIL/ImageFont.py",
+        ),
+        "9b335c8d6b636232c7adb193b0de4b22be7243ebbcf35fdc559b3c465b633123": (
+            20129,
+            "credential_assignment",
+            "boto3/session.py",
+        ),
+        "8f194ccabf13aacbb182f14edeef6eaaf272a4146553c926d4a8a5e1a718c81e": (
+            52780,
+            "credential_assignment",
+            "botocore/session.py",
+        ),
+        "587ff2acd46ed574876a21a1482ec3f8dd81c7db8bafab58567c808618383552": (
+            69306,
+            "aws_access_key_id",
+            "PIL/ImageFont.py",
+        ),
+        "948b6c7dc79540def99ef68b81d7e84656859419597869d8b8d81d2000033c85": (
+            21426,
+            "credential_assignment",
+            "boto3/session.py",
+        ),
+        "aeb99e462d1d421b89ecde8cf11ae925af9f53ae805ddd3b5dcb4305271f198b": (
+            6571,
+            "credential_assignment",
+            "boto3-1.43.125.dist-info/METADATA",
+        ),
+        "be7cb678c162c37447274ece3bef088e27f884f6322ddc4fdfb605234ed67240": (
+            54897,
+            "credential_assignment",
+            "botocore/session.py",
+        ),
+        "38f1593417e0e831867a01863b2e15c4690eb8f83d78e8e023c55fb273617a98": (
+            5570,
+            "credential_assignment",
+            "botocore-1.43.125.dist-info/METADATA",
+        ),
+        "20ab191db05235290836f51afc7f76738f3fb12f406b1d08381afdea30d6ecb6": (
+            66925,
+            "private_key_content",
+            "cryptography/hazmat/primitives/serialization/ssh.py",
+        ),
+        "3bc05cb5203423a040d6c1ccfa3e3c3456ba644393e20a294740e814746d0b35": (
+            30829,
+            "credential_assignment",
+            "npa/src/npa/cli/agent_env_files.py",
+        ),
+        "8838b973820de910c0ad4ce863b040e02cfa6881657211a9bb156127e7f412c0": (
+            139074,
+            "credential_assignment",
+            "npa/src/npa/cli/main.py",
+        ),
+        "153affea4f7685b5662bac68d76cc403e2a2403efe8ea58c39a7c7383560f5da": (
+            148093,
+            "credential_assignment",
+            "npa/src/npa/cli/cosmos/__init__.py",
+        ),
+        "833714e57f0ce4f7c5b763ed94e9364c13292b96f5d926e21a1cd7af104f052a": (
+            174487,
+            "credential_assignment",
+            "npa/src/npa/cli/fiftyone/__init__.py",
+        ),
+        "fa39489ca6502b57475b8d9f958e8bce6748830dd44577a635af370b57db15bf": (
+            136422,
+            "credential_assignment",
+            "npa/src/npa/cli/isaac_lab/__init__.py",
+        ),
+        "477f0dc5c66e6f01cf4e6d81a5e4cfcc661112933127e9b09a2a7b463171b659": (
+            13583,
+            "credential_assignment",
+            "npa/src/npa/cli/workbench/cosmos_curate.py",
+        ),
+        "7ea338779d3dcb22c83b2a7a1af42b87f1220ce8f8a27c97e0b42f115e4e5093": (
+            98718,
+            "credential_assignment",
+            "npa/src/npa/orchestration/npa_workflow/run_state.py",
+        ),
+    }
+
+    assert {
+        digest: (
+            reviews[digest]["bytes"],
+            next(iter(reviews[digest]["match_counts"])),
+            reviews[digest]["source"]["member"],
+        )
+        for digest in expected
+    } == expected
+
+
 def test_history_finding_remains_blocking_without_member_evidence(tmp_path):
     config = {"config": {"Env": ["HF_TOKEN=inert-fixture-value"]}, "history": []}
     path, _, _ = _image(tmp_path, [[("source.py", b"value = 42\n")]], config)
