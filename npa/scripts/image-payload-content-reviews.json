@@ -1745,6 +1745,182 @@
         "revision": "c3f67795b1a2bdb62dd9aca9ba4d4018e8f11e4188700b3246ea5ae049f65887",
         "member": "smart_open-8.0.3.dist-info/METADATA"
       }
+    },
+    {
+      "sha256": "42c1162038e21c8bd94a500008e0801914fc19176b94b106b24ea12774d9c67c",
+      "bytes": 67672,
+      "match_counts": {"aws_access_key_id": 1},
+      "reason": "Compiled Pillow font-module bytecode contains an AWS-shaped substring from built-in font data, not an access key.",
+      "source": {
+        "url": "https://files.pythonhosted.org/packages/ef/fe/f5cdaa2d1c4086e757430f368c271a58ee29cfe7378e7ae7b9d964015c25/pillow-13.0.0-cp313-cp313-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl",
+        "revision": "5f56499c1a74d2b862beb0c33b8016f99d095858455df9d21583bbbc1c15b582",
+        "member": "PIL/ImageFont.py"
+      }
+    },
+    {
+      "sha256": "9b335c8d6b636232c7adb193b0de4b22be7243ebbcf35fdc559b3c465b633123",
+      "bytes": 20129,
+      "match_counts": {"credential_assignment": 1},
+      "reason": "Compiled public boto3 SDK bytecode contains credential variable names, not configured credentials.",
+      "source": {
+        "url": "https://files.pythonhosted.org/packages/b5/12/1e295c564a8319e6e27353c4c849ec31b0e3857b2614c36c7cc050ca1b9c/boto3-1.43.125-py3-none-any.whl",
+        "revision": "101fe3ee99664e671efb9af65c8e98ec0bceddf6de922ea89685da4adc8c6907",
+        "member": "boto3/session.py"
+      }
+    },
+    {
+      "sha256": "8f194ccabf13aacbb182f14edeef6eaaf272a4146553c926d4a8a5e1a718c81e",
+      "bytes": 52780,
+      "match_counts": {"credential_assignment": 1},
+      "reason": "Compiled public botocore SDK bytecode contains credential variable names, not configured credentials.",
+      "source": {
+        "url": "https://files.pythonhosted.org/packages/3a/c1/0dca9a7ea362219b1e98f7fa8aebca1c19f6516eb91792b82595d7b79dc0/botocore-1.43.125-py3-none-any.whl",
+        "revision": "e3969c8191d3435440037310187d324f37c00da53987ea31df2eceff19a2795a",
+        "member": "botocore/session.py"
+      }
+    },
+    {
+      "sha256": "587ff2acd46ed574876a21a1482ec3f8dd81c7db8bafab58567c808618383552",
+      "bytes": 69306,
+      "match_counts": {"aws_access_key_id": 1},
+      "reason": "Compiled Pillow font-module bytecode contains an AWS-shaped substring from built-in font data, not an access key.",
+      "source": {
+        "url": "https://files.pythonhosted.org/packages/e6/99/fdf65cc539e266ab93546c261bdf98411fe165c6e4e13f9dbf597097192b/pillow-13.0.0-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl",
+        "revision": "42d63be3af4f9b951b199b0a9d23365d37ab14687e6d77b74940432c8515c4ca",
+        "member": "PIL/ImageFont.py"
+      }
+    },
+    {
+      "sha256": "948b6c7dc79540def99ef68b81d7e84656859419597869d8b8d81d2000033c85",
+      "bytes": 21426,
+      "match_counts": {"credential_assignment": 1},
+      "reason": "Compiled public boto3 SDK bytecode contains credential variable names, not configured credentials.",
+      "source": {
+        "url": "https://files.pythonhosted.org/packages/b5/12/1e295c564a8319e6e27353c4c849ec31b0e3857b2614c36c7cc050ca1b9c/boto3-1.43.125-py3-none-any.whl",
+        "revision": "101fe3ee99664e671efb9af65c8e98ec0bceddf6de922ea89685da4adc8c6907",
+        "member": "boto3/session.py"
+      }
+    },
+    {
+      "sha256": "aeb99e462d1d421b89ecde8cf11ae925af9f53ae805ddd3b5dcb4305271f198b",
+      "bytes": 6571,
+      "match_counts": {"credential_assignment": 1},
+      "reason": "Public boto3 package metadata documents credential variables and contains no configured credential.",
+      "source": {
+        "url": "https://files.pythonhosted.org/packages/b5/12/1e295c564a8319e6e27353c4c849ec31b0e3857b2614c36c7cc050ca1b9c/boto3-1.43.125-py3-none-any.whl",
+        "revision": "101fe3ee99664e671efb9af65c8e98ec0bceddf6de922ea89685da4adc8c6907",
+        "member": "boto3-1.43.125.dist-info/METADATA"
+      }
+    },
+    {
+      "sha256": "be7cb678c162c37447274ece3bef088e27f884f6322ddc4fdfb605234ed67240",
+      "bytes": 54897,
+      "match_counts": {"credential_assignment": 1},
+      "reason": "Compiled public botocore SDK bytecode contains credential variable names, not configured credentials.",
+      "source": {
+        "url": "https://files.pythonhosted.org/packages/3a/c1/0dca9a7ea362219b1e98f7fa8aebca1c19f6516eb91792b82595d7b79dc0/botocore-1.43.125-py3-none-any.whl",
+        "revision": "e3969c8191d3435440037310187d324f37c00da53987ea31df2eceff19a2795a",
+        "member": "botocore/session.py"
+      }
+    },
+    {
+      "sha256": "38f1593417e0e831867a01863b2e15c4690eb8f83d78e8e023c55fb273617a98",
+      "bytes": 5570,
+      "match_counts": {"credential_assignment": 1},
+      "reason": "Public botocore package metadata documents credential variables and contains no configured credential.",
+      "source": {
+        "url": "https://files.pythonhosted.org/packages/3a/c1/0dca9a7ea362219b1e98f7fa8aebca1c19f6516eb91792b82595d7b79dc0/botocore-1.43.125-py3-none-any.whl",
+        "revision": "e3969c8191d3435440037310187d324f37c00da53987ea31df2eceff19a2795a",
+        "member": "botocore-1.43.125.dist-info/METADATA"
+      }
+    },
+    {
+      "sha256": "20ab191db05235290836f51afc7f76738f3fb12f406b1d08381afdea30d6ecb6",
+      "bytes": 66925,
+      "match_counts": {"private_key_content": 1},
+      "reason": "Compiled cryptography SSH-parser bytecode contains PEM boundary constants, not a private key.",
+      "source": {
+        "url": "https://files.pythonhosted.org/packages/1a/f1/b474e930c4d910328780e3940da76f5aa5cbc48ce1fc14e44d239d9ea9db/cryptography-50.0.2-cp311-abi3-manylinux_2_28_x86_64.whl",
+        "revision": "4061c0079120205fb760c58acab6443e217307dcf05e3702cf970e0689972856",
+        "member": "cryptography/hazmat/primitives/serialization/ssh.py"
+      }
+    },
+    {
+      "sha256": "3bc05cb5203423a040d6c1ccfa3e3c3456ba644393e20a294740e814746d0b35",
+      "bytes": 30829,
+      "match_counts": {"credential_assignment": 1},
+      "reason": "Compiled NPA bytecode references operator-provided values and contains no configured credential.",
+      "source": {
+        "url": "https://github.com/nebius/nebius-physical-ai/blob/67d8c43bc35627f7b71fc233dbd7be2c1aec582d/npa/src/npa/cli/agent_env_files.py",
+        "revision": "67d8c43bc35627f7b71fc233dbd7be2c1aec582d",
+        "member": "npa/src/npa/cli/agent_env_files.py"
+      }
+    },
+    {
+      "sha256": "8838b973820de910c0ad4ce863b040e02cfa6881657211a9bb156127e7f412c0",
+      "bytes": 139074,
+      "match_counts": {"credential_assignment": 1},
+      "reason": "Compiled NPA bytecode references operator-provided values and contains no configured credential.",
+      "source": {
+        "url": "https://github.com/nebius/nebius-physical-ai/blob/67d8c43bc35627f7b71fc233dbd7be2c1aec582d/npa/src/npa/cli/main.py",
+        "revision": "67d8c43bc35627f7b71fc233dbd7be2c1aec582d",
+        "member": "npa/src/npa/cli/main.py"
+      }
+    },
+    {
+      "sha256": "153affea4f7685b5662bac68d76cc403e2a2403efe8ea58c39a7c7383560f5da",
+      "bytes": 148093,
+      "match_counts": {"credential_assignment": 1},
+      "reason": "Compiled NPA bytecode references operator-provided values and contains no configured credential.",
+      "source": {
+        "url": "https://github.com/nebius/nebius-physical-ai/blob/67d8c43bc35627f7b71fc233dbd7be2c1aec582d/npa/src/npa/cli/cosmos/__init__.py",
+        "revision": "67d8c43bc35627f7b71fc233dbd7be2c1aec582d",
+        "member": "npa/src/npa/cli/cosmos/__init__.py"
+      }
+    },
+    {
+      "sha256": "833714e57f0ce4f7c5b763ed94e9364c13292b96f5d926e21a1cd7af104f052a",
+      "bytes": 174487,
+      "match_counts": {"credential_assignment": 1},
+      "reason": "Compiled NPA bytecode references operator-provided values and contains no configured credential.",
+      "source": {
+        "url": "https://github.com/nebius/nebius-physical-ai/blob/67d8c43bc35627f7b71fc233dbd7be2c1aec582d/npa/src/npa/cli/fiftyone/__init__.py",
+        "revision": "67d8c43bc35627f7b71fc233dbd7be2c1aec582d",
+        "member": "npa/src/npa/cli/fiftyone/__init__.py"
+      }
+    },
+    {
+      "sha256": "fa39489ca6502b57475b8d9f958e8bce6748830dd44577a635af370b57db15bf",
+      "bytes": 136422,
+      "match_counts": {"credential_assignment": 1},
+      "reason": "Compiled NPA bytecode references operator-provided values and contains no configured credential.",
+      "source": {
+        "url": "https://github.com/nebius/nebius-physical-ai/blob/67d8c43bc35627f7b71fc233dbd7be2c1aec582d/npa/src/npa/cli/isaac_lab/__init__.py",
+        "revision": "67d8c43bc35627f7b71fc233dbd7be2c1aec582d",
+        "member": "npa/src/npa/cli/isaac_lab/__init__.py"
+      }
+    },
+    {
+      "sha256": "477f0dc5c66e6f01cf4e6d81a5e4cfcc661112933127e9b09a2a7b463171b659",
+      "bytes": 13583,
+      "match_counts": {"credential_assignment": 1},
+      "reason": "Compiled NPA bytecode references operator-provided values and contains no configured credential.",
+      "source": {
+        "url": "https://github.com/nebius/nebius-physical-ai/blob/67d8c43bc35627f7b71fc233dbd7be2c1aec582d/npa/src/npa/cli/workbench/cosmos_curate.py",
+        "revision": "67d8c43bc35627f7b71fc233dbd7be2c1aec582d",
+        "member": "npa/src/npa/cli/workbench/cosmos_curate.py"
+      }
+    },
+    {
+      "sha256": "7ea338779d3dcb22c83b2a7a1af42b87f1220ce8f8a27c97e0b42f115e4e5093",
+      "bytes": 98718,
+      "match_counts": {"credential_assignment": 1},
+      "reason": "Compiled NPA bytecode references operator-provided values and contains no configured credential.",
+      "source": {
+        "url": "https://github.com/nebius/nebius-physical-ai/blob/67d8c43bc35627f7b71fc233dbd7be2c1aec582d/npa/src/npa/orchestration/npa_workflow/run_state.py",
+        "revision": "67d8c43bc35627f7b71fc233dbd7be2c1aec582d",
+        "member": "npa/src/npa/orchestration/npa_workflow/run_state.py"
+      }
     }
   ]
 }
