@@ -46,8 +46,15 @@ npa/.venv/bin/npa workbench workflow stage-src \
 npa/.venv/bin/npa workbench workflow submit "$SPEC" --runtime \
   --project "$PROJECT_ALIAS" --run-id "$RUN_ID" \
   --var bucket="$BUCKET" --var prefix="groot-n15-offline-rl/$RUN_ID" \
+  --secret-env AWS_ACCESS_KEY_ID --secret-env AWS_SECRET_ACCESS_KEY \
   --output-format json
 ```
+
+`--secret-env` forwards only the named values from the selected project's
+credential store (or the operator environment); it never places their values in
+the YAML, rendered plan, logs, or source tree. Both names are needed by every
+stage that reads or writes the run-owned durable prefix. A run that reuses a
+prepared prefix from a compatible earlier run needs the same read scope.
 
 Use the generic `status`, `logs`, and `artifacts` operations with the same run
 and project identity. A recoverable interruption must resume that run only after
