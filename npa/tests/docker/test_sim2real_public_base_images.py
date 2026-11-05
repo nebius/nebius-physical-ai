@@ -120,19 +120,23 @@ def test_envgen_requires_a_source_attested_non_genesis_parent() -> None:
 def test_loop_eval_installs_the_qualified_moviepy_closure_before_repair() -> None:
     """Keep the Pillow metadata repair bound to its hash-locked closure."""
     text = (WORKBENCH / "sim2real-eval/Dockerfile").read_text(encoding="utf-8")
-    lock = (WORKBENCH / "common/moviepy-pillow311-requirements.lock").read_text(
+    lock = (WORKBENCH / "common/moviepy-pillow312-requirements.lock").read_text(
         encoding="utf-8"
     )
     assert "moviepy==2.2.1" in lock
     assert "pillow==13.0.0" in lock
-    assert "COPY docker/workbench/common/moviepy-pillow311-requirements.lock" in text
+    assert (
+        "sha256:42d63be3af4f9b951b199b0a9d23365d37ab14687e6d77b74940432c8515c4ca"
+        in lock
+    )
+    assert "COPY docker/workbench/common/moviepy-pillow312-requirements.lock" in text
     install = text.index(
         "python -m pip install --no-cache-dir --no-deps --force-reinstall"
     )
     repair = text.index("python /opt/npa/moviepy_pillow_compat.py")
     dependency_check = text.index("python -m pip check")
     assert "--only-binary=:all: --require-hashes" in text
-    assert "-r /opt/npa/moviepy-pillow311-requirements.lock" in text
+    assert "-r /opt/npa/moviepy-pillow312-requirements.lock" in text
     assert install < repair < dependency_check
 
 
