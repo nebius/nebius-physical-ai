@@ -14,6 +14,7 @@ ENV PYTHONUNBUFFERED=1 \
     NPA_IMAGE_SOURCE_SHA=${NPA_SOURCE_SHA} \
     NPA_SIM2REAL_GENESIS_BATCH_SIZE=16 \
     NPA_SIM2REAL_GENESIS_MAX_STEPS=240 \
+    IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg \
     PYTHONPATH=/opt/npa/src
 
 WORKDIR /workspace
@@ -23,10 +24,8 @@ USER root
 COPY --chown=ubuntu:ubuntu pyproject.toml /opt/npa/pyproject.toml
 COPY --chown=ubuntu:ubuntu src/npa /opt/npa/src/npa
 COPY --chown=ubuntu:ubuntu workflows /opt/npa/workflows
-COPY docker/workbench/common/sim2real-control-requirements.txt \
-    /opt/npa/sim2real-control-requirements.txt
-COPY docker/workbench/common/sim2real-genesis-requirements.txt \
-    /opt/npa/sim2real-genesis-requirements.txt
+COPY docker/workbench/common/sim2real-eval-requirements.lock \
+    /opt/npa/sim2real-eval-requirements.lock
 COPY --chmod=0755 docker/workbench/common/moviepy_pillow_compat.py \
     /opt/npa/moviepy_pillow_compat.py
 COPY --chmod=0755 docker/workbench/common/workflow_runtime_entrypoint.sh \
@@ -44,15 +43,19 @@ RUN /usr/local/bin/install-workflow-runtime-prereqs "${UBUNTU_SNAPSHOT}" \
     && find /opt/npa/src /opt/npa/workflows -type f -exec chmod a+r {} + \
     && chmod a+r /opt/npa/pyproject.toml \
     && python -m pip uninstall -y transformers \
-    && python -m pip install --no-deps \
-      -r /opt/npa/sim2real-control-requirements.txt \
-      -r /opt/npa/sim2real-genesis-requirements.txt \
+    && python -m pip install --no-cache-dir --no-deps --force-reinstall \
+      --extra-index-url https://download.pytorch.org/whl/cu130 \
+      --only-binary=:all: --no-binary=imageio-ffmpeg --require-hashes \
+      -r /opt/npa/sim2real-eval-requirements.lock \
+    && python -c \
+      'import imageio_ffmpeg; from pathlib import Path; root = Path(imageio_ffmpeg.__file__).parent; assert not list(root.glob("binaries/ffmpeg*")); assert imageio_ffmpeg.get_ffmpeg_exe() == "/usr/bin/ffmpeg"' \
     && python /opt/npa/moviepy_pillow_compat.py \
     && python -m pip check \
     && python -c 'import importlib.metadata as m; assert not any(d.metadata["Name"].lower() == "transformers" for d in m.distributions())' \
     && python -m py_compile /opt/npa/src/npa/workflows/sim2real_loop.py \
     && env -u PYTHONPATH python -c \
       'from npa.workflows.sim2real_loop import main; assert callable(main)' \
+    && python -c "import torch; assert torch.__version__ == '2.13.0+cu130'; assert torch.version.cuda == '13.0'" \
     && python -c "from npa.genesis.env_pick_place import EnvConfig, FrankaPickPlaceEnv; assert EnvConfig(action_space='cartesian').action_space == 'cartesian'; assert FrankaPickPlaceEnv.__name__ == 'FrankaPickPlaceEnv'" \
     && chown -R ubuntu:ubuntu /workspace /opt/npa/src /opt/npa/pyproject.toml
 

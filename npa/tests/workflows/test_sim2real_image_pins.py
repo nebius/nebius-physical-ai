@@ -869,13 +869,16 @@ def test_sim2real_control_plane_requirement_closure_is_exact() -> None:
         "GitPython==3.2.1",
         "pillow==13.0.0",
     ]
-    for relative_path in ("sim2real-eval/Dockerfile",):
-        dockerfile = (root / relative_path).read_text(encoding="utf-8")
-        assert "sim2real-control-requirements.txt" in dockerfile
-        assert "sim2real-genesis-requirements.txt" in dockerfile
-        assert "python -m pip uninstall -y transformers" in dockerfile
-        assert 'd.metadata["Name"].lower() == "transformers"' in dockerfile
-        assert "pip check" in dockerfile
+    eval_dockerfile = (root / "sim2real-eval/Dockerfile").read_text(encoding="utf-8")
+    # Loop evaluation installs its complete, hash-locked Python 3.12 closure;
+    # it must not fall back to the partial control or Genesis requirement files.
+    assert "sim2real-eval-requirements.lock" in eval_dockerfile
+    assert "sim2real-control-requirements.txt" not in eval_dockerfile
+    assert "sim2real-genesis-requirements.txt" not in eval_dockerfile
+    assert "--require-hashes" in eval_dockerfile
+    assert "python -m pip uninstall -y transformers" in eval_dockerfile
+    assert 'd.metadata["Name"].lower() == "transformers"' in eval_dockerfile
+    assert "pip check" in eval_dockerfile
 
     envgen_dockerfile = (root / "sim2real-envgen/Dockerfile").read_text(
         encoding="utf-8"

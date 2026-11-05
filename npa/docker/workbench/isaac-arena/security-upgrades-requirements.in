@@ -1,5 +1,5 @@
 # Security overlay for the parent Isaac Lab runtime retained by Arena.  The
 # public image targets CPython 3.12 on Linux x86_64; regenerate the hash lock
-# with: uv pip compile --generate-hashes --no-emit-index-url security-upgrades-requirements.in
+# with: uv pip compile --quiet --generate-hashes --no-emit-index-url --no-annotate --custom-compile-command 'uv pip compile --quiet --generate-hashes --no-emit-index-url --no-annotate -' - < security-upgrades-requirements.in
 certifi==2026.10.23
 Pillow==13.0.0

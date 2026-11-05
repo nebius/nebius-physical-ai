@@ -117,6 +117,69 @@ def test_envgen_requires_a_source_attested_non_genesis_parent() -> None:
     assert "/opt/genesis/venv" not in text
 
 
+def test_loop_eval_installs_the_qualified_moviepy_closure_before_repair() -> None:
+    """Keep the full overlay and metadata repair bound to one locked closure."""
+    text = (WORKBENCH / "sim2real-eval/Dockerfile").read_text(encoding="utf-8")
+    lock = (WORKBENCH / "common/sim2real-eval-requirements.lock").read_text(
+        encoding="utf-8"
+    )
+    resolver_input = (WORKBENCH / "common/sim2real-eval-requirements.in").read_text(
+        encoding="utf-8"
+    )
+    resolver_override = (
+        WORKBENCH / "common/sim2real-eval-requirements.override"
+    ).read_text(encoding="utf-8")
+    assert "-r sim2real-control-requirements.txt" in resolver_input
+    assert "-r sim2real-genesis-requirements.txt" in resolver_input
+    assert "moviepy==2.2.1" in resolver_input
+    assert "torch==2.13.0+cu130" in resolver_input
+    assert "pillow==11.3.0" in resolver_override.splitlines()
+    assert (
+        "--overrides npa/docker/workbench/common/sim2real-eval-requirements.override"
+        in lock
+    )
+    for requirement in (
+        "gitpython==3.2.1",
+        "gitdb==4.0.12",
+        "huggingface-hub==0.35.3",
+        "hf-xet==1.8.0",
+        "filelock==4.2.9",
+        "moviepy==2.2.1",
+        "decorator==5.3.1",
+        "imageio==2.38.1",
+        "imageio-ffmpeg==0.6.0",
+        "proglog==0.1.12",
+        "python-dotenv==1.2.4",
+        "python-dateutil==2.9.0.post0",
+        "pillow==13.0.0",
+        "torch==2.13.0+cu130",
+        "cuda-toolkit==13.0.3.0",
+    ):
+        assert requirement in lock
+    assert "pillow==11.3.0" not in lock
+    assert (
+        "sha256:42d63be3af4f9b951b199b0a9d23365d37ab14687e6d77b74940432c8515c4ca"
+        in lock
+    )
+    assert "COPY docker/workbench/common/sim2real-eval-requirements.lock" in text
+    assert "sim2real-control-requirements.txt" not in text
+    assert "sim2real-genesis-requirements.txt" not in text
+    install = text.index(
+        "python -m pip install --no-cache-dir --no-deps --force-reinstall"
+    )
+    repair = text.index("python /opt/npa/moviepy_pillow_compat.py")
+    dependency_check = text.index("python -m pip check")
+    assert "--only-binary=:all: --no-binary=imageio-ffmpeg --require-hashes" in text
+    assert "--extra-index-url https://download.pytorch.org/whl/cu130" in text
+    assert "-r /opt/npa/sim2real-eval-requirements.lock" in text
+    assert "IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg" in text
+    assert "binaries/ffmpeg*" in text
+    assert 'imageio_ffmpeg.get_ffmpeg_exe() == "/usr/bin/ffmpeg"' in text
+    assert install < repair < dependency_check
+    assert "torch.__version__ == '2.13.0+cu130'" in text
+    assert "torch.version.cuda == '13.0'" in text
+
+
 def test_cosmos_reason_replaces_parent_npa_metadata_before_pip_check() -> None:
     text = (WORKBENCH / "cosmos3-reason/Dockerfile").read_text(encoding="utf-8")
     assert text.index("python -m pip uninstall -y npa") < text.index(
@@ -290,7 +353,9 @@ def test_genesis_only_images_retain_the_separate_gitpython_closure() -> None:
     assert pin and Version(pin.group(1)) >= Version("3.2.1")
     for relative in ("sim2real-eval/Dockerfile",):
         text = (WORKBENCH / relative).read_text()
-        install = text.index("-r /opt/npa/sim2real-genesis-requirements.txt")
+        lock = (WORKBENCH / "common/sim2real-eval-requirements.lock").read_text()
+        assert "gitpython==3.2.1" in lock
+        install = text.index("-r /opt/npa/sim2real-eval-requirements.lock")
         assert install < text.index("python -m pip check"), relative
         assert not re.search(r"GitPython\s*(?:@|==)", text, re.IGNORECASE), relative
 
