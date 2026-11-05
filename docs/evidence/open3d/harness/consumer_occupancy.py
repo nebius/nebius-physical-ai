@@ -35,9 +35,10 @@ import json
 from pathlib import Path
 
 import numpy as np
+from harness_io import output_path, read_cloud, read_mesh
 
 BUNDLE = Path("/data/final-bundle")
-OUT = Path("/data/downstream-consumer-reproduced.json")
+DEFAULT_OUT = "/data/downstream-consumer-reproduced.json"
 
 CELL = 0.1
 #: Support radius as a multiple of the cell. 0.87 is the rounded value of the
@@ -153,9 +154,8 @@ def differences(expected, actual, path: str = "") -> list[tuple[str, object, obj
 
 
 def main() -> int:
-    import open3d as o3d
-
-    cloud = o3d.io.read_point_cloud(str(BUNDLE / "multiway/fused.ply"))
+    out = output_path(DEFAULT_OUT)
+    cloud = read_cloud(BUNDLE / "multiway/fused.ply")
     centres, dims = probe_grid(cloud, CELL)
     radius = SUPPORT_RADIUS_FACTOR * CELL
     supported = support_mask(cloud, centres, radius)
@@ -167,7 +167,7 @@ def main() -> int:
         "variants": {},
     }
     for name, relative in VARIANTS.items():
-        mesh = o3d.io.read_triangle_mesh(str(BUNDLE / relative))
+        mesh = read_mesh(BUNDLE / relative)
         report["variants"][name] = {
             "artifact": relative,
             **score_variant(mesh, centres, supported, radius, CELL),
@@ -185,7 +185,7 @@ def main() -> int:
         - base["recall_of_observed_cells"],
     }
 
-    OUT.write_text(json.dumps(report, indent=2, sort_keys=True))
+    out.write_text(json.dumps(report, indent=2, sort_keys=True))
 
     original = json.loads(Path("/data/downstream-consumer.json").read_text())
     mismatches = differences(original, report)

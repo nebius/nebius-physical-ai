@@ -322,7 +322,18 @@ def test_canonical_reference_auditor_accepts_every_record(loaded: dict) -> None:
             data.get("artifacts_committed_under") if isinstance(data, dict) else None
         )
         bound, _unbound = auditor.bound_pairs(data)
-        for _where, named, claimed in bound:
+        for _where, named, claimed, at_commit in bound:
+            if at_commit:
+                actual = auditor.digest_at_commit(at_commit, named)
+                if actual is None:
+                    continue
+                checked += 1
+                if actual != claimed:
+                    mismatches.append(
+                        f"{record_key(path)}: {named} at {at_commit[:12]} -> "
+                        f"{(actual or 'absent')[:12]} != {claimed[:12]}"
+                    )
+                continue
             target = auditor.resolve(named, run_dir)
             if target is None:
                 continue

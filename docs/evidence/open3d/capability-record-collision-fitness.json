@@ -27,7 +27,7 @@
   "regression_tests": {
     "file": "npa/tests/workbench/test_open3d_collision_fitness.py",
     "path_is_relative_to": "the repository root, unlike the provenance paths below, which are relative to this evidence directory",
-    "sha256": "2fae9bf747f8dd74b77255a701b362f2660575e39184e0b104e434365775a53f",
+    "sha256": "2c2a8f520cff82ca46f759141f3f837dacc191a383cbf3fd0d621c36c594cbf4",
     "what_they_pin": "That the verdict is stated rather than abstained on; that the instrument's closed-mesh control is present and passes, since without it the verdict is worthless; that parity and signed distance agree on the control; that the record does not present the baseline as a closed control; and that the narrower fit output is named with its measured figures."
   },
   "provenance": {
@@ -36,7 +36,8 @@
     "harness_that_produced_this": [
       {
         "path": "harness/collision_fitness_verdict.py",
-        "sha256": "0560da386ec4229febaae9a624c506a108fe95d33f9cb354e1b59c1d519a29d8"
+        "sha256": "0560da386ec4229febaae9a624c506a108fe95d33f9cb354e1b59c1d519a29d8",
+        "bytes_committed_at": "be1b51931310e5a5061aff24d1af2c318d2d436f"
       },
       {
         "path": "collision-fitness-verdict.json",

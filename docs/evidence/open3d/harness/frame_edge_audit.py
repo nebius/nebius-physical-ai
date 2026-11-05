@@ -24,9 +24,9 @@ Reads PNG bytes only. No geometry, no Open3D, no network.
 
 from __future__ import annotations
 
+import argparse
 import hashlib
 import json
-import sys
 from pathlib import Path
 
 import numpy as np
@@ -48,13 +48,11 @@ def audit(path: Path, *, border: int = 2) -> dict:
     # The background is the modal corner colour: all four corners of a framed
     # render are background, and taking the mode tolerates one corner holding an
     # annotation.
-    corners = np.stack(
-        [rgb[0, 0], rgb[0, -1], rgb[-1, 0], rgb[-1, -1]]
-    )
+    corners = np.stack([rgb[0, 0], rgb[0, -1], rgb[-1, 0], rgb[-1, -1]])
     values, counts = np.unique(corners, axis=0, return_counts=True)
     background = values[int(np.argmax(counts))]
 
-    content = (np.abs(rgb - background).max(axis=2) > CONTENT_TOLERANCE)
+    content = np.abs(rgb - background).max(axis=2) > CONTENT_TOLERANCE
 
     edges = {
         "top": content[:border, :],
@@ -111,8 +109,11 @@ def audit(path: Path, *, border: int = 2) -> dict:
 
 
 def main() -> int:
-    out = Path(sys.argv[1])
-    frames = [Path(a) for a in sys.argv[2:]]
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("output", type=Path, help="where to write the report JSON")
+    parser.add_argument("frames", type=Path, nargs="+", help="the PNG frames to audit")
+    args = parser.parse_args()
+    out, frames = args.output, args.frames
     rows = [audit(path) for path in sorted(frames)]
     report = {
         "what": (

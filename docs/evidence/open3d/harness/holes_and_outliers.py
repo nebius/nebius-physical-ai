@@ -20,9 +20,10 @@ from pathlib import Path
 
 import numpy as np
 import open3d as o3d
+from harness_io import output_path, read_cloud, read_mesh
 
 BUNDLE = Path(os.environ.get("OPEN3D_BUNDLE", "/data/final-bundle"))
-OUT = Path(os.environ.get("OPEN3D_OUT", "/data/holes-and-outliers.json"))
+DEFAULT_OUT = "/data/holes-and-outliers.json"
 VARIANTS = {"baseline": "mesh-baseline/mesh.ply", "candidate": "mesh/mesh.ply"}
 CLOUD = "multiway/fused.ply"
 NB_NEIGHBORS = 20
@@ -230,8 +231,8 @@ def build() -> dict:
     for label, path in paths.items():
         if not path.is_file() or path.stat().st_size == 0:
             raise ValueError(f"{label} input is missing or empty: {path}")
-    cloud = o3d.io.read_point_cloud(str(paths["cloud"]))
-    meshes = {name: o3d.io.read_triangle_mesh(str(paths[name])) for name in VARIANTS}
+    cloud = read_cloud(paths["cloud"])
+    meshes = {name: read_mesh(paths[name]) for name in VARIANTS}
     topologies = {name: topology(mesh) for name, mesh in meshes.items()}
     return {
         "schema": "npa.open3d.holes-and-outliers.measurement.v2",
@@ -272,12 +273,15 @@ def publication(report: dict, out: Path) -> tuple[Path, bool]:
 
 
 def main() -> int:
+    # Validate the destination before opening any geometry or doing the measurement,
+    # while keeping the pure detector helpers importable for their offline controls.
+    out = output_path(DEFAULT_OUT)
     try:
         report = build()
     except (OSError, ValueError, RuntimeError) as exc:
         print(f"Measurement failed closed: {exc}")
         return 1
-    destination, published = publication(report, OUT)
+    destination, published = publication(report, out)
     destination.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
     if not published:
         print(f"Measurement controls failed; quarantined at {destination}")

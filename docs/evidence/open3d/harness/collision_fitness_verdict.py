@@ -45,9 +45,10 @@ from pathlib import Path
 
 import numpy as np
 import open3d as o3d
+from harness_io import output_path, read_cloud, read_mesh
 
 BUNDLE = Path(os.environ.get("OPEN3D_BUNDLE", "/data/final-bundle"))
-OUT = Path(os.environ.get("OPEN3D_OUT", "/data/collision-fitness-verdict.json"))
+OUT = output_path("/data/collision-fitness-verdict.json")
 
 VARIANTS = {"baseline": "mesh-baseline/mesh.ply", "candidate": "mesh/mesh.ply"}
 CLOUD = "multiway/fused.ply"
@@ -280,14 +281,12 @@ def build() -> dict:
     input_paths = {"cloud": BUNDLE / CLOUD} | {
         name: BUNDLE / relative for name, relative in VARIANTS.items()
     }
-    cloud = o3d.io.read_point_cloud(str(input_paths["cloud"]))
-    if not cloud.has_points():
-        raise RuntimeError(f"input point cloud is empty: {input_paths['cloud']}")
+    cloud = read_cloud(input_paths["cloud"])
     points = probe_points(cloud)
 
     variants = {}
     for name in VARIANTS:
-        mesh = o3d.io.read_triangle_mesh(str(input_paths[name]))
+        mesh = read_mesh(input_paths[name])
         if not mesh.has_triangles():
             raise RuntimeError(f"input mesh is empty: {input_paths[name]}")
         variants[name] = {
