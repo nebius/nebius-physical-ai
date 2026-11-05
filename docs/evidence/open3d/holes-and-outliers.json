@@ -1,0 +1,12 @@
+{
+  "schema": "npa.open3d.holes-and-outliers.withdrawal.v1",
+  "status": "withdrawn",
+  "withdrawn_claims": [
+    "candidate interior-hole count and area",
+    "baseline interior-hole count",
+    "statistical outliers were fitted rather than rejected"
+  ],
+  "reason": "The original run used an unhashbound ephemeral bundle and a vertex-once boundary walker that is invalid when boundary loops share a vertex. The inputs are no longer available, so the values cannot be regenerated or tied to retained bytes.",
+  "retained_truth": "The support-crop evidence already documents the intended coverage-versus-observed-support tradeoff. This withdrawal makes no new robotics capability or quantitative reconstruction claim.",
+  "replacement": "harness/holes_and_outliers.py now requires hash-bound nonempty inputs, decomposes boundary edges into closed cycles using every edge exactly once, exposes nonmanifold boundary degree, labels Newell values as projected boundary area, and emits descriptive outlier distances without a fitted/rejected verdict. No replacement measurement is committed."
+}

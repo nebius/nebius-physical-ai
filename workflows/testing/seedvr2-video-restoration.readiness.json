@@ -1,10 +1,10 @@
 {
   "schema_version": "workflow-readiness/v1",
-  "workflow_sha256": "7220375b6a94cd98a22d1116830fbb735408e1949c0caee2840a4d861fe3aae2",
+  "workflow_sha256": "2249237a2dd2d0010b907f7244d87fa0aeaaa40751ba6e0d44b8d651d9b4939d",
   "planning": {
     "validation": {
       "status": "verified",
-      "reason": "Schema, four-stage plan, argv and exact resource/render overrides pass CPU checks.",
+      "reason": "Schema, five-stage plan, argv and exact resource/render overrides pass CPU checks.",
       "evidence": [
         "npa/tests/workflows/test_seedvr2_workflow.py"
       ]

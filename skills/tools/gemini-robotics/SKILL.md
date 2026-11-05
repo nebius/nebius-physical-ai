@@ -9,15 +9,15 @@ Gemini Robotics is the closed-weight VLA tool for ER (embodied reasoning)
 planning and rubric evaluation, all served through the
 hosted Gemini API (``GOOGLE_API_KEY`` required).
 
-The toolRefs are a live-validated API adapter: every stage
-requires an explicit ``--model`` (no default). The validated model identifier
-is documentation only and is never selected by the implementation.
+The toolRefs use endpoint and model defaults live-validated 2026-10-10.
+Workflow specs expose ``config.api_base_url`` and ``config.model_id`` as
+optional overrides; omitted or empty values defer to the runtime defaults.
 
 Workflow tasks use the default CPU image with staged NPA source because the
 adapter calls a hosted API. Pass `--secret-env GOOGLE_API_KEY` when submitting;
 the renderer declares that credential hint and does not select a local model
-image. Explicit API/model overrides remain required. Transport tests do not
-establish live provider availability.
+image. The historical validation does not prove current provider availability;
+transport tests remain local contract evidence only.
 
 ## Interfaces
 
