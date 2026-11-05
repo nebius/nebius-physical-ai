@@ -1,6 +1,6 @@
 ---
 name: nebius-stream-beta
-description: Use Nebius Stream beta through a supplied Cosmos3 HTTPS API independently to register customer S3 storage, discover Nano or Super capabilities, run paired media-generation iterations, manage source inventories and batches, recover verified artifacts, and export owner-scoped usage. Explain native LeRobot import limits without requiring a private SDK, repository, Nebius CLI, or SSH.
+description: Use Nebius Stream beta through a supplied Cosmos3 HTTPS API independently to register customer S3 storage, discover Nano or Super capabilities, transfer full-length videos with custom or multiple controls, individual weights and negative prompts, run paired iterations, manage source inventories and batches, recover verified artifacts, and export owner-scoped usage. Explain native LeRobot import limits without requiring a private SDK, repository, Nebius CLI or SSH.
 ---
 
 # Nebius Stream beta
@@ -67,6 +67,31 @@ locally and make configuration/request files mode 0600. Register input storage
 separately when it uses another connection or credential. The helper reads the
 current S3 credential file for each registration. Media must already exist in
 the registered input bucket; the helper does not upload local media.
+
+## Full-length custom controls
+
+Use `POST /v1/transfers` for uploaded edge/depth/segmentation/blur controls,
+multiple controls, individual relative weights and a top-level negative prompt
+on either explicitly selected model. Discover the `structural_transfer` task
+and require its profile, selected controls, exact combination and supported
+weight/negative-prompt flags. Keep it separate from the legacy edge
+`/v1/augmentations` request shape.
+
+The full-source transfer contract accepts complete videos, including 227 and
+302 frames, without an application frame cap. In
+`structural-transfer-832x480-121-v1`, 121 names the internal generation window,
+not the input length. Native chunking retains the complete source frame count;
+do not trim, split or reject an input just because its count is not 121 or
+`4n+1`. Check the running constraints: an endpoint still advertising an exact
+121-frame source requirement has an older contract, not permission to crop.
+
+The current profile requires fully decodable 832x480, 24-FPS source/control
+videos with identical frame counts. Read the
+[transfer request and remaining limits](references/requests.md#full-length-structural-transfers)
+and copy the [complete request example](examples/structural-transfer.json)
+into the private working directory before replacing its placeholders. Then use
+`submit --route /v1/transfers` and the same durable `resume` workflow. The
+portable client, verified TLS, storage checks and recovery need no private SDK.
 
 ## Submission, polling and waiting
 

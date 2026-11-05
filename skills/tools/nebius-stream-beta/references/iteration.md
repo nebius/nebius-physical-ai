@@ -58,8 +58,13 @@ model's full-source contract accepts its decoded dimensions, frame rate and
 duration. Use the source dataset and episode chosen for the evaluation.
 Do not silently truncate a long source to fit a prefix-continuation profile.
 `/v1/videos` prefix continuation conditions only its documented first source
-frames; `/v1/augmentations` is the separate full-source structural-control
-path. Discover each model's exposed, implemented, qualified controls first.
+frames. Full-source edge augmentation uses `/v1/augmentations`; uploaded or
+multiple controls, individual weights and negative prompts use the separate
+[`/v1/transfers` contract](requests.md#full-length-structural-transfers).
+Its full-source profile processes complete videos, including 227 or 302
+frames, in native windows rather than requiring an exact 121-frame source.
+Discover each model's exposed, implemented, qualified controls and current
+media constraints first; do not crop the source to match a profile name.
 
 **Native LeRobot dataset import is not available in this API.** A LeRobot
 dataset contains episode metadata, observations, timestamps and often actions
@@ -76,14 +81,18 @@ and any resizing or frame-rate conversion. Mark this preprocessing separately
 from API inference. A whole episode rendered at a different FPS is still a
 derivative. Do not label it native dataset ingestion. If the task requires
 native LeRobot semantics, report that capability gap instead of substituting
-an extract. Uploading local media to input storage is also a prerequisite;
-this client and the inference API do not provide a local-file upload route.
-The customer can stage it using their provider's console or existing tooling.
+an extract. Uploading local media to input storage is also a prerequisite for
+this client. Stage it using the provider's console or existing S3 tooling;
+the portable helper does not upload local files.
 
 ## Baseline and tuned full-source requests
 
 For the complete HTTP request, all five sampling settings, and Nano's source
 requirements, start with the [full-source request reference](requests.md#full-source-video-to-video).
+For custom controls, use the
+[full-length transfer example](requests.md#full-length-structural-transfers)
+instead, keeping complete source/control media and changing only the intended
+weight, negative prompt or sampling setting between paired requests.
 The paired example below changes only the step count and leaves other optional
 sampling settings at the selected model's service defaults.
 

@@ -192,7 +192,7 @@ def verified_output(connection):
 
 
 def qualify(contract, payload, route):
-    if route not in {"/v1/videos", "/v1/images", "/v1/augmentations"} or "post" not in contract.get("openapi", {}).get("paths", {}).get(route, {}):
+    if route not in {"/v1/videos", "/v1/images", "/v1/augmentations", "/v1/transfers"} or "post" not in contract.get("openapi", {}).get("paths", {}).get(route, {}):
         raise ClientError("requested generation route is unsupported")
     model = next((item for item in contract["models"].get("data", []) if item.get("id") == payload.get("model")), None)
     if model is None or model.get("availability") in {"unavailable", "disabled"}:
@@ -201,14 +201,53 @@ def qualify(contract, payload, route):
     rows = model.get("capability_matrix", [])
     if route == "/v1/augmentations":
         row = next((row for row in rows if row.get("task") == "full_source_v2v_augmentation"), {})
+    elif route == "/v1/transfers":
+        row = next((row for row in rows if row.get("task") == "structural_transfer" and profile and profile in row.get("profiles", [])), {})
     else:
         row = next((row for row in rows if profile and profile in row.get("profiles", [])), {})
     if not row.get("endpoint_exposed") or not row.get("runtime_implemented") or row.get("profile_evidence", {}).get(profile, row.get("evidence_status")) != "qualified":
         raise ClientError("requested task/profile has no exposed qualified runtime capability")
+    if route == "/v1/transfers":
+        _qualify_transfer(row, payload)
+
+
+def _transfer_weights(controls):
+    """Check relative weights without coercing strings or accepting booleans."""
+    if any(not isinstance(control, dict) for control in controls.values()):
+        raise ClientError("transfer controls must be objects")
+    values = [control.get("weight", 1.0) for control in controls.values()]
+    if any(type(value) not in {int, float} for value in values):
+        raise ClientError("transfer weights must be finite nonnegative numbers")
+    try:
+        weights = [float(value) for value in values]
+    except OverflowError:
+        raise ClientError("transfer weights must be finite nonnegative numbers") from None
+    total = sum(weights)
+    if any(not math.isfinite(weight) or weight < 0 for weight in weights) or not math.isfinite(total) or total <= 0:
+        raise ClientError("transfer weights must have a finite positive total")
+    return weights
+
+
+def _qualify_transfer(row, payload):
+    """Require the advertised guarded control, combination and prompt capability."""
+    if row.get("guardrails_required") is not True:
+        raise ClientError("transfer requires an explicitly guarded capability")
+    controls = payload.get("controls")
+    if not isinstance(controls, dict) or not controls or any(kind not in row.get("controls", []) for kind in controls):
+        raise ClientError("requested transfer controls are not advertised")
+    combination = "+".join(sorted(controls))
+    if len(controls) > 1 and combination not in row.get("control_combinations", []):
+        raise ClientError("requested transfer control combination is not qualified")
+    weights = _transfer_weights(controls)
+    if len(set(weights)) > 1 and row.get("control_weights_supported") is not True:
+        raise ClientError("relative transfer weights are not qualified")
+    if payload.get("negative_prompt") and row.get("negative_prompt_supported") is not True:
+        raise ClientError("transfer negative prompts are not qualified")
 
 
 SUBMISSIONS = {
     "/v1/videos": "job_id", "/v1/images": "job_id", "/v1/augmentations": "job_id",
+    "/v1/transfers": "job_id",
     "/v1/batches": "batch_id", "/v1/augmentation-batches": "batch_id",
     "/v1/source-inventories": "inventory_id",
 }
