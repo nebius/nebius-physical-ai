@@ -1145,10 +1145,13 @@ def _predict_action(model: Any, transform: Any, raw: Mapping[str, Any], seed: in
 
     import numpy as np
     import torch
+    from gr00t.model.transforms import DefaultDataCollator
 
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
-    normalized = transform(_inference_input(raw))
+    # Match the native Trainer path: the transform leaves VLM images as PIL
+    # objects and its collator owns conversion to model tensors.
+    normalized = DefaultDataCollator()([transform(_inference_input(raw))])
     with torch.inference_mode(), torch.autocast(device_type="cuda", dtype=torch.bfloat16):
         result = model.get_action(normalized)
     prediction = result["action_pred"].float().cpu()
