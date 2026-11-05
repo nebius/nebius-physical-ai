@@ -145,10 +145,11 @@
     "path_is_relative_to": "this evidence directory",
     "interpreter": "/home/ubuntu/npa-worktrees/cursor-open3d-occlusion/npa/.venv/bin/python",
     "python": "3.14.7",
-    "npa_runner_imported_from": {
-      "absolute_path_on_the_machine_that_ran_it": "/home/ubuntu/npa-worktrees/cursor-open3d-margin/npa/src/npa/workbench/open3d/runner.py",
-      "crop_margin_function_sha256": "e1afe871ac54823f692444ae4332147b3a0d5b0a4b2cf82fb224ae78ad296458",
-      "repository_relative": "npa/src/npa/workbench/open3d/runner.py",
+  "npa_runner_imported_from": {
+    "absolute_path_on_the_machine_that_ran_it": "/home/ubuntu/npa-worktrees/cursor-open3d-margin/npa/src/npa/workbench/open3d/runner.py",
+    "crop_margin_function_sha256": "e1afe871ac54823f692444ae4332147b3a0d5b0a4b2cf82fb224ae78ad296458",
+    "hashes_that_name_no_file_here": "sha256 identifies the complete runner.py bytes and crop_margin_function_sha256 identifies the measured function within those bytes. runner.py is repository source, not a file committed in this evidence directory; repository_relative and source_commit locate the retained source in Git history.",
+    "repository_relative": "npa/src/npa/workbench/open3d/runner.py",
       "sha256": "d397a91479da3b92ee009f18fe8884a76297ef83c37074035225412cd0995736",
       "source_commit": "054f2508a9f351acc30e30832c867e64d43e88c0"
     },
