@@ -34,6 +34,7 @@ from npa.orchestration.npa_workflow.runtime import (
     MAX_TERMINAL_PLAN_MIGRATIONS,
     SCHEDULER_OBSERVATION_SCHEMA,
     SCHEDULER_OBSERVATION_SOURCE,
+    STATUS_QUERY_TIMEOUT_SECONDS,
     RuntimeLedger,
     RuntimeOptions,
     SkyPilotWaveExecutor,
@@ -1091,7 +1092,12 @@ def test_default_skypilot_calls_preserve_explicit_runtime_isolation(
         "logical_launch_id": "",
         "project": "default",
     }
-    status.assert_called_once_with("1", **expected)
+    status.assert_called_once_with(
+        "1",
+        **expected,
+        timeout=STATUS_QUERY_TIMEOUT_SECONDS,
+        kill_process_group_on_timeout=True,
+    )
     timeline.assert_called_once_with("1", **expected)
     lookup.assert_called_once_with("isolated-job", **expected)
     reconcile.assert_called_once_with("isolated-job", job_id="1", **expected)

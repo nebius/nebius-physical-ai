@@ -99,6 +99,10 @@ _SUPERVISOR_RECOVERY_ACTIONS = frozenset(action.value for action in RecoveryActi
 
 DEFAULT_POLL_SECONDS = 30
 DEFAULT_MAX_WAIT_SECONDS = 3600
+# A query timeout is an observation health boundary, not a workload time limit.
+# It prevents an orphaned provider CLI child from pinning a durable controller;
+# the caller records UNKNOWN and reconciles the exact prior managed job.
+STATUS_QUERY_TIMEOUT_SECONDS = 120
 #: How many consecutive `sky jobs queue` failures to tolerate before giving up on a
 #: wave. A busy API server or a query timeout says nothing about the job itself, so
 #: transient errors must not orphan a running GPU job.
@@ -3411,6 +3415,8 @@ class SkyPilotWaveExecutor:
             isolated_config_dir=self.options.isolated_config_dir,
             config_path=self.options.config_path,
             sky_bin=self.options.sky_bin,
+            timeout=STATUS_QUERY_TIMEOUT_SECONDS,
+            kill_process_group_on_timeout=True,
         )
 
     def _timeline(self, job_id: str) -> list[dict[str, Any]]:
