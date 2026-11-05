@@ -416,6 +416,26 @@ def test_reused_prepare_commit_rejects_a_different_dataset_revision(
         )
 
 
+def test_missing_external_prepared_inputs_fail_before_public_download(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    class Store:
+        def exists(self, _uri: str) -> bool:
+            return False
+
+    monkeypatch.setattr(workflow, "S3Store", Store)
+    args = SimpleNamespace(
+        workspace=tmp_path / "workspace",
+        prepare_commit_uri="s3://bucket/old/prepare-commit.json",
+        prepared_dataset_uri="s3://bucket/old/prepared/dataset",
+        candidate_uri="s3://bucket/new/candidate",
+        prepared_input_mode="build-or-reuse",
+    )
+
+    with pytest.raises(workflow.WorkflowArtifactError, match="required prepared inputs"):
+        workflow._prepare(args)
+
+
 def test_checked_in_workflow_dispatches_every_compositional_stage() -> None:
     from npa.orchestration.npa_workflow.interpreter import build_plan
     from npa.orchestration.npa_workflow.spec import load_spec

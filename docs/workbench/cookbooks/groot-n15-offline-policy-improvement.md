@@ -62,13 +62,15 @@ prepared object plus its feedback, manifest, and provenance records before it
 returns; it fails closed if the pinned dataset revision, split, feedback mode,
 action horizon, codec, or native modality differs. This recovery path never
 overwrites a complete prior prepare artifact and is not a shortcut for partial
-outputs or a different dataset configuration.
+outputs or a different dataset configuration. The selected runtime credentials
+must be able to read that prefix: an absent or unreadable external commit fails
+before any public download or codec conversion, rather than recreating it.
 
 The typed YAML customization surface includes public data/source/model revisions,
 feedback mode and worker-readable feedback URI, episode split counts, action
 horizon, native modality and embodiment, `decord` backend, codec provenance,
 batch/learning-rate/seed/pass schedule, checkpoint cadence and root, output
-prefix, reusable prepared-input prefix, and held-out evidence clip selection.
+prefix, reusable prepared-input prefix/mode, and held-out evidence clip selection.
 `outcome` and `progress` modes
 require supplied recorded labels/progress; uniform mode intentionally fabricates
 neither. The schedule computes `ceil(train_frames / batch_size)` per requested

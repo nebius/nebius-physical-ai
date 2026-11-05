@@ -74,6 +74,7 @@ config:
   root_uri: "s3://{{config.bucket}}/{{config.prefix}}"
   prepared_root_uri: "s3://{{config.bucket}}/{{config.prepared_prefix}}/prepared"
   prepared_dataset_uri: "{{config.prepared_root_uri}}/dataset"
+  prepared_input_mode: build-or-reuse
   feedback_output_uri: "{{config.prepared_root_uri}}/feedback.json"
   manifest_uri: "{{config.prepared_root_uri}}/feedback-manifest.json"
   prepare_receipt_uri: "{{config.prepared_root_uri}}/provenance.json"
@@ -144,6 +145,8 @@ states:
         - "{{config.derivative_codec}}"
         - --prepared-dataset-uri
         - "{{config.prepared_dataset_uri}}"
+        - --prepared-input-mode
+        - "{{config.prepared_input_mode}}"
         - --manifest-uri
         - "{{config.manifest_uri}}"
         - --prepare-receipt-uri

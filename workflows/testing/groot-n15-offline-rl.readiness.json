@@ -1,6 +1,6 @@
 {
   "schema_version": "workflow-readiness/v1",
-  "workflow_sha256": "b5d8de833be42d2d247826d846244823164ee51db49be85abded4e0f6a0aaaa3",
+  "workflow_sha256": "6f9c4eb6404b1193b5ddecc8cb7d5c7d8de90d4da0d15a0c7adfdcecda30b8aa",
   "planning": {
     "validation": {
       "status": "verified",

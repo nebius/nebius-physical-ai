@@ -712,6 +712,17 @@ def _reuse_prepared_inputs(
     }
 
 
+def _has_external_prepared_prefix(args: argparse.Namespace) -> bool:
+    """Return whether prepared inputs live outside this run's output root."""
+
+    prepared = S3Uri.parse(args.prepared_dataset_uri)
+    candidate = S3Uri.parse(args.candidate_uri)
+    if not candidate.key.endswith("/candidate"):
+        raise WorkflowArtifactError("candidate URI cannot establish the run output root")
+    output_root = candidate.key.removesuffix("/candidate")
+    return prepared.bucket != candidate.bucket or prepared.key != f"{output_root}/prepared/dataset"
+
+
 def _prepare(args: argparse.Namespace) -> dict[str, Any]:
     """Fetch public bytes, materialize the codec derivative, and bind feedback."""
 
@@ -727,6 +738,10 @@ def _prepare(args: argparse.Namespace) -> dict[str, Any]:
     reused = _reuse_prepared_inputs(args, store, stage)
     if reused is not None:
         return reused
+    if args.prepared_input_mode == "require-existing" or _has_external_prepared_prefix(args):
+        raise WorkflowArtifactError(
+            "required prepared inputs are missing or unreadable; refusing to overwrite them"
+        )
     raw = stage / "raw-dataset"
     derivative = stage / "h264-dataset"
     snapshot_download(
@@ -1709,6 +1724,11 @@ def _add_common_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--video-backend", choices=("decord", "torchcodec", "torchvision_av"), default="decord")
     parser.add_argument("--derivative-codec", choices=("h264",), default="h264")
     parser.add_argument("--prepared-dataset-uri", required=True)
+    parser.add_argument(
+        "--prepared-input-mode",
+        choices=("build-or-reuse", "require-existing"),
+        default="build-or-reuse",
+    )
     parser.add_argument("--manifest-uri", required=True)
     parser.add_argument("--prepare-receipt-uri", required=True)
     parser.add_argument("--prepare-commit-uri", required=True)
