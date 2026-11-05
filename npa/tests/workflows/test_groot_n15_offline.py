@@ -101,6 +101,30 @@ def test_metrics_reject_nonfinite_native_action_predictions() -> None:
         )
 
 
+def test_inverse_transformed_actions_use_recorded_target_width_not_model_padding() -> None:
+    """GR00T's padded action head must decode back to the SO-100's six axes."""
+
+    decoded = workflow._decoded_action_array(
+        {
+            "action.single_arm": np.zeros((1, 16, 5), dtype=np.float32),
+            "action.gripper": np.zeros((1, 16, 1), dtype=np.float32),
+        },
+        action_horizon=16,
+        expected_action_dim=6,
+    )
+
+    assert decoded.shape == (16, 6)
+    with pytest.raises(workflow.WorkflowArtifactError, match=r"expected \(1, 16, 32\)"):
+        workflow._decoded_action_array(
+            {
+                "action.single_arm": np.zeros((1, 16, 5), dtype=np.float32),
+                "action.gripper": np.zeros((1, 16, 1), dtype=np.float32),
+            },
+            action_horizon=16,
+            expected_action_dim=32,
+        )
+
+
 def test_standalone_html_embeds_video_and_no_remote_dependency(tmp_path: Path) -> None:
     video = tmp_path / "proof.mp4"
     video.write_bytes(b"not-a-real-mp4-but-an-embedded-fixture")

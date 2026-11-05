@@ -1140,22 +1140,19 @@ def _inference_input(raw: Mapping[str, Any]) -> dict[str, Any]:
     return value
 
 
-def _predict_action(model: Any, transform: Any, raw: Mapping[str, Any], seed: int) -> Any:
-    """Run one actual native ``get_action`` call with comparable diffusion noise."""
+def _decoded_action_array(
+    unnormalized: Mapping[str, Any], *, action_horizon: int, expected_action_dim: int
+) -> Any:
+    """Join inverse-transformed SO-100 actions using the recorded target width.
+
+    ``GR00T_N1_5.action_dim`` is the padded action-head width (32 for the
+    pinned model), not the width of this SO-100 modality.  The native inverse
+    transform deliberately removes that padding and restores the five arm and
+    one gripper coordinates present in the recorded data.
+    """
 
     import numpy as np
-    import torch
-    from gr00t.model.transforms import DefaultDataCollator
 
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
-    # Match the native Trainer path: the transform leaves VLM images as PIL
-    # objects and its collator owns conversion to model tensors.
-    normalized = DefaultDataCollator()([transform(_inference_input(raw))])
-    with torch.inference_mode(), torch.autocast(device_type="cuda", dtype=torch.bfloat16):
-        result = model.get_action(normalized)
-    prediction = result["action_pred"].float().cpu()
-    unnormalized = transform.unapply({"action": prediction})
     def as_array(value: Any) -> Any:
         if hasattr(value, "detach"):
             value = value.detach().float().cpu().numpy()
@@ -1168,9 +1165,42 @@ def _predict_action(model: Any, transform: Any, raw: Mapping[str, Any], seed: in
         ],
         axis=-1,
     )
-    if action.shape != (1, model.action_horizon, model.action_dim):
-        raise WorkflowArtifactError("native inference action shape is incompatible with the checkpoint")
+    expected_shape = (1, action_horizon, expected_action_dim)
+    if action.shape != expected_shape:
+        raise WorkflowArtifactError(
+            "native inverse-transformed action shape differs from held-out targets: "
+            f"expected {expected_shape}, got {action.shape}"
+        )
     return action[0]
+
+
+def _predict_action(
+    model: Any,
+    transform: Any,
+    raw: Mapping[str, Any],
+    seed: int,
+    *,
+    expected_action_dim: int,
+) -> Any:
+    """Run one actual native ``get_action`` call with comparable diffusion noise."""
+
+    import torch
+    from gr00t.model.transforms import DefaultDataCollator
+
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    # Match the native Trainer path: the transform leaves VLM images as PIL
+    # objects and its collator owns conversion to model tensors.
+    normalized = DefaultDataCollator()([transform(_inference_input(raw))])
+    with torch.inference_mode(), torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+        result = model.get_action(normalized)
+    prediction = result["action_pred"].float().cpu()
+    unnormalized = transform.unapply({"action": prediction})
+    return _decoded_action_array(
+        unnormalized,
+        action_horizon=int(model.action_horizon),
+        expected_action_dim=expected_action_dim,
+    )
 
 
 def _metrics(prediction: Any, target: Any, mask: Any) -> dict[str, Any]:
@@ -1412,8 +1442,25 @@ def _evaluate(args: argparse.Namespace) -> dict[str, Any]:
         target = _raw_targets(raw, horizon=manifest.action_horizon)
         mask = np.arange(manifest.action_horizon) + frame < episodes[episode].length
         common_seed = args.inference_seed + ordinal
-        baseline_actions.append(_predict_action(baseline, native.transforms, raw, common_seed))
-        candidate_actions.append(_predict_action(candidate_model, native.transforms, raw, common_seed))
+        expected_action_dim = int(target.shape[-1])
+        baseline_actions.append(
+            _predict_action(
+                baseline,
+                native.transforms,
+                raw,
+                common_seed,
+                expected_action_dim=expected_action_dim,
+            )
+        )
+        candidate_actions.append(
+            _predict_action(
+                candidate_model,
+                native.transforms,
+                raw,
+                common_seed,
+                expected_action_dim=expected_action_dim,
+            )
+        )
         targets.append(target)
         masks.append(mask)
         identities.append((episode, frame))
