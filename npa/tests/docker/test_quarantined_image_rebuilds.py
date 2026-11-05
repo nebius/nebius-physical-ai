@@ -75,7 +75,7 @@ def test_lerobot_vlm_child_replaces_the_parent_sdk_before_its_import_smoke():
         "COPY --chown=ubuntu:ubuntu src/npa "
     )
     assert "env -u PYTHONPATH python - <<'PY'" in text
-    assert 'Path(policy_container.__file__).resolve() == Path(' in text
+    assert "Path(policy_container.__file__).resolve() == Path(" in text
     assert '"/opt/npa/src/npa/workbench/lerobot/policy_container.py"' in text
 
 

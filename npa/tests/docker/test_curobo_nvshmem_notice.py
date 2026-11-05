@@ -38,11 +38,11 @@ def test_notice_is_additional_and_bound_to_reviewed_release_bytes():
     command = _notice_instruction()
     assert command == (
         f"nvshmem_archive={ARCHIVE_PATH} "
-        f"&& curl --fail --location {ARCHIVE_URL} -o \"${{nvshmem_archive}}\" "
+        f'&& curl --fail --location {ARCHIVE_URL} -o "${{nvshmem_archive}}" '
         f"&& echo '{ARCHIVE_SHA256}  {ARCHIVE_PATH}' | sha256sum -c - "
-        f"&& tar -xJOf \"${{nvshmem_archive}}\" {ARCHIVE_MEMBER} > {NOTICE_PATH} "
+        f'&& tar -xJOf "${{nvshmem_archive}}" {ARCHIVE_MEMBER} > {NOTICE_PATH} '
         f"&& echo '{NOTICE_SHA256}  {NOTICE_PATH}' | sha256sum -c - "
-        f"&& rm -f \"${{nvshmem_archive}}\" "
+        f'&& rm -f "${{nvshmem_archive}}" '
         f"&& chmod 0444 {NOTICE_PATH}"
     )
     record = (IMAGE / "REDISTRIBUTION.md").read_text()
@@ -69,8 +69,10 @@ def test_actual_notice_shell_rejects_changed_bytes_or_failed_fetch(
     curl.chmod(0o755)
     destination = tmp_path / "NVSHMEM-LICENSE.txt"
     archive = tmp_path / "nvshmem.tar.xz"
-    command = _notice_instruction().replace(NOTICE_PATH, str(destination)).replace(
-        ARCHIVE_PATH, str(archive)
+    command = (
+        _notice_instruction()
+        .replace(NOTICE_PATH, str(destination))
+        .replace(ARCHIVE_PATH, str(archive))
     )
     result = subprocess.run(
         ["/bin/bash", "-o", "pipefail", "-c", command],

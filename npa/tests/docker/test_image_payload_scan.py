@@ -227,8 +227,7 @@ def test_openpi_uses_system_ffmpeg_without_bundled_payload() -> None:
     )
     assert (
         "ARG OPENPI_PIP_WHEEL_SHA256="
-        "f3b60b20ffaadd4415ed7957212a38ac63fa4c5fa375bd0f4a797777940fad13"
-        in dockerfile
+        "f3b60b20ffaadd4415ed7957212a38ac63fa4c5fa375bd0f4a797777940fad13" in dockerfile
     )
     assert "--no-deps --upgrade" in dockerfile
     assert "${OPENPI_PIP_WHEEL_URL}#sha256=${OPENPI_PIP_WHEEL_SHA256}" in dockerfile

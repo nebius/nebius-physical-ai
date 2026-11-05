@@ -75,7 +75,9 @@ def test_cosmos_uses_npa_only_as_build_time_ast_source() -> None:
     assert "python -m pip install --no-deps -e /opt/npa" not in text
     assert "PYTHONPATH=/opt/npa/src" not in text
     assert "rm -rf /opt/npa/src /opt/npa/pyproject.toml" in text
-    cleanup = text.split("COPY --chown=ubuntu:ubuntu docker/workbench/cosmos/smoke_functional.py", 1)[1]
+    cleanup = text.split(
+        "COPY --chown=ubuntu:ubuntu docker/workbench/cosmos/smoke_functional.py", 1
+    )[1]
     assert cleanup.index("USER root") < cleanup.index(
         "RUN python /opt/npa/docker/workbench/cosmos/build_server.py"
     )
