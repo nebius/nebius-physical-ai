@@ -898,6 +898,211 @@
         "member_sha256": "8c95494071c9ef65cd44c2aaa3acef3d4c1820adabf00c38449719c4c9706dae",
         "verification": "The exact AWS-shaped substring is present in the generated character array reconstructed from consecutive C character literals."
       }
+    },
+    {
+      "sha256": "9182befa0e4047e8df244ca9e8534fdb52312bcf10219629c608c91efe8a6821",
+      "bytes": 63900,
+      "match_counts": {
+        "aws_access_key_id": 1
+      },
+      "reason": "The AWS-shaped substring occurs inside Pillow's base64-encoded built-in Aileron font, not an access key.",
+      "source": {
+        "url": "https://files.pythonhosted.org/packages/e6/99/fdf65cc539e266ab93546c261bdf98411fe165c6e4e13f9dbf597097192b/pillow-13.0.0-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl",
+        "revision": "42d63be3af4f9b951b199b0a9d23365d37ab14687e6d77b74940432c8515c4ca",
+        "member": "PIL/ImageFont.py"
+      }
+    },
+    {
+      "sha256": "990679496d43d8024a68ab7ced73942cf1cbe7617cdd50488603c479be73d650",
+      "bytes": 6571,
+      "match_counts": {
+        "credential_assignment": 1
+      },
+      "reason": "SDK variable documentation matches the named-assignment detector; the reviewed metadata contains no operational credential.",
+      "source": {
+        "url": "https://files.pythonhosted.org/packages/71/04/7a7c75e465b063d40d63b6fc5217e312793400fb43411d3064a5ba9174cc/boto3-1.43.124-py3-none-any.whl",
+        "revision": "62edd40fdeef6523ee2f73f4ccbe754fde79200ad0763bd86f4422e8125b2735",
+        "member": "boto3-1.43.124.dist-info/METADATA"
+      }
+    },
+    {
+      "sha256": "1da939f2ac5ee705775c5e5601177d97174f5ce0755ed695015118cb64c61d6c",
+      "bytes": 51661,
+      "match_counts": {
+        "credential_assignment": 1
+      },
+      "reason": "The Botocore session source references SDK credential configuration; the reviewed source contains no operational credential.",
+      "source": {
+        "url": "https://files.pythonhosted.org/packages/84/a4/77409b07ba0b5520dbc591c33b305c5fe4c186036d881ca894a597c0dfba/botocore-1.43.124-py3-none-any.whl",
+        "revision": "4651bac68d1aef78d42c8aefb514a6cd86fda07971b8348652a9d24f21b07965",
+        "member": "botocore/session.py"
+      }
+    },
+    {
+      "sha256": "3834dec08ddf71cfd987331c904b5ca844075f2fbb1753f2d77f8e137cc5a0df",
+      "bytes": 5570,
+      "match_counts": {
+        "credential_assignment": 1
+      },
+      "reason": "SDK variable documentation matches the named-assignment detector; the reviewed metadata contains no operational credential.",
+      "source": {
+        "url": "https://files.pythonhosted.org/packages/84/a4/77409b07ba0b5520dbc591c33b305c5fe4c186036d881ca894a597c0dfba/botocore-1.43.124-py3-none-any.whl",
+        "revision": "4651bac68d1aef78d42c8aefb514a6cd86fda07971b8348652a9d24f21b07965",
+        "member": "botocore-1.43.124.dist-info/METADATA"
+      }
+    },
+    {
+      "sha256": "060acc4fb061927ec4cc8c9f30d063941682a75cda5dcff29d0b4532700829cf",
+      "bytes": 268999976,
+      "match_counts": {
+        "credential_assignment": 1
+      },
+      "reason": "The immutable public Rerun SDK CLI binary carries a static named-assignment pattern in its bundled metadata, not an operational credential.",
+      "source": {
+        "url": "https://files.pythonhosted.org/packages/3d/a9/3156999af1935b85cbe3991d219255c134a008448aff76026b390171b108/rerun_sdk-0.38.1-cp310-abi3-manylinux_2_28_x86_64.whl",
+        "revision": "5f6b16374b1af1ecdb7232ed5c7f02f77e908c7c378ce83321479d2610286c0c",
+        "member": "rerun_sdk/rerun_cli/rerun"
+      }
+    },
+    {
+      "sha256": "8a5783505e3778f75669cad2592cac97a53679faadacf4710191d7e2bf3c16f7",
+      "bytes": 170092,
+      "match_counts": {"credential_assignment": 2},
+      "reason": "NPA source references operator-provided values, annotations, shell substitutions, and documented placeholders. The named-assignment detector matches these expressions; no operational credential literal is present.",
+      "source": {"url": "https://github.com/nebius/nebius-physical-ai/blob/c512452716e6deb4e1b898876e6ceab84044dfc6/npa/src/npa/cli/fiftyone/__init__.py", "revision": "c512452716e6deb4e1b898876e6ceab84044dfc6", "member": "npa/src/npa/cli/fiftyone/__init__.py"}
+    },
+    {
+      "sha256": "f329e5c06705fe9b3cdd4b0a697609506d530cca14617096ab2490b17e24f302",
+      "bytes": 106735,
+      "match_counts": {"credential_assignment": 3},
+      "reason": "NPA source references operator-provided values, annotations, shell substitutions, and documented placeholders. The named-assignment detector matches these expressions; no operational credential literal is present.",
+      "source": {"url": "https://github.com/nebius/nebius-physical-ai/blob/c512452716e6deb4e1b898876e6ceab84044dfc6/npa/src/npa/cli/genesis/__init__.py", "revision": "c512452716e6deb4e1b898876e6ceab84044dfc6", "member": "npa/src/npa/cli/genesis/__init__.py"}
+    },
+    {
+      "sha256": "7b76b736c913693f0207ad60724a7d85c1984bdff5c46b3b099cba22b667df7b",
+      "bytes": 153746,
+      "match_counts": {"credential_assignment": 11},
+      "reason": "NPA source references operator-provided values, annotations, shell substitutions, and documented placeholders. The named-assignment detector matches these expressions; no operational credential literal is present.",
+      "source": {"url": "https://github.com/nebius/nebius-physical-ai/blob/c512452716e6deb4e1b898876e6ceab84044dfc6/npa/src/npa/cli/groot/__init__.py", "revision": "c512452716e6deb4e1b898876e6ceab84044dfc6", "member": "npa/src/npa/cli/groot/__init__.py"}
+    },
+    {
+      "sha256": "dcaccb56118e7dae83bee9e9887573d06ffde586effc65f1cd9fecc94aa603cb",
+      "bytes": 127259,
+      "match_counts": {"credential_assignment": 4},
+      "reason": "NPA source references operator-provided values, annotations, shell substitutions, and documented placeholders. The named-assignment detector matches these expressions; no operational credential literal is present.",
+      "source": {"url": "https://github.com/nebius/nebius-physical-ai/blob/c512452716e6deb4e1b898876e6ceab84044dfc6/npa/src/npa/cli/isaac_lab/__init__.py", "revision": "c512452716e6deb4e1b898876e6ceab84044dfc6", "member": "npa/src/npa/cli/isaac_lab/__init__.py"}
+    },
+    {
+      "sha256": "bf6eb90fc752cc714c8a781e6195494e4b4a6955d38a31150abdf435c587645e",
+      "bytes": 141572,
+      "match_counts": {"credential_assignment": 10},
+      "reason": "NPA source references operator-provided values, annotations, shell substitutions, and documented placeholders. The named-assignment detector matches these expressions; no operational credential literal is present.",
+      "source": {"url": "https://github.com/nebius/nebius-physical-ai/blob/c512452716e6deb4e1b898876e6ceab84044dfc6/npa/src/npa/cli/main.py", "revision": "c512452716e6deb4e1b898876e6ceab84044dfc6", "member": "npa/src/npa/cli/main.py"}
+    },
+    {
+      "sha256": "937cf083dffb784a6b866051ffdc0415ab14a01b4d06f1d6fed50f3021e7547b",
+      "bytes": 30509,
+      "match_counts": {"credential_assignment": 3},
+      "reason": "NPA source references operator-provided values, annotations, shell substitutions, and documented placeholders. The named-assignment detector matches these expressions; no operational credential literal is present.",
+      "source": {"url": "https://github.com/nebius/nebius-physical-ai/blob/c512452716e6deb4e1b898876e6ceab84044dfc6/npa/src/npa/cli/workbench/health.py", "revision": "c512452716e6deb4e1b898876e6ceab84044dfc6", "member": "npa/src/npa/cli/workbench/health.py"}
+    },
+    {
+      "sha256": "2e6c2e467e395ebf566f75642f012a768d2ad806689a7615c962a531318170a5",
+      "bytes": 146824,
+      "match_counts": {"credential_assignment": 8},
+      "reason": "NPA source references operator-provided values, annotations, shell substitutions, and documented placeholders. The named-assignment detector matches these expressions; no operational credential literal is present.",
+      "source": {"url": "https://github.com/nebius/nebius-physical-ai/blob/c512452716e6deb4e1b898876e6ceab84044dfc6/npa/src/npa/cli/workbench/lerobot.py", "revision": "c512452716e6deb4e1b898876e6ceab84044dfc6", "member": "npa/src/npa/cli/workbench/lerobot.py"}
+    },
+    {
+      "sha256": "bf2ffee8ca78ba05d125677942d76a40258835b44466919a2b783aa73b746b90",
+      "bytes": 18227,
+      "match_counts": {"credential_assignment": 1},
+      "reason": "NPA source references operator-provided values, annotations, shell substitutions, and documented placeholders. The named-assignment detector matches these expressions; no operational credential literal is present.",
+      "source": {"url": "https://github.com/nebius/nebius-physical-ai/blob/c512452716e6deb4e1b898876e6ceab84044dfc6/npa/src/npa/cli/workbench/robocasa/deploy.py", "revision": "c512452716e6deb4e1b898876e6ceab84044dfc6", "member": "npa/src/npa/cli/workbench/robocasa/deploy.py"}
+    },
+    {
+      "sha256": "a37f80fbd26c66e10eeaa2a11dcc1f04bb360470ad7f12820455b4108f877964",
+      "bytes": 45873,
+      "match_counts": {"credential_assignment": 1},
+      "reason": "NPA source references operator-provided values, annotations, shell substitutions, and documented placeholders. The named-assignment detector matches these expressions; no operational credential literal is present.",
+      "source": {"url": "https://github.com/nebius/nebius-physical-ai/blob/c512452716e6deb4e1b898876e6ceab84044dfc6/npa/src/npa/cli/workbench/sim2real.py", "revision": "c512452716e6deb4e1b898876e6ceab84044dfc6", "member": "npa/src/npa/cli/workbench/sim2real.py"}
+    },
+    {
+      "sha256": "ba8c2712c1bc09e4faecec82cddaa88b7200c191f9458e7489183b02af722f5e",
+      "bytes": 442701,
+      "match_counts": {"credential_assignment": 13},
+      "reason": "NPA source references operator-provided values, annotations, shell substitutions, and documented placeholders. The named-assignment detector matches these expressions; no operational credential literal is present.",
+      "source": {"url": "https://github.com/nebius/nebius-physical-ai/blob/c512452716e6deb4e1b898876e6ceab84044dfc6/npa/src/npa/cli/workbench/workflow/__init__.py", "revision": "c512452716e6deb4e1b898876e6ceab84044dfc6", "member": "npa/src/npa/cli/workbench/workflow/__init__.py"}
+    },
+    {
+      "sha256": "abbc54e878eccfca0d85391b316be85642b6a417ae25d95ae222c4d0cb4dedd1",
+      "bytes": 39737,
+      "match_counts": {"credential_assignment": 2},
+      "reason": "NPA source references operator-provided values, annotations, shell substitutions, and documented placeholders. The named-assignment detector matches these expressions; no operational credential literal is present.",
+      "source": {"url": "https://github.com/nebius/nebius-physical-ai/blob/c512452716e6deb4e1b898876e6ceab84044dfc6/npa/src/npa/clients/storage.py", "revision": "c512452716e6deb4e1b898876e6ceab84044dfc6", "member": "npa/src/npa/clients/storage.py"}
+    },
+    {
+      "sha256": "96bf0eab1cf6a4b81ef9a4c79ab6bcd0b7ead96ffd22e6edcc1d977cc001e8f8",
+      "bytes": 81014,
+      "match_counts": {"credential_assignment": 10},
+      "reason": "NPA source references operator-provided values, annotations, shell substitutions, and documented placeholders. The named-assignment detector matches these expressions; no operational credential literal is present.",
+      "source": {"url": "https://github.com/nebius/nebius-physical-ai/blob/c512452716e6deb4e1b898876e6ceab84044dfc6/npa/src/npa/orchestration/npa_workflow/run_state.py", "revision": "c512452716e6deb4e1b898876e6ceab84044dfc6", "member": "npa/src/npa/orchestration/npa_workflow/run_state.py"}
+    },
+    {
+      "sha256": "b9e4436bc9f4ff1557da3bf60975fd210a1e55c5b206198bc9e51ac5ddd66cd3",
+      "bytes": 24039,
+      "match_counts": {"credential_assignment": 1},
+      "reason": "NPA source references operator-provided values, annotations, shell substitutions, and documented placeholders. The named-assignment detector matches these expressions; no operational credential literal is present.",
+      "source": {"url": "https://github.com/nebius/nebius-physical-ai/blob/c512452716e6deb4e1b898876e6ceab84044dfc6/npa/src/npa/orchestration/npa_workflow/sim2real_preflight.py", "revision": "c512452716e6deb4e1b898876e6ceab84044dfc6", "member": "npa/src/npa/orchestration/npa_workflow/sim2real_preflight.py"}
+    },
+    {
+      "sha256": "e59bbbd5336a9570e8d67342b49df971b0f106fb3d0cb2296156f9dfa9c54d24",
+      "bytes": 19923,
+      "match_counts": {"credential_assignment": 1},
+      "reason": "NPA source references operator-provided values, annotations, shell substitutions, and documented placeholders. The named-assignment detector matches these expressions; no operational credential literal is present.",
+      "source": {"url": "https://github.com/nebius/nebius-physical-ai/blob/c512452716e6deb4e1b898876e6ceab84044dfc6/npa/src/npa/orchestration/npa_workflow/src_staging.py", "revision": "c512452716e6deb4e1b898876e6ceab84044dfc6", "member": "npa/src/npa/orchestration/npa_workflow/src_staging.py"}
+    },
+    {
+      "sha256": "67f4e3abd69ec66663f311c7648941072053796bbf7168f81fa149d79d285df3",
+      "bytes": 90763,
+      "match_counts": {"credential_assignment": 1},
+      "reason": "NPA source references operator-provided values, annotations, shell substitutions, and documented placeholders. The named-assignment detector matches these expressions; no operational credential literal is present.",
+      "source": {"url": "https://github.com/nebius/nebius-physical-ai/blob/c512452716e6deb4e1b898876e6ceab84044dfc6/npa/src/npa/orchestration/npa_workflow/submit_matrix.py", "revision": "c512452716e6deb4e1b898876e6ceab84044dfc6", "member": "npa/src/npa/orchestration/npa_workflow/submit_matrix.py"}
+    },
+    {
+      "sha256": "b23b811dd9b83881f968ef7cd2f5643d3dd27d9b7f9d584f7474922c484112dd",
+      "bytes": 41512,
+      "match_counts": {"credential_assignment": 4},
+      "reason": "NPA source references operator-provided values, annotations, shell substitutions, and documented placeholders. The named-assignment detector matches these expressions; no operational credential literal is present.",
+      "source": {"url": "https://github.com/nebius/nebius-physical-ai/blob/c512452716e6deb4e1b898876e6ceab84044dfc6/npa/src/npa/orchestration/skypilot/workflow_state.py", "revision": "c512452716e6deb4e1b898876e6ceab84044dfc6", "member": "npa/src/npa/orchestration/skypilot/workflow_state.py"}
+    },
+    {
+      "sha256": "5c65176a0a328303e8abb2a53c1842c2fe521d78e52f8973343f1ae9fd69994c",
+      "bytes": 75608,
+      "match_counts": {"credential_assignment": 1},
+      "reason": "NPA source references operator-provided values, annotations, shell substitutions, and documented placeholders. The named-assignment detector matches these expressions; no operational credential literal is present.",
+      "source": {"url": "https://github.com/nebius/nebius-physical-ai/blob/c512452716e6deb4e1b898876e6ceab84044dfc6/npa/src/npa/smoke/golden_evals.yaml", "revision": "c512452716e6deb4e1b898876e6ceab84044dfc6", "member": "npa/src/npa/smoke/golden_evals.yaml"}
+    },
+    {
+      "sha256": "366f6ef22133c50a1124aee2c98d9d57984a50f8205e7bff3a62757f89e8e1c4",
+      "bytes": 11910,
+      "match_counts": {"credential_assignment": 1},
+      "reason": "The generated package member is copied byte-for-byte from this documented NPA workflow template and references only operator-provided credentials.",
+      "source": {"url": "https://github.com/nebius/nebius-physical-ai/blob/c512452716e6deb4e1b898876e6ceab84044dfc6/workflows/main/nurec-reconstruct.yaml", "revision": "c512452716e6deb4e1b898876e6ceab84044dfc6", "member": "workflows/main/nurec-reconstruct.yaml"}
+    },
+    {
+      "sha256": "330d9d817fd2c2d50b2c50e358c5b6a218ebcae130051f73a4c13fe6c51fe117",
+      "bytes": 57652,
+      "match_counts": {"credential_assignment": 2},
+      "reason": "NPA source references operator-provided values, annotations, shell substitutions, and documented placeholders. The named-assignment detector matches these expressions; no operational credential literal is present.",
+      "source": {"url": "https://github.com/nebius/nebius-physical-ai/blob/c512452716e6deb4e1b898876e6ceab84044dfc6/npa/src/npa/workflows/rerun_serve.py", "revision": "c512452716e6deb4e1b898876e6ceab84044dfc6", "member": "npa/src/npa/workflows/rerun_serve.py"}
+    },
+    {
+      "sha256": "bcd3ddc1bbd0696cd3da3a45e173a8d9410837645e88d50b9d9051e2dd61de5d",
+      "bytes": 88224,
+      "match_counts": {"credential_assignment": 3},
+      "reason": "NPA source references operator-provided values, annotations, shell substitutions, and documented placeholders. The named-assignment detector matches these expressions; no operational credential literal is present.",
+      "source": {"url": "https://github.com/nebius/nebius-physical-ai/blob/c512452716e6deb4e1b898876e6ceab84044dfc6/npa/src/npa/workflows/sim_to_real.py", "revision": "c512452716e6deb4e1b898876e6ceab84044dfc6", "member": "npa/src/npa/workflows/sim_to_real.py"}
     }
   ]
 }

@@ -74,6 +74,15 @@ def test_image_uses_exact_repaired_framework_parent_and_bakes_no_weights() -> No
     assert "linux-libc-dev=" not in text
     assert "dpkg --purge --force-depends linux-libc-dev" in text
     assert "dpkg-query -W -f'${Status}' linux-libc-dev" in text
+    maintenance_layer = text.split("RUN apt-get update", 1)[1].split("USER ubuntu", 1)[
+        0
+    ]
+    assert "rm -f /etc/ssh/ssh_host_*" in maintenance_layer
+    assert (
+        maintenance_layer.index("apt-get upgrade -y")
+        < maintenance_layer.index("rm -f /etc/ssh/ssh_host_*")
+        < maintenance_layer.index("dpkg-query -W")
+    )
     assert "rm -rf /opt/nvidia/nsight-compute" in text
     assert "uv sync --frozen --inexact" in text
     assert "--extra guardrail --extra serve --group cu130-torch213" in text

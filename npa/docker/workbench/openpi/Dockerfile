@@ -4,6 +4,8 @@ FROM nvidia/cuda:12.8.1-cudnn-devel-ubuntu24.04@sha256:24c8e3581ea6330038b0d3749
 
 ARG OPENPI_SOURCE_URL=https://github.com/Physical-Intelligence/openpi.git
 ARG OPENPI_SOURCE_REF=15a9616a00943ada6c20a0f158e3adb39df2ccac
+ARG OPENPI_PIP_WHEEL_URL=https://files.pythonhosted.org/packages/07/25/ee8c38ae72d66b844ce8eb9711ba905dba21ca1a8a0c960057c41cd23337/pip-26.3-py3-none-any.whl
+ARG OPENPI_PIP_WHEEL_SHA256=f3b60b20ffaadd4415ed7957212a38ac63fa4c5fa375bd0f4a797777940fad13
 ARG NPA_SOURCE_SHA=unknown
 
 LABEL npa.tool="openpi" \
@@ -66,7 +68,14 @@ RUN git clone --filter=blob:none --no-checkout "${OPENPI_SOURCE_URL}" /opt/byof 
 # compatibility overlay below. The upstream JAX 0.5.3 / NCCL 2.26.2 pair faults
 # on the first cross-node collective; the replacement wheels were qualified on
 # eight one-GPU RTX PRO 6000 nodes. Keep the public GCS reader isolated from this environment.
+# The retained uv bootstrap venv is scanned alongside the application venvs.
+# Replace Ubuntu's seeded pip with the hash-pinned current wheel so its bundled
+# CA set meets the same security floor as the role closures.
 RUN python3 -m venv /opt/uv \
+    && /opt/uv/bin/pip install --no-cache-dir --no-deps --upgrade \
+      "${OPENPI_PIP_WHEEL_URL}#sha256=${OPENPI_PIP_WHEEL_SHA256}" \
+    && /opt/uv/bin/python -c \
+      'import pip; from pip._vendor import certifi; assert pip.__version__ == "26.3"; assert certifi.__version__ == "2026.10.23"' \
     && /opt/uv/bin/pip install --no-cache-dir 'uv==0.13.4' \
     && /opt/uv/bin/uv python install 3.11 \
     && /opt/uv/bin/uv venv --python 3.11 /opt/venv \

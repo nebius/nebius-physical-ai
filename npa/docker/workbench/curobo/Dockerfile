@@ -100,10 +100,15 @@ RUN pip install --no-cache-dir --require-hashes \
     && pip check
 
 # The NVSHMEM wheel omits its release's product supplement and third-party
-# notices. Add the complete official notice without replacing its wheel license.
-# This URL can change; the exact reviewed release notice hash fails closed.
-RUN curl --fail --location https://developer.download.nvidia.com/compute/nvshmem/redist/libnvshmem/LICENSE.txt -o /usr/share/doc/npa-curobo/NVSHMEM-LICENSE.txt \
-    && echo '43a87c0ff94ce3196011ff75e17fbee96933c9e1d511557659ece8a326f95e8f  /usr/share/doc/npa-curobo/NVSHMEM-LICENSE.txt' | sha256sum -c - \
+# notices. Extract the complete notice from the hash-verified release archive
+# rather than a mutable standalone license URL, without replacing the wheel's
+# bundled CUDA license.
+RUN nvshmem_archive=/tmp/nvshmem-linux-x86_64-3.4.5_cuda13.tar.xz \
+    && curl --fail --location https://developer.download.nvidia.com/compute/nvshmem/redist/libnvshmem/linux-x86_64/libnvshmem-linux-x86_64-3.4.5_cuda13-archive.tar.xz -o "${nvshmem_archive}" \
+    && echo '18f12807c23bc5b270581af1f9bafd540369da783e557171558887623d77842c  /tmp/nvshmem-linux-x86_64-3.4.5_cuda13.tar.xz' | sha256sum -c - \
+    && tar -xJOf "${nvshmem_archive}" libnvshmem-linux-x86_64-3.4.5_cuda13-archive/LICENSE > /usr/share/doc/npa-curobo/NVSHMEM-LICENSE.txt \
+    && echo '1f5b7ada702926bc73327e6eb02dc2d41facc844cc4512ac900451bda06a459e  /usr/share/doc/npa-curobo/NVSHMEM-LICENSE.txt' | sha256sum -c - \
+    && rm -f "${nvshmem_archive}" \
     && chmod 0444 /usr/share/doc/npa-curobo/NVSHMEM-LICENSE.txt
 
 # Official archive hashes are checked before extraction. Keep upstream source and

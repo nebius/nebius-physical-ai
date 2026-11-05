@@ -42,6 +42,7 @@ USER root
 RUN id -u ubuntu >/dev/null 2>&1 || useradd -m -s /bin/bash -u 1000 ubuntu; \
     install -d -m 0755 -o ubuntu -g ubuntu \
       /opt/genesis \
+      /opt/genesis/compat \
       /opt/genesis/outputs \
       /opt/npa/src/npa \
       /opt/npa/docker/workbench/genesis; \
@@ -104,8 +105,10 @@ RUN python -m pip install --upgrade pip setuptools wheel \
     && python /opt/genesis/prepare-public-policies.py \
       --site-packages /opt/genesis/venv/lib/python3.11/site-packages \
       > /opt/genesis/public-policy-source.json \
-    && printf '%s\n' /opt/genesis/compat \
-      > /opt/genesis/venv/lib/python3.11/site-packages/npa-genesis-compat.pth \
+    && install -m 0644 /opt/genesis/compat/tetgen.py \
+      /opt/genesis/venv/lib/python3.11/site-packages/tetgen.py \
+    && python -c \
+      'from pathlib import Path; import tetgen; assert Path(tetgen.__file__).resolve() == Path("/opt/genesis/venv/lib/python3.11/site-packages/tetgen.py")' \
     && python -m pip check \
     && test -z "$(find /opt/genesis/venv -type f \
       -path '*/imageio_ffmpeg/binaries/ffmpeg*' -print -quit)" \

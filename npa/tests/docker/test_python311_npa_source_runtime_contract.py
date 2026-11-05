@@ -9,8 +9,8 @@ ROOT = Path(__file__).resolve().parents[3]
 DOCKER = ROOT / "npa" / "docker" / "workbench"
 
 
-def test_genesis_uses_python312_and_cosmos2_npa_control_is_python311_or_newer() -> None:
-    """The Sim2Real lineage must keep NPA out of a Python 3.10 environment."""
+def test_genesis_and_cosmos2_use_supported_python_families() -> None:
+    """The Sim2Real lineage must not keep an unpatchable Python 3.10 runtime."""
 
     genesis = (DOCKER / "genesis" / "Dockerfile").read_text(encoding="utf-8")
     cosmos2 = (DOCKER / "cosmos2-transfer" / "Dockerfile").read_text(encoding="utf-8")
@@ -23,6 +23,9 @@ def test_genesis_uses_python312_and_cosmos2_npa_control_is_python311_or_newer() 
     assert "NPA_BAKED_PYTHON=/opt/npa/control-venv/bin/python" in cosmos2
     assert "uv venv --python /usr/bin/python3 /opt/npa/control-venv" in cosmos2
     assert "assert sys.version_info >= (3, 11)" in cosmos2
+    assert "COSMOS_PYTHON_VERSION=3.11.16" in cosmos2
+    assert ".venv/lib/python3.11/site-packages" in cosmos2
+    assert ".venv/lib/python3.10/site-packages" not in cosmos2
 
 
 def test_groot_uses_vendor_python312_separate_from_python311_npa_control() -> None:
@@ -72,3 +75,10 @@ def test_cosmos_uses_npa_only_as_build_time_ast_source() -> None:
     assert "python -m pip install --no-deps -e /opt/npa" not in text
     assert "PYTHONPATH=/opt/npa/src" not in text
     assert "rm -rf /opt/npa/src /opt/npa/pyproject.toml" in text
+    cleanup = text.split(
+        "COPY --chown=ubuntu:ubuntu docker/workbench/cosmos/smoke_functional.py", 1
+    )[1]
+    assert cleanup.index("USER root") < cleanup.index(
+        "RUN python /opt/npa/docker/workbench/cosmos/build_server.py"
+    )
+    assert cleanup.index("USER ubuntu") < cleanup.index("RUN python -m py_compile")

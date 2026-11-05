@@ -250,10 +250,15 @@ def test_dockerfile_pins_source_base_and_nonroot() -> None:
         Path(__file__).resolve().parents[2]
         / "docker/workbench/flex-pi/pins/security-dependencies.patch"
     ).read_text()
+    assert '+  "brotli==1.2.1",' in dependency_patch
     assert '"gitpython==3.2.1"' in dependency_patch
     assert '-  "hydra-core==1.3.2",' in dependency_patch
     assert '+  "hydra-core==1.3.8",' in dependency_patch
     assert '"wandb==0.30.0"' in dependency_patch
+    assert '-  "pillow==12.0.0",' in dependency_patch
+    assert '+  "pillow==13.0.0",' in dependency_patch
+    assert "version('Brotli') == '1.2.1'" in text
+    assert "version('Pillow') == '13.0.0'" in text
 
     snapshot_patch = (
         Path(__file__).resolve().parents[2]

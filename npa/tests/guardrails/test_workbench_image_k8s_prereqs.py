@@ -403,7 +403,7 @@ def test_derived_prereq_dockerfile_matches_the_shipped_one(tool: str) -> None:
 @pytest.mark.parametrize(
     ("tool", "snapshot"),
     (
-        ("genesis", "20261002T000000Z"),
+        ("genesis", "20261103T000000Z"),
         ("sim2real-envgen", "20261103T000000Z"),
         ("sim2real-eval", "20261103T000000Z"),
     ),
