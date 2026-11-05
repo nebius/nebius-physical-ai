@@ -26,6 +26,32 @@
 
 </div>
 
+## Demos
+
+**Video augmentation · 8 seconds**
+
+One ALOHA recording, twelve Cosmos3 appearance variants. This batch did not pass
+its quality gate. [Workflow](workflows/main/paidf-cosmos3.yaml) ·
+[Runbook](workflows/guides/paidf-cosmos3.md)
+
+https://github.com/user-attachments/assets/95917c76-7920-420f-af08-c13590a36a3f
+
+**Robot locomotion · 8 seconds**
+
+A Unitree G1 policy rollout in MJLab simulation.
+[Workflow](workflows/testing/mjlab-render.yaml)
+
+https://github.com/user-attachments/assets/7e605a6d-b32b-4746-808c-51258a11b21a
+
+**Video segmentation · 6 seconds**
+
+SAM 2.1 follows an object through generated video.
+[Workflow](workflows/testing/byof-sam2.1.yaml)
+
+https://github.com/user-attachments/assets/f629401a-346d-4862-b221-34b5ecc28128
+
+[Clip sources and scope](docs/demos/readme-videos.md)
+
 
 For a shared Workbench endpoint, start with the
 [shared-access quickstart](docs/workbench/shared-workbench-quickstart.md).
