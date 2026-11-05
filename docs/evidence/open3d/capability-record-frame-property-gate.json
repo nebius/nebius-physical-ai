@@ -1,0 +1,294 @@
+{
+  "capability": "The delivered Open3D frames are gated on their pixels in CI",
+  "user_outcome": "A reviewer who re-renders, replaces, crops or re-captures any of the nine delivered frames finds out in CI if the new bytes are clipped, strand the subject, wash it out, or have lost the scale reference. Before this, no test in the repository read a pixel of them.",
+  "why_this_was_open": "An independent review reduced its framing row to P4 and reframed it: the properties actually worth gating already pass, and the only residue is that nothing enforces them in CI. Measured against main, npa/tests/workbench/test_open3d.py pins the camera-fitting math and no test reads the delivered PNGs.",
+  "what_is_gated": {
+    "max_border_content_pixels": 0,
+    "max_low_contrast_content_fraction": 0.3,
+    "min_median_contrast": 60.0,
+    "min_subject_spread": 0.06,
+    "not_gated": [
+      "content_fraction",
+      "extent_span_narrower_axis"
+    ],
+    "scale_label_rect_top_bottom_left_right": [
+      648,
+      670,
+      20,
+      240
+    ],
+    "scale_label_sha256": "1bc310158d2020172cce6bda0d1214668f1a6b3eadc9ea6fd4d55a4440ed99e3",
+    "subject_spread_overlay_rects_top_bottom_left_right": [
+      [648, 670, 20, 240],
+      [655, 720, 27, 317]
+    ]
+  },
+  "result_on_the_delivered_frames": {
+    "frames": 9,
+    "passed": true,
+    "measured": {
+      "baseline_scan_and_surface__opposite.png": {
+        "border_content_pixels": 0,
+        "low_contrast_content_fraction": 0.007347174639864614,
+        "median_contrast_vs_background": 137.2126,
+        "scale_label_intact": true,
+        "subject_spread_narrower_axis": 0.175
+      },
+      "baseline_scan_and_surface__overview.png": {
+        "border_content_pixels": 0,
+        "low_contrast_content_fraction": 0.01242875074593082,
+        "median_contrast_vs_background": 157.8138,
+        "scale_label_intact": true,
+        "subject_spread_narrower_axis": 0.190625
+      },
+      "baseline_scan_and_surface__topdown.png": {
+        "border_content_pixels": 0,
+        "low_contrast_content_fraction": 0.011299128488588965,
+        "median_contrast_vs_background": 162.2848,
+        "scale_label_intact": true,
+        "subject_spread_narrower_axis": 0.14791666666666667
+      },
+      "baseline_surface_only__overview.png": {
+        "border_content_pixels": 0,
+        "low_contrast_content_fraction": 0.00021377541169006703,
+        "median_contrast_vs_background": 159.28480000000002,
+        "scale_label_intact": true,
+        "subject_spread_narrower_axis": 0.18958333333333333
+      },
+      "candidate_scan_and_surface__opposite.png": {
+        "border_content_pixels": 0,
+        "low_contrast_content_fraction": 0.03651696063410866,
+        "median_contrast_vs_background": 156.28480000000002,
+        "scale_label_intact": true,
+        "subject_spread_narrower_axis": 0.13020833333333334
+      },
+      "candidate_scan_and_surface__overview.png": {
+        "border_content_pixels": 0,
+        "low_contrast_content_fraction": 0.036706563265513345,
+        "median_contrast_vs_background": 152.28480000000002,
+        "scale_label_intact": true,
+        "subject_spread_narrower_axis": 0.128125
+      },
+      "candidate_scan_and_surface__topdown.png": {
+        "border_content_pixels": 0,
+        "low_contrast_content_fraction": 0.03252237200466894,
+        "median_contrast_vs_background": 169.357,
+        "scale_label_intact": true,
+        "subject_spread_narrower_axis": 0.10416666666666667
+      },
+      "candidate_surface_only__overview.png": {
+        "border_content_pixels": 0,
+        "low_contrast_content_fraction": 0.0004033097418817652,
+        "median_contrast_vs_background": 155.2848,
+        "scale_label_intact": true,
+        "subject_spread_narrower_axis": 0.12604166666666666
+      },
+      "observed_scan_only__overview.png": {
+        "border_content_pixels": 0,
+        "low_contrast_content_fraction": 0.07841950131442683,
+        "median_contrast_vs_background": 139.2848,
+        "scale_label_intact": true,
+        "subject_spread_narrower_axis": 0.12916666666666668
+      }
+    }
+  },
+  "two_findings_that_changed_the_design": {
+    "1_a_fixed_annotation_contaminates_the_obvious_measure": {
+      "what": "Every one of the nine frames carries a scale bar reading '1.0 m (scan units)' drawn at a fixed bottom-left position. It is content, so it pins the content bounding box.",
+      "the_tell": "All nine report a left margin of 27px, a bottom margin of 28px and a clipping headroom of 1.056 -- identical across nine different views of different geometry. Nine independent 3D projections cannot coincide like that; the number was describing the annotation.",
+      "magnitude": "At the matched-pair-certified overlay boundary, exclusion changes the extent by as much as 52.26% and the spread by at most 0.0021 (1.96%), so the extent is 26.7x more mask-sensitive. The gate therefore acts on the masked spread; extent is recorded and not gated.",
+      "consequence": "A 0.40 floor on extent -- which is what gating the recorded number would have meant -- passes a frame whose geometry has collapsed to a 16x16 speck, at every placement tried, because the annotation still anchors a corner of the box.",
+      "so": "Stranding is gated on an interquartile spread, and extent is recorded and not gated.",
+      "this_also_corrects_a_review_statement": "The review's 'the subject spans 55-71% of each frame's narrower axis' is a reading of the content bounding box, not of the subject. The arithmetic was right; the annotation was in the frame. The review measured it independently, confirmed the 27px/28px margins on all nine, and struck the claim in their own report rather than quietly amending it.",
+      "the_argument_that_needs_no_mask_at_all": "A reviewer found the decisive version and it is stronger than any shift figure. With the annotation anchoring one corner, moving a 16x16 speck further from centre makes the extent reading go UP: 0.472 dead centre, 0.794 upper-right, 0.906 in a far corner, all three passing a 0.40 floor. So an extent floor is weakest exactly where the framing is worst. The quartile spread reads 0.036 at every placement and fires on all three. Reproduced here independently; their figures were 0.461 / 0.683 / 0.822 from different speck coordinates, agreeing in direction and magnitude.",
+      "which_pixels_are_the_annotation_was_settled_by_two_controls_not_by_choosing_a_mask": {
+        "why_it_needed_settling": "The annotation has no edge the pixel values define, so for a while every figure here was a function of how much I removed. A reviewer and I produced three different shifts from three different masks and each of us argued for our own. That is not a measurement.",
+        "control_1_a_matched_pair_diff": "Baseline and candidate are different reconstructions of the same view. If the band held any subject geometry, a matched pair must differ inside it. Across all four matched pairs the band differs by exactly 0 pixels while the rest of the same frames differ by 82,788 to 97,765. The band is overlay end to end. Reproduced independently here; the reviewer proposed it and their four figures match mine to the digit.",
+        "control_2_a_plateau_sweep": "Growing the exclusion rectangle from the overlay's own origin (row 655, col 27) gives 0.332-0.596 at 81px wide, 0.321-0.510 at 120px, and then 0.264-0.510 from 160px all the way out to 440px -- flat to three decimals over a 280px growth. If the box were eating geometry the value would keep drifting. It does not, so there is nothing in those rows left to remove, and the box is minimal sufficient rather than generous.",
+        "why_this_is_better_than_either_mask_argument": "Neither control requires agreeing where the glyphs end. One asks whether the band responds to a change of reconstruction; the other asks where the answer stops changing. That is the figure to show if the boundary is ever questioned again."
+      },
+      "retired_exploratory_mask_figures": {
+        "why_they_are_not_current_claims": "Earlier absolute shifts came from rectangles or an all-frame pixel intersection that did not define the production mask. They remain reproducible history but are not used to characterize or execute the gate.",
+        "current_bound": "The matched-pair-certified 290px band is the operative exclusion. Its measured changes are reported as 52.26% for extent and 0.0021 (1.96%) for spread."
+      }
+    },
+    "2_the_framing_pair_had_a_hole_and_the_sweep_found_it": {
+      "what": "candidate_scan_and_surface__topdown.png fails the framing checks at 1.1x and 1.2x and passes again at 1.3x. By 1.3x the scale bar has been cropped out of the frame entirely, so it no longer contributes border content, and the geometry happens to miss the border on that step.",
+      "why_it_was_nearly_missed": "The sweep first reported each band as min..max, which called that band closed and said nothing. Reporting contiguity instead is what exposed it.",
+      "closed_by": "Hashing the scale label's exact pixels. The largest rectangle around the glyphs that is byte-identical in all nine frames is rows 648-670, cols 20-240; the bar beneath is excluded because its length encodes each view's metres-per-pixel and legitimately differs. No resample or crop survives an exact hash: across every frame the only zoom that keeps the label intact is 1.00.",
+      "cost_of_this_choice": "It is deliberately brittle. It fails if the renderer moves, restyles, refonts or rewords the label, and re-blessing LABEL_SHA256 should be a conscious act by someone who looked. A gate that quietly stopped checking would be worse."
+    }
+  },
+  "why_fill_is_not_gated": {
+    "claim": "A content_fraction gate has a floor and no ceiling, so it is passed by zooming in.",
+    "measured": "Fill rises monotonically with zoom in every one of the nine frames.",
+    "consequence": "The cheapest way to pass such a gate is to crop, and what crops away first is the sparse incomplete geometry these views exist to show. This is the review's objection, measured rather than repeated."
+  },
+  "the_framing_pair_is_closed": {
+    "measured": "9/9 framing bands are bounded on both sides",
+    "wall_below": "stranding -- zoom out and the content contracts below the spread floor",
+    "wall_above": "clipping -- zoom in and content reaches the border band",
+    "so": "No zoom satisfies both while ruining the framing, and the label check admits only 1.00."
+  },
+  "honest_note_on_the_thresholds": "Regression ratchets, not quality claims, and set with the current measurements in hand, so they are not a blind pre-registration. Zero border pixels is the exception and is not a tuned number. The rest sit far from observed values on purpose: a gate that trips on ordinary re-render variation gets deleted, and then it protects nothing. What makes them mean anything is that each is shown to fire on the defect it names. A review lane pointed out that the bracketing argument establishes the band exists and says nothing about its edges, and that with nine frames and a width chosen after seeing all nine, no argument from those nine can validate the edges. They asked for a control instead of an argument; harness/spread_floor_margin.py is it, and the answer is below.",
+  "what_the_floor_margin_actually_measures": {
+    "the_question": "Is 0.06 too generous, and is its exact value doing work?",
+    "both_bounds": {
+      "weakest_delivered_frame": "0.1042 (candidate_scan_and_surface__topdown), 1.74x the floor after the certified overlay is excluded",
+      "healthiest_delivered_frame": "0.1906, 3.18x the floor",
+      "hardest_stranded_control": "0.0078, with the floor 7.69x above it",
+      "so": "The masked floor separates the overlay-plus-speck control from the weakest delivered subject."
+    },
+    "the_blind_spot_stated_as_a_number": "In the worst delivered frame a subject may shrink to 0.34 of its delivered linear size and still pass. The summary uses the minimum crossing across frames, because that is the largest admissible degradation.",
+    "whether_to_tighten_is_also_measured": {
+      "what_the_data_would_carry": "0.065 tightens the worst-case admissible shrink to 0.38 while retaining 1.60x headroom over the weakest delivered frame.",
+      "what_it_rules_out": "0.07 and 0.08, because their headroom above the weakest masked frame (1.49x and 1.30x) does not exceed the 1.50x movement observed between matched reconstructions.",
+      "why_the_floor_is_not_moving": "The movement estimate rests on four pairs, and the reason this report exists is that a threshold cannot be validated against the same nine frames it was chosen from. Tightening on that evidence repeats the error with a smaller number. The floor stays, the asymmetry is recorded, and a reviewer who wants 0.065 now has the figures to ask for it."
+    },
+    "what_this_does_not_do": "It does not make the threshold pre-registered and does not show the floor catches every bad frame. It bounds one failure mode -- a subject that shrank away from the camera -- and says how much room there is on that axis."
+  },
+  "why_i_did_not_use_the_repos_existing_freeze_machinery": {
+    "the_pointer": "A review lane noted that acceptance_visual_review_binding already expresses a frozen control committed before a result, as hashes an acceptance script verifies, and suggested ten minutes on it before hand-rolling anything.",
+    "what_that_design_leans_on": "Not the hashes. vlm_evidence.py's _attempt_marker commits freeze_sha256 and request_sha256 to object storage with if_none_match=True before the hosted call, reads the object back, and compares body and etag; an existing object aborts with 'retry is prohibited'. Priority is enforced by a third party that refuses to let the author overwrite their own history, around a one-shot external call that cannot be silently retried.",
+    "why_it_does_not_transfer": "This gate is a local deterministic function of committed bytes. There is no external call to witness, no attempt to make unrepeatable, and nothing that refuses a second run. Freezing these thresholds into a hashed file would reproduce the visible half of that design and none of its enforcement.",
+    "so_i_declined": "The result would be a record that reads as pre-registered without being it -- the same shape as every finding closed on the sibling branch. A plain disclosure is worth more than a credible-looking imitation of a guarantee I cannot make. The note above stands unchanged.",
+    "what_constrains_the_thresholds_instead": "The framing pair brackets from both sides: zoom out and the spread floor fails, zoom in and the border check fails. The pass band is closed on 9 of 9 frames by measurement. Neither threshold can be loosened to admit a bad frame without the other firing, which is a property of the gate's shape rather than of when the numbers were chosen.",
+    "where_that_is_still_weaker": "The band's width is a choice made after seeing the frames. A closed band does not make its edges correct, and a reviewer who considers 0.06 too generous should propose a value; it is cheap to measure."
+  },
+  "negative_controls": [
+    "content pasted into the border band -> clipped, and only clipped",
+    "geometry replaced by a 16x16 speck with the annotation left in place -> stranded, while the extent reading it replaces still passes 0.40",
+    "all content pulled to 12% of its contrast -> washed out",
+    "two in five content pixels pushed inside the low-contrast limit -> washed-out floor fires while the median stays at 93.2, above its own floor of 60, so the two contrast checks are shown not to be redundant",
+    "the label rectangle blanked -> scale label missing",
+    "the 1.3x crop that slips past the framing checks -> caught by the label alone",
+    "geometry recoloured to a different high-contrast colour -> gate stays silent, because a gate that rejects everything protects nothing",
+    "a synthetic frame whose extent and quartile spread disagree by 20x -> pins both axes"
+  ],
+  "i_mutation_tested_my_own_tests": {
+    "killed": [
+      "border gate disabled (max 0 -> 10**9)",
+      "spread floor disabled (0.06 -> 0.0)",
+      "median contrast disabled (60 -> 0)",
+      "low-contrast gate disabled (0.30 -> 1.0)",
+      "label check skipped",
+      "spread reverted to extent on both axes",
+      "spread reverted to extent on the column axis only",
+      "spread reverted to extent on the row axis only"
+    ],
+    "my_first_mutation_was_not_faithful": "I replaced the quartile expression with count=1, which changed only the column axis. The narrower-axis min() then returned the still-correct row axis and the suite passed, so I recorded a surviving mutant. The mutation was wrong, not the tests -- the faithful both-axis version is killed by the stranded-speck test.",
+    "but_the_partial_mutation_was_a_real_gap": "A gate that is quartile-based on one axis and extent-based on the other is broken in a way no frame test would show, because min() hides it. Closed by a test that pins each axis separately against a synthetic frame where the two readings disagree by 20x. Both partial mutations are now killed."
+  },
+  "what_this_does_not_establish": [
+    "Nothing here says the frames are good, only that four named defects would be caught. The subject is an untextured point cloud and is still hard to name from a single view; the review measured that separately and the remaining remedy it named is an honest caption, which is claimed by another lane.",
+    "The zoom sweep is a 2D rescale about the frame centre, not a re-render. It exercises the gate, not the renderer or the camera fitting, which are pinned separately.",
+    "The thresholds are not calibrated against human judgement. No VLM was called: this is a pixel-measurement gate over committed bytes, so visual evaluation is not applicable rather than manufactured.",
+    "The label check encodes the current renderer's overlay convention. It does not verify the scale bar is numerically correct, only that the label's pixels are unchanged.",
+    "No centring property is gated. The spread answers 'is the content concentrated', not 'is the subject well placed'. A reviewer pointed out that subject-only left against right margin would answer the placement question; it needs a sound overlay boundary first, so it is not built here.",
+    "The occupancy of these frames is low -- four are under 13% fill -- and nothing in this change improves that. A reviewer was explicit that pinning low occupancy is not fixing it, and that the original framing complaint stays open. This change should not be read as closing it."
+  ],
+  "reproduce": [
+    "npa/.venv/bin/python docs/evidence/open3d/harness/frame_property_gate.py --out docs/evidence/open3d/delivered-frame-property-gate.json docs/evidence/open3d/frames-refit/*.png",
+    "npa/.venv/bin/python docs/evidence/open3d/harness/gate_zoom_sweep.py --out docs/evidence/open3d/gate-zoom-sweep.json docs/evidence/open3d/frames-refit/*.png",
+    "cd npa && .venv/bin/python -m pytest tests/workbench/test_open3d_frame_properties.py -q"
+  ],
+  "provenance": {
+    "source_commit": "d06e95846",
+    "built_on_main": "d06e95846",
+    "main_is_an_ancestor_of_this_commit": true,
+    "why_harness_digests_and_not_only_a_commit": "The harness that produced these numbers is added by this change, so the record cannot name its own commit -- the hash does not exist until after the record is written. The file digests are knowable now and are what a reader actually needs to recompute.",
+    "pr_602_merge_is_an_ancestor": "15b0b11f0",
+    "harness_that_produced_this": [
+      {
+        "path": "harness/frame_edge_audit.py",
+        "sha256": "b2fbbf2e9e902342498d064dade0397c5f48c5b4ab3f014c8944cd7b87330b8e"
+      },
+      {
+        "path": "harness/frame_property_gate.py",
+        "sha256": "9bd3de75d8e7fbb53fe30e3eda8a860ee49875335cf062dd6aebebd999afc412"
+      },
+      {
+        "path": "harness/gate_zoom_sweep.py",
+        "sha256": "2dd9aa7aff8f74948d329ad4e49097caeb34769dad5aefb777b0f3cba57d9ef6"
+      },
+      {
+        "path": "harness/overlay_isolation_controls.py",
+        "sha256": "8d49ff37ede658e674d43562d707acf720650a328ce0dda2928f7b03169e0bd3"
+      },
+      {
+        "path": "harness/spread_floor_margin.py",
+        "sha256": "a4a7c09ba8bf8e01ce11baec5a57a56461bb8c19b09a8bfd820532d440078912"
+      },
+      {
+        "path": "harness/statistic_mask_sensitivity.py",
+        "sha256": "3176bb3c0acc57ce9f5d1833a662e86650360000351fd0d4265d247f2f23609c"
+      },
+      {
+        "path": "statistic-mask-sensitivity.json",
+        "sha256": "0232e31343124386d0716d83769f7ab1f488e97f05d5f20b11efbb2f4e68b37e"
+      }
+    ],
+    "one_of_these_pins_goes_stale_when_a_sibling_lands": "harness/frame_edge_audit.py is edited by the evidence-binding branch (PR 982), which makes it record the sha256 of each file it measures. That digest is correct for the bytes on this branch and stops being correct the moment 982 merges. Whichever of the two lands second must re-read it. Written down rather than left for a reader to discover, because a stale pin and a tampered one look the same.",
+    "why_this_gate_pins_that_harness_at_all": "The zoom sweep's framing columns are the audit harness's own measurements, taken through the same code path, so the sweep's numbers are only reproducible against the version of it recorded here.",
+    "the_two_hashes_this_change_leaves_unbound": "LABEL_SHA256 appears twice -- once in the gate report's thresholds and once in what_is_gated above -- and the evidence guard counts both as hashes that name no file. That is correct: it digests a pixel rectangle inside a frame, not a file, so no file-binding guard can check it. It first appeared 20 times, once per frame as well, which was 18 identical hashes of pure noise; the per-frame record is now a boolean and the expected value is stated once. The extended guard on the evidence-binding branch cross-checks hashes that two records state side by side, which is the check that will cover these two."
+  },
+  "a_claim_i_withdrew": {
+    "what_i_said": "That the delivered frames are 'one small camera change from clipping', on the strength of margins as uneven as 27px against 405px and a clipping headroom near 1.06.",
+    "why_it_was_wrong": "That 27px is the annotation, not the subject -- the same conflation I had just corrected one section earlier, and the constant 1.056 headroom across nine different views was in my own list of tells that a number is describing the overlay. A reviewer caught that my conclusion had inherited the error its own evidence refuted.",
+    "what_is_actually_measured": "The subject's left margin is nowhere near 27px. Removing only the provable annotation leaves 73-76px, which is still contaminated upward by glyph edges anti-aliased against the geometry behind them; a reviewer's rectangular exclusion out to col 107 gives 108-236px, censored at its own boundary. Both are bounds on the same quantity from opposite directions, and neither is 27. Right margins run 237-405px.",
+    "so": "The fragility claim is withdrawn, not deferred. The frames are less badly framed than I said. A sound subject-only margin cannot be measured from these bytes alone -- it needs the renderer to declare its overlay region -- and a genuine centring gate is a separate measurement this change does not make."
+  },
+  "two_controls_replaced_three_arguments_about_masks": {
+    "why": "Three masks produced three different annotation shifts and each of us argued for our own. A reviewer and I both corrected the figure in the wrong direction before either of us ran a control.",
+    "control_1_matched_pair_diff": "Baseline and candidate are different reconstructions of one view. The band differs by 0 pixels in all four matched pairs while the rest of the same frames differ by 82,788 to 97,765. The band does not respond to a change of reconstruction, so it is not the subject.",
+    "control_2_plateau_sweep": "Growing the exclusion rectangle from the overlay's origin: 0.332-0.596 at 81px, 0.321-0.510 at 120px, then 0.264-0.510 flat from 160px to 440px at every height tested. A box eating geometry keeps moving the answer; this one has stopped.",
+    "why_these_beat_a_mask_argument": "Neither needs agreement about where the glyphs end. One asks whether the band responds to a change of reconstruction; the other asks where the answer stops changing.",
+    "harnesses": "harness/overlay_isolation_controls.py and harness/spread_floor_margin.py, both pinned by tests.",
+    "i_mutation_tested_them": {
+      "result": "6 of 7 killed.",
+      "the_one_that_survived_is_equivalent": "Shrinking the stranded control's speck from 16x16 to 1x1. Both of the control's claims still hold -- the naive extent reading passes and the spread fails -- because a 1x1 speck is still a stranded subject. Pinning the exact speck size would pin an incidental constant, so it is recorded rather than chased.",
+      "one_real_gap_it_found": "Removing the speck entirely left a frame that also reads below the floor, so a test asserting only 'the control fails' could not tell an empty frame from a collapsed one. The test now also asserts the naive extent reading still passes, which is the control's actual claim."
+    },
+    "but_the_two_controls_disagree_above_290px_and_only_one_of_them_is_right": {
+      "what_i_believed": "That the plateau and the pair diff agreed, so either would do and the widest box in the sweep was safe.",
+      "what_is_true": "The pair diff is exactly zero through 290px and nonzero from 320px, rising to 4,174 differing pixels at 440px. The extent plateau is flat across that whole range. A flat extent means the annotation no longer pins the bounding box; it does not mean the box is empty of subject, because interior pixels that were never on the boundary can be removed without the extent moving.",
+      "consequence": "The pair diff is the load-bearing control and the plateau is corroboration. The published subject extent is unaffected, because the plateau onset at 160px sits well inside the certified region.",
+      "what_it_cost_me": "One figure in this record, the spread's sensitivity, was measured at 440px and was therefore about double the true value. A reviewer's independent figure disagreed with mine, and the disagreement is what found this."
+    }
+  },
+  "the_gated_statistic_is_the_one_the_mask_cannot_move": {
+    "why_this_matters_more_than_the_dispute_it_settles": "The figure argued over at length is the bounding-box extent, which this gate records and does not act on. The gate acts on the interquartile spread. Removing the annotation moves the extent by up to 52.3% and the spread by 1.96%, so the statistic that gates is 26.7x less exposed to the mask question than the one that was disputed.",
+    "who_noticed": "A reviewer, after neither of us had thought to ask. I had recorded the absolute movement and drawn the right conclusion from it, but never as the ratio that makes the case, which is the form that shows the dispute could not have changed a verdict.",
+    "why_quartiles_behave_this_way": "An interquartile spread is insensitive to a compact cluster at one corner, which is what a fixed annotation is. An extent is defined by the outermost pixel, so one glyph can set it.",
+    "what_this_does_not_excuse": "The extent figure was still published wrong and corrected twice. Being a diagnostic makes it less dangerous, not less wrong.",
+    "where_the_headline_ratio_sits": "26.7x is the second smallest of the nine per-frame ratios, which run 24.5x to 66.2x, and one frame's spread does not move under the mask at all. A reviewer called it the smallest; it is the second smallest. Either way it is near the bottom of the range, so the conclusion does not rest on a flattering frame.",
+    "a_cross_measurement_disagreement_narrowed_to_one_term": {
+      "what_it_was_not": "Not a row misattribution. I proposed that, because a reviewer's 48.5x matched this harness's reading of the adjacent frame to within 0.2. They hashed all nine frames against the ones in this PR: 9 of 9 byte-identical under the same names. The coincidence was real and the inference from it was not.",
+      "what_it_was_not_either": "Not the axis definition they proposed. The frame reads the same under every convention that moves extent and spread together.",
+      "what_it_actually_is": "A pairing difference. They pin the extent to the horizontal axis and vary only the spread axis; this harness moved both together, so each of us was invariant within our own family and neither family was named. A nine-cell matrix of numerator axis against denominator axis now localises it: their extent-horizontal over spread-vertical column reproduces here exactly on both frames, and their spread-horizontal column does not, which leaves the horizontal quartile spread as the only term that can differ.",
+      "a_claim_of_mine_that_was_scoped_too_broadly": "I labelled a frame 'convention-invariant' on the strength of four conventions that all move both axes at once. It is invariant within that family and not across theirs. The label claimed more than the control tested.",
+      "the_durable_fix": "Any ratio quoted about these frames names its numerator axis and its denominator axis. Naming one is what let this run for three exchanges, and it is the fourth disagreement here caused by convention rather than data."
+    },
+    "a_sentence_that_understated_my_own_result": "Review found a sentence reading 'zero differing pixels through 260px' beside a table whose zero-diff readings run to 290 and a widest_certified_overlay_only of 290. It understated the certified range by one step of the sweep and changed no conclusion, which is why nothing else would have caught it. Corrected, and pinned as an agreement between the prose and the field rather than as a literal, so a re-run cannot leave the sentence behind.",
+    "the_cross_measurement_disagreement_is_resolved": {
+      "how": "I asked review for one number -- their horizontal quartile spread before and after the cut on observed_scan_only__overview -- rather than proposing a third cause. They measured it from their own retained bytes: Q1 332 to 334, Q3 458 unchanged, horizontal IQR 126 to 124 px, relative movement 0.015873. Against their extent movement that gives 24.58, which rounds to 24.6.",
+      "outcome": "They withdrew 48.5 and confirmed this harness's 24.6, and their published 'undefined' for candidate_surface_only__overview is withdrawn in favour of this harness's 48.3. They then reproduced all 16 defined pairing entries, including both undefined cells in the right places, after replacing their fixed annotation box with a per-view band.",
+      "what_actually_closed_it": "A pairing matrix and a request for one term, not another hypothesis. Three hypotheses died before that: my row misattribution, their axis definition, and their first pairing account. Naming both axes of every ratio is what made the remaining disagreement small enough to settle with a single measurement.",
+      "how_much_of_their_reproduction_is_independent": "Eight of the sixteen are independent: the five overview frames, where the band they used was one they had measured themselves before this exchange and which produced this harness's 729 overlay pixels without reference to that number. The other eight are not. They found the opposite and topdown right edges by searching for the value that reproduces this harness's published pixel counts, which is fitting to my data. They said so unprompted and asked to be cited as 'consistent with' rather than 'independently confirmed' on that half, so that is how it is cited here. The arithmetic check on top of a fitted band is still real and is still weaker than the overview half.",
+      "the_cause_is_now_measured_and_it_was_neither_of_the_candidates": {
+        "what_it_turned_out_to_be": "An unstated background tolerance acting on a quantity with a one-pixel hinge. The ratio's denominator is the relative movement of an interquartile spread; that movement is one to two pixels in 126, so one pixel crossing the threshold halves the denominator and doubles the ratio.",
+        "reproduced_here": "Their whole sweep reproduces on these frames: 24.58 at tolerances 0-8, 48.77 at 10-16, 24.58 at 18, 24.38 at 20-22 and 48.38 at 24-30, with the horizontal quartile movement reading 2px in the low bands and 1px in the high ones. Their published pair -- 48.38 on the disputed frame and undefined on candidate_surface_only__overview -- is exactly what this harness produces at tolerance 24 and above.",
+        "who_found_it": "The reviewer, by sweeping their own harness after two of their own explanations had failed, and against their own published figure. Each of their three hypotheses was tested and discarded by them, including the pairing asymmetry they had raised an hour earlier.",
+        "what_it_cost": "Four exchanges and three dead hypotheses -- one of mine about rows, two of theirs about axes and pairing -- over a quantity neither of us had swept.",
+        "what_i_did_beyond_confirming_it": "They asked for a one-line stability note. The sweep showed five of the nine frames swing by 2x to 3x and two pass through undefined, so it is a property of the ratio rather than a quirk of the disputed frame, and a note would have understated it. Every entry is now published with the interval it occupies over the sweep.",
+        "diagnostic_only": "Every diagnostic spread clears the nominal 0.06 floor across this median-background tolerance sweep. This is not a production-gate measurement: the gate uses a modal corner background and a fixed tolerance, and is tested directly."
+      }
+    }
+  },
+  "the_floors_fragility_stated_from_measured_movement": {
+    "the_figures": "The weakest delivered frame sits 1.77x above the floor. The largest movement the statistic has shown between two reconstructions of one view is 1.50x.",
+    "what_follows": "The headroom beyond already-observed movement is about 18%. A reconstruction that moved as much again as the worst case measured would put the weakest delivered frame close to the floor.",
+    "why_this_is_recorded_instead_of_a_tighter_floor": "It is derived from measured movement rather than from the nine frames the threshold was chosen on, so it needs no new threshold and cannot be a disguised retune. It argues for validating the edge against frames outside these nine. A reviewer proposed it on exactly that basis and explicitly did not ask for 0.065.",
+    "masked_and_unmasked": "1.77x is the unmasked minimum and 1.74x the masked one. The gate reads the masked frame, so 1.74x is the operative margin. The gap is the mask rather than a disagreement with the reviewer who measured both."
+  }
+}

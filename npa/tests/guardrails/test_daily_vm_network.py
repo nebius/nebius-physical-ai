@@ -97,7 +97,7 @@ def test_daily_workflow_has_no_pr_trigger_and_always_cleans_credentials():
     assert _step("Clean up SSH key")["if"] == "always()"
     assert _step("Check out repository")["with"]["persist-credentials"] is False
     assert "ssh-keyscan" not in WORKFLOW.read_text()
-    missing = _step("Verify required secrets are present")["run"]
+    missing = _step("Verify required secure transport settings are present")["run"]
     assert '"$DEV_VM_SSH_KNOWN_HOSTS"' in missing
     steps = [step["name"] for step in workflow["jobs"]["dev-vm-tests"]["steps"]]
     cleanup = "Clean up the remote runner script"
@@ -125,10 +125,10 @@ def test_missing_ssh_settings_fail_without_exposing_other_values(tmp_path, missi
     }
     environment.update(configured)
     del environment[missing]
-    result = _run("Verify required secrets are present", environment)
+    result = _run("Verify required secure transport settings are present", environment)
     assert result.returncode == 1
     output = result.stdout + result.stderr
-    assert f"Missing required secret(s): {missing}" in output
+    assert f"Missing required secure transport setting(s): {missing}" in output
     assert all(value not in output for value in configured.values())
     assert not Path(environment["COMMAND_LOG"]).exists()
 

@@ -786,6 +786,22 @@ def test_excessively_nested_manifest_json_is_normalized(tmp_path: Path) -> None:
     assert type(caught.value) is RuntimeError
 
 
+def test_structural_json_depth_limit_has_a_safe_boundary() -> None:
+    permitted = (
+        b'{"nested":' * scanner.MAX_JSON_NESTING
+        + b"0"
+        + b"}" * scanner.MAX_JSON_NESTING
+    )
+    rejected = (
+        b'{"nested":' * (scanner.MAX_JSON_NESTING + 1)
+        + b"0"
+        + b"}" * (scanner.MAX_JSON_NESTING + 1)
+    )
+    assert scanner._strict_json(permitted)
+    with pytest.raises(RuntimeError, match="excessively nested structural data"):
+        scanner._strict_json(rejected)
+
+
 @pytest.mark.parametrize(
     "payload",
     [

@@ -76,10 +76,12 @@ _INRELEASE = _PublicProof(
 )
 _SOURCES = _PublicProof(
     "robomimic-debian-bookworm-sources.xz",
-    (
-        "https://snapshot.debian.org/archive/debian/"
-        f"{_SNAPSHOT}/dists/bookworm/main/source/Sources.xz"
-    ),
+    # The archive route for this large signed index intermittently returns 5xx.
+    # This official, immutable Snapshot file representation serves the identical
+    # object. Its hash and size remain bound by the verified InRelease below.
+    "https://snapshot.debian.org/file/"
+    "b5d2189a5f7dd344fab97d8e372bbb852c7644b9/"
+    "92d11a035571df011f06f28c61cb9825130ef1d92abb2f2e0525e8674dc44af8",
     "92d11a035571df011f06f28c61cb9825130ef1d92abb2f2e0525e8674dc44af8",
     9_491_888,
     "snapshot.debian.org",

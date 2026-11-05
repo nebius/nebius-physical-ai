@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from npa.workbench.seedvr2 import artifacts, runtime
+from npa.workbench.seedvr2 import artifacts, quality, runtime
 from npa.workbench.seedvr2.schemas import (
     ConditioningMode,
     ExpectedGPU,
@@ -74,10 +74,23 @@ def review(*, input_path: str, output_path: str, run_id: str) -> dict[str, Any]:
     )
 
 
+def quality_boundary(
+    *, input_path: str, output_path: str, run_id: str
+) -> dict[str, Any]:
+    """Publish advisory diagnostics and an explicit review-only boundary."""
+
+    return quality.assess(
+        VideoArtifactRequest(
+            input_path=input_path, output_path=output_path, run_id=run_id
+        )
+    )
+
+
 __all__ = [
     "RestoreRequest",
     "VideoArtifactRequest",
     "probe",
+    "quality_boundary",
     "restore",
     "review",
     "verify",

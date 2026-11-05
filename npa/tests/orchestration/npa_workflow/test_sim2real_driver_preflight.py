@@ -58,13 +58,17 @@ def _workflow(pod=None):
     )
 
 
+def _placements():
+    return isaac_render_placements(_workflow(), context="synthetic")
+
+
 @pytest.mark.parametrize(
     "excluded",
     ["cordoned", "unready", "tainted", "selector", "allowlist", "memory", "gpu"],
 )
 def test_excluded_managed_pool_does_not_block_operator_pool(excluded):
     node = _node()
-    placements = isaac_render_placements(_workflow(), context="synthetic")
+    placements = _placements()
     if excluded == "cordoned":
         node["spec"]["unschedulable"] = True
     elif excluded == "unready":
@@ -91,6 +95,27 @@ def test_excluded_managed_pool_does_not_block_operator_pool(excluded):
     assert (
         _managed_driver_isaac_nodes(
             json.dumps({"items": [node, operator]}), placements=placements
+        )
+        == []
+    )
+
+
+@pytest.mark.parametrize("excluded", ["cordoned", "unready", "tainted"])
+def test_unavailable_managed_node_does_not_require_gpu_inventory(excluded):
+    node = _node()
+    del node["status"]["allocatable"]["nvidia.com/gpu"]
+    if excluded == "cordoned":
+        node["spec"]["unschedulable"] = True
+    elif excluded == "unready":
+        node["status"]["conditions"][0]["status"] = "False"
+    else:
+        node["spec"]["taints"] = [
+            {"key": "dedicated", "value": "compute", "effect": "NoSchedule"}
+        ]
+
+    assert (
+        _managed_driver_isaac_nodes(
+            json.dumps({"items": [node]}), placements=_placements()
         )
         == []
     )
@@ -125,9 +150,10 @@ def test_matching_toleration_keeps_managed_node_in_driver_check(effect):
 def test_default_gpu_noschedule_toleration_is_preserved():
     node = _node()
     node["spec"]["taints"] = [{"key": "nvidia.com/gpu", "effect": "NoSchedule"}]
-    assert node_can_host_isaac(node)
+    placements = _placements()
+    assert node_can_host_isaac(node, placements)
     node["spec"]["taints"][0]["effect"] = "NoExecute"
-    assert not node_can_host_isaac(node)
+    assert not node_can_host_isaac(node, placements)
 
 
 def test_global_context_and_task_placement_follow_skypilot_merge(tmp_path):
@@ -192,7 +218,92 @@ def test_missing_node_evidence_cannot_be_reported_as_safe(missing):
     node = _node()
     del node["status"][missing]
     with pytest.raises(ValueError, match="evidence is missing"):
-        node_can_host_isaac(node)
+        node_can_host_isaac(node, _placements())
+
+
+@pytest.mark.parametrize("placements", [None, [], (), [{}], ["invalid"]])
+def test_missing_or_malformed_placement_authority_is_rejected(placements):
+    with pytest.raises(ValueError, match="effective Isaac stage placement"):
+        node_can_host_isaac(_node(), placements)
+
+
+def test_every_effective_placement_is_validated_before_a_node_match():
+    placements = _placements()
+    placements.append({})
+
+    with pytest.raises(ValueError, match="effective Isaac stage placement"):
+        node_can_host_isaac(_node(), placements)
+
+
+def test_every_effective_placement_shape_is_validated_after_a_node_match():
+    placements = _placements()
+    placements.append({**placements[0], "cpus": "invalid"})
+
+    with pytest.raises(ValueError, match="effective Isaac stage placement"):
+        node_can_host_isaac(_node(), placements)
+
+
+def test_unexpected_effective_placement_fields_are_rejected():
+    placements = _placements()
+    placements[0]["unexpected"] = True
+
+    with pytest.raises(ValueError, match="effective Isaac stage placement"):
+        node_can_host_isaac(_node(), placements)
+
+
+@pytest.mark.parametrize("missing", ["cpus", "memory", "allowed_nodes"])
+def test_required_effective_placement_fields_cannot_be_omitted(missing):
+    placements = _placements()
+    del placements[0][missing]
+
+    with pytest.raises(ValueError, match="effective Isaac stage placement"):
+        node_can_host_isaac(_node(), placements)
+
+
+@pytest.mark.parametrize(
+    "allowed_nodes",
+    [
+        7,
+        "managed-pool",
+        {"managed-pool": True},
+        ("managed-pool", 7),
+        ("",),
+    ],
+    ids=["integer", "string", "mapping", "non-string-member", "blank-member"],
+)
+def test_malformed_effective_allowed_nodes_are_rejected(allowed_nodes):
+    placements = _placements()
+    placements[0]["allowed_nodes"] = allowed_nodes
+
+    with pytest.raises(ValueError, match="effective Isaac stage placement"):
+        node_can_host_isaac(_node(), placements)
+
+
+def test_explicit_unrestricted_allowed_nodes_is_accepted():
+    placements = _placements()
+    for placement in placements:
+        placement["allowed_nodes"] = None
+
+    assert node_can_host_isaac(_node(), placements)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("cpus", None),
+        ("cpus", 0),
+        ("cpus", -1),
+        ("memory", None),
+        ("memory", 0),
+        ("memory", ""),
+    ],
+)
+def test_nonpositive_effective_capacity_is_rejected(field, value):
+    placements = _placements()
+    placements[0][field] = value
+
+    with pytest.raises(ValueError, match="effective Isaac stage placement"):
+        node_can_host_isaac(_node(), placements)
 
 
 def test_unknown_affinity_fails_closed():
@@ -272,4 +383,4 @@ def test_placement_node_rejects_malformed_identity(broken):
     else:
         del node["metadata"]["name"]
     with pytest.raises(ValueError, match="evidence is invalid"):
-        node_can_host_isaac(node)
+        node_can_host_isaac(node, _placements())
