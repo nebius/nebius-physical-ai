@@ -159,6 +159,189 @@ def validate_pair(row: Any) -> None:
         raise Open3dError("aligned cloud must carry a sha256 digest")
     if not _finite_number(row["wall_seconds"]) or row["wall_seconds"] < 0:
         raise Open3dError("wall_seconds must be a nonnegative duration")
+    _validate_agreement(row)
+
+
+_AGREEMENT_FIELDS = (
+    "seeds",
+    "worst_pairwise_displacement",
+    "worst_pairwise_displacement_voxels",
+    "worst_disagreeing_seeds",
+    "fitness_spread",
+    "inlier_rmse_spread",
+    "fitness_by_seed",
+    "inlier_rmse_by_seed",
+    "agreement_is_not_correctness",
+)
+
+
+def _is_seed(value: Any) -> bool:
+    """An Open3D seed is an int. `bool` is an int in Python and is not a seed."""
+
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _validate_failed_seeds(failed: Any) -> None:
+    """Seeds whose diagnostic re-run raised, recorded rather than dropped.
+
+    Optional, because a row from before this existed does not carry it and a run
+    where nothing failed has nothing to record.
+    """
+
+    if failed is None:
+        return
+    if not isinstance(failed, list) or not failed:
+        raise Open3dError("failed_seeds must be a non-empty list when present")
+    for entry in failed:
+        if not isinstance(entry, dict) or not _is_seed(entry.get("seed")):
+            raise Open3dError("each failed seed must name the integer seed it was")
+        if not isinstance(entry.get("error"), str) or not entry["error"]:
+            raise Open3dError("each failed seed must carry why it failed")
+
+
+def _validate_agreement(row: Any) -> None:
+    """Check the multi-seed agreement block against the attempts it summarizes.
+
+    Opt-in, so a row without it is a row from a manifest that did not ask for it and
+    is left alone. A row that carries the key with nothing in it is a different thing
+    and is an error: `None` would otherwise be indistinguishable from not having asked.
+
+    What this can check is internal consistency. It cannot check that the alignment is
+    correct -- nothing in the report can, which is the finding this block exists to
+    publish rather than a gap in it.
+    """
+
+    if "agreement" not in row:
+        return
+    block = row["agreement"]
+    if not isinstance(block, dict):
+        raise Open3dError("registration agreement block is missing measurements")
+
+    # A requested measurement that could not be taken. Fewer than two seeds
+    # registered successfully, so there is no legal agreement to summarize -- and
+    # omitting the key would be indistinguishable from never having asked for it.
+    if block.get("measured") is False:
+        if not isinstance(block.get("why_not"), str) or not block["why_not"]:
+            raise Open3dError(
+                "an agreement that was not measured has to say why it was not"
+            )
+        _validate_failed_seeds(block.get("failed_seeds"))
+        return
+
+    if not set(_AGREEMENT_FIELDS) <= set(block):
+        raise Open3dError("registration agreement block is missing measurements")
+    seeds = block["seeds"]
+    if not isinstance(seeds, list) or len(seeds) < 2:
+        raise Open3dError("agreement needs at least two seeds to compare")
+    # F7: `set()` on list contents without a type guard. A published journal row
+    # carrying `"seeds": [[1], [2]]` raised `TypeError: unhashable type` out of
+    # `read_journal`, which the CLI does not catch -- the same hole the `float(None)`
+    # guard below already closes for the counterexample path.
+    if not all(_is_seed(one) for one in seeds):
+        raise Open3dError("agreement seeds must be integers")
+    if len(set(seeds)) != len(seeds):
+        raise Open3dError("agreement seeds must be distinct, or they repeat one run")
+    _validate_failed_seeds(block.get("failed_seeds"))
+    for key in ("fitness_by_seed", "inlier_rmse_by_seed"):
+        values = block[key]
+        if not isinstance(values, list) or len(values) != len(seeds):
+            raise Open3dError(f"{key} must carry one value per seed")
+        if not all(_finite_number(value) for value in values):
+            raise Open3dError(f"{key} must be finite numbers")
+    for key, series in (
+        ("fitness_spread", "fitness_by_seed"),
+        ("inlier_rmse_spread", "inlier_rmse_by_seed"),
+    ):
+        values = [float(value) for value in block[series]]
+        if not _finite_number(block[key]) or float(block[key]) < 0:
+            raise Open3dError(f"{key} must be a nonnegative spread")
+        if abs(float(block[key]) - (max(values) - min(values))) > 1e-12:
+            raise Open3dError(f"{key} does not match the per-seed values beside it")
+    worst = block["worst_pairwise_displacement"]
+    if not _finite_number(worst) or float(worst) < 0:
+        raise Open3dError("worst_pairwise_displacement must be a nonnegative distance")
+    pair = block["worst_disagreeing_seeds"]
+    if float(worst) > 0:
+        if not isinstance(pair, list) or len(pair) != 2:
+            raise Open3dError("a nonzero disagreement must name the two seeds it is")
+        if not all(_is_seed(one) for one in pair):
+            raise Open3dError("worst_disagreeing_seeds must name integer seeds")
+        if not set(pair) <= set(seeds):
+            raise Open3dError("worst_disagreeing_seeds names a seed that was not run")
+    voxels = block["worst_pairwise_displacement_voxels"]
+    if voxels is not None and not _finite_number(voxels):
+        raise Open3dError("worst_pairwise_displacement_voxels must be finite or null")
+    # F8: the voxel-normalised figure is the one the README, the evidence record and
+    # the counterexample all quote, and it was the only field in the block with no
+    # internal consistency check -- a stale or wrong normalisation passed `validate`
+    # silently. The block now carries the voxel size it divided by, so the quotient
+    # is checkable from the row alone.
+    if voxels is not None:
+        voxel_size = block.get("voxel_size")
+        if not _finite_number(voxel_size) or float(voxel_size) <= 0:
+            raise Open3dError(
+                "a voxel-normalised disagreement must carry the positive voxel size "
+                "it was divided by, or the figure cannot be checked from the row"
+            )
+        expected = float(worst) / float(voxel_size)
+        # Relative, because the quotient spans many orders of magnitude across
+        # scenes and an absolute epsilon would be vacuous at one end and wrong at
+        # the other.
+        if abs(float(voxels) - expected) > max(1e-9, abs(expected) * 1e-9):
+            raise Open3dError(
+                "worst_pairwise_displacement_voxels is not "
+                "worst_pairwise_displacement divided by voxel_size"
+            )
+    _validate_counterexample(block["agreement_is_not_correctness"])
+
+
+def _validate_counterexample(limitation: Any) -> None:
+    """The limitation is a relation between two measured numbers, so check the relation.
+
+    A consumer who reads agreement as correctness is the failure this measurement
+    invites, so the block has to carry the case where agreement was high and every
+    seed was wrong. Carried as a sentence it could be inverted by one word and still
+    satisfy any phrase a guard looks for. Carried as figures, the claim is that the
+    error dwarfs the agreement, and that either holds or it does not.
+    """
+
+    if not isinstance(limitation, dict) or "measured_counterexample" not in limitation:
+        raise Open3dError(
+            "the agreement block must carry the measured case where every seed agreed "
+            "and every seed was wrong"
+        )
+    case = limitation["measured_counterexample"]
+    required = ("seeds_agreed_within_voxels", "every_seed_was_wrong_by_voxels")
+    if not isinstance(case, dict) or not set(required) <= set(case):
+        raise Open3dError("the counterexample must carry both of its measurements")
+    # Before the float() below, not after. Unpacking forced the conversion first, so
+    # `float(None)` raised TypeError -- which the CLI's `(Open3dError, ValueError)` does
+    # not catch -- before the guard written to reject exactly that was consulted. JSON
+    # `null` is the likeliest real shape for a measurement that was not taken.
+    if not all(_finite_number(case[key]) for key in required):
+        raise Open3dError("the counterexample's measurements must be finite numbers")
+    agreed, wrong = (float(case[key]) for key in required)
+    if agreed <= 0 or wrong <= 0:
+        raise Open3dError("the counterexample's measurements must be positive")
+    # Strictly more than ten times, so a case sitting exactly on the boundary is
+    # rejected. This guard exists to make the claim hard to satisfy, and the measured
+    # figures clear it by a factor of twenty-five.
+    #
+    # Note the coupling this creates, because it is deliberate and has a cost: the
+    # ratio is enforced on every agreement block the runtime *reads*, and the figures
+    # it is checked against are the editorial constant `AGREEMENT_COUNTEREXAMPLE` in
+    # `runner.py`. A future re-measurement that moved those figures below 10x would
+    # therefore make the runner emit journals its own validator rejects -- a runtime
+    # failure, not merely a red test. The trade is accepted: shipping the limitation
+    # as a checkable relation is what stops it from being invertible prose, and if the
+    # counterexample ever stops being one, the measurement's published claim has
+    # changed and the constant is the right place to be forced to notice.
+    if wrong <= 10.0 * agreed:
+        raise Open3dError(
+            f"the counterexample is not one: the seeds agreed within {agreed} voxels "
+            f"and were wrong by {wrong}, which does not show that agreement and "
+            "correctness are different things"
+        )
 
 
 def read_journal(path: Path) -> list[dict[str, Any]]:
@@ -909,6 +1092,100 @@ def validate_support(report: Any, *, voxel_size: float) -> None:
     ) * (1.0 + 1e-6):
         raise Open3dError(
             "surface remains farther from the scan than the support limit allows"
+        )
+    _validate_coverage_cost(report, coverage, float(factor))
+
+
+#: Distinguishes "this record predates the coverage pair" from "this record published
+#: the pair as nothing". Only the first is exempt.
+_ABSENT = object()
+
+
+def _validate_coverage_cost(report: Any, coverage: dict, factor: float) -> None:
+    """Check what the crop cost coverage against the coverage pair it sits beside.
+
+    Reports written before this pair existed do not carry it, and are left alone. A
+    report that carries the keys with nothing in them is not one of those: it is a new
+    report declining to measure, and it is an error. What
+    this does check is the one direction the crop can move coverage: removing surface
+    cannot bring a sample closer to it, so coverage can only fall, and a sample covered
+    afterwards must have been covered before. That makes the abandonment count equal to
+    the drop, and a report where those disagree is describing something the crop cannot
+    do.
+    """
+
+    # A sentinel rather than `None`, because `report.get(k)` gives `None` both for an
+    # old record that predates this pair and for a new one that published the keys
+    # carrying nothing, and those deserve opposite answers. Keyed on `None` the
+    # exemption was a switch: emitting both as `None` kept the keys present, satisfied
+    # the guard that reads them, and skipped every check below.
+    cost = report.get("coverage_cost_of_crop", _ABSENT)
+    before = report.get("coverage_before_crop", _ABSENT)
+    if cost is _ABSENT and before is _ABSENT:
+        return
+    cost = None if cost is _ABSENT else cost
+    before = None if before is _ABSENT else before
+    for name, block, keys in (
+        ("coverage_before_crop", before, ("fraction_within_voxel", "samples")),
+        (
+            "coverage_cost_of_crop",
+            cost,
+            (
+                "samples",
+                "samples_covered_before_crop",
+                "samples_abandoned_by_crop",
+                "coverage_is_bit_identical",
+            ),
+        ),
+    ):
+        if not isinstance(block, dict) or not set(keys) <= set(block):
+            raise Open3dError(f"reconstruction report is missing {name} measurements")
+    if not (coverage["samples"] == before["samples"] == cost["samples"]):
+        raise Open3dError(
+            "the coverage pair and its cost must measure the same samples"
+        )
+    samples = int(coverage["samples"])
+    fraction_before = before["fraction_within_voxel"]
+    if not _finite_number(fraction_before) or not 0.0 <= float(fraction_before) <= 1.0:
+        raise Open3dError("coverage fraction must be a fraction in [0, 1]")
+    if float(coverage["fraction_within_voxel"]) > float(fraction_before) + 1e-9:
+        raise Open3dError(
+            "coverage rose across the crop, which removing surface cannot do"
+        )
+    covered_before = round(float(fraction_before) * samples)
+    covered_after = round(float(coverage["fraction_within_voxel"]) * samples)
+    for key in ("samples_covered_before_crop", "samples_abandoned_by_crop"):
+        value = cost[key]
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise Open3dError(f"{key} must be a nonnegative count")
+    if cost["samples_covered_before_crop"] != covered_before:
+        raise Open3dError(
+            "the cost block disagrees with coverage_before_crop about how many "
+            "samples the surface explained"
+        )
+    if cost["samples_abandoned_by_crop"] != covered_before - covered_after:
+        raise Open3dError(
+            "abandoned samples must account for the whole drop in coverage"
+        )
+    if cost["coverage_is_bit_identical"] is not (covered_before == covered_after):
+        raise Open3dError(
+            "the cost block disagrees with the coverage pair about whether coverage "
+            "moved"
+        )
+    worst = cost.get("worst_abandoned_sample_voxels_from_surface")
+    if cost["samples_abandoned_by_crop"]:
+        if not _finite_number(worst) or float(worst) < 1.0:
+            raise Open3dError(
+                "an abandoned sample is by definition more than one voxel from the "
+                "surface, so the worst of them cannot be nearer than that"
+            )
+    elif worst is not None:
+        raise Open3dError(
+            "no sample was abandoned, so there is no worst abandoned sample"
+        )
+    if factor <= 0.0 and cost["samples_abandoned_by_crop"]:
+        raise Open3dError(
+            "the crop was disabled, so it cannot have abandoned any sample"
         )
 
 

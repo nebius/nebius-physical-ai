@@ -32,7 +32,8 @@
       "resolution": [
         960,
         720
-      ]
+      ],
+      "sha256": "259c1808bb6316171a780b29c2880c31cd04194561998f538f469941edb80003"
     },
     {
       "background_rgb": [
@@ -64,7 +65,8 @@
       "resolution": [
         960,
         720
-      ]
+      ],
+      "sha256": "f2822d214b6c7fbef98f97bb968769ace13073206e4e75547d689c98b1db6e7d"
     },
     {
       "background_rgb": [
@@ -96,7 +98,8 @@
       "resolution": [
         960,
         720
-      ]
+      ],
+      "sha256": "6e22a34f33d634825d16545a51dc83c124a200adf23c237fc48f3bf9d13588fc"
     },
     {
       "background_rgb": [
@@ -128,7 +131,8 @@
       "resolution": [
         960,
         720
-      ]
+      ],
+      "sha256": "abd27683858a3b878717d05337545555767c39bdbc09efb42ea17e88a58c8fbd"
     },
     {
       "background_rgb": [
@@ -160,7 +164,8 @@
       "resolution": [
         960,
         720
-      ]
+      ],
+      "sha256": "01eed5309c10dad96cfe6ffc452508a999d93d22d7a7203a049f17a891e38e55"
     },
     {
       "background_rgb": [
@@ -192,7 +197,8 @@
       "resolution": [
         960,
         720
-      ]
+      ],
+      "sha256": "95d998fa156f6fe3e4aa254e16531ad41c23090a250cd84bd5a2a706e09dabda"
     },
     {
       "background_rgb": [
@@ -224,7 +230,8 @@
       "resolution": [
         960,
         720
-      ]
+      ],
+      "sha256": "27939fe0bd46c49927e399158b6e83462aee6e8e4c6247636324522a4d598871"
     },
     {
       "background_rgb": [
@@ -256,7 +263,8 @@
       "resolution": [
         960,
         720
-      ]
+      ],
+      "sha256": "47d4faa010ce34ecc63ee34b4a0e1642415cfb99dab1752771166bd168200d93"
     },
     {
       "background_rgb": [
@@ -288,7 +296,8 @@
       "resolution": [
         960,
         720
-      ]
+      ],
+      "sha256": "80c2c8fc80ecb76513ae1e4cef29913836181b7b61d1e9b252fbca396f02ceec"
     }
   ],
   "what": "Per-frame clipping and legibility measured from PNG bytes. A frame is clipped when content occupies a border row or column; content is low-contrast when its luminance sits within 24/255 of the background."

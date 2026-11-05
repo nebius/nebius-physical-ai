@@ -96,6 +96,11 @@ rationale can still describe operator data.
 `evidence: null` means no provider call occurred, as with `stub` or `--score`.
 It cannot support a visual claim. Hosted `api` evaluation rejects provider
 refusal, truncation, filtering, malformed JSON, and any served-model mismatch.
+Every real verdict also requires a nonempty ordered
+`provider_observable_support` array of nonblank strings. NPA retains decoded
+text and order but does not verify semantic truth, relevance, completeness,
+frame identity, or correspondence to submitted pixels. Stub and score-override
+results keep the array empty.
 Single results, loop rows, and benchmark cases disclose requested/served identity
 and `served_model_match_enforced`. All current hosted profiles require exact
 identity; self-hosted responses and non-provider scores report false. Never
@@ -128,16 +133,20 @@ reports remain authoritative and fail closed, without favorable legacy fallback.
 The `self-hosted` backend preserves legacy JSON framing, including embedded
 objects and duplicate keys, while requiring literal boolean `success`, a finite
 numeric `score` in [0, 1], and a nonempty string `rationale`. Invalid verdict
-fields fail without coercion or clamping. Its parser version is
-`npa_vlm_eval_compatible_json_v2`, with the framing suffix when applicable.
-Retained self-hosted reports tagged `npa_vlm_eval_compatible_json_v1` (including
-its framing suffix) no longer satisfy the current promotion parser contract,
-even if their content has valid literal fields. The gate returns `loop_back`
-with `provider_metadata_mismatch`; this can mean a superseded parser, not
-tampering. Preserve the old artifact and obtain a new evaluated report when
-promotion is needed; never edit its parser tag to simulate new execution.
-Malformed score/type/success verdicts also abort the whole loop/sweep; no score
-is manufactured. Correct the serving output contract before a new evaluation.
+fields fail without coercion or clamping. Both real parsers also require the
+provider-support array and preserve it without trimming, normalization,
+deduplication, or synthesis. Each member must contain a code point that is
+neither whitespace under `str.isspace()` nor Unicode general category `Cf`;
+members containing only whitespace and format controls are rejected, while
+embedded format controls in otherwise nonblank text are retained unchanged.
+This narrow machine rule is not an exhaustive rendering or semantic-substance
+check. Current parser versions are
+`npa_vlm_eval_hosted_json_v2` and `npa_vlm_eval_compatible_json_v3`, with the
+framing suffix when applicable. Retained hosted-v1 and self-hosted-v2 reports
+predate this contract and return `loop_back` with
+`provider_parser_obsolete`; preserve them and obtain a new evaluation rather
+than editing an old response or parser tag. Malformed verdicts abort the whole
+loop or sweep; no score or support is manufactured.
 Completion evidence does not certify promotion eligibility. The operator
 provenance lane separately requires HTTP
 200, `finish_reason=stop`, expected served identity and verifiable framing.
@@ -156,7 +165,16 @@ score-derived verdicts disagree or either judge errors. The artifact is always
 weak judge can make disagreement common without making the scene intrinsically
 ambiguous. Unlike ordinary single-judge compatibility parsing, this path
 rejects Markdown-fenced JSON as a typed judge error instead of transforming the
-output. It also does not defend against in-image instructions or prove a
+output. The exact MiniCPM-V-4_5 plus gemma-3-27b-it pair is rejected before
+input or credential work because a retained six-family calibration found
+shared false-pass modes in three of six retained adversarial families. The
+sanitized retained-evidence index is
+`docs/workbench/evidence/vlm-paired-shared-failure-calibration-20261101/`.
+Other compatible pairs remain
+available. Those calls used a legacy probe schema, not the current strict
+paired-response contract, so the rule is a precaution for one measured pair,
+not model qualification or unseen-attack coverage.
+The path still does not generally defend against in-image instructions or prove a
 critical visible defect absent. Full provider responses stay in the private
 artifact; CLI output is a bounded summary.
 
@@ -256,9 +274,9 @@ npa workbench vlm-eval benchmark \
 `--rubrics` accepts names from the dataset, inline text, or `@file` paths.
 `--dataset` defaults to a packaged sample fixture, which is useful for proving
 the sweep runs but tells you nothing about your task. Its reports declare
-`dataset_evidence_scope: illustrative_only`: four rollouts are synthetic 2x2
-color swatches with color-correlated caller labels; a fifth tiny synthetic
-sequence omits the terminal outcome. The resulting
+`dataset_evidence_scope: illustrative_only`: four rollouts are single-frame
+synthetic 2x2 color swatches with color-correlated caller labels; one separate
+three-frame 4x2 synthetic sequence omits the terminal outcome. The resulting
 metrics are wiring examples, not task-validation or operational error-rate
 evidence. Custom manifests default to `dataset_evidence_scope: unspecified`;
 declare `evidence_scope` and ordered `limitations` in the manifest when their
@@ -400,9 +418,13 @@ the latter is named `order_disagreement_or_nondeterminism` because one request
 per order cannot isolate an order effect from provider nondeterminism. The
 command never retries or averages preferences, and refuses an existing output.
 Task and rubric text containing `baseline` or `candidate` is rejected before
-transport. Telling the model not to follow image text is not a defense against
-in-image instructions. Its CLI summary omits paths, prompts, visible support,
-uncertainty, request IDs, and raw responses.
+transport. This lexical screen case-folds and searches only those two
+substrings across the model ID, task, rubric, and provider-request text;
+synonyms and content-linked disclosures can pass, so an order-consistent mapped
+preference does not establish content blinding. Telling the model not to follow
+image text is not a defense against in-image instructions. Its CLI summary
+omits paths, prompts, visible support, uncertainty, request IDs, and raw
+responses.
 
 Use toolRef `workbench.vlm_eval.compare_preference`. See
 [the live audit contract](../../../docs/testing/vlm-audit-live-contracts.md)

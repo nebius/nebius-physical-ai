@@ -56,6 +56,8 @@ COSMOS2_TRANSFER = ROOT / "workflows" / "testing" / "cosmos2-transfer.yaml"
 # The raw cosmos3-reason template is retired; its npa.workflow spec is the surface
 # (both run the same manifest builder — EVIDENCE §R2).
 COSMOS3_REASON = ROOT / "workflows" / "testing" / "cosmos3-reason.yaml"
+_HOSTILE_BOOLEAN_VALUES = ("false", "no", "0", 1, [], {}, None)
+_MISSING_BOOLEAN = object()
 
 pytestmark = pytest.mark.usefixtures("operator_sim2real_image_defaults")
 
@@ -934,6 +936,159 @@ def test_component_heldout_payload_raises_when_byo_robot_not_loaded(
             threshold=0.75,
             robot=robot,
         )
+
+
+@pytest.mark.parametrize("hostile_value", _HOSTILE_BOOLEAN_VALUES)
+def test_normalize_heldout_report_rejects_nonliteral_success(
+    hostile_value: object,
+) -> None:
+    """A truthy string must never raise the promotion-facing success rate."""
+
+    with pytest.raises(
+        Sim2RealLoopError,
+        match=r"per_env\[0\]\.success must be a literal boolean",
+    ):
+        loop_module._normalize_heldout_report(
+            {"per_env": [{"env_id": "h-0", "score": 0.0, "success": hostile_value}]},
+            config=Sim2RealLoopConfig(run_id="r", threshold=0.5),
+            outer_iteration=1,
+            inner_evidence_uri="inner.json",
+            invocation={"component": "heldout_eval"},
+        )
+
+
+@pytest.mark.parametrize(
+    ("item", "expected_rate"),
+    [
+        ({"score": 1.0}, 1.0),
+        ({"score": 0.0}, 0.0),
+        ({"score": 1.0, "success": False}, 0.0),
+        ({"score": 0.0, "success": True}, 1.0),
+    ],
+    ids=("absent-score-pass", "absent-score-fail", "explicit-false", "explicit-true"),
+)
+def test_normalize_heldout_report_preserves_literal_and_absent_success(
+    item: dict[str, object],
+    expected_rate: float,
+) -> None:
+    report = loop_module._normalize_heldout_report(
+        {"per_env": [{"env_id": "h-0", **item}]},
+        config=Sim2RealLoopConfig(run_id="r", threshold=0.5),
+        outer_iteration=1,
+        inner_evidence_uri="inner.json",
+        invocation={"component": "heldout_eval"},
+    )
+
+    assert report["success_rate"] == expected_rate
+    assert report["per_env"][0]["success"] is (expected_rate == 1.0)
+
+
+def _normalize_test_vlm_booleans(
+    *,
+    success: object = _MISSING_BOOLEAN,
+    disagreement: object = _MISSING_BOOLEAN,
+    score: float = 0.9,
+    confidence: object = 0.9,
+) -> dict[str, object]:
+    """Normalize one VLM step with optional boolean fields."""
+
+    step = {
+        "step": 0,
+        "critique_text": "The rollout remains aligned.",
+        "error_tags": ["ok"],
+        "confidence": confidence,
+    }
+    payload = {"score": score, "per_step": [step]}
+    if success is not _MISSING_BOOLEAN:
+        payload["success"] = success
+    if disagreement is not _MISSING_BOOLEAN:
+        step["model_disagreement"] = disagreement
+    return engine_module._normalize_vlm_evaluation(
+        payload,
+        manifest={
+            "actions": [
+                {
+                    "step": 0,
+                    "action": [0.0],
+                    "simulator_ground_truth": {},
+                }
+            ]
+        },
+        rollout_id="rollout-0",
+        config=Sim2RealLoopConfig(run_id="r", threshold=0.5),
+        invocation={"component": "vlm_eval"},
+    )
+
+
+@pytest.mark.parametrize("hostile_value", _HOSTILE_BOOLEAN_VALUES)
+def test_normalize_vlm_evaluation_rejects_nonliteral_success(
+    hostile_value: object,
+) -> None:
+    """Malformed success must fail before temporal credit sees a literal True."""
+
+    with pytest.raises(Sim2RealLoopError, match="success must be a literal boolean"):
+        _normalize_test_vlm_booleans(success=hostile_value, score=0.0)
+
+
+@pytest.mark.parametrize("hostile_value", _HOSTILE_BOOLEAN_VALUES)
+def test_normalize_vlm_evaluation_rejects_nonliteral_disagreement(
+    hostile_value: object,
+) -> None:
+    """Malformed disagreement must fail before it can downweight temporal credit."""
+
+    with pytest.raises(
+        Sim2RealLoopError,
+        match=r"per_step\[0\]\.model_disagreement must be a literal boolean",
+    ):
+        _normalize_test_vlm_booleans(disagreement=hostile_value)
+
+
+@pytest.mark.parametrize(
+    "hostile_value", [True, "0.9", None, float("nan"), float("inf"), 10**400]
+)
+def test_normalize_vlm_evaluation_rejects_coerced_confidence(
+    hostile_value: object,
+) -> None:
+    with pytest.raises(Sim2RealLoopError, match="finite JSON number"):
+        _normalize_test_vlm_booleans(confidence=hostile_value)
+
+
+@pytest.mark.parametrize(
+    (
+        "success",
+        "disagreement",
+        "score",
+        "expected_success",
+        "expected_disagreement",
+    ),
+    [
+        (_MISSING_BOOLEAN, _MISSING_BOOLEAN, 0.9, True, False),
+        (False, False, 0.9, False, False),
+        (True, True, 0.0, True, True),
+    ],
+    ids=("absent-defaults", "explicit-false", "explicit-true"),
+)
+def test_normalize_vlm_evaluation_preserves_booleans_through_temporal_credit(
+    success: object,
+    disagreement: object,
+    score: float,
+    expected_success: bool,
+    expected_disagreement: bool,
+) -> None:
+    evaluation = _normalize_test_vlm_booleans(
+        success=success,
+        disagreement=disagreement,
+        score=score,
+    )
+    signal = convert_vlm_eval_to_rl_signal(evaluation)
+
+    assert evaluation["success"] is expected_success
+    assert evaluation["per_step"][0]["model_disagreement"] is expected_disagreement
+    assert signal["success"] is expected_success
+    assert signal["per_step"][0]["model_disagreement"] is expected_disagreement
+    assert signal["calibration"]["model_disagreement_steps"] == int(
+        expected_disagreement
+    )
 
 
 def test_normalize_heldout_report_propagates_robot_provenance() -> None:

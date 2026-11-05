@@ -11,6 +11,7 @@ import pytest
 
 from npa.workflows.sim2real.config import build_config_from_env
 from npa.workflows.sim2real.engine import threshold_decision
+from npa.workflows.sim2real.models import Sim2RealLoopError
 
 pytestmark = pytest.mark.usefixtures("operator_sim2real_image_defaults")
 
@@ -73,6 +74,32 @@ def test_promote_stub_without_real_checkpoint(tmp_path):
     assert cand["deployable_policy"] is False
     assert cand["policy_artifact_kind"] == "reference_metadata"
     assert not (tmp_path / "outer_loop" / "loopback.json").exists()
+
+
+@pytest.mark.parametrize(
+    ("container", "field"),
+    [
+        ("policy_inference_provenance", "loaded_for_inference"),
+        ("policy_inference_provenance", "stock_or_scripted_policy"),
+        ("applied_scenario_proof", "exact_digest_match"),
+    ],
+)
+@pytest.mark.parametrize("invalid", ["false", 0, None, [], {}])
+def test_promotion_proof_booleans_reject_coercible_values_before_side_effects(
+    tmp_path: Path, container: str, field: str, invalid: object
+) -> None:
+    report = _real_report(1.0)
+    report[container][field] = invalid
+
+    with pytest.raises(Sim2RealLoopError, match=field):
+        threshold_decision(
+            _cfg(tmp_path),
+            local_dir=tmp_path,
+            heldout_report=report,
+            outer_iteration=1,
+        )
+
+    assert not (tmp_path / "checkpoints").exists()
 
 
 def test_below_threshold_real_checkpoint_remains_packaged_candidate(

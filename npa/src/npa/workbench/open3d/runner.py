@@ -97,6 +97,109 @@ def _result_summary(result) -> dict[str, Any]:
     }
 
 
+#: The measured case where every seed agreed and every seed was wrong, published with
+#: the measurement rather than described beside it. `docs/evidence/open3d/
+#: registration-ambiguity.json` is where it was measured; these are its figures.
+#:
+#: Read-only, and copied into each report rather than shared. Published by reference it
+#: was one `report[...].update(...)` away from changing what every later report in the
+#: process claimed, which is how a caller's local edit becomes a false record.
+AGREEMENT_COUNTEREXAMPLE = MappingProxyType(
+    {
+        "construction": "a square prism, invariant under 90 degrees about z",
+        "seeds": 6,
+        "seeds_agreed_within_voxels": 0.13,
+        "every_seed_was_wrong_by_voxels": 32.7,
+        "evidence": "docs/evidence/open3d/registration-ambiguity.json",
+    }
+)
+
+
+def _transform_displacement(first, second, points) -> float:
+    """RMS distance between where two transforms send the same points.
+
+    Transforms are compared through the cloud rather than by subtracting matrices,
+    because a rotation and a translation are not in the same units and a small angle
+    on a large object is not a small error. This answers the question a consumer has:
+    if I use alignment A instead of alignment B, how far does my data move.
+    """
+
+    import numpy as np
+
+    first = np.asarray(first, dtype=float)
+    second = np.asarray(second, dtype=float)
+    points = np.asarray(points, dtype=float)
+    moved_first = points @ first[:3, :3].T + first[:3, 3]
+    moved_second = points @ second[:3, :3].T + second[:3, 3]
+    return float(np.sqrt(((moved_first - moved_second) ** 2).sum(axis=1).mean()))
+
+
+def _agreement(attempts: list[dict[str, Any]], points, voxel: float) -> dict[str, Any]:
+    """How far apart the alignments found under different seeds actually are.
+
+    `fitness` and `inlier_rmse` come from ICP's own result, computed against the
+    correspondences ICP chose, so they describe how well the alignment it settled on
+    explains the points it used. They cannot distinguish a correct alignment from a
+    confidently wrong one. Measured on a rotationally symmetric pair, six seeds held
+    `inlier_rmse` at 0.0123 to 0.0125 -- a quarter of a voxel -- while landing between
+    8 and 25 voxels from the truth, in different places.
+
+    Disagreement here is therefore proof that the published fitness is not evidence of
+    accuracy. Agreement is **not** proof of the converse: on a pair with a 90-degree
+    symmetry, six seeds agreed to 0.13 voxels and all six were 32.7 voxels from the
+    truth, because they all took the same wrong branch. See
+    `docs/evidence/open3d/registration-ambiguity.json`.
+    """
+
+    import numpy as np
+
+    worst = 0.0
+    worst_pair: list[int] = []
+    for i in range(len(attempts)):
+        for j in range(i + 1, len(attempts)):
+            moved = _transform_displacement(
+                attempts[i]["transformation"], attempts[j]["transformation"], points
+            )
+            if moved > worst:
+                worst, worst_pair = (
+                    moved,
+                    [
+                        attempts[i]["seed"],
+                        attempts[j]["seed"],
+                    ],
+                )
+    fitness = [float(attempt["icp"]["fitness"]) for attempt in attempts]
+    rmse = [float(attempt["icp"]["inlier_rmse"]) for attempt in attempts]
+    return {
+        "seeds": [int(attempt["seed"]) for attempt in attempts],
+        "worst_pairwise_displacement": worst,
+        "worst_pairwise_displacement_voxels": worst / voxel if voxel > 0 else None,
+        # The divisor, so the normalised figure above is checkable from the row. It is
+        # the number the README, the evidence record and the counterexample all quote,
+        # and it was the one field here the published validator could not check: a
+        # stale normalisation passed `validate` silently.
+        "voxel_size": float(voxel) if voxel > 0 else None,
+        "worst_disagreeing_seeds": worst_pair,
+        "fitness_spread": float(np.max(fitness) - np.min(fitness)),
+        "inlier_rmse_spread": float(np.max(rmse) - np.min(rmse)),
+        "fitness_by_seed": fitness,
+        "inlier_rmse_by_seed": rmse,
+        # Carried as numbers and not only as a sentence. A sentence can be inverted
+        # with one word and still contain every phrase a guard greps for -- which is
+        # how the first version of this block could have been turned into its own
+        # opposite without failing anything. The relation between these two figures is
+        # the claim, and it is checkable.
+        "agreement_is_not_correctness": {
+            "measured_counterexample": dict(AGREEMENT_COUNTEREXAMPLE),
+            "so": (
+                "Disagreement here proves that fitness and inlier_rmse are not "
+                "accuracy. Agreement proves nothing, because the seeds can agree on "
+                "the same wrong branch of a symmetry."
+            ),
+        },
+    }
+
+
 def _register_pair(o3d, source, target, manifest: RegistrationManifest):
     """Upstream global registration followed by upstream ICP refinement."""
 
@@ -228,6 +331,74 @@ def run_stage_demo(
     }
 
 
+def _measure_agreement(
+    o3d,
+    source,
+    target,
+    manifest: RegistrationManifest,
+    first: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Re-register the pair under further seeds and report how far apart they land.
+
+    The whole pair is re-registered rather than the RANSAC step alone, even though the
+    seed only reaches RANSAC. A consumer who reruns this command reruns all of it, and
+    Open3D reduces over correspondences in thread-scheduling order, so repeating only
+    the seeded part would report a smaller movement than a rerun actually has.
+
+    Returns `None` when the manifest did not ask for this, so a report keeps exactly
+    the shape and cost it had before.
+
+    This no longer re-seeds on the way out, and `run_register` no longer interleaves
+    it with the primary alignments. It used to: the reset meant pair 2's first attempt
+    began from a freshly seeded generator when the diagnostic was on and from whatever
+    pair 1 left behind when it was off, so turning the measurement on changed the
+    published `transformation` and `aligned_sha256` of every pair after the first. A
+    diagnostic that changes the result it reports on is not an observation of that
+    result. Seeding every pair instead would have fixed the asymmetry by changing the
+    default path's registrations, which is the other way to get it wrong; `run_register`
+    completes the whole primary pass first instead.
+    """
+
+    if manifest.agreement_seeds <= 0:
+        return None
+    attempts = [{"seed": manifest.random_seed, **first}]
+    failed: list[dict[str, Any]] = []
+    for offset in range(1, manifest.agreement_seeds + 1):
+        seed = (manifest.random_seed + offset) % (2**31 - 1)
+        o3d.utility.random.seed(seed)
+        try:
+            attempt = _register_pair(o3d, source, target, manifest)
+        except Open3dError as exc:
+            # A diagnostic re-run that fails is a fact about this pair under that
+            # seed, not a failure of the registration the caller asked for. Letting
+            # it propagate discarded every pair already computed and reported a
+            # RANSAC correspondence problem as though the primary alignment had hit
+            # it -- an untruthful failure, and in exactly the marginal-overlap
+            # population this measurement exists to flag.
+            failed.append({"seed": seed, "error": str(exc)})
+            continue
+        attempts.append({"seed": seed, **attempt})
+
+    if len(attempts) < 2:
+        # The validator requires two or more seeds, so there is no legal block to
+        # emit. Report the attempt that failed rather than silently omitting the
+        # measurement the manifest asked for.
+        return {
+            "measured": False,
+            "why_not": (
+                f"{manifest.agreement_seeds} extra seed(s) were requested and "
+                f"{len(failed)} failed to register, leaving fewer than the two "
+                "successful attempts an agreement needs"
+            ),
+            "failed_seeds": failed,
+        }
+
+    block = _agreement(attempts, source.points, manifest.voxel_size)
+    if failed:
+        block["failed_seeds"] = failed
+    return block
+
+
 def run_register(payload: dict[str, Any], output: Path, run_id: str) -> dict[str, Any]:
     """Register consecutive fragment pairs and publish each aligned cloud."""
 
@@ -239,12 +410,44 @@ def run_register(payload: dict[str, Any], output: Path, run_id: str) -> dict[str
     aligned_dir.mkdir(parents=True, exist_ok=True)
     rows: list[dict[str, Any]] = []
     ordered = [fragment.id for fragment in manifest.fragments]
-    for source_id, target_id in zip(ordered, ordered[1:]):
+    pairs = list(zip(ordered, ordered[1:]))
+
+    # Every primary alignment first, with nothing between them. The agreement
+    # diagnostic sets the global generator per attempt, so running it inside this loop
+    # put a different RNG state in front of every pair after the first -- the published
+    # alignment then depended on whether the diagnostic had been requested. Finishing
+    # the primary pass before any extra seed is set keeps `agreement_seeds > 0` and
+    # `agreement_seeds == 0` byte-identical through here, without touching the seeding
+    # of the default path.
+    primary: list[tuple[str, str, dict[str, Any], float]] = []
+    for source_id, target_id in pairs:
         started = time.perf_counter()
         source = _read_cloud(o3d, paths[source_id])
         target = _read_cloud(o3d, paths[target_id])
         measured = _register_pair(o3d, source, target, manifest)
+        # Elapsed, not a start time: the diagnostic pass and the publish pass both
+        # come later now, and subtracting at the end would charge this pair for them.
+        primary.append((source_id, target_id, measured, time.perf_counter() - started))
+
+    # Then the diagnostic, which may now seed freely: no primary alignment is still
+    # outstanding. The clouds are re-read rather than retained, because a manifest may
+    # carry up to MAX_FRAGMENTS scans and holding them all costs more than the reads.
+    agreements: dict[str, dict[str, Any] | None] = {}
+    if manifest.agreement_seeds > 0:
+        _seeded(o3d, manifest)
+        for source_id, target_id, measured, _elapsed in primary:
+            source = _read_cloud(o3d, paths[source_id])
+            target = _read_cloud(o3d, paths[target_id])
+            agreements[f"{source_id}__{target_id}"] = _measure_agreement(
+                o3d, source, target, manifest, measured
+            )
+
+    for source_id, target_id, measured, elapsed in primary:
+        source = _read_cloud(o3d, paths[source_id])
         pair_id = f"{source_id}__{target_id}"
+        agreement = agreements.get(pair_id)
+        if agreement is not None:
+            measured["agreement"] = agreement
         aligned = aligned_dir / f"{pair_id}.ply"
         # Write the source in the target's frame: that is the thing the
         # transformation claims, so it is the thing a reviewer should be able to
@@ -262,7 +465,7 @@ def run_register(payload: dict[str, Any], output: Path, run_id: str) -> dict[str
                 "aligned_points": len(moved.points),
                 "aligned_sha256": _digest(aligned),
                 "aligned_bytes": aligned.stat().st_size,
-                "wall_seconds": time.perf_counter() - started,
+                "wall_seconds": elapsed,
             }
         )
     (output / PAIRS_JOURNAL).write_text(
@@ -636,8 +839,12 @@ def _crop_justification(before: dict[str, Any], removed: int, mesh) -> dict[str,
             "The unsupported area was concentrated within three voxels of a sample, "
             "which is where a correct surface reconstructed from samples of this "
             "spacing also falls. The crop may have removed correct geometry, and "
-            "coverage cannot rule that out. Raise --support-distance-factor to 1.5 "
-            "or 2.0, or pass 0, unless the tighter crop is wanted deliberately. "
+            "coverage cannot rule that out. Raising --support-distance-factor to 1.5 "
+            "or 2.0 keeps more of it, but does not make the crop safe for coverage: "
+            "a triangle is removed when any one of its vertices is unsupported, so "
+            "one distant vertex still deletes surface its other two vertices sit "
+            "under, at any factor. Read coverage_cost_of_crop for what it cost on "
+            "this run, and pass 0 if it must be zero. "
             "This reading is not a clean bill of health either: it cannot see "
             "fabrication below the sensitivity floor, which is setup-dependent, so "
             "a small invented region reads exactly like none at all."
@@ -716,6 +923,35 @@ def _support(o3d, mesh, cloud, voxel: float) -> dict[str, Any]:
     }
 
 
+def _sample_to_surface(o3d, mesh, cloud):
+    """Distance from every observed sample to the nearest point of this surface."""
+
+    import numpy as np
+
+    scene = o3d.t.geometry.RaycastingScene()
+    scene.add_triangles(o3d.t.geometry.TriangleMesh.from_legacy(mesh))
+    points = np.asarray(cloud.points).astype(np.float32)
+    return scene.compute_distance(o3d.core.Tensor(points)).numpy()
+
+
+def _coverage_from_distances(distances, voxel: float) -> dict[str, Any]:
+    """The coverage definitions, with the surface query already done.
+
+    Separated from the query so they can be exercised where Open3D is not installed,
+    which is every CI shard.
+    """
+
+    import numpy as np
+
+    return {
+        "samples": int(len(distances)),
+        "fraction_within_voxel": float((distances < voxel).mean()),
+        "fraction_within_two_voxels": float((distances < 2.0 * voxel).mean()),
+        "sample_to_surface_rmse": float(np.sqrt((distances**2).mean())),
+        "sample_to_surface_p95": float(np.percentile(distances, 95)),
+    }
+
+
 def _coverage(o3d, mesh, cloud, voxel: float) -> dict[str, Any]:
     """The other direction: do the observed samples still lie on this surface?
 
@@ -723,18 +959,51 @@ def _coverage(o3d, mesh, cloud, voxel: float) -> dict[str, Any]:
     that explains real observations, so the crop is measured against this.
     """
 
+    return _coverage_from_distances(_sample_to_surface(o3d, mesh, cloud), voxel)
+
+
+def _coverage_cost(before, after, voxel: float) -> dict[str, Any]:
+    """Count the samples the crop left with no surface within one voxel.
+
+    The crop tests *vertices* against `voxel * support_distance_factor`, and
+    `remove_vertices_by_mask` deletes every triangle touching a masked vertex. Coverage
+    asks about sample-to-*surface* distance. Those are different questions, so surface
+    within one voxel of a sample can be removed, in two distinct ways:
+
+    At a factor below 1.0 the vertex test is tighter than the coverage question, so a
+    vertex between `factor * voxel` and `voxel` from its nearest sample is removed while
+    that sample is still within one voxel of it. A factor of 1.0 -- the schema default --
+    closes that band.
+
+    The second way no factor closes. A triangle is removed when *any one* of its three
+    vertices is unsupported, so a triangle with two vertices a fraction of a voxel from a
+    sample is deleted for a third vertex far away. Measured on constructed geometry: at
+    factor 1.0 and again at 2.0, a sample with retained vertices 0.32 voxels away lost its
+    only nearby surface and ended eight voxels from anything. Raising the factor does not
+    help, because the distant vertex is removed at any finite factor below its own
+    distance. Only `--support-distance-factor 0` avoids it, by not cropping.
+
+    Neither of these is a bug in the crop -- a conservative crop that errs toward removing
+    is the point. What was missing is this count, so a consumer reads what the crop cost
+    instead of assuming it cost nothing.
+    """
+
     import numpy as np
 
-    scene = o3d.t.geometry.RaycastingScene()
-    scene.add_triangles(o3d.t.geometry.TriangleMesh.from_legacy(mesh))
-    points = np.asarray(cloud.points).astype(np.float32)
-    distances = scene.compute_distance(o3d.core.Tensor(points)).numpy()
+    before = np.asarray(before)
+    after = np.asarray(after)
+    covered_before = before < voxel
+    abandoned = covered_before & ~(after < voxel)
     return {
-        "samples": int(len(distances)),
-        "fraction_within_voxel": float((distances < voxel).mean()),
-        "fraction_within_two_voxels": float((distances < 2.0 * voxel).mean()),
-        "sample_to_surface_rmse": float(np.sqrt((distances**2).mean())),
-        "sample_to_surface_p95": float(np.percentile(distances, 95)),
+        "samples": int(len(before)),
+        "samples_covered_before_crop": int(covered_before.sum()),
+        "samples_abandoned_by_crop": int(abandoned.sum()),
+        "coverage_is_bit_identical": bool(
+            covered_before.mean() == (after < voxel).mean()
+        ),
+        "worst_abandoned_sample_voxels_from_surface": (
+            float(after[abandoned].max() / voxel) if abandoned.any() else None
+        ),
     }
 
 
@@ -857,6 +1126,7 @@ def run_reconstruct(
     if not o3d.io.write_triangle_mesh(str(full_path), mesh):
         raise Open3dError("Open3D could not write the uncropped mesh")
     before = _support(o3d, mesh, cloud, voxel)
+    coverage_before_distances = _sample_to_surface(o3d, mesh, cloud)
     unsupported_removed = 0
     if request.support_distance_factor > 0.0:
         limit = voxel * request.support_distance_factor
@@ -873,6 +1143,7 @@ def run_reconstruct(
     mesh_path = output / "mesh.ply"
     if not o3d.io.write_triangle_mesh(str(mesh_path), mesh):
         raise Open3dError("Open3D could not write the reconstructed mesh")
+    coverage_after_distances = _sample_to_surface(o3d, mesh, cloud)
     return {
         "run_id": run_id,
         "poisson_depth": request.poisson_depth,
@@ -896,7 +1167,13 @@ def run_reconstruct(
         # not establish that removed geometry was incorrect.
         "support_before_crop": before,
         "support": _support(o3d, mesh, cloud, voxel),
-        "coverage": _coverage(o3d, mesh, cloud, voxel),
+        "coverage_before_crop": _coverage_from_distances(
+            coverage_before_distances, voxel
+        ),
+        "coverage": _coverage_from_distances(coverage_after_distances, voxel),
+        "coverage_cost_of_crop": _coverage_cost(
+            coverage_before_distances, coverage_after_distances, voxel
+        ),
         "crop_justification": _crop_justification(before, unsupported_removed, mesh),
         "cloud_extent": [
             float(value) for value in cloud.get_axis_aligned_bounding_box().get_extent()
@@ -1383,6 +1660,17 @@ class _View(NamedTuple):
     contents: tuple[str, ...]
     aspect: float
 
+    #: Entities this view carries but does not show until a reviewer asks for them.
+    #: In the recording and one click away, not stacked on top of the view's subject.
+    #:
+    #: This is a separate decision from ``contents`` because an opaque mesh listed as
+    #: context will hide the thing the view exists to show, and fitting a camera does
+    #: not help: measured over 24 azimuths at the product's own elevation, the audit
+    #: view's removed surface never exceeded 49% visible, and the camera that ships is
+    #: already within three points of the best of them. The occluder is what is drawn,
+    #: not where it is drawn from, so no camera could have fixed it.
+    hidden_by_default: tuple[str, ...] = ()
+
 
 #: One table for every view: the geometry its camera frames and the entities it
 #: draws. Both come from here so they cannot drift apart, and they did drift --
@@ -1402,6 +1690,8 @@ VIEW_GEOMETRY: dict[str, _View] = {
         ("fused", "mesh"),
         ("/world/fused", "/world/mesh", "/world/fragments/**"),
         CAMERA_WINDOW_ASPECT * CAMERA_SCENE_SHARE,
+        # Per-fragment clouds duplicate the fused cloud in space.
+        ("/world/fragments",),
     ),
     SCAN_VIEW: _View(
         ("fused",),
@@ -1417,6 +1707,14 @@ VIEW_GEOMETRY: dict[str, _View] = {
         ("unsupported", "mesh", "fused"),
         ("/world/mesh", "/world/mesh_unsupported", "/world/fused"),
         CAMERA_WINDOW_ASPECT * CAMERA_TAB_SHARE,
+        # The retained surface was hiding this view's entire subject. Measured by ray
+        # casting from the camera that ships: 35.2% of the removed area visible on a
+        # partial scan and 38.2% on a resampled complete mesh, rising to 78.5% and
+        # 81.8% with this one entity hidden. The fused cloud stays visible -- points
+        # occlude nothing a ray can hit -- so the overlay is still shown against the
+        # observations it is being judged against, and the surface it was cut from is
+        # one click away for the comparison a reviewer would want next.
+        ("/world/mesh",),
     ),
 }
 
@@ -1497,6 +1795,13 @@ def _blueprint(rr, rrb, cameras: dict[str, Any]):
             name=name,
             origin="/world",
             contents=list(VIEW_GEOMETRY[name].contents),
+            # Read off the same table as contents and the camera geometry. Written as
+            # a literal here instead, a view's subject could be re-covered by an edit
+            # that looks like it only changed what the view carries.
+            overrides={
+                entity: rrb.EntityBehavior(visible=False)
+                for entity in VIEW_GEOMETRY[name].hidden_by_default
+            },
             eye_controls=rrb.EyeControls3D(
                 kind=rrb.Eye3DKind.Orbital,
                 position=camera["eye"],
@@ -1515,15 +1820,7 @@ def _blueprint(rr, rrb, cameras: dict[str, Any]):
     tabs.append(rrb.TextDocumentView(name="Provenance", origin="/provenance"))
     return rrb.Blueprint(
         rrb.Horizontal(
-            view(
-                SCENE_VIEW,
-                overrides={
-                    # Per-fragment clouds duplicate the fused cloud in space. Keep
-                    # them in the recording and one click away, not stacked on top
-                    # of it by default.
-                    "/world/fragments": rrb.EntityBehavior(visible=False),
-                },
-            ),
+            view(SCENE_VIEW),
             rrb.Tabs(*tabs),
             column_shares=list(CAMERA_COLUMN_SHARES),
         ),

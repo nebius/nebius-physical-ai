@@ -2,7 +2,6 @@
   "capability": "The six-stage Open3D npa.workflow runs through the standard SkyPilot runtime on rebuilt source, and the artifact it ships carries the corrected semantics.",
   "why_this_was_needed": "Neither the earlier 256c26bc runtime evidence nor the aggregate preview links this newer source to a real runtime. The preview reads PLYs an older run left behind; the older run predates every semantic correction. Only a fresh run on the corrected source can show that the correction survives the trip through the runtime.",
   "recorded_utc": "2026-09-21T06:11:26Z",
-  "source_commit": "b18d7aef5",
   "image": {
     "digest": "sha256:926325abdab02b96110c1a0ea26922d31cb55ccf0f8c597e03692bd5ebbc2855",
     "delivery": "private registry, by digest; not published",
@@ -290,5 +289,13 @@
     "not_caught_before_publication": "Both had already been pushed. Describing this as caught before publication would be false.",
     "what_was_done": "This branch's owned history was rebuilt so that neither commit is an ancestor of the candidate. That repairs what is reachable from this branch and nothing else: it makes no claim about objects a remote or its provider has already retained.",
     "why_not_a_later_deletion": "Deleting the files in a follow-up commit leaves the values in the history the scan reads, so it is not a repair."
+  },
+  "provenance": {
+    "source_commit": "b18d7aef56bbe25a5b45290e0b705f20a59ad4da",
+    "commit_is_an_ancestor_of_main": false,
+    "no_advertised_origin_ref_at_audit": "PR 602 was squashed when it merged, so this commit never became an ancestor of main and was on no advertised origin ref at audit time -- the audit found no advertised origin ref containing it at the recorded time; that does not establish whether the object is fetchable directly by SHA. 15b0b11f0 is where its work reached main: a symbol or source line this commit introduced is present at main and `git log -S` traces it to that merge. That is a check on this commit's contribution reaching main, not a claim that the two trees are identical. The per-commit probes are in capability-record-record-provenance-shape.json.",
+    "commit_on_main_carrying_this_source": "15b0b11f0bc137631954ac87076f44753c513976",
+    "why_this_shape": "A review lane found provenance recorded six different ways across these records, so an auditor had to learn each file. This is the one shape: the commit the record attests to, whether the commit is an ancestor of main, and -- where the answer is no -- why that is deliberate and what a reader can resolve instead. harness/audit_record_provenance.py checks the ancestry claim against the repository rather than trusting it.",
+    "this_key_replaced": "A top-level `source_commit` holding 'b18d7aef5'. Moved rather than dropped."
   }
 }

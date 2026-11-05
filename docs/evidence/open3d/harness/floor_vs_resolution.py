@@ -27,6 +27,8 @@ from __future__ import annotations
 import itertools
 import json
 
+from harness_io import output_path
+
 import numpy as np
 import open3d as o3d
 from harness_io import NEAR_READING, output_path, seed_sampling

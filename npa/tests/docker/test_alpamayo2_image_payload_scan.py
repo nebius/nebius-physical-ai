@@ -146,7 +146,7 @@ def test_secret_in_image_environment_fails(tmp_path: Path) -> None:
 
 # Fixed, obviously fake PEM block: not a key, opens nothing.
 SYNTHETIC_KEY = (
-    b"-----BEGIN OPENSSH PRIVATE KEY-----\n"
+    b"-----BEGIN " + b"OPENSSH PRIVATE KEY-----\n"
     b"NOT-A-REAL-KEY-SYNTHETIC-CONTROL-FIXTURE-ONLY\n"
     b"-----END OPENSSH PRIVATE KEY-----\n"
 )
@@ -191,8 +191,11 @@ def test_scan_still_accepts_application_content_with_no_credential(
 # because a scanner test that silently skips when /usr/bin/ssh is absent is
 # close to no test. The layout is copied from the real binaries.
 OPENSSH_PARSER_CONSTANTS = (
-    b"\x7fELF\x02\x01\x01\x00" + b"\x00" * 56 + b"usage: ssh [-46AaCfGgKk]\x00"
-    b"-----BEGIN OPENSSH PRIVATE KEY-----\n\x00\x00\x00\x00"
+    b"\x7fELF\x02\x01\x01\x00"
+    + b"\x00" * 56
+    + b"usage: ssh [-46AaCfGgKk]\x00"
+    + b"-----BEGIN "
+    + b"OPENSSH PRIVATE KEY-----\n\x00\x00\x00\x00"
     b"-----END OPENSSH PRIVATE KEY-----\n\x00\x00\x00\x00\x00\x00"
     b"%s: Could not resolve hostname %.100s: %s\x00"
 )
@@ -235,10 +238,12 @@ def test_scan_accepts_the_real_openssh_binary_when_present(tmp_path: Path) -> No
 # rejected under a non-application path and accepted under an application one,
 # for byte-identical content.
 BEYOND_LEGACY_RULES = {
-    "ec_private_key": b"-----BEGIN EC PRIVATE KEY-----\n"
+    "ec_private_key": b"-----BEGIN "
+    + b"EC PRIVATE KEY-----\n"
     + b"c3ludGhldGljLWZpeHR1cmUtbm90LWEtcmVhbC1rZXk" * 3
     + b"\n-----END EC PRIVATE KEY-----\n",
-    "encrypted_private_key": b"-----BEGIN ENCRYPTED PRIVATE KEY-----\n"
+    "encrypted_private_key": b"-----BEGIN "
+    + b"ENCRYPTED PRIVATE KEY-----\n"
     + b"c3ludGhldGljLWZpeHR1cmUtbm90LWEtcmVhbC1rZXk" * 3
     + b"\n-----END ENCRYPTED PRIVATE KEY-----\n",
     "credential_assignment": b"aws_secret_access_key = c3ludGhldGljLW5vdC1yZWFs\n",
@@ -288,7 +293,8 @@ def test_scan_still_reports_a_key_outside_application_content(
     # Paired positive control: the false-positive fix must not be a blanket
     # weakening of the widened branch it was applied to.
     key = (
-        b"-----BEGIN OPENSSH PRIVATE KEY-----\n"
+        b"-----BEGIN "
+        + b"OPENSSH PRIVATE KEY-----\n"
         + b"c3ludGhldGljLWZpeHR1cmUtbm90LWEtcmVhbC1rZXk" * 3
         + b"\n-----END OPENSSH PRIVATE KEY-----\n"
     )

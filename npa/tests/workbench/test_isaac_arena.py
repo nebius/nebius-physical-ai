@@ -26,6 +26,7 @@ from npa.workbench.isaac_arena.runtime import (
     _prepare_viewport_graphics,
     _prepare_replay_execution_input,
     _probe_mp4,
+    _summarize,
 )
 from npa.workbench.isaac_arena.action_evidence import (
     configure_action_evidence,
@@ -36,6 +37,8 @@ from npa.workbench.isaac_arena.video_evidence import (
     EVIDENCE_FILTER,
     EVIDENCE_PLAYBACK_RATE,
 )
+
+_MISSING_SUCCESS = object()
 
 
 def test_lightweight_console_route_is_exact() -> None:
@@ -90,6 +93,7 @@ def test_capabilities_are_complete_and_honest() -> None:
             "baked": False,
         }
     ]
+
     lightwheel_sdk = next(
         item
         for item in payload["runtime_dependencies"]
@@ -174,6 +178,52 @@ def test_capabilities_are_complete_and_honest() -> None:
     cli = CliRunner().invoke(app, ["workbench", "isaac-arena", "capabilities"])
     assert cli.exit_code == 0, cli.output
     assert json.loads(cli.output) == payload
+
+
+@pytest.mark.parametrize(
+    "hostile_value",
+    [
+        "false",
+        "no",
+        "0",
+        1,
+        [],
+        {},
+        None,
+        pytest.param(_MISSING_SUCCESS, id="missing"),
+    ],
+)
+def test_summary_rejects_nonliteral_episode_success(
+    tmp_path: Path,
+    hostile_value: object,
+) -> None:
+    record: dict[str, object] = {"episode_length": 4}
+    if hostile_value is not _MISSING_SUCCESS:
+        record["success"] = hostile_value
+    (tmp_path / "episode_results_rank0.jsonl").write_text(
+        json.dumps(record) + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(IsaacArenaError, match="has no boolean success"):
+        _summarize(tmp_path)
+
+
+def test_summary_counts_only_valid_literal_successes(tmp_path: Path) -> None:
+    records = [
+        {"success": False, "episode_length": 4},
+        {"success": True, "episode_length": 6},
+    ]
+    (tmp_path / "episode_results_rank0.jsonl").write_text(
+        "\n".join(json.dumps(record) for record in records) + "\n",
+        encoding="utf-8",
+    )
+
+    summary, _ = _summarize(tmp_path)
+
+    assert summary["episodes"] == 2
+    assert summary["successes"] == 1
+    assert summary["success_rate"] == 0.5
 
 
 def test_dry_run_builds_real_pinned_upstream_argv(tmp_path: Path) -> None:

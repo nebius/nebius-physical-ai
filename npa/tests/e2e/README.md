@@ -38,6 +38,17 @@ request accounting in its test artifact. This proves transport and receipt
 recovery; rendered Isaac rollouts and gold policy efficacy require the full
 workflow run. The test skips when the prefix is absent.
 
+The scheduled Token Factory contract is deliberately stricter: its
+`token-factory-live` environment must provide the private
+`NPA_SIM2REAL_EVALUATION_LIVE_S3_PREFIX`,
+`NPA_SIM2REAL_EVALUATION_LIVE_S3_ENDPOINT`,
+`NPA_SIM2REAL_EVALUATION_LIVE_S3_ACCESS_KEY_ID`, and
+`NPA_SIM2REAL_EVALUATION_LIVE_S3_SECRET_ACCESS_KEY` secrets. The workflow maps
+those values to its S3 client only for the credentialed live-test step and
+fails before provider calls when any is absent. Scope the credentials to that
+single private test prefix; do not place values in repository variables, source,
+or workflow-dispatch inputs.
+
 ## PAIDF native variant recovery
 
 After executing the reviewed candidate source through the standard PAIDF runtime,

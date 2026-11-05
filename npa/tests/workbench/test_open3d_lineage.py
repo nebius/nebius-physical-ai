@@ -33,7 +33,7 @@ def _documents():
             ],
             "voxel_size": 0.05,
         }
-    ).model_dump(mode="json")
+    ).canonical_document()
     graph = {
         "nodes": [{"fragment_id": key, "pose": IDENTITY} for key in ("a", "b")],
         "edges": [
