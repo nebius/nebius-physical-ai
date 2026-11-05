@@ -160,9 +160,13 @@ def _state_from_uri(
     if normalized.endswith("/manifest.json"):
         normalized = normalized.removesuffix("/manifest.json")
     _bucket, prefix = parse_s3_uri(normalized)
-    if PAIDF_WORKFLOW_NAME in prefix.split("/") and prefix.rstrip("/").endswith(
-        f"/{run_id}"
-    ):
+    # Public workflow commands accept a run-root URI (``.../<run-id>``), while
+    # the durable control records live below its ``npa-workflow`` child.  Treat
+    # that exact trailing run ID as the documented shorthand for the control
+    # prefix for every workflow, not only the historical PAIDF layout.  A nested
+    # ``.../<run-id>/<workflow>`` URI remains unchanged because its tail is not
+    # the requested run ID.
+    if prefix.rstrip("/").endswith(f"/{run_id}"):
         normalized = f"{normalized}/npa-workflow"
     return resolve_workflow_s3_config(
         run_id=run_id,

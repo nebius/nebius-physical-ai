@@ -1025,6 +1025,46 @@ def test_active_runtime_retry_supersedes_historical_terminal_ledger(
     assert terminal.outcome == "skipped"
 
 
+def test_explicit_run_root_uri_recovers_active_runtime_ledger(
+    resolver_env: ExactS3,
+) -> None:
+    """The documented run-root locator resolves its npa-workflow control child."""
+
+    run_id = "run-root-active-runtime"
+    root = f"runs/{run_id}"
+    resolver_env.put_json(
+        "alias-bucket",
+        f"{root}/npa-workflow/runtime.json",
+        {
+            "schema_version": "npa.workflow.runtime.v1",
+            "run_id": run_id,
+            "workflow": "groot-n15-offline-rl",
+            "status": "running",
+            "waves": [
+                {
+                    "status": "running",
+                    "job_id": "12",
+                    "job_name": "prepare-active",
+                }
+            ],
+        },
+    )
+
+    resolved = resolve_run(
+        run_id,
+        project="paidf",
+        workflow_s3_uri=f"s3://alias-bucket/{root}",
+    )
+
+    assert resolved.found is True
+    assert resolved.source == "explicit_workflow_s3_uri"
+    assert resolved.state is not None
+    assert resolved.state.uri == f"s3://alias-bucket/{root}/npa-workflow"
+    assert resolved.job_id == "12"
+    assert resolved.job_name == "prepare-active"
+    assert resolved.runtime_state["status"] == "running"
+
+
 def test_receipt_canonical_parent_must_match_requested_run_id(
     resolver_env: ExactS3,
 ) -> None:
