@@ -312,6 +312,30 @@ def test_public_base_pull_authentication_precedes_local_build() -> None:
     assert auth < build < push
 
 
+def test_hosted_builds_reclaim_only_unused_runner_sdks_before_local_export() -> None:
+    spec = _spec(PUBLISH)
+    steps = spec["jobs"]["build-development"]["steps"]
+    names = [str(step.get("name") or "") for step in steps]
+    cleanup = steps[names.index("Reclaim unused hosted-runner SDK space")]
+    build = names.index("Build immutable development image locally")
+
+    assert cleanup["if"] == (
+        "matrix.tool != 'ncore' && runner.environment == 'github-hosted'"
+    )
+    script = cleanup["run"]
+    for directory in (
+        "/usr/local/lib/android",
+        "/usr/share/dotnet",
+        "/usr/share/swift",
+        "/opt/ghc",
+    ):
+        assert directory in script
+    assert "xargs -0 -r -n1 -P4 sudo rm -rf --" in script
+    assert "df -h /" in script
+    assert "docker" not in script
+    assert names.index("Reclaim unused hosted-runner SDK space") < build
+
+
 def test_large_image_scan_reclaims_only_disposable_build_cache_and_tar() -> None:
     spec = _spec(PUBLISH)
     step = next(

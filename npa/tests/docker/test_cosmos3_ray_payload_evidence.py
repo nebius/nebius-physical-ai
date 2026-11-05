@@ -178,6 +178,109 @@ def test_clean_report_has_no_credential_members(tmp_path):
     report = SCANNER.scan_tarball(path)
     assert report["verdict"] == "clean"
     assert report["credential_hits"] == report["credential_members"] == []
+    assert report["reviewed_nonoperational_content"] == []
+
+
+def test_exact_reviewed_member_is_receipted_without_suppressing_changed_bytes(
+    tmp_path, monkeypatch
+):
+    payload = b"hf_token='documented-non-operational-fixture'\n"
+    digest = hashlib.sha256(payload).hexdigest()
+    review = {
+        digest: {
+            "sha256": digest,
+            "bytes": len(payload),
+            "match_counts": {"credential_assignment": 1},
+            "reason": "fixture documents the exact-review contract",
+            "source": {
+                "url": "https://example.invalid/reviewed-fixture",
+                "revision": "a" * 40,
+            },
+        }
+    }
+    monkeypatch.setattr(SCANNER, "load_reviews", lambda: review)
+
+    path, layers, _ = _image(tmp_path, [[("source.py", payload)]])
+    report = SCANNER.scan_tarball(path)
+
+    assert report["verdict"] == "clean"
+    assert report["credential_hits"] == report["credential_members"] == []
+    assert report["reviewed_nonoperational_content"] == [
+        {
+            "path": "source.py",
+            "layer_index": 0,
+            "layer_sha256": hashlib.sha256(layers[0]).hexdigest(),
+            "member_index": 0,
+            "sha256": digest,
+            "bytes": len(payload),
+            "match_counts": {"credential_assignment": 1},
+            "source": {
+                "url": "https://example.invalid/reviewed-fixture",
+                "revision": "a" * 40,
+            },
+        }
+    ]
+
+    changed, _, _ = _image(tmp_path, [[("source.py", payload + b"# changed\n")]])
+    changed_report = SCANNER.scan_tarball(changed)
+    assert changed_report["verdict"] == "restricted-payload-detected"
+    assert changed_report["credential_hits"] == ["credential_assignment:source.py"]
+    assert changed_report["reviewed_nonoperational_content"] == []
+
+
+def test_public_ray_review_catalog_covers_the_validated_child_closure():
+    reviews = SCANNER.load_reviews()
+    expected = {
+        "fe589e51504f9478673966e85643bf9b7ca2b289504cc43b701feceb8c2fec45": (
+            4638,
+            1,
+            "npa/docker/workbench/cosmos3-ray-serve/smoke_functional.sh",
+        ),
+        "6a05df7aaadd119d7a04f42b5d130a8059484f0ebaf0922dfdf3c8804b726d47": (
+            34423,
+            1,
+            "google/auth/aws.py",
+        ),
+        "1304025f88099e4c2beabe6b42f359acfb0e03f87f2969bd63a5f7e2b125b4b2": (
+            5770,
+            1,
+            "google/auth/environment_vars.py",
+        ),
+        "10822904acfb629b80bc5a6c31b435cc6a29b92e0f273839d5f675c447750966": (
+            41948,
+            1,
+            "gradio/themes/builder_app.py",
+        ),
+        "9583eb2ddfe8153c2caa7a306bda70f58413b139e549d79d9015eb6b4369abb6": (
+            5917,
+            1,
+            "ray/autoscaler/_private/aws/utils.py",
+        ),
+        "625198176f51ba21f91608296d3e7ead662c3b895da0bc692c2c0c0aa6b2eb80": (
+            18738,
+            2,
+            "ray/data/catalog.py",
+        ),
+        "9d0b077a56dd4fea40b47191f453a55c1154a1145a088711f9728c4307b4f22a": (
+            60510,
+            1,
+            "smart_open/s3.py",
+        ),
+        "411e7195a8cf5b50fb59ccc475a2e409f4bb8e5a3c346a85153f37006eb5a214": (
+            25021,
+            2,
+            "smart_open-8.0.3.dist-info/METADATA",
+        ),
+    }
+
+    assert {
+        digest: (
+            reviews[digest]["bytes"],
+            reviews[digest]["match_counts"]["credential_assignment"],
+            reviews[digest]["source"]["member"],
+        )
+        for digest in expected
+    } == expected
 
 
 def test_history_finding_remains_blocking_without_member_evidence(tmp_path):

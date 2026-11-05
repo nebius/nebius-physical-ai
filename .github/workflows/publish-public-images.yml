@@ -558,6 +558,18 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y skopeo
 
+      - name: Reclaim unused hosted-runner SDK space
+        if: matrix.tool != 'ncore' && runner.environment == 'github-hosted'
+        run: |
+          set -euo pipefail
+          # Large CUDA image exports and local byte gates must coexist on the
+          # disposable GitHub-hosted root volume. These runner-image SDKs are
+          # unrelated to public image builds; never alter Docker state here.
+          printf '%s\0' \
+            /usr/local/lib/android /usr/share/dotnet /usr/share/swift /opt/ghc | \
+            xargs -0 -r -n1 -P4 sudo rm -rf --
+          df -h /
+
       # Build locally first. Every gate below inspects these exact bytes; no registry write
       # occurs until the final explicit docker push.
       - name: Build immutable development image locally

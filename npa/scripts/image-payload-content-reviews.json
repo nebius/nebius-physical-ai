@@ -1103,6 +1103,648 @@
       "match_counts": {"credential_assignment": 3},
       "reason": "NPA source references operator-provided values, annotations, shell substitutions, and documented placeholders. The named-assignment detector matches these expressions; no operational credential literal is present.",
       "source": {"url": "https://github.com/nebius/nebius-physical-ai/blob/c512452716e6deb4e1b898876e6ceab84044dfc6/npa/src/npa/workflows/sim_to_real.py", "revision": "c512452716e6deb4e1b898876e6ceab84044dfc6", "member": "npa/src/npa/workflows/sim_to_real.py"}
+    },
+    {
+      "sha256": "96137275400f39510c9a533c6ad8a921e94266e664e7e09c9ad6ea9f23277c23",
+      "bytes": 2057632,
+      "match_counts": {
+        "private_key_content": 10
+      },
+      "reason": "Official GnuTLS library contains known-answer PEM self-test constants; the exact reviewed ELF contains no operational private key.",
+      "source": {
+        "url": "https://launchpad.net/ubuntu/+source/gnutls28/3.8.3-1.1ubuntu3.4",
+        "revision": "2f04c14daa086889b4e85f7056c39d23766ddaa1",
+        "member": "usr/lib/x86_64-linux-gnu/libgnutls.so.30.37.1"
+      },
+      "supporting_source": {
+        "url": "https://github.com/gnutls/gnutls/blob/3.8.3/lib/crypto-selftests-pk.c",
+        "sha256": "0199a5b05732d825e235001455afa1d54178d8508da1fd2e0eb8a5ef271405b8",
+        "verification": "The detected PEM constants are GnuTLS known-answer self-test material, not a deployed private key."
+      }
+    },
+    {
+      "sha256": "33beea8e8c3037ba992d44b09e8b4ae71a35c055cf58ba4f396f4092379978d0",
+      "bytes": 15601,
+      "match_counts": {
+        "credential_assignment": 1
+      },
+      "reason": "Pinned upstream documentation or test fixture references operator-provided credentials or placeholders; it contains no baked credential literal.",
+      "source": {
+        "url": "https://github.com/NVIDIA/cosmos-framework/blob/5e67049cd94acb667786f1e6dd0dab821cb90c97/.github/workflows/gpu-tests.yml",
+        "revision": "5e67049cd94acb667786f1e6dd0dab821cb90c97",
+        "member": ".github/workflows/gpu-tests.yml"
+      }
+    },
+    {
+      "sha256": "e5c0367573935bd09e107305ec4df882d8547bdbd1bcaaecf72785bd37e43dae",
+      "bytes": 3329,
+      "match_counts": {
+        "credential_assignment": 1
+      },
+      "reason": "Pinned upstream documentation or test fixture references operator-provided credentials or placeholders; it contains no baked credential literal.",
+      "source": {
+        "url": "https://github.com/NVIDIA/cosmos-framework/blob/5e67049cd94acb667786f1e6dd0dab821cb90c97/docs/action_policy_droid_server.md",
+        "revision": "5e67049cd94acb667786f1e6dd0dab821cb90c97",
+        "member": "docs/action_policy_droid_server.md"
+      }
+    },
+    {
+      "sha256": "a3c68ad91037a5804d42c8c5a5c663cb72feea8339a6626e139272d885ea8665",
+      "bytes": 13326,
+      "match_counts": {
+        "credential_assignment": 1
+      },
+      "reason": "Pinned upstream documentation or test fixture references operator-provided credentials or placeholders; it contains no baked credential literal.",
+      "source": {
+        "url": "https://github.com/NVIDIA/cosmos-framework/blob/5e67049cd94acb667786f1e6dd0dab821cb90c97/docs/setup.md",
+        "revision": "5e67049cd94acb667786f1e6dd0dab821cb90c97",
+        "member": "docs/setup.md"
+      }
+    },
+    {
+      "sha256": "a2e893a782e8749395744b568d9c78477ee65deb18d4adcdef38b680c5e351c6",
+      "bytes": 6803,
+      "match_counts": {
+        "credential_assignment": 1
+      },
+      "reason": "Pinned upstream documentation or test fixture references operator-provided credentials or placeholders; it contains no baked credential literal.",
+      "source": {
+        "url": "https://github.com/NVIDIA/cosmos-framework/blob/5e67049cd94acb667786f1e6dd0dab821cb90c97/justfile",
+        "revision": "5e67049cd94acb667786f1e6dd0dab821cb90c97",
+        "member": "justfile"
+      }
+    },
+    {
+      "sha256": "2609c62ef183dad7d30839ae18f3e950dd18083980e3f8cb0b1bfc2fd4cb6e2f",
+      "bytes": 6446,
+      "match_counts": {
+        "credential_assignment": 1
+      },
+      "reason": "Pinned upstream documentation or test fixture references operator-provided credentials or placeholders; it contains no baked credential literal.",
+      "source": {
+        "url": "https://github.com/NVIDIA/cosmos-framework/blob/5e67049cd94acb667786f1e6dd0dab821cb90c97/tests/_stage_h100_inputs.sh",
+        "revision": "5e67049cd94acb667786f1e6dd0dab821cb90c97",
+        "member": "tests/_stage_h100_inputs.sh"
+      }
+    },
+    {
+      "sha256": "0741d970a271d37630bdb71e51577793a9d21c921b4018f195927ffdc9853da2",
+      "bytes": 139564552,
+      "match_counts": {
+        "aws_access_key_id": 1
+      },
+      "reason": "The exact public Pyrefly analyzer binary contains an AWS-shaped test byte sequence, not configured cloud credentials.",
+      "source": {
+        "url": "https://files.pythonhosted.org/packages/a9/39/bc65cdd5243eb2dfea25dd1321f9a5a93e8d9c3a308501c4c6c05d011585/pyrefly-0.55.0-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl",
+        "revision": "f5aa85657d76da1d25d081a49f0e33c8fc3ec91c1a0f185a8ed393a5a3d9e178",
+        "member": "pyrefly-0.55.0.data/scripts/pyrefly"
+      }
+    },
+    {
+      "sha256": "d640808bbc59c3a5878e04ed278ee9c4f8c5c1beb01ef4ca380950738614173b",
+      "bytes": 35483792,
+      "match_counts": {
+        "aws_access_key_id": 1
+      },
+      "reason": "The exact public Ruff analyzer binary contains an AWS-shaped test byte sequence, not configured cloud credentials.",
+      "source": {
+        "url": "https://files.pythonhosted.org/packages/55/bf/9cb1ea5e3066779e42ade8d0cd3d3b0582a5720a814ae1586f85014656b6/ruff-0.12.7-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl",
+        "revision": "06bfb01e1623bf7f59ea749a841da56f8f653d641bfd046edee32ede7ff6c606",
+        "member": "ruff-0.12.7.data/scripts/ruff"
+      }
+    },
+    {
+      "sha256": "41014ce4d9821d30bf1e8aba2c8aef38bdc4544bbe1d5f73c79ae948b7bfefcc",
+      "bytes": 67634,
+      "match_counts": {
+        "aws_access_key_id": 1
+      },
+      "reason": "Compiled Pillow font-module bytecode contains an AWS-shaped substring from built-in font data, not an access key.",
+      "source": {
+        "url": "https://files.pythonhosted.org/packages/84/21/a35af28dcc61f37ed850a2d64c65c701321dfbf25085e469d5559360cbbf/pillow-12.3.0-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl",
+        "revision": "78cb2c6865a35ab8ff8b75fd122f6033b92a62c82801110e48ddd6c936a45d91",
+        "member": "PIL/ImageFont.py"
+      }
+    },
+    {
+      "sha256": "8da9f55f6be831d2fa54c6d5d5691a362bb6c1f4033733925429915bfa552c20",
+      "bytes": 20129,
+      "match_counts": {
+        "credential_assignment": 1
+      },
+      "reason": "Public boto3 SDK code or documentation contains credential variable names or canonical examples, not configured credentials.",
+      "source": {
+        "url": "https://files.pythonhosted.org/packages/61/24/3bf865b07d15fea85b63504856e137029b6acbc73762496064219cdb265d/boto3-1.40.61-py3-none-any.whl",
+        "revision": "6b9c57b2a922b5d8c17766e29ed792586a818098efe84def27c8f582b33f898c",
+        "member": "boto3/session.py"
+      }
+    },
+    {
+      "sha256": "2beb01599c682e30010991eba8066ce7b71879fc0f9838abd37a66e8f13f9a1e",
+      "bytes": 1390,
+      "match_counts": {
+        "aws_access_key_id": 1
+      },
+      "reason": "Public boto3 SDK code or documentation contains credential variable names or canonical examples, not configured credentials.",
+      "source": {
+        "url": "https://files.pythonhosted.org/packages/61/24/3bf865b07d15fea85b63504856e137029b6acbc73762496064219cdb265d/boto3-1.40.61-py3-none-any.whl",
+        "revision": "6b9c57b2a922b5d8c17766e29ed792586a818098efe84def27c8f582b33f898c",
+        "member": "boto3/examples/cloudfront.rst"
+      }
+    },
+    {
+      "sha256": "93e39cbd3be43e09703d85d2f1a7830ca2bdd98100084260e62a6a58c421a243",
+      "bytes": 22136,
+      "match_counts": {
+        "credential_assignment": 1
+      },
+      "reason": "Public boto3 SDK code or documentation contains credential variable names or canonical examples, not configured credentials.",
+      "source": {
+        "url": "https://files.pythonhosted.org/packages/61/24/3bf865b07d15fea85b63504856e137029b6acbc73762496064219cdb265d/boto3-1.40.61-py3-none-any.whl",
+        "revision": "6b9c57b2a922b5d8c17766e29ed792586a818098efe84def27c8f582b33f898c",
+        "member": "boto3/session.py"
+      }
+    },
+    {
+      "sha256": "dc0ee7fac93e04712cd1dd2d8a2dca6c2d7d5ad24f14f801089a66600c052b5d",
+      "bytes": 6581,
+      "match_counts": {
+        "credential_assignment": 1
+      },
+      "reason": "Public boto3 SDK code or documentation contains credential variable names or canonical examples, not configured credentials.",
+      "source": {
+        "url": "https://files.pythonhosted.org/packages/61/24/3bf865b07d15fea85b63504856e137029b6acbc73762496064219cdb265d/boto3-1.40.61-py3-none-any.whl",
+        "revision": "6b9c57b2a922b5d8c17766e29ed792586a818098efe84def27c8f582b33f898c",
+        "member": "boto3-1.40.61.dist-info/METADATA"
+      }
+    },
+    {
+      "sha256": "7f68f509ff81de02feda97b9e2f4acc4f8f473201d958a52f59755a3ab01887d",
+      "bytes": 52780,
+      "match_counts": {
+        "credential_assignment": 1
+      },
+      "reason": "Public botocore SDK code or documentation contains credential variable names or canonical examples, not configured credentials.",
+      "source": {
+        "url": "https://files.pythonhosted.org/packages/7f/6c/522e05388aa6fc66cf8ea46c6b29809a1a6f527ea864998b01ffb368ca36/botocore-1.40.76-py3-none-any.whl",
+        "revision": "fe425d386e48ac64c81cbb4a7181688d813df2e2b4c78b95ebe833c9e868c6f4",
+        "member": "botocore/session.py"
+      }
+    },
+    {
+      "sha256": "4f912aac51590625652fd76c37e4f90e78a05355273125df555c012b4d005ab5",
+      "bytes": 48537,
+      "match_counts": {
+        "aws_access_key_id": 1
+      },
+      "reason": "Public botocore SDK code or documentation contains credential variable names or canonical examples, not configured credentials.",
+      "source": {
+        "url": "https://files.pythonhosted.org/packages/7f/6c/522e05388aa6fc66cf8ea46c6b29809a1a6f527ea864998b01ffb368ca36/botocore-1.40.76-py3-none-any.whl",
+        "revision": "fe425d386e48ac64c81cbb4a7181688d813df2e2b4c78b95ebe833c9e868c6f4",
+        "member": "botocore/data/iam/2010-05-08/examples-1.json"
+      }
+    },
+    {
+      "sha256": "c83fc27073767fdb7d3e5190e4dcce25a09871c7b118fa289db056d93e0e31c9",
+      "bytes": 11885,
+      "match_counts": {
+        "aws_access_key_id": 1
+      },
+      "reason": "Public botocore SDK code or documentation contains credential variable names or canonical examples, not configured credentials.",
+      "source": {
+        "url": "https://files.pythonhosted.org/packages/7f/6c/522e05388aa6fc66cf8ea46c6b29809a1a6f527ea864998b01ffb368ca36/botocore-1.40.76-py3-none-any.whl",
+        "revision": "fe425d386e48ac64c81cbb4a7181688d813df2e2b4c78b95ebe833c9e868c6f4",
+        "member": "botocore/data/sts/2011-06-15/examples-1.json"
+      }
+    },
+    {
+      "sha256": "a0bc37780937d5e707b0a52f354a4fff29c295e911724e1c2cd1c40eb24ca7fb",
+      "bytes": 5869,
+      "match_counts": {
+        "credential_assignment": 1
+      },
+      "reason": "Public botocore SDK code or documentation contains credential variable names or canonical examples, not configured credentials.",
+      "source": {
+        "url": "https://files.pythonhosted.org/packages/7f/6c/522e05388aa6fc66cf8ea46c6b29809a1a6f527ea864998b01ffb368ca36/botocore-1.40.76-py3-none-any.whl",
+        "revision": "fe425d386e48ac64c81cbb4a7181688d813df2e2b4c78b95ebe833c9e868c6f4",
+        "member": "botocore-1.40.76.dist-info/METADATA"
+      }
+    },
+    {
+      "sha256": "03cc0fdc27678a174739d9b1652a45d24da512e1d6d877429c989cc3965b39e2",
+      "bytes": 35163,
+      "match_counts": {
+        "credential_assignment": 1
+      },
+      "reason": "NPA source references operator-provided values, annotations, shell substitutions, or documented placeholders; no operational credential literal is present.",
+      "source": {
+        "url": "https://github.com/nebius/nebius-physical-ai/blob/348449e8752e6b3c10e62b072ce599646537f084/npa/src/npa/cli/agent_env_files.py",
+        "revision": "348449e8752e6b3c10e62b072ce599646537f084",
+        "member": "npa/cli/agent_env_files.py"
+      }
+    },
+    {
+      "sha256": "f10dabb4f8ec59270274e1fdd699a9eb38d1abf37e5b46330f50a2d6df670690",
+      "bytes": 418775,
+      "match_counts": {
+        "credential_assignment": 1
+      },
+      "reason": "NPA source references operator-provided values, annotations, shell substitutions, or documented placeholders; no operational credential literal is present.",
+      "source": {
+        "url": "https://github.com/nebius/nebius-physical-ai/blob/348449e8752e6b3c10e62b072ce599646537f084/npa/src/npa/cli/workbench/workflow/__init__.py",
+        "revision": "348449e8752e6b3c10e62b072ce599646537f084",
+        "member": "npa/cli/workbench/workflow/__init__.py"
+      }
+    },
+    {
+      "sha256": "b2c38afb7dacd731c09c6ba65a0adfe2feb85f550fcdb1878a41bf6b0a17ad79",
+      "bytes": 29811,
+      "match_counts": {
+        "credential_assignment": 1
+      },
+      "reason": "NPA source references operator-provided values, annotations, shell substitutions, or documented placeholders; no operational credential literal is present.",
+      "source": {
+        "url": "https://github.com/nebius/nebius-physical-ai/blob/348449e8752e6b3c10e62b072ce599646537f084/npa/src/npa/clients/storage.py",
+        "revision": "348449e8752e6b3c10e62b072ce599646537f084",
+        "member": "npa/clients/storage.py"
+      }
+    },
+    {
+      "sha256": "4f8a40418c51bd64669190c390d0877b32cdea2f81c55d61669f205e37c3ed19",
+      "bytes": 112933,
+      "match_counts": {
+        "credential_assignment": 1
+      },
+      "reason": "NPA source references operator-provided values, annotations, shell substitutions, or documented placeholders; no operational credential literal is present.",
+      "source": {
+        "url": "https://github.com/nebius/nebius-physical-ai/blob/348449e8752e6b3c10e62b072ce599646537f084/npa/src/npa/orchestration/npa_workflow/run_state.py",
+        "revision": "348449e8752e6b3c10e62b072ce599646537f084",
+        "member": "npa/orchestration/npa_workflow/run_state.py"
+      }
+    },
+    {
+      "sha256": "2bbb9cad9bb2389b872aa9006370bdfe93daf57c9cdf4dff5df831f24680f03f",
+      "bytes": 18398,
+      "match_counts": {
+        "credential_assignment": 1
+      },
+      "reason": "NPA source references operator-provided values, annotations, shell substitutions, or documented placeholders; no operational credential literal is present.",
+      "source": {
+        "url": "https://github.com/nebius/nebius-physical-ai/blob/348449e8752e6b3c10e62b072ce599646537f084/npa/src/npa/orchestration/npa_workflow/src_staging.py",
+        "revision": "348449e8752e6b3c10e62b072ce599646537f084",
+        "member": "npa/orchestration/npa_workflow/src_staging.py"
+      }
+    },
+    {
+      "sha256": "4f4f400116d61ee495c44723ef143bcbe52dd0781a65658d8023f7b7339891c3",
+      "bytes": 74382,
+      "match_counts": {
+        "credential_assignment": 1
+      },
+      "reason": "NPA source references operator-provided values, annotations, shell substitutions, or documented placeholders; no operational credential literal is present.",
+      "source": {
+        "url": "https://github.com/nebius/nebius-physical-ai/blob/348449e8752e6b3c10e62b072ce599646537f084/npa/src/npa/orchestration/npa_workflow/submit_matrix.py",
+        "revision": "348449e8752e6b3c10e62b072ce599646537f084",
+        "member": "npa/orchestration/npa_workflow/submit_matrix.py"
+      }
+    },
+    {
+      "sha256": "ab22accee830f0ce79d6f4391375f7f3552c4b25feea6dbe73a8742abb2c2e56",
+      "bytes": 71420,
+      "match_counts": {
+        "credential_assignment": 1
+      },
+      "reason": "NPA source references operator-provided values, annotations, shell substitutions, or documented placeholders; no operational credential literal is present.",
+      "source": {
+        "url": "https://github.com/nebius/nebius-physical-ai/blob/348449e8752e6b3c10e62b072ce599646537f084/npa/src/npa/smoke/golden_evals.yaml",
+        "revision": "348449e8752e6b3c10e62b072ce599646537f084",
+        "member": "npa/smoke/golden_evals.yaml"
+      }
+    },
+    {
+      "sha256": "b7cd6adfcb823a1d9a33ac8bddb7167967497f2c127957c06ab49040370c2514",
+      "bytes": 12317,
+      "match_counts": {
+        "credential_assignment": 1
+      },
+      "reason": "NPA source references operator-provided values, annotations, shell substitutions, or documented placeholders; no operational credential literal is present.",
+      "source": {
+        "url": "https://github.com/nebius/nebius-physical-ai/blob/348449e8752e6b3c10e62b072ce599646537f084/npa/src/npa/workbench/nurec/examples/nurec-reconstruct.yaml",
+        "revision": "348449e8752e6b3c10e62b072ce599646537f084",
+        "member": "npa/workbench/nurec/examples/nurec-reconstruct.yaml"
+      }
+    },
+    {
+      "sha256": "10fec3b0eac920781ddc9a79e047e78a669284844bbb157a662f264658f0ad62",
+      "bytes": 11910,
+      "match_counts": {
+        "credential_assignment": 1
+      },
+      "reason": "NPA source references operator-provided values, annotations, shell substitutions, or documented placeholders; no operational credential literal is present.",
+      "source": {
+        "url": "https://github.com/nebius/nebius-physical-ai/blob/348449e8752e6b3c10e62b072ce599646537f084/npa/src/npa/workflows/main/nurec-reconstruct.yaml",
+        "revision": "348449e8752e6b3c10e62b072ce599646537f084",
+        "member": "npa/workflows/main/nurec-reconstruct.yaml"
+      }
+    },
+    {
+      "sha256": "601feebc682e38ee8556c23dfc7328e3d51f1e81782c01a757be0f5f942e8b1a",
+      "bytes": 1822,
+      "match_counts": {
+        "credential_assignment": 1
+      },
+      "reason": "NPA workflow source references operator-provided values or documented placeholders; no operational credential literal is present.",
+      "source": {
+        "url": "https://github.com/nebius/nebius-physical-ai/blob/348449e8752e6b3c10e62b072ce599646537f084/workflows/workbench/ray-train-synthetic/cluster/start.sh",
+        "revision": "348449e8752e6b3c10e62b072ce599646537f084",
+        "member": "workflows/workbench/ray-train-synthetic/cluster/start.sh"
+      }
+    },
+    {
+      "sha256": "9c789ac4384d194b8911af4ee5e6a9a26dc0c393d6d83841c1d581f2fab58c36",
+      "bytes": 69235,
+      "match_counts": {
+        "aws_access_key_id": 1
+      },
+      "reason": "Compiled Pillow font-module bytecode contains an AWS-shaped substring from built-in font data, not an access key.",
+      "source": {
+        "url": "https://files.pythonhosted.org/packages/84/21/a35af28dcc61f37ed850a2d64c65c701321dfbf25085e469d5559360cbbf/pillow-12.3.0-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl",
+        "revision": "78cb2c6865a35ab8ff8b75fd122f6033b92a62c82801110e48ddd6c936a45d91",
+        "member": "PIL/ImageFont.py"
+      }
+    },
+    {
+      "sha256": "8100bfd6c72569746e736960bade8f0f8f55435937ce72668aec738ee8241040",
+      "bytes": 21426,
+      "match_counts": {
+        "credential_assignment": 1
+      },
+      "reason": "Public boto3 SDK code or documentation contains credential variable names or canonical examples, not configured credentials.",
+      "source": {
+        "url": "https://files.pythonhosted.org/packages/74/e4/7e88c40e9f61888e12dac0de41a5fddc2bcd1c3992d9b28e17d915cce0df/boto3-1.43.108-py3-none-any.whl",
+        "revision": "19e9da95ef0c494e27052049a42137550e66730509bb613e76eaa30ddf9a7170",
+        "member": "boto3/session.py"
+      }
+    },
+    {
+      "sha256": "0882cb73f2c1e7f5966cab62470d0da7f2c9e5cfcbe77710400ce7d28e2ace0c",
+      "bytes": 6571,
+      "match_counts": {
+        "credential_assignment": 1
+      },
+      "reason": "Public boto3 SDK code or documentation contains credential variable names or canonical examples, not configured credentials.",
+      "source": {
+        "url": "https://files.pythonhosted.org/packages/74/e4/7e88c40e9f61888e12dac0de41a5fddc2bcd1c3992d9b28e17d915cce0df/boto3-1.43.108-py3-none-any.whl",
+        "revision": "19e9da95ef0c494e27052049a42137550e66730509bb613e76eaa30ddf9a7170",
+        "member": "boto3-1.43.108.dist-info/METADATA"
+      }
+    },
+    {
+      "sha256": "7b2087b286ebffe871becc13866bffe317007b4d41c21a7e5661d3b56045558c",
+      "bytes": 54897,
+      "match_counts": {
+        "credential_assignment": 1
+      },
+      "reason": "Public botocore SDK code or documentation contains credential variable names or canonical examples, not configured credentials.",
+      "source": {
+        "url": "https://files.pythonhosted.org/packages/7a/0b/4670b7e23914b5cc357be5ca45fae503b57d98ecff4b3eabea70412809fd/botocore-1.43.108-py3-none-any.whl",
+        "revision": "ab9d16c6b4350aaa54ed28202dfa2998b2d735fdbf3247eb60af469d8d48a5b8",
+        "member": "botocore/session.py"
+      }
+    },
+    {
+      "sha256": "2a6d039a6587a4ea81e64222f88ef17aa1f549f3290765cef4306520b0c5504c",
+      "bytes": 5570,
+      "match_counts": {
+        "credential_assignment": 1
+      },
+      "reason": "Public botocore SDK code or documentation contains credential variable names or canonical examples, not configured credentials.",
+      "source": {
+        "url": "https://files.pythonhosted.org/packages/7a/0b/4670b7e23914b5cc357be5ca45fae503b57d98ecff4b3eabea70412809fd/botocore-1.43.108-py3-none-any.whl",
+        "revision": "ab9d16c6b4350aaa54ed28202dfa2998b2d735fdbf3247eb60af469d8d48a5b8",
+        "member": "botocore-1.43.108.dist-info/METADATA"
+      }
+    },
+    {
+      "sha256": "3bb46b26f9af51f991fef8beea1f9acbdbde5bbbcbc7129c36100d2877057624",
+      "bytes": 66925,
+      "match_counts": {
+        "private_key_content": 1
+      },
+      "reason": "Compiled cryptography SSH-parser bytecode contains PEM boundary constants, not a private key.",
+      "source": {
+        "url": "https://files.pythonhosted.org/packages/e1/1b/82f0f0d8858d4432be1af790477edf62aef90324041aa07c57e57bef1af7/cryptography-50.0.1-cp311-abi3-manylinux_2_28_x86_64.whl",
+        "revision": "51593d180cf6d179bde5c5d065bed81386b1f381656ae7d042b7ffc87a9895ad",
+        "member": "cryptography/hazmat/primitives/serialization/ssh.py"
+      }
+    },
+    {
+      "sha256": "0b22899554fea5035bd9fd81c2551a200a16b686dc67ae58d2f829197dadb670",
+      "bytes": 3157,
+      "match_counts": {
+        "credential_assignment": 1
+      },
+      "reason": "Public PyArrow test configuration names an operator-provided AWS secret variable; it contains no credential literal.",
+      "source": {
+        "url": "https://files.pythonhosted.org/packages/60/c9/711ca85d79f1ec98f29a5eae2b051e25b4ecec5de3e3c0e2d5c5dcb15664/pyarrow-25.0.1-cp312-cp312-manylinux_2_28_x86_64.whl",
+        "revision": "5389cdf79447ed1515c9e31620e6e1e2302249564d603f2ad727d4f6d313e4c3",
+        "member": "pyarrow/tests/parquet/conftest.py"
+      }
+    },
+    {
+      "sha256": "f1a589460b8a19b5b254eaaabba290b2e00969dc9f15ec4cddd3fae77c5603df",
+      "bytes": 30829,
+      "match_counts": {
+        "credential_assignment": 1
+      },
+      "reason": "NPA source references operator-provided values, annotations, shell substitutions, or documented placeholders; no operational credential literal is present.",
+      "source": {
+        "url": "https://github.com/nebius/nebius-physical-ai/blob/348449e8752e6b3c10e62b072ce599646537f084/npa/src/npa/cli/agent_env_files.py",
+        "revision": "348449e8752e6b3c10e62b072ce599646537f084",
+        "member": "npa/cli/agent_env_files.py"
+      }
+    },
+    {
+      "sha256": "2c38e756992b2bab0e5cd42ca647e44f38ce8dda11d1a1f8ac6ae9784353b1a2",
+      "bytes": 138322,
+      "match_counts": {
+        "credential_assignment": 1
+      },
+      "reason": "NPA source references operator-provided values, annotations, shell substitutions, or documented placeholders; no operational credential literal is present.",
+      "source": {
+        "url": "https://github.com/nebius/nebius-physical-ai/blob/348449e8752e6b3c10e62b072ce599646537f084/npa/src/npa/cli/main.py",
+        "revision": "348449e8752e6b3c10e62b072ce599646537f084",
+        "member": "npa/cli/main.py"
+      }
+    },
+    {
+      "sha256": "57e9782067523c8a6983bab315cdb4737f642e6284ca047f6bad3ae87beeab87",
+      "bytes": 148093,
+      "match_counts": {
+        "credential_assignment": 1
+      },
+      "reason": "NPA source references operator-provided values, annotations, shell substitutions, or documented placeholders; no operational credential literal is present.",
+      "source": {
+        "url": "https://github.com/nebius/nebius-physical-ai/blob/348449e8752e6b3c10e62b072ce599646537f084/npa/src/npa/cli/cosmos/__init__.py",
+        "revision": "348449e8752e6b3c10e62b072ce599646537f084",
+        "member": "npa/cli/cosmos/__init__.py"
+      }
+    },
+    {
+      "sha256": "065386c44104e7849ae0337feb57801bd85910c49bde55f866f32ca2cbbb19df",
+      "bytes": 173857,
+      "match_counts": {
+        "credential_assignment": 1
+      },
+      "reason": "NPA source references operator-provided values, annotations, shell substitutions, or documented placeholders; no operational credential literal is present.",
+      "source": {
+        "url": "https://github.com/nebius/nebius-physical-ai/blob/348449e8752e6b3c10e62b072ce599646537f084/npa/src/npa/cli/fiftyone/__init__.py",
+        "revision": "348449e8752e6b3c10e62b072ce599646537f084",
+        "member": "npa/cli/fiftyone/__init__.py"
+      }
+    },
+    {
+      "sha256": "b4f842ed8dad6a59528045789efb96a3befdefb0b30d57a19690b998d9eb9a0f",
+      "bytes": 136507,
+      "match_counts": {
+        "credential_assignment": 1
+      },
+      "reason": "NPA source references operator-provided values, annotations, shell substitutions, or documented placeholders; no operational credential literal is present.",
+      "source": {
+        "url": "https://github.com/nebius/nebius-physical-ai/blob/348449e8752e6b3c10e62b072ce599646537f084/npa/src/npa/cli/isaac_lab/__init__.py",
+        "revision": "348449e8752e6b3c10e62b072ce599646537f084",
+        "member": "npa/cli/isaac_lab/__init__.py"
+      }
+    },
+    {
+      "sha256": "02ad2cd2a6601145349ff61b4aa641f403ee565e38ae3d6a24f95f1838712a11",
+      "bytes": 13583,
+      "match_counts": {
+        "credential_assignment": 1
+      },
+      "reason": "NPA source references operator-provided values, annotations, shell substitutions, or documented placeholders; no operational credential literal is present.",
+      "source": {
+        "url": "https://github.com/nebius/nebius-physical-ai/blob/348449e8752e6b3c10e62b072ce599646537f084/npa/src/npa/cli/workbench/cosmos_curate.py",
+        "revision": "348449e8752e6b3c10e62b072ce599646537f084",
+        "member": "npa/cli/workbench/cosmos_curate.py"
+      }
+    },
+    {
+      "sha256": "aa86f7b56f45c7e010f26a2eac2573863c1df28a3eda0f1edf728dba21cda8fd",
+      "bytes": 96426,
+      "match_counts": {
+        "credential_assignment": 1
+      },
+      "reason": "NPA source references operator-provided values, annotations, shell substitutions, or documented placeholders; no operational credential literal is present.",
+      "source": {
+        "url": "https://github.com/nebius/nebius-physical-ai/blob/348449e8752e6b3c10e62b072ce599646537f084/npa/src/npa/orchestration/npa_workflow/run_state.py",
+        "revision": "348449e8752e6b3c10e62b072ce599646537f084",
+        "member": "npa/orchestration/npa_workflow/run_state.py"
+      }
+    },
+    {
+      "sha256": "fe589e51504f9478673966e85643bf9b7ca2b289504cc43b701feceb8c2fec45",
+      "bytes": 4638,
+      "match_counts": {
+        "credential_assignment": 1
+      },
+      "reason": "The NPA smoke script requires an operator-provided HF_TOKEN at runtime; its shell parameter expansion contains no baked credential value.",
+      "source": {
+        "url": "https://github.com/nebius/nebius-physical-ai/blob/4f06946c5f4c7e07db215f01c73eaab601e1ce05/npa/docker/workbench/cosmos3-ray-serve/smoke_functional.sh",
+        "revision": "4f06946c5f4c7e07db215f01c73eaab601e1ce05",
+        "member": "npa/docker/workbench/cosmos3-ray-serve/smoke_functional.sh"
+      }
+    },
+    {
+      "sha256": "6a05df7aaadd119d7a04f42b5d130a8059484f0ebaf0922dfdf3c8804b726d47",
+      "bytes": 34423,
+      "match_counts": {
+        "credential_assignment": 1
+      },
+      "reason": "Official google-auth AWS credential-source code names a caller-provided secret field; it contains no configured credential.",
+      "source": {
+        "url": "https://files.pythonhosted.org/packages/eb/a3/87fe9b7203ec2e56ea6a57c75e6d632eaf9487c7f7978cdad1d801bee0af/google_auth-2.62.0-py3-none-any.whl",
+        "revision": "4ff4319aeb4ad128409759d397a9fcafad126d0031d241cc0dd6b9a00b43e3f3",
+        "member": "google/auth/aws.py"
+      }
+    },
+    {
+      "sha256": "1304025f88099e4c2beabe6b42f359acfb0e03f87f2969bd63a5f7e2b125b4b2",
+      "bytes": 5770,
+      "match_counts": {
+        "credential_assignment": 1
+      },
+      "reason": "Official google-auth environment-variable constants name a caller-provided AWS secret; they contain no configured credential.",
+      "source": {
+        "url": "https://files.pythonhosted.org/packages/eb/a3/87fe9b7203ec2e56ea6a57c75e6d632eaf9487c7f7978cdad1d801bee0af/google_auth-2.62.0-py3-none-any.whl",
+        "revision": "4ff4319aeb4ad128409759d397a9fcafad126d0031d241cc0dd6b9a00b43e3f3",
+        "member": "google/auth/environment_vars.py"
+      }
+    },
+    {
+      "sha256": "10822904acfb629b80bc5a6c31b435cc6a29b92e0f273839d5f675c447750966",
+      "bytes": 41948,
+      "match_counts": {
+        "credential_assignment": 1
+      },
+      "reason": "The reproducible Gradio metadata derivative retains this exact Apache-2.0 upstream UI source member, which reads a caller-provided HF token and contains no credential literal.",
+      "source": {
+        "url": "https://files.pythonhosted.org/packages/2a/12/ac98683fa45d84c2c96c14acdb040aa746209089ea045c766f380549ecec/gradio-6.16.0-py3-none-any.whl",
+        "revision": "a5de01bf17336bf421d52af4b5dbd9fdbd530762c485067748456ccb797700bb",
+        "member": "gradio/themes/builder_app.py"
+      }
+    },
+    {
+      "sha256": "9583eb2ddfe8153c2caa7a306bda70f58413b139e549d79d9015eb6b4369abb6",
+      "bytes": 5917,
+      "match_counts": {
+        "credential_assignment": 1
+      },
+      "reason": "Official Ray AWS utility code names a caller-provided environment variable and contains no configured credential.",
+      "source": {
+        "url": "https://files.pythonhosted.org/packages/ae/1f/59306bf0583844fc935497c7400b30abf3914d85c6a0fd664d5cf184d6ef/ray-2.58.0-cp313-cp313-manylinux2014_x86_64.whl",
+        "revision": "b2262140a199458c5ad6f7917ec758d057d1669f824048f785119c6ce2539363",
+        "member": "ray/autoscaler/_private/aws/utils.py"
+      }
+    },
+    {
+      "sha256": "625198176f51ba21f91608296d3e7ead662c3b895da0bc692c2c0c0aa6b2eb80",
+      "bytes": 18738,
+      "match_counts": {
+        "credential_assignment": 2
+      },
+      "reason": "Official Ray catalog code exposes caller-provided AWS storage parameters and contains no configured credential.",
+      "source": {
+        "url": "https://files.pythonhosted.org/packages/ae/1f/59306bf0583844fc935497c7400b30abf3914d85c6a0fd664d5cf184d6ef/ray-2.58.0-cp313-cp313-manylinux2014_x86_64.whl",
+        "revision": "b2262140a199458c5ad6f7917ec758d057d1669f824048f785119c6ce2539363",
+        "member": "ray/data/catalog.py"
+      }
+    },
+    {
+      "sha256": "9d0b077a56dd4fea40b47191f453a55c1154a1145a088711f9728c4307b4f22a",
+      "bytes": 60510,
+      "match_counts": {
+        "credential_assignment": 1
+      },
+      "reason": "Official smart-open S3 API code exposes a caller-provided AWS secret parameter and contains no configured credential.",
+      "source": {
+        "url": "https://files.pythonhosted.org/packages/d1/79/60e14c5a19f39ebcf4fecd8ae8b0b01418ff5839bd7e66cf02b019d31826/smart_open-8.0.3-py3-none-any.whl",
+        "revision": "c3f67795b1a2bdb62dd9aca9ba4d4018e8f11e4188700b3246ea5ae049f65887",
+        "member": "smart_open/s3.py"
+      }
+    },
+    {
+      "sha256": "411e7195a8cf5b50fb59ccc475a2e409f4bb8e5a3c346a85153f37006eb5a214",
+      "bytes": 25021,
+      "match_counts": {
+        "credential_assignment": 2
+      },
+      "reason": "Official smart-open package documentation shows caller-provided AWS secret parameters and contains no configured credential.",
+      "source": {
+        "url": "https://files.pythonhosted.org/packages/d1/79/60e14c5a19f39ebcf4fecd8ae8b0b01418ff5839bd7e66cf02b019d31826/smart_open-8.0.3-py3-none-any.whl",
+        "revision": "c3f67795b1a2bdb62dd9aca9ba4d4018e8f11e4188700b3246ea5ae049f65887",
+        "member": "smart_open-8.0.3.dist-info/METADATA"
+      }
     }
   ]
 }

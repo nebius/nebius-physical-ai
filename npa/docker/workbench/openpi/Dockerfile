@@ -71,6 +71,9 @@ RUN git clone --filter=blob:none --no-checkout "${OPENPI_SOURCE_URL}" /opt/byof 
 # The retained uv bootstrap venv is scanned alongside the application venvs.
 # Replace Ubuntu's seeded pip with the hash-pinned current wheel so its bundled
 # CA set meets the same security floor as the role closures.
+# uv also retains its managed CPython bootstrap under the runtime user's home.
+# Complete-byte scanning reaches its seeded pip and bundled CA set, so update
+# that exact interpreter through the already hash-pinned wheel.
 RUN python3 -m venv /opt/uv \
     && /opt/uv/bin/pip install --no-cache-dir --no-deps --upgrade \
       "${OPENPI_PIP_WHEEL_URL}#sha256=${OPENPI_PIP_WHEEL_SHA256}" \
@@ -78,6 +81,12 @@ RUN python3 -m venv /opt/uv \
       'import pip; from pip._vendor import certifi; assert pip.__version__ == "26.3"; assert certifi.__version__ == "2026.10.23"' \
     && /opt/uv/bin/pip install --no-cache-dir 'uv==0.13.4' \
     && /opt/uv/bin/uv python install 3.11 \
+    && for interpreter in /home/ubuntu/.local/share/uv/python/*/bin/python3; do \
+      test -x "$interpreter"; \
+      /opt/uv/bin/pip --python "$interpreter" install --no-cache-dir --no-deps --upgrade --break-system-packages \
+        "${OPENPI_PIP_WHEEL_URL}#sha256=${OPENPI_PIP_WHEEL_SHA256}"; \
+      "$interpreter" -c 'import pip; from pip._vendor import certifi; assert pip.__version__ == "26.3"; assert certifi.__version__ == "2026.10.23"'; \
+    done \
     && /opt/uv/bin/uv venv --python 3.11 /opt/venv \
     && cd /opt/byof \
     && VIRTUAL_ENV=/opt/venv /opt/uv/bin/uv sync --active --frozen --group rlds --no-dev \
