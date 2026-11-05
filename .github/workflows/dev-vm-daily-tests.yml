@@ -6,13 +6,18 @@
 # ~/.npa credentials, config, and SkyPilot) and runs scripts/dev-vm-daily-tests.sh
 # there.
 #
-# Required repository secrets:
-#   DEV_VM_SSH_HOST         hostname or IP of the dev VM
+# Required repository configuration:
+#   DEV_VM_PRIMARY_HOST     repository variable identifying the dev VM
 #   DEV_VM_SSH_USER         SSH login user
 #   DEV_VM_SSH_PRIVATE_KEY  private key (PEM) authorized on the dev VM
 #   DEV_VM_SSH_KNOWN_HOSTS  independently verified SSH host key entry
 # Optional:
-#   DEV_VM_SSH_PORT         SSH port (defaults to 22)
+#   DEV_VM_PRIMARY_PORT     repository variable for the SSH port (defaults to 22)
+#
+# `DEV_VM_SSH_HOST` and `DEV_VM_SSH_PORT` secrets remain supported as a
+# transition override, but the reviewed primary host/port variables are the
+# canonical non-secret routing inputs. The user, key, and known-host entry must
+# always remain protected secrets.
 #
 # GUARDRAIL: the GPU-spending `live-gpu` tier must never run unattended on a
 # schedule (docs/testing/live-e2e.md). The scheduled path is capped to a safe
@@ -67,9 +72,9 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Verify required secrets are present
+      - name: Verify required secure transport settings are present
         env:
-          DEV_VM_SSH_HOST: ${{ secrets.DEV_VM_SSH_HOST }}
+          DEV_VM_SSH_HOST: ${{ secrets.DEV_VM_SSH_HOST || vars.DEV_VM_PRIMARY_HOST }}
           DEV_VM_SSH_USER: ${{ secrets.DEV_VM_SSH_USER }}
           DEV_VM_SSH_PRIVATE_KEY: ${{ secrets.DEV_VM_SSH_PRIVATE_KEY }}
           DEV_VM_SSH_KNOWN_HOSTS: ${{ secrets.DEV_VM_SSH_KNOWN_HOSTS }}
@@ -80,7 +85,7 @@ jobs:
           [ -n "$DEV_VM_SSH_PRIVATE_KEY" ] || missing="$missing DEV_VM_SSH_PRIVATE_KEY"
           [ -n "$DEV_VM_SSH_KNOWN_HOSTS" ] || missing="$missing DEV_VM_SSH_KNOWN_HOSTS"
           if [ -n "$missing" ]; then
-            echo "::error::Missing required secret(s):$missing. Add them under Settings > Secrets and variables > Actions."
+            echo "::error::Missing required secure transport setting(s):$missing. Add protected secrets under Settings > Secrets and variables > Actions."
             exit 1
           fi
 
@@ -112,8 +117,8 @@ jobs:
 
       - name: Check direct SSH reachability
         env:
-          DEV_VM_SSH_HOST: ${{ secrets.DEV_VM_SSH_HOST }}
-          DEV_VM_SSH_PORT: ${{ secrets.DEV_VM_SSH_PORT }}
+          DEV_VM_SSH_HOST: ${{ secrets.DEV_VM_SSH_HOST || vars.DEV_VM_PRIMARY_HOST }}
+          DEV_VM_SSH_PORT: ${{ secrets.DEV_VM_SSH_PORT || vars.DEV_VM_PRIMARY_PORT }}
         run: |
           python3 - <<'PYTHON'
           import os
@@ -140,9 +145,9 @@ jobs:
 
       - name: Configure SSH access to the dev VM
         env:
-          DEV_VM_SSH_HOST: ${{ secrets.DEV_VM_SSH_HOST }}
+          DEV_VM_SSH_HOST: ${{ secrets.DEV_VM_SSH_HOST || vars.DEV_VM_PRIMARY_HOST }}
           DEV_VM_SSH_PRIVATE_KEY: ${{ secrets.DEV_VM_SSH_PRIVATE_KEY }}
-          DEV_VM_SSH_PORT: ${{ secrets.DEV_VM_SSH_PORT }}
+          DEV_VM_SSH_PORT: ${{ secrets.DEV_VM_SSH_PORT || vars.DEV_VM_PRIMARY_PORT }}
           # Require independently verified host keys before sending credentials.
           DEV_VM_SSH_KNOWN_HOSTS: ${{ secrets.DEV_VM_SSH_KNOWN_HOSTS }}
         run: |
@@ -159,7 +164,7 @@ jobs:
       - name: Copy runner script to the dev VM
         id: stage
         env:
-          DEV_VM_SSH_HOST: ${{ secrets.DEV_VM_SSH_HOST }}
+          DEV_VM_SSH_HOST: ${{ secrets.DEV_VM_SSH_HOST || vars.DEV_VM_PRIMARY_HOST }}
           DEV_VM_SSH_USER: ${{ secrets.DEV_VM_SSH_USER }}
         run: |
           remote_dir="$(ssh -p "$SSH_PORT" \
@@ -183,7 +188,7 @@ jobs:
 
       - name: Run test tier on the dev VM
         env:
-          DEV_VM_SSH_HOST: ${{ secrets.DEV_VM_SSH_HOST }}
+          DEV_VM_SSH_HOST: ${{ secrets.DEV_VM_SSH_HOST || vars.DEV_VM_PRIMARY_HOST }}
           DEV_VM_SSH_USER: ${{ secrets.DEV_VM_SSH_USER }}
           REMOTE_RUN_DIR: ${{ steps.stage.outputs.directory }}
           TIER: ${{ steps.plan.outputs.tier }}
@@ -256,7 +261,7 @@ jobs:
       - name: Clean up the remote runner script
         if: ${{ always() && steps.stage.outputs.directory != '' }}
         env:
-          DEV_VM_SSH_HOST: ${{ secrets.DEV_VM_SSH_HOST }}
+          DEV_VM_SSH_HOST: ${{ secrets.DEV_VM_SSH_HOST || vars.DEV_VM_PRIMARY_HOST }}
           DEV_VM_SSH_USER: ${{ secrets.DEV_VM_SSH_USER }}
           REMOTE_RUN_DIR: ${{ steps.stage.outputs.directory }}
         run: |

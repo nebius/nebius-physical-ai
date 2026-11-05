@@ -54,17 +54,21 @@ npa workbench workflow submit \
   --var seedvr2_input_uri="s3://<your-bucket>/inputs/low-resolution.mp4"
 ```
 
-The canonical graph is `probe -> restore -> verify -> review`. Keep the CPU
+The canonical graph is
+`probe -> restore -> verify -> review -> quality_boundary`. Keep the CPU
 probe, GPU inference, digest-bound GPU identity/readback verification, and
-review stages separate.
+review stages separate. The final CPU boundary publishes advisory diagnostics
+but must retain `quality_qualified=false`, `sensor_truth_qualified=false`, and
+`downstream_use=review_only`; successful publication is evidence completeness,
+not restoration acceptance.
 Every command uses `--input-path`, `--output-path`, and `--run-id`; restore also
 receives mandatory `--probe-path` and must reject a changed run ID, input bytes,
 or media. Artifacts move through S3 and are create-only per object. A partial
 publication remains failure evidence; retry it under a new run ID and prefix.
 Source and output frames must stay within the reviewed 1920x1080 area budget; output
 dimensions must also preserve source aspect ratio and be divisible by 16.
-Inputs must contain at least two decodable frames; the CPU probe and restore
-input check reject single-frame files before model resolution or GPU inference.
+Inputs must contain at least three decodable frames; the CPU probe and restore
+input check reject shorter clips before model resolution or GPU inference.
 
 Configure the optional service with `SEEDVR2_TOKEN` and
 `SEEDVR2_ALLOWED_S3_ROOTS`. Keep authentication, request serialization,
@@ -79,6 +83,19 @@ frame mapping, source/model/image/commit identities, timestamps, hardware,
 decoded media properties, and SHA-256 values. Verify S3 bytes after upload.
 Treat `verification.json` as artifact/runtime consistency evidence only; pair it
 with the platform workflow receipt that identifies the actual producer pod.
+Treat `quality-boundary.json` as a fail-closed use-policy record, not a passing
+quality certificate. It must bind the exact source/result/candidate hashes,
+fully decode both videos, require matching frame counts and rates, and report
+the temporal and motion-hallucination diagnostics separately.
+
+The existing temporal diagnostic is sensitive to all four retained
+quality-rejected B200 outputs at its unchanged defaults, but the calibration
+cohort is too narrow and correlated to make it blocking. The existing
+hallucination diagnostic passes all four and measures added motion rather than
+static invented detail. Keep both advisory until a separately frozen,
+independently labeled benign/adverse/diverse and held-out calibration supports
+enforcement. Never use either diagnostic to call generated texture sensor
+truth.
 
 For the pinned RoboPro `roboreal_all_80tasks` robot-kitchen asset, compare
 candidate and bicubic against the original high-resolution reference. Its

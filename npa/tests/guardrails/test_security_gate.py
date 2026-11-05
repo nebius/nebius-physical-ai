@@ -1103,6 +1103,60 @@ def test_malformed_known_json_runtime_lock_is_rejected(
         dependencies._python_manifest_pins(source)
 
 
+def test_robotwin_runtime_lock_is_a_scanned_python_manifest(security_modules, tmp_path):
+    _, dependencies = security_modules
+    directory = tmp_path / "robotwin"
+    directory.mkdir()
+    source = directory / "runtime-lock.json"
+    source.write_text(
+        json.dumps(
+            {
+                "schema_version": "npa.robotwin.runtime-lock.v1",
+                "runtime_artifacts": [
+                    {"name": "urllib3", "version": "2.8.0", "kind": "bdist_wheel"},
+                    {"name": "Werkzeug", "version": "3.1.9", "kind": "bdist_wheel"},
+                ],
+            }
+        )
+    )
+
+    assert dependencies._is_python_dependency_manifest(source)
+    assert dependencies._python_manifest_pins(source) == [
+        "urllib3==2.8.0",
+        "werkzeug==3.1.9",
+    ]
+
+
+@pytest.mark.parametrize(
+    "artifacts",
+    [
+        [],
+        {},
+        [{"name": "urllib3", "kind": "bdist_wheel"}],
+        [{"name": "urllib3", "version": ">=2.8.0", "kind": "bdist_wheel"}],
+        [
+            {"name": "urllib3", "version": "2.8.0", "kind": "bdist_wheel"},
+            {"name": "Urllib3", "version": "2.7.0", "kind": "bdist_wheel"},
+        ],
+    ],
+)
+def test_invalid_robotwin_runtime_artifacts_cannot_disappear(
+    security_modules, tmp_path, artifacts
+):
+    _, dependencies = security_modules
+    source = tmp_path / "runtime-lock.json"
+    source.write_text(
+        json.dumps(
+            {
+                "schema_version": "npa.robotwin.runtime-lock.v1",
+                "runtime_artifacts": artifacts,
+            }
+        )
+    )
+    with pytest.raises((ValueError, TypeError)):
+        dependencies._python_manifest_pins(source)
+
+
 def _installation_source_pins(root: Path) -> list[str]:
     pattern = re.compile(
         r"(?<![A-Za-z0-9_.-])([A-Za-z0-9_.-]+)==([0-9][A-Za-z0-9.!+_-]*)"
@@ -1168,7 +1222,7 @@ def test_deployed_workbench_security_floors(security_modules, package, minimum):
                 or not dependencies._is_python_dependency_manifest(manifest)
             ):
                 continue
-            pins.extend(dependencies._exact_pins(manifest.read_text()))
+            pins.extend(dependencies._python_manifest_pins(manifest))
     for pin in pins:
         name, version = pin.split("==", maxsplit=1)
         if canonicalize_name(name) == canonicalize_name(package):

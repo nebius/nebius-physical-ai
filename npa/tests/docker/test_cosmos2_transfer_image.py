@@ -87,7 +87,7 @@ def test_lfs_media_models_and_build_credentials_are_excluded() -> None:
     text = _dockerfile()
     # The Transfer tree now comes from an integrity-checked public archive; SAM2
     # remains a separate Git fetch and must keep its LFS-smudge protections.
-    assert text.count("GIT_LFS_SKIP_SMUDGE=1") >= 2
+    assert text.count("GIT_LFS_SKIP_SMUDGE=1") >= 3
     assert "filter.lfs.smudge=" in text
     assert "rm -rf .git assets" in text
     assert "matplotlib/mpl-data/sample_data" in text

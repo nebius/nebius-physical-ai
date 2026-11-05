@@ -206,6 +206,11 @@ attrs==26.1.0 \
     #   aiohttp
     #   jsonschema
     #   referencing
+audioop-lts==0.2.2 ; python_version >= "3.13" \
+    --hash=sha256:51c916108c56aa6e426ce611946f901badac950ee2ddaf302b7ed35d9958970d
+    # via
+    #   -r npa/docker/workbench/cosmos3-ray-serve/security-upgrades-requirements.in
+    #   gradio
 brotli==1.2.1 \
     --hash=sha256:0023348c448140a6ea71615eba331835c971d38ae8acf8a89b4e963b1f38f131 \
     --hash=sha256:00a50d063aae2e69c2eb28818ccf6dc3e51f2ea5b74e3c2082a47943ee23f399 \
