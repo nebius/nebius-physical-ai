@@ -23,12 +23,12 @@ RUN --mount=from=installer-build,source=/opt/repaired-installer,target=/mnt/repa
     python /opt/npa/wan2-2/refresh_ensurepip.py \
       --pip-wheel /mnt/repaired-installer/pip-26.2.1+npa.1-py3-none-any.whl \
       --pip-receipt /mnt/repaired-installer/build-receipt.json \
-      --setuptools-wheel /mnt/bootstrap-wheels/setuptools-84.0.0-py3-none-any.whl \
+      --setuptools-wheel /mnt/bootstrap-wheels/setuptools-84.2.1-py3-none-any.whl \
       --inputs /opt/npa/wan2-2/installer-inputs.json \
       --report /opt/npa/wan2-2/ensurepip-repair.json \
     && python -m pip install --no-cache-dir --no-index --no-deps --upgrade \
       /mnt/repaired-installer/pip-26.2.1+npa.1-py3-none-any.whl \
-      /mnt/bootstrap-wheels/setuptools-84.0.0-py3-none-any.whl \
+      /mnt/bootstrap-wheels/setuptools-84.2.1-py3-none-any.whl \
       /mnt/bootstrap-wheels/wheel-0.47.0-py3-none-any.whl \
       /mnt/bootstrap-wheels/packaging-26.3-py3-none-any.whl \
     && cp /mnt/repaired-installer/build-receipt.json /opt/npa/wan2-2/installer-build-receipt.json \
@@ -54,7 +54,7 @@ RUN printf '#!/bin/sh\nexit 101\n' > /usr/sbin/policy-rc.d \
     && apt-get install -y --no-install-recommends \
       ca-certificates ffmpeg git git-lfs libgl1 libglib2.0-0t64 \
       openssh-server procps rsync sudo util-linux \
-      libbz2-1.0 libcrypt1 libdb5.3t64 libexpat1 libffi8 libgdbm6t64 liblzma5 \
+      libbz2-1.0 libcrypt1 libdb5.3t64 libexpat1 libffi8 libgdbm6t64 liblzma5 libnsl2 libtirpc3t64 \
       libncursesw6 libreadline8t64 libsqlite3-0 libssl3t64 libtcl8.6 libtk8.6 \
       libuuid1 zlib1g libzstd1 \
     && rm -f /etc/ssh/ssh_host_*_key /etc/ssh/ssh_host_*_key.pub \
