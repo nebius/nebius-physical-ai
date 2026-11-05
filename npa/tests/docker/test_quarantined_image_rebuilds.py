@@ -95,16 +95,16 @@ def test_isaac_2_runtime_dependency_fixes_preserve_the_runtime_family(name, floo
 
 def test_sonic_uses_the_fixed_jammy_header_snapshot():
     text = (WORKBENCH / "sonic/Dockerfile").read_text()
-    assert "NPA_UBUNTU_SNAPSHOT=20261002T000000Z" in text
-    assert "NPA_LINUX_LIBC_DEV_VERSION=5.15.0-198.208" in text
+    assert "NPA_UBUNTU_SNAPSHOT=20261103T000000Z" in text
+    assert "NPA_LINUX_LIBC_DEV_VERSION=5.15.0-202.212" in text
 
 
 def test_loop_eval_uses_the_fixed_kernel_header_snapshot():
     text = (WORKBENCH / "sim2real-eval/Dockerfile").read_text()
-    assert "ARG UBUNTU_SNAPSHOT=20261002T000000Z" in text
+    assert "ARG UBUNTU_SNAPSHOT=20261103T000000Z" in text
     assert 'install-workflow-runtime-prereqs "${UBUNTU_SNAPSHOT}"' in text
     prereqs = (WORKBENCH / "common/install_workflow_runtime_prereqs.sh").read_text()
-    assert 'linux_libc_dev_version="5.15.0-198.208"' in prereqs
+    assert 'linux_libc_dev_version="5.15.0-202.212"' in prereqs
 
 
 def test_loop_eval_repairs_the_reviewed_moviepy_pillow13_metadata_before_checking():

@@ -41,6 +41,7 @@ def test_portable_overlay_hashes_and_application_order(image: str) -> None:
         assert "--no-deps" not in docker[overlay:check]
         for requirement in (
             "aiohttp==3.14.4",
+            "audioop-lts==0.2.2",
             "certifi==2026.10.19",
             "opentelemetry-api==1.45.1",
         ):
@@ -50,6 +51,7 @@ def test_portable_overlay_hashes_and_application_order(image: str) -> None:
         assert "msgpack==1.2.3" in lock
     if image == "openpi":
         assert "yarl==1.25.1" in lock
+        assert "certifi==2026.10.19" in lock
     assert "setuptools==84.2.1" in lock
     if image == "cosmos3":
         assert "certifi==2026.10.23" in lock

@@ -36,10 +36,10 @@ set -euo pipefail
 TORCH_VERSION="${TORCH_VERSION:-2.9.0}"
 TORCHVISION_VERSION="${TORCHVISION_VERSION:-0.24.0}"
 TORCHAUDIO_VERSION="${TORCHAUDIO_VERSION:-2.9.0}"
-UBUNTU_SNAPSHOT="${NPA_UBUNTU_SNAPSHOT:-20261018T000000Z}"
+UBUNTU_SNAPSHOT="${NPA_UBUNTU_SNAPSHOT:-20261103T000000Z}"
 UBUNTU_SUITE="${NPA_UBUNTU_SUITE:-jammy}"
 ISAAC_PYTHON_MINOR="${NPA_ISAAC_PYTHON_MINOR:-3.11}"
-LINUX_LIBC_DEV_VERSION="${NPA_LINUX_LIBC_DEV_VERSION:-5.15.0-198.208}"
+LINUX_LIBC_DEV_VERSION="${NPA_LINUX_LIBC_DEV_VERSION:-5.15.0-202.212}"
 PYTHON_VERSION="${NPA_ISAAC_PYTHON_VERSION:-3.11.18}"
 PYTHON_SOURCE_SHA256="${NPA_ISAAC_PYTHON_SOURCE_SHA256:-5f62711b12470fd435f83f1451c1b1ef4a179aebc715c716874b0967567d814e}"
 PYTHON_SOURCE_BASE="${NPA_ISAAC_PYTHON_SOURCE_BASE:-https://www.python.org/ftp/python}"
@@ -125,7 +125,7 @@ fi
 if [ -n "$LINUX_LIBC_DEV_VERSION" ]; then
   system_packages+=("linux-libc-dev=${LINUX_LIBC_DEV_VERSION}")
 elif [ "$UBUNTU_SUITE" = jammy ]; then
-  system_packages+=(linux-libc-dev=5.15.0-198.208)
+  system_packages+=(linux-libc-dev=5.15.0-202.212)
 elif [ "$UBUNTU_SUITE" = noble ]; then
   # Fixed for the current critical CVEs in the immutable Noble snapshot.
   # Keep the exact build here so a future base/snapshot change cannot silently

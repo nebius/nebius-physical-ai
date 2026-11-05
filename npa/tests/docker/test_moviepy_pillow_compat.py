@@ -376,6 +376,10 @@ def _assert_groot_keeps_qualified_moviepy_pillow_state(text):
     repair = "/opt/npa/docker/workbench/common/moviepy_pillow_compat.py"
     assert '"pillow==13.0.0"' not in overlay
     assert repair in overlay
+    permission_fix = "chmod -R a+rX /opt/npa/docker/workbench/common"
+    assert permission_fix in text
+    runtime_user = text.index("USER ubuntu", text.index(permission_fix))
+    assert text.index(permission_fix) < runtime_user < text.index(repair)
     # This overlay intentionally uses --no-deps against a vendor environment whose
     # full dependency graph is not internally consistent. The bounded MoviePy/Pillow
     # verifier is the applicable postcondition; a venv-wide pip check would fail on
@@ -404,6 +408,11 @@ def test_groot_moviepy_post_overlay_contract_rejects_mutations():
         dockerfile.replace(
             "/opt/npa/docker/workbench/common/moviepy_pillow_compat.py",
             "/opt/npa/docker/workbench/common/omitted_moviepy_repair.py",
+            1,
+        ),
+        dockerfile.replace(
+            "chmod -R a+rX /opt/npa/docker/workbench/common",
+            "chmod -R u+rX /opt/npa/docker/workbench/common",
             1,
         ),
     )
