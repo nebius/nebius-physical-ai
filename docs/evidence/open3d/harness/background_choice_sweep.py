@@ -19,6 +19,7 @@ the point is to change the page, never the data.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -29,6 +30,10 @@ from PIL import Image
 WEIGHTS = np.array([0.2126, 0.7152, 0.0722])
 #: Content this close to the background is drawn and effectively unreadable.
 LOW_CONTRAST_LIMIT = 24
+
+
+def digest(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def content_luminance(path: Path) -> np.ndarray:
@@ -71,6 +76,13 @@ def main() -> int:
             "the delivered frames and never altered; only the page changes."
         ),
         "frames_measured": [p.name for p in frames],
+        "frame_bindings": [
+            {
+                "path": p.resolve().relative_to(out.parent.resolve()).as_posix(),
+                "sha256": digest(p),
+            }
+            for p in frames
+        ],
         "content_pixels": int(luminance.size),
         "content_luminance_percentiles": {
             str(q): float(np.percentile(luminance, q))

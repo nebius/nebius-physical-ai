@@ -636,8 +636,12 @@ def _crop_justification(before: dict[str, Any], removed: int, mesh) -> dict[str,
             "The unsupported area was concentrated within three voxels of a sample, "
             "which is where a correct surface reconstructed from samples of this "
             "spacing also falls. The crop may have removed correct geometry, and "
-            "coverage cannot rule that out. Raise --support-distance-factor to 1.5 "
-            "or 2.0, or pass 0, unless the tighter crop is wanted deliberately. "
+            "coverage cannot rule that out. Raising --support-distance-factor to 1.5 "
+            "or 2.0 keeps more of it, but does not make the crop safe for coverage: "
+            "a triangle is removed when any one of its vertices is unsupported, so "
+            "one distant vertex still deletes surface its other two vertices sit "
+            "under, at any factor. Read coverage_cost_of_crop for what it cost on "
+            "this run, and pass 0 if it must be zero. "
             "This reading is not a clean bill of health either: it cannot see "
             "fabrication below the sensitivity floor, which is setup-dependent, so "
             "a small invented region reads exactly like none at all."
@@ -716,6 +720,35 @@ def _support(o3d, mesh, cloud, voxel: float) -> dict[str, Any]:
     }
 
 
+def _sample_to_surface(o3d, mesh, cloud):
+    """Distance from every observed sample to the nearest point of this surface."""
+
+    import numpy as np
+
+    scene = o3d.t.geometry.RaycastingScene()
+    scene.add_triangles(o3d.t.geometry.TriangleMesh.from_legacy(mesh))
+    points = np.asarray(cloud.points).astype(np.float32)
+    return scene.compute_distance(o3d.core.Tensor(points)).numpy()
+
+
+def _coverage_from_distances(distances, voxel: float) -> dict[str, Any]:
+    """The coverage definitions, with the surface query already done.
+
+    Separated from the query so they can be exercised where Open3D is not installed,
+    which is every CI shard.
+    """
+
+    import numpy as np
+
+    return {
+        "samples": int(len(distances)),
+        "fraction_within_voxel": float((distances < voxel).mean()),
+        "fraction_within_two_voxels": float((distances < 2.0 * voxel).mean()),
+        "sample_to_surface_rmse": float(np.sqrt((distances**2).mean())),
+        "sample_to_surface_p95": float(np.percentile(distances, 95)),
+    }
+
+
 def _coverage(o3d, mesh, cloud, voxel: float) -> dict[str, Any]:
     """The other direction: do the observed samples still lie on this surface?
 
@@ -723,18 +756,51 @@ def _coverage(o3d, mesh, cloud, voxel: float) -> dict[str, Any]:
     that explains real observations, so the crop is measured against this.
     """
 
+    return _coverage_from_distances(_sample_to_surface(o3d, mesh, cloud), voxel)
+
+
+def _coverage_cost(before, after, voxel: float) -> dict[str, Any]:
+    """Count the samples the crop left with no surface within one voxel.
+
+    The crop tests *vertices* against `voxel * support_distance_factor`, and
+    `remove_vertices_by_mask` deletes every triangle touching a masked vertex. Coverage
+    asks about sample-to-*surface* distance. Those are different questions, so surface
+    within one voxel of a sample can be removed, in two distinct ways:
+
+    At a factor below 1.0 the vertex test is tighter than the coverage question, so a
+    vertex between `factor * voxel` and `voxel` from its nearest sample is removed while
+    that sample is still within one voxel of it. A factor of 1.0 -- the schema default --
+    closes that band.
+
+    The second way no factor closes. A triangle is removed when *any one* of its three
+    vertices is unsupported, so a triangle with two vertices a fraction of a voxel from a
+    sample is deleted for a third vertex far away. Measured on constructed geometry: at
+    factor 1.0 and again at 2.0, a sample with retained vertices 0.32 voxels away lost its
+    only nearby surface and ended eight voxels from anything. Raising the factor does not
+    help, because the distant vertex is removed at any finite factor below its own
+    distance. Only `--support-distance-factor 0` avoids it, by not cropping.
+
+    Neither of these is a bug in the crop -- a conservative crop that errs toward removing
+    is the point. What was missing is this count, so a consumer reads what the crop cost
+    instead of assuming it cost nothing.
+    """
+
     import numpy as np
 
-    scene = o3d.t.geometry.RaycastingScene()
-    scene.add_triangles(o3d.t.geometry.TriangleMesh.from_legacy(mesh))
-    points = np.asarray(cloud.points).astype(np.float32)
-    distances = scene.compute_distance(o3d.core.Tensor(points)).numpy()
+    before = np.asarray(before)
+    after = np.asarray(after)
+    covered_before = before < voxel
+    abandoned = covered_before & ~(after < voxel)
     return {
-        "samples": int(len(distances)),
-        "fraction_within_voxel": float((distances < voxel).mean()),
-        "fraction_within_two_voxels": float((distances < 2.0 * voxel).mean()),
-        "sample_to_surface_rmse": float(np.sqrt((distances**2).mean())),
-        "sample_to_surface_p95": float(np.percentile(distances, 95)),
+        "samples": int(len(before)),
+        "samples_covered_before_crop": int(covered_before.sum()),
+        "samples_abandoned_by_crop": int(abandoned.sum()),
+        "coverage_is_bit_identical": bool(
+            covered_before.mean() == (after < voxel).mean()
+        ),
+        "worst_abandoned_sample_voxels_from_surface": (
+            float(after[abandoned].max() / voxel) if abandoned.any() else None
+        ),
     }
 
 
@@ -857,6 +923,7 @@ def run_reconstruct(
     if not o3d.io.write_triangle_mesh(str(full_path), mesh):
         raise Open3dError("Open3D could not write the uncropped mesh")
     before = _support(o3d, mesh, cloud, voxel)
+    coverage_before_distances = _sample_to_surface(o3d, mesh, cloud)
     unsupported_removed = 0
     if request.support_distance_factor > 0.0:
         limit = voxel * request.support_distance_factor
@@ -873,6 +940,7 @@ def run_reconstruct(
     mesh_path = output / "mesh.ply"
     if not o3d.io.write_triangle_mesh(str(mesh_path), mesh):
         raise Open3dError("Open3D could not write the reconstructed mesh")
+    coverage_after_distances = _sample_to_surface(o3d, mesh, cloud)
     return {
         "run_id": run_id,
         "poisson_depth": request.poisson_depth,
@@ -896,7 +964,13 @@ def run_reconstruct(
         # not establish that removed geometry was incorrect.
         "support_before_crop": before,
         "support": _support(o3d, mesh, cloud, voxel),
-        "coverage": _coverage(o3d, mesh, cloud, voxel),
+        "coverage_before_crop": _coverage_from_distances(
+            coverage_before_distances, voxel
+        ),
+        "coverage": _coverage_from_distances(coverage_after_distances, voxel),
+        "coverage_cost_of_crop": _coverage_cost(
+            coverage_before_distances, coverage_after_distances, voxel
+        ),
         "crop_justification": _crop_justification(before, unsupported_removed, mesh),
         "cloud_extent": [
             float(value) for value in cloud.get_axis_aligned_bounding_box().get_extent()

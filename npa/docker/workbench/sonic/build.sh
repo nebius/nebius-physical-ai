@@ -87,6 +87,7 @@ case "$VARIANT" in
     BASE_IMAGE_DEFAULT="nvidia/cuda:13.0.2-cudnn-devel-ubuntu22.04@sha256:36c66a3ad4608580cf937f7ec3add9323a610956cfe8c9e2f99ef2ea0c896f01"
     ISAAC_LAB_PYTHON="/isaac-sim/python.sh"
     NPA_ISAAC_VENV="/opt/npa/sim/venv"
+    NPA_ISAAC_INHERITED_PYTHON=""
     NPA_ISAAC_SKIP_TORCH=0
     TORCH_INDEX_URL="https://download.pytorch.org/whl/cu130"
     REQUIRE_TORCH_SM120=1
@@ -105,10 +106,11 @@ case "$VARIANT" in
       BASE_IMAGE_DEFAULT="npa-base:cuda13-b300-sm80-sm90-sm100-sm103-sm120-v2-latest"
     fi
     # Isaac always goes through the bootstrap shim, in both variants, so the k8s task
-    # templates need no change. The base image's own python venv is reused for
-    # everything else (NPA_ISAAC_SKIP_TORCH=1 keeps its CUDA-matched cu130 torch).
+    # templates need no change. A source-built venv layers the base image's
+    # site-packages, while NPA_ISAAC_SKIP_TORCH=1 keeps its CUDA-matched cu130 torch.
     ISAAC_LAB_PYTHON="/isaac-sim/python.sh"
-    NPA_ISAAC_VENV="/opt/npa/venv"
+    NPA_ISAAC_VENV="/opt/npa/sim/venv"
+    NPA_ISAAC_INHERITED_PYTHON="/opt/npa/venv/bin/python"
     NPA_ISAAC_SKIP_TORCH=1
     TORCH_INDEX_URL="https://download.pytorch.org/whl/cu130"
     REQUIRE_TORCH_SM120=1
@@ -130,6 +132,7 @@ case "$VARIANT" in
     # whole change exists to prevent.
     NPA_IMAGE_PYTHON_DEFAULT="/opt/npa/venv/bin/python"
     NPA_ISAAC_VENV="/opt/npa/venv"
+    NPA_ISAAC_INHERITED_PYTHON=""
     NPA_ISAAC_SKIP_TORCH=1
     TORCH_INDEX_URL="https://download.pytorch.org/whl/cu128"
     REQUIRE_TORCH_SM120=0
@@ -232,6 +235,7 @@ BUILD_ARGS=(
   --build-arg "ISAAC_SIM_VERSION=${ISAAC_SIM_VERSION}"
   --build-arg "ISAAC_LAB_SRC_COMMIT=${ISAAC_LAB_SRC_COMMIT}"
   --build-arg "NPA_ISAAC_VENV=${NPA_ISAAC_VENV}"
+  --build-arg "NPA_ISAAC_INHERITED_PYTHON=${NPA_ISAAC_INHERITED_PYTHON}"
   --build-arg "NPA_ISAAC_SKIP_TORCH=${NPA_ISAAC_SKIP_TORCH}"
   --build-arg "TORCH_INDEX_URL=${TORCH_INDEX_URL}"
   --build-arg "REQUIRE_TORCH_SM120=${REQUIRE_TORCH_SM120}"

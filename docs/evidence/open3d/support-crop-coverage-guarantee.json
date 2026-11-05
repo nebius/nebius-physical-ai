@@ -1,0 +1,174 @@
+{
+  "answer": "No. It is a measurement that held on that dataset. Surface within one voxel of an observed sample can be removed, by two mechanisms, and one of them is open at every factor including the schema default.",
+  "generator": {
+    "harness": "docs/evidence/open3d/harness/support_crop_coverage_guarantee.py",
+    "open3d_version": "0.20.0",
+    "python": "3.12.14",
+    "repository_clean": true,
+    "repository_commit": "73e39bd96c480c94f99d082a38abef4de8032ba4",
+    "voxel": 1.0
+  },
+  "mechanisms": {
+    "a_triangle_dies_for_one_vertex": {
+      "closed_only_by": "Not cropping. `--support-distance-factor 0` disables the crop explicitly; a factor above the mesh's worst vertex distance does the same thing by accident, which is what the untouched row above is. The capability record's own limitations already offer factor 0 as the escape for consumers needing closed geometry; what it does not say is that coverage needs the same escape.",
+      "factors": [
+        {
+          "coverage_is_bit_identical": false,
+          "coverage_within_voxel_after": 0.9,
+          "coverage_within_voxel_before": 1.0,
+          "samples_abandoned": 1,
+          "support_distance_factor": 1.0,
+          "triangles_after": 4,
+          "triangles_before": 5,
+          "vertices_removed": 1,
+          "worst_abandoned_voxels_from_surface": 8.000624656677246
+        },
+        {
+          "coverage_is_bit_identical": false,
+          "coverage_within_voxel_after": 0.9,
+          "coverage_within_voxel_before": 1.0,
+          "samples_abandoned": 1,
+          "support_distance_factor": 1.5,
+          "triangles_after": 4,
+          "triangles_before": 5,
+          "vertices_removed": 1,
+          "worst_abandoned_voxels_from_surface": 8.000624656677246
+        },
+        {
+          "coverage_is_bit_identical": false,
+          "coverage_within_voxel_after": 0.9,
+          "coverage_within_voxel_before": 1.0,
+          "samples_abandoned": 1,
+          "support_distance_factor": 2.0,
+          "triangles_after": 4,
+          "triangles_before": 5,
+          "vertices_removed": 1,
+          "worst_abandoned_voxels_from_surface": 8.000624656677246
+        },
+        {
+          "coverage_is_bit_identical": true,
+          "coverage_within_voxel_after": 1.0,
+          "coverage_within_voxel_before": 1.0,
+          "samples_abandoned": 0,
+          "support_distance_factor": 4.0,
+          "triangles_after": 5,
+          "triangles_before": 5,
+          "vertices_removed": 0,
+          "worst_abandoned_voxels_from_surface": null
+        }
+      ],
+      "factors_where_coverage_fell": [
+        1.0,
+        1.5,
+        2.0
+      ],
+      "factors_where_coverage_held_after_a_real_crop": [],
+      "factors_where_nothing_was_removed": [
+        4.0
+      ],
+      "label": "a_triangle_dies_for_one_vertex",
+      "patch_vertex_distances_to_nearest_sample_in_voxels": [
+        0.3162,
+        0.3162,
+        3.9
+      ],
+      "reading": "Coverage fell at [1.0, 1.5, 2.0], which includes the schema default and two factors above it. Two of that triangle's vertices are 0.32 voxels from a sample and are retained; the third is 3.9 voxels out and is not, and the triangle goes with it. The sample those two vertices sat under ends 8.0 voxels from any surface. Coverage did hold at [4.0], and that is worth stating precisely rather than counting as a win: at that factor the crop removed zero vertices, because the factor exceeds the distant vertex's own 3.9. Coverage survived because there was no crop. No factor both crops this geometry and keeps coverage -- [] is the set that would have to be non-empty for raising the factor to be the remedy."
+    },
+    "factor_below_one_opens_a_band": {
+      "factors": [
+        {
+          "coverage_is_bit_identical": true,
+          "coverage_within_voxel_after": 1.0,
+          "coverage_within_voxel_before": 1.0,
+          "samples_abandoned": 0,
+          "support_distance_factor": 1.0,
+          "triangles_after": 5,
+          "triangles_before": 5,
+          "vertices_removed": 0,
+          "worst_abandoned_voxels_from_surface": null
+        },
+        {
+          "coverage_is_bit_identical": true,
+          "coverage_within_voxel_after": 1.0,
+          "coverage_within_voxel_before": 1.0,
+          "samples_abandoned": 0,
+          "support_distance_factor": 0.95,
+          "triangles_after": 5,
+          "triangles_before": 5,
+          "vertices_removed": 0,
+          "worst_abandoned_voxels_from_surface": null
+        },
+        {
+          "coverage_is_bit_identical": false,
+          "coverage_within_voxel_after": 0.9,
+          "coverage_within_voxel_before": 1.0,
+          "samples_abandoned": 1,
+          "support_distance_factor": 0.87,
+          "triangles_after": 4,
+          "triangles_before": 5,
+          "vertices_removed": 3,
+          "worst_abandoned_voxels_from_surface": 8.0
+        },
+        {
+          "coverage_is_bit_identical": false,
+          "coverage_within_voxel_after": 0.9,
+          "coverage_within_voxel_before": 1.0,
+          "samples_abandoned": 1,
+          "support_distance_factor": 0.5,
+          "triangles_after": 4,
+          "triangles_before": 5,
+          "vertices_removed": 3,
+          "worst_abandoned_voxels_from_surface": 8.0
+        }
+      ],
+      "factors_where_coverage_fell": [
+        0.87,
+        0.5
+      ],
+      "factors_where_coverage_held_after_a_real_crop": [],
+      "factors_where_nothing_was_removed": [
+        1.0,
+        0.95
+      ],
+      "label": "factor_below_one_opens_a_band",
+      "patch_vertex_distances_to_nearest_sample_in_voxels": [
+        0.9,
+        0.9014,
+        0.9014
+      ],
+      "reading": "Coverage fell at [0.87, 0.5] and the patch survived untouched at [1.0, 0.95]. That patch's vertices all lie further than 0.87 voxels from the nearest sample and all closer than 1.0, so at a factor of 1.0 the vertex test and the coverage question ask the same thing and the crop leaves it alone. This mechanism really is closed at the schema default of 1.0. The run behind the record used 1.0."
+    }
+  },
+  "question": "The support-crop capability record lists a bit-identical coverage result among its supported claims, worded as a property of the crop rule. Is it one?",
+  "recorded_run_observation": {
+    "coverage_within_voxel_after": 0.9927456237186564,
+    "coverage_within_voxel_before": 0.9927456237186564,
+    "reading": "The retained real-data record measured unchanged observed-sample coverage at factor 1.0. That one observation is not a guarantee and does not establish frequency on other scans.",
+    "source": "docs/evidence/open3d/capability-record-support-crop.json",
+    "support_distance_factor": 1.0
+  },
+  "schema": "npa.evidence.open3d.support-crop-coverage-guarantee/v0.0.1",
+  "the_claim_examined": {
+    "field": "claim_scope.supported_claims[1]",
+    "source": "docs/evidence/open3d/capability-record-support-crop.json",
+    "text": "Surface with no observed sample within one voxel can be removed without moving the observed samples off the surface: coverage within a voxel is bit-identical at 0.9927456237186564 and sample-to-surface RMSE changes by 4.7e-05 m.",
+    "the_run_used_factor": 1.0,
+    "the_schema_default_is": 1.0,
+    "what_is_not_disputed": "That coverage was bit-identical on that run, and that the RMSE moved by 4.7e-05 m. Nothing here re-measures that dataset; the inputs are not on this host. What is disputed is reading it as a guarantee."
+  },
+  "what_changed_in_the_product": {
+    "the_advice_corrected": "`_crop_justification` told a reader to raise the factor to 1.5 or 2.0. That keeps more surface, but this measurement shows it does not make the crop safe for coverage at any factor, so the sentence now says so and points at the new field.",
+    "the_report_now_publishes": [
+      "coverage_before_crop, so the before/after pair the claim compares is in the artifact rather than computed by hand beside it",
+      "coverage_cost_of_crop, with the count of samples left without surface within one voxel and how far the worst of them ended up"
+    ],
+    "why_not_change_the_crop": "The crop is not wrong. A conservative crop that errs toward removing is what an honest-holes reconstruction wants, and the asymmetry is inherent to removing triangles by vertex mask. What was missing is the measurement, because without it a consumer assumes the cost was zero -- and on the recorded dataset it was, which is the most convincing way to be wrong about the next one."
+  },
+  "what_this_does_not_claim": [
+    "That the recorded dataset's coverage result is wrong. It was not re-measured and the inputs are not reachable from this host.",
+    "That the crop removes correct geometry on real data. These are constructed meshes chosen to isolate a mechanism, not samples of anything.",
+    "That abandonment is common. Its frequency on real scans is unmeasured; the new field is what would measure it.",
+    "That a factor of 1.0 is sufficient. It closes the band and leaves the asymmetry open."
+  ],
+  "why_the_two_questions_differ": "The crop masks vertices whose distance to the nearest sample exceeds `voxel * support_distance_factor`, and `remove_vertices_by_mask` deletes every triangle touching a masked vertex. Coverage measures each sample's distance to the nearest point of the remaining *surface*. A vertex test and a surface measurement do not have to agree, and where they disagree the crop removes surface a sample is within one voxel of."
+}

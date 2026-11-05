@@ -234,9 +234,9 @@ def test_invalid_upstream_verdict_runs_pixel_check(
     static = np.zeros((24, 24), dtype=np.uint8)
     invented = static.copy()
     invented[8:16, 8:16] = 255
-    monkeypatch.setattr(hal, "_probe_size", lambda path: static.shape)
+    monkeypatch.setattr(hal, "_probe_size", lambda path, **kwargs: static.shape)
 
-    def decode(path, height, width):
+    def decode(path, height, width, **kwargs):
         yield static
         yield static if path == original else invented
 
@@ -300,12 +300,12 @@ def _run_temporal_with_frames(
     variant = tmp_path / "variant.mp4"
     original.write_bytes(b"video")
     variant.write_bytes(b"video")
-    monkeypatch.setattr(temporal, "_probe_size", lambda path: source[0].shape)
+    monkeypatch.setattr(temporal, "_probe_size", lambda path, **kwargs: source[0].shape)
     streams = iter([source, augmented])
     monkeypatch.setattr(
         temporal,
         "_iter_gray_frames",
-        lambda path, height, width: _frame_stream(next(streams)),
+        lambda path, height, width, **kwargs: _frame_stream(next(streams)),
     )
     return temporal.check_temporal_consistency(
         clip_id="clip-0",
@@ -488,9 +488,9 @@ def test_temporal_consistency_uses_source_geometry_for_both_decoders(
     augmented.write_bytes(b"video")
     calls: list[tuple[str, int, int]] = []
     frames = [np.zeros((6, 10), dtype=np.uint8) for _ in range(3)]
-    monkeypatch.setattr(temporal, "_probe_size", lambda path: (6, 10))
+    monkeypatch.setattr(temporal, "_probe_size", lambda path, **kwargs: (6, 10))
 
-    def decode(path: Path, height: int, width: int):
+    def decode(path: Path, height: int, width: int, **kwargs):
         calls.append((path.name, height, width))
         yield from [frame.copy() for frame in frames]
 

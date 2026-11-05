@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+import math
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -350,7 +351,9 @@ def _score_from_keys(values: Mapping[str, Any], keys: tuple[str, ...]) -> float 
             continue
         value = values[key]
         if isinstance(value, bool):
-            return 1.0 if value else 0.0
+            if key.endswith("success"):
+                return 1.0 if value else 0.0
+            return None
         score = _coerce_score(value)
         if score is not None:
             return score
@@ -358,11 +361,13 @@ def _score_from_keys(values: Mapping[str, Any], keys: tuple[str, ...]) -> float 
 
 
 def _coerce_score(value: Any) -> float | None:
+    if type(value) not in (int, float):
+        return None
     try:
         score = float(value)
-    except (TypeError, ValueError):
+    except OverflowError:
         return None
-    if not 0.0 <= score <= 1.0:
+    if not math.isfinite(score) or not 0.0 <= score <= 1.0:
         return None
     return score
 

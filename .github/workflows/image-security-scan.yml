@@ -78,6 +78,7 @@ jobs:
           npa/.venv/bin/python npa/docker/workbench/check_tag_consistency.py
           npa/.venv/bin/python -m pytest \
             npa/tests/docker/test_image_payload_scan.py \
+            npa/tests/docker/test_python_runtime_probe.py \
             npa/tests/docker/test_antioch_image_payload_scan.py \
             npa/tests/docker/test_packaging_contract.py \
             npa/tests/docker/test_isaac_bootstrap.py \

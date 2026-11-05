@@ -12,7 +12,11 @@ from typing import Any
 from npa.clients.storage import StorageClient
 from npa.workflows.sim2real.constants import SCHEMA_THRESHOLD_DECISION
 from npa.workflows.sim2real.hashing import sha256_file
-from npa.workflows.sim2real.models import Sim2RealLoopConfig, Sim2RealLoopError
+from npa.workflows.sim2real.models import (
+    Sim2RealLoopConfig,
+    Sim2RealLoopError,
+    require_sim2real_boolean,
+)
 from npa.workflows.sim2real.utils import _utc_now, _write_json_artifact
 
 
@@ -27,9 +31,6 @@ def threshold_decision(
 
     stage_started = time.monotonic()
     success_rate = float(heldout_report["success_rate"])
-    checkpoint_dir = local_dir / "checkpoints" / "candidate"
-    checkpoint_dir.mkdir(parents=True, exist_ok=True)
-    candidate_path = checkpoint_dir / "candidate.json"
     # When a BYO trainer produced a real policy checkpoint (surfaced by the heldout
     # eval as policy_checkpoint), promote should reference those real weights and be
     # deployable — not the reference-metadata stub.
@@ -40,24 +41,35 @@ def threshold_decision(
     inference = dict(heldout_report.get("policy_inference_provenance") or {})
     scenario_proof = dict(heldout_report.get("applied_scenario_proof") or {})
     split = str(heldout_report.get("evaluation_split") or "")
+    loaded_for_inference = True
+    stock_or_scripted_policy = False
+    exact_digest_match = True
+    if is_real_policy:
+        loaded_for_inference = require_sim2real_boolean(
+            inference.get("loaded_for_inference", False),
+            field="policy_inference_provenance.loaded_for_inference",
+        )
+        stock_or_scripted_policy = require_sim2real_boolean(
+            inference.get("stock_or_scripted_policy", True),
+            field="policy_inference_provenance.stock_or_scripted_policy",
+        )
+        exact_digest_match = require_sim2real_boolean(
+            scenario_proof.get("exact_digest_match", False),
+            field="applied_scenario_proof.exact_digest_match",
+        )
     promotion_gates = {
         "strict_success_threshold": success_rate >= config.threshold,
         "final_gold_split": split in {"", "gold_heldout"},
-        "checkpoint_loaded_for_inference": (
-            bool(inference.get("loaded_for_inference")) if is_real_policy else True
-        ),
-        "stock_or_scripted_policy_false": (
-            inference.get("stock_or_scripted_policy") is False
-            if is_real_policy
-            else True
-        ),
-        "applied_scenario_digest_match": (
-            bool(scenario_proof.get("exact_digest_match")) if is_real_policy else True
-        ),
+        "checkpoint_loaded_for_inference": loaded_for_inference,
+        "stock_or_scripted_policy_false": stock_or_scripted_policy is False,
+        "applied_scenario_digest_match": exact_digest_match,
         "minimum_episode_coverage": len(heldout_report.get("per_env") or [])
         >= (config.heldout_env_count if split == "gold_heldout" else 1),
     }
     promoted = all(promotion_gates.values())
+    checkpoint_dir = local_dir / "checkpoints" / "candidate"
+    checkpoint_dir.mkdir(parents=True, exist_ok=True)
+    candidate_path = checkpoint_dir / "candidate.json"
     checkpoint_uri = real_checkpoint if is_real_policy else str(checkpoint_dir)
     checkpoint_metadata: dict[str, Any] = {}
     if is_real_policy:

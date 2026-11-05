@@ -12,11 +12,19 @@ background is present in the file and invisible to a reader. Reported as the
 share of content pixels that are low-contrast against the background, plus the
 median contrast, because a mean hides a washed-out floor behind a dark wall.
 
+**Which bytes it read.** Each row carries the sha256 of the file it measured. A
+review lane found the gap this closes: the measurements were tied to the frames
+by filename alone, so regenerating the frames and re-running the binder produced
+freshly correct digests paired with measurements taken from bytes that were
+gone, and every check still passed. A measurement that cannot name the bytes it
+came from is not evidence about those bytes.
+
 Reads PNG bytes only. No geometry, no Open3D, no network.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -74,6 +82,9 @@ def audit(path: Path, *, border: int = 2) -> dict:
 
     return {
         "frame": path.name,
+        # The bytes these numbers were taken from, so a later reader can tell
+        # whether the measurement still describes the file of that name.
+        "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
         "resolution": [int(width), int(height)],
         "background_rgb": [int(v) for v in background],
         "content_pixels": int(content.sum()),
