@@ -167,6 +167,17 @@ ensure_venv() {
   PY="${venv}/bin/python"
 }
 
+load_live_e2e_environment() {
+  local live_env="${HOME}/.npa/live-e2e.env"
+  [[ -f "$live_env" ]] \
+    || die "live infrastructure tiers require the VM-scoped ${live_env}"
+  set -a
+  # shellcheck source=/dev/null
+  . "$live_env"
+  set +a
+  export NPA_SKYPILOT_BIN="${NPA_SKYPILOT_BIN:-${HOME}/.npa/skypilot-venv/bin/sky}"
+}
+
 run_unit() {
   local py="$1"
   log "Tier=unit: fast unit suite (no live infra) + ruff lint"
@@ -179,6 +190,7 @@ run_unit() {
 
 run_e2e() {
   local py="$1"
+  load_live_e2e_environment
   run_unit "$py"
   log "Tier=e2e: real-infra S3 e2e suite (self-cleaning, budget-bounded)"
   (
@@ -408,6 +420,7 @@ run_fleet_storage_verification() {
 
 run_e2e_daily() {
   local py="$1"
+  load_live_e2e_environment
   log "Tier=e2e-daily: comprehensive >= 4-step workflow coverage + all-image check + rotating S3 e2e subset"
   run_agent_eval_gate "$py"
   run_workflow_coverage_gate "$py"
