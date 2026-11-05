@@ -85,6 +85,9 @@
   },
   "independent_review": "requested on the PR",
   "provenance": {
+    "source_commit": "356e0714804c181292ad9b5b75398ff718c87b95",
+    "commit_is_an_ancestor_of_main": false,
+    "how_this_commit_was_recovered": "This is the retained measurement/report head named by the record's source_commit field; later commits narrow claims and bind review contracts without relabeling execution.",
     "harness_that_produced_this": [
       {
         "path": "harness/reference_free_fabrication.py",
