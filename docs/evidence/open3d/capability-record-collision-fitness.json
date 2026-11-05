@@ -31,6 +31,8 @@
     "what_they_pin": "That the verdict is stated rather than abstained on; that the instrument's closed-mesh control is present and passes, since without it the verdict is worthless; that parity and signed distance agree on the control; that the record does not present the baseline as a closed control; and that the narrower fit output is named with its measured figures."
   },
   "provenance": {
+    "source_commit": null,
+    "why_no_source_commit": "The historical report did not bind a repository commit, and the original retained input bundle is unavailable; naming the later repair commit would misstate where the historical measurement was produced.",
     "harness_that_produced_this": [
       {
         "path": "harness/collision_fitness_verdict.py",
