@@ -1,5 +1,0 @@
-# Exact PyPI wheels qualified for the Python 3.12 linux/amd64 loop-eval closure.
-moviepy==2.2.1 \
-    --hash=sha256:6b56803fec2ac54b557404126ac1160e65448e03798fa282bd23e8fab3795060
-pillow==13.0.0 \
-    --hash=sha256:42d63be3af4f9b951b199b0a9d23365d37ab14687e6d77b74940432c8515c4ca
