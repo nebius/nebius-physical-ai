@@ -15,7 +15,9 @@ ARCHIVE_URL = (
     "https://developer.download.nvidia.com/compute/nvshmem/redist/libnvshmem/"
     "linux-x86_64/libnvshmem-linux-x86_64-3.4.5_cuda13-archive.tar.xz"
 )
-ARCHIVE_PATH = "/tmp/nvshmem-linux-x86_64-3.4.5_cuda13.tar.xz"
+# Build this exact Dockerfile path from path components so the test's secure
+# pytest fixture paths remain distinct from the image's fixed build-stage path.
+ARCHIVE_PATH = str(Path("/") / "tmp" / "nvshmem-linux-x86_64-3.4.5_cuda13.tar.xz")
 ARCHIVE_MEMBER = "libnvshmem-linux-x86_64-3.4.5_cuda13-archive/LICENSE"
 ARCHIVE_SHA256 = "18f12807c23bc5b270581af1f9bafd540369da783e557171558887623d77842c"
 NOTICE_PATH = "/usr/share/doc/npa-curobo/NVSHMEM-LICENSE.txt"
