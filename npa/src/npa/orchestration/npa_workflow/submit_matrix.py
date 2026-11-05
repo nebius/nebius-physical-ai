@@ -1499,7 +1499,7 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
     SubmitLiveCase(
         "groot-n15-offline-rl.yaml",
         "gpu",
-        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "HF_TOKEN"),
         runtime=True,
         rotation_skip=True,
         skip_reason=(
