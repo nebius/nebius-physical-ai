@@ -954,6 +954,28 @@ def _immutable_candidate_copy(
         raise RuntimeError("candidate selection media write could not be verified")
 
 
+def _quality_gate_evidence_disclosure(
+    producer: str | None,
+) -> dict[str, str | bool | None]:
+    """Describe the gate's evidence ceiling without claiming external authenticity."""
+
+    scopes = {
+        "vlm": "vlm_report_internal_consistency_checks_only",
+        "cosmos": "cosmos_report_status_pass_score_checks_only",
+        None: "no_report_selected",
+    }
+    if producer not in scopes:
+        raise ValueError("unknown quality report producer")
+    return {
+        "report_producer": producer,
+        "evidence_scope": scopes[producer],
+        "provider_authentication_established": False,
+        "captured_request_authenticity_established": False,
+        "visual_correctness_established": False,
+        "submitted_frame_byte_equivalence_established": False,
+    }
+
+
 def _quality_gate_contract(
     report: dict[str, Any], threshold: float, *, producer: str
 ) -> dict[str, Any]:
@@ -1578,6 +1600,7 @@ def grade_gate(
     }
     report: dict[str, Any] = {}
     source = ""
+    selected_producer: str | None = None
     problems: list[str] = []
     for candidate, expected_producer in candidates:
         try:
@@ -1600,6 +1623,7 @@ def grade_gate(
             break
         contract = candidate_contract
         source = candidate
+        selected_producer = producer
         break
     if not source:
         print(
@@ -1614,6 +1638,7 @@ def grade_gate(
     decision_payload: dict[str, Any] = {
         "schema": "npa.sim2real.threshold_decision.v1",
         **contract,
+        **_quality_gate_evidence_disclosure(selected_producer),
         "report_sha256": _payload_sha256(report) if source else "",
     }
     if refinement_uri:

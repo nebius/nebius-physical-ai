@@ -58,6 +58,8 @@ def _resistant_oversized_worker(
             }
         )
     )
+    descriptor = W.multiprocessing.reduction.recv_handle(connection)
+    os.close(descriptor)
     descendant = subprocess.Popen(
         [
             sys.executable,

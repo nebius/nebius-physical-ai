@@ -75,7 +75,7 @@ def _assert_metadata(artifact, uri, payload):
 def test_training_checkpoint_and_metrics_use_each_successful_write(
     monkeypatch, destination
 ):
-    import torch
+    torch = pytest.importorskip("torch")
 
     class Detector(torch.nn.Module):
         def __init__(self):

@@ -1,0 +1,58 @@
+{
+  "schema": "npa.workbench.vlm-paired-shared-failure-calibration-index.v1",
+  "evidence_id": "vlm-paired-shared-failure-calibration-20261101",
+  "classification": "sanitized_index_to_private_adversarial_calibration",
+  "measured_utc_date": "2026-11-01",
+  "matrix": {
+    "control_families": 6,
+    "repetitions_per_family_per_model": 2,
+    "calls_per_model": 12,
+    "models": [
+      {
+        "model_id": "MiniMaxAI/MiniMax-M3",
+        "false_pass_calls": 2,
+        "families_with_false_pass": 1
+      },
+      {
+        "model_id": "openbmb/MiniCPM-V-4_5",
+        "false_pass_calls": 6,
+        "families_with_false_pass": 3
+      },
+      {
+        "model_id": "google/gemma-3-27b-it",
+        "false_pass_calls": 10,
+        "families_with_false_pass": 5
+      }
+    ],
+    "excluded_pair": [
+      "openbmb/MiniCPM-V-4_5",
+      "google/gemma-3-27b-it"
+    ],
+    "shared_false_pass_families_for_excluded_pair": 3,
+    "joint_false_pass_repetitions_for_excluded_pair": 6
+  },
+  "larger_retained_investigation": {
+    "attempts": 132,
+    "parsed_responses": 117,
+    "correct": 73,
+    "wrong": 44,
+    "http_400": 15
+  },
+  "request_contract": {
+    "response_schema": "legacy passed/reason",
+    "current_path_exactly_reproduced": false,
+    "new_provider_calls_for_this_change": 0
+  },
+  "private_record": {
+    "retained": true,
+    "lookup_key": "vlm-paired-shared-failure-calibration-20261101",
+    "public_attack_inputs": false,
+    "reason_inputs_are_private": "Do not publish reusable adversarial prompt and image constructions."
+  },
+  "limitations": [
+    "This record motivates one exact pair exclusion and does not qualify any accepted pair.",
+    "The current success/rationale and finish-reason contract was not replayed.",
+    "Provider hardware and deployment stability were not observed.",
+    "No conclusion extends to unseen attacks or broad model quality."
+  ]
+}

@@ -16,6 +16,8 @@ from typing import Any
 import typer
 from rich.console import Console
 
+from npa.literal_values import require_positive_finite_number
+
 app = typer.Typer(
     name="molmoact",
     help=(
@@ -98,6 +100,12 @@ def finetune_cmd(
         raise typer.BadParameter("--batch-size must be positive")
     if num_gpus <= 0:
         raise typer.BadParameter("--num-gpus must be positive")
+    try:
+        learning_rate = float(
+            require_positive_finite_number(learning_rate, field="--learning-rate")
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
     model_id = _require_model_id(model_id)
     dataset_uri = _require_s3_uri(dataset_uri, "dataset-uri")
     output_s3_uri = _require_s3_uri(output_s3_uri, "output-s3-uri")

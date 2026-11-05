@@ -92,6 +92,184 @@ def test_per_env_from_distances_scoring():
     assert rows[0]["details"]["object_goal_distance_m"] == 0.0
 
 
+@pytest.mark.parametrize(
+    "distance",
+    ["0.02", False, None, [], {}, float("nan"), float("inf"), 10**400],
+)
+def test_per_env_from_distances_rejects_non_finite_json_numbers(
+    distance: object,
+) -> None:
+    with pytest.raises(ValueError, match=r"distances\[0\]"):
+        ev.per_env_from_distances([distance], success_dist_m=0.05)
+
+
+def test_per_env_from_distances_rejects_numeric_subclasses() -> None:
+    class NumericSubclass(float):
+        pass
+
+    with pytest.raises(ValueError, match=r"distances\[0\] must be a literal number"):
+        ev.per_env_from_distances([NumericSubclass(0.02)], success_dist_m=0.05)
+
+
+@pytest.mark.parametrize(
+    ("metrics", "expected"),
+    [
+        ({"placement_stable": True}, True),
+        ({"placement_stable": False}, False),
+        ({"place": True}, True),
+        ({"place": False}, False),
+        ({"placement_stable": False, "place": True}, False),
+        ({}, False),
+    ],
+)
+def test_per_env_runtime_stability_preserves_literal_booleans(
+    metrics: dict[str, object], expected: bool
+) -> None:
+    rows = ev.per_env_from_distances(
+        [0.02],
+        success_dist_m=0.05,
+        runtime_metrics=[metrics],
+    )
+    assert rows[0]["success"] is expected
+
+
+@pytest.mark.parametrize("field", ["placement_stable", "place"])
+@pytest.mark.parametrize(
+    "value",
+    ["no", "false", "unstable", 0, 1, None, [], {}],
+)
+def test_per_env_runtime_stability_rejects_non_booleans(
+    field: str, value: object
+) -> None:
+    with pytest.raises(
+        ValueError,
+        match=rf"runtime_metrics\[0\]\.{field} must be a literal boolean",
+    ):
+        ev.per_env_from_distances(
+            [0.02],
+            success_dist_m=0.05,
+            runtime_metrics=[{field: value}],
+        )
+
+
+@pytest.mark.parametrize("field", ["reach", "contact", "stable_grasp", "lift"])
+@pytest.mark.parametrize("value", ["false", 0, 1, None, [], {}])
+def test_per_env_runtime_decomposed_metrics_reject_non_booleans(
+    field: str, value: object
+) -> None:
+    with pytest.raises(
+        ValueError,
+        match=rf"runtime_metrics\[0\]\.{field} must be a literal boolean",
+    ):
+        ev.per_env_from_distances(
+            [0.02],
+            success_dist_m=0.05,
+            runtime_metrics=[{field: value, "placement_stable": True}],
+        )
+
+
+@pytest.mark.parametrize("placement_stable", [False, True])
+@pytest.mark.parametrize("place", ["no", "false", 0, 1, None, [], {}])
+def test_per_env_runtime_stability_validates_retained_place_with_primary(
+    placement_stable: bool, place: object
+) -> None:
+    with pytest.raises(
+        ValueError,
+        match=r"runtime_metrics\[0\]\.place must be a literal boolean",
+    ):
+        ev.per_env_from_distances(
+            [0.02],
+            success_dist_m=0.05,
+            runtime_metrics=[{"placement_stable": placement_stable, "place": place}],
+        )
+
+
+def test_runtime_stability_controls_strict_success_statistics() -> None:
+    per_env = ev.per_env_from_distances(
+        [0.02, 0.02],
+        success_dist_m=0.05,
+        runtime_metrics=[
+            {"placement_stable": True, "difficulty": "easy"},
+            {"placement_stable": False, "difficulty": "easy"},
+        ],
+    )
+    report = ev.build_heldout_report(
+        per_env,
+        isaac_task="Isaac-Lift-Cube-Franka-v0",
+        checkpoint_uri="s3://bucket/model.pt",
+        source="byo_isaac_eval",
+    )
+    assert report["strict_success"]["count"] == 1
+    assert report["strict_success"]["rate"] == 0.5
+    assert report["per_difficulty"]["easy"]["strict_success_count"] == 1
+    assert report["per_difficulty"]["easy"]["strict_success_rate"] == 0.5
+
+
+@pytest.mark.parametrize("success", ["false", 0, 1, None, [], {}])
+def test_build_heldout_report_rejects_non_boolean_success(success: object) -> None:
+    with pytest.raises(
+        ValueError, match=r"per_env\[0\]\.success must be a literal boolean"
+    ):
+        ev.build_heldout_report(
+            [{"env_id": "e0", "success": success, "score": 0.0, "details": {}}],
+            isaac_task="task",
+            checkpoint_uri="s3://bucket/model.pt",
+            source="probe",
+        )
+
+
+@pytest.mark.parametrize(
+    "distance",
+    ["0.02", False, None, [], {}, float("nan"), float("inf"), 10**400],
+)
+def test_build_heldout_report_rejects_non_finite_distance_metrics(
+    distance: object,
+) -> None:
+    with pytest.raises(
+        ValueError,
+        match=r"per_env\[0\]\.details\.object_goal_distance_m",
+    ):
+        ev.build_heldout_report(
+            [
+                {
+                    "env_id": "e0",
+                    "success": False,
+                    "score": 0.0,
+                    "details": {"object_goal_distance_m": distance},
+                }
+            ],
+            isaac_task="task",
+            checkpoint_uri="s3://bucket/model.pt",
+            source="probe",
+        )
+
+
+@pytest.mark.parametrize(
+    "field", ["reach", "contact", "stable_grasp", "lift", "place", "placement_stable"]
+)
+@pytest.mark.parametrize("value", ["false", 0, 1, None, [], {}])
+def test_build_heldout_report_rejects_non_boolean_decomposed_metrics(
+    field: str, value: object
+) -> None:
+    with pytest.raises(
+        ValueError,
+        match=rf"per_env\[0\]\.details\.{field} must be a literal boolean",
+    ):
+        ev.build_heldout_report(
+            [
+                {
+                    "env_id": "e0",
+                    "success": False,
+                    "score": 0.0,
+                    "details": {field: value},
+                }
+            ],
+            isaac_task="task",
+            checkpoint_uri="s3://bucket/model.pt",
+            source="probe",
+        )
+
+
 def test_manipulator_contact_rejects_table_force_without_reach() -> None:
     ee_distance = np.array([0.20, 0.02, 0.02])
     force_contact = np.array([True, False, True])

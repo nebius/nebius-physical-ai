@@ -15,6 +15,7 @@ RESULT_SCHEMA = "npa.workbench.seedvr2.result.v1"
 PROBE_SCHEMA = "npa.workbench.seedvr2.probe.v1"
 VERIFICATION_SCHEMA = "npa.workbench.seedvr2.verification.v1"
 REVIEW_SCHEMA = "npa.workbench.seedvr2.review.v1"
+QUALITY_BOUNDARY_SCHEMA = "npa.workbench.seedvr2.quality-boundary.v1"
 
 MODEL_FILES: dict[str, tuple[int, str]] = {
     "ema_vae.pth": (
@@ -112,6 +113,7 @@ __all__ = [
     "MODEL_REPOSITORY",
     "MODEL_REVISION",
     "PROBE_SCHEMA",
+    "QUALITY_BOUNDARY_SCHEMA",
     "RESULT_SCHEMA",
     "REVIEW_SCHEMA",
     "SOURCE_REPOSITORY",

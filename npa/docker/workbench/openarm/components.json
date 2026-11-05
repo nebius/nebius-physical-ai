@@ -56,6 +56,47 @@
       "payload": "Runtime shared libraries only; separately installed SDK headers/static archives removed"
     },
     {
+      "name": "CPython",
+      "version": "3.11.18",
+      "source": "https://www.python.org/ftp/python/3.11.18/Python-3.11.18.tgz",
+      "source_sha256": "5f62711b12470fd435f83f1451c1b1ef4a179aebc715c716874b0967567d814e",
+      "license": "Python Software Foundation License Version 2",
+      "baked": true,
+      "payload": "Hash-pinned source build; exact release license retained at /usr/share/doc/cpython3.11/LICENSE; standard-library test fixtures removed after build validation"
+    },
+    {
+      "name": "CPython bundled Expat",
+      "version": "2.9.0",
+      "source": "CPython 3.11.18 Modules/expat",
+      "license": "MIT",
+      "baked": true,
+      "payload": "Statically compiled into pyexpat; exact bundled license retained at /usr/share/doc/cpython3.11/EXPAT-LICENSE"
+    },
+    {
+      "name": "CPython bundled mpdecimal",
+      "version": "2.5.1",
+      "source": "CPython 3.11.18 Modules/_decimal/libmpdec",
+      "license": "BSD-2-Clause",
+      "baked": true,
+      "payload": "Compiled into _decimal; exact license-bearing source header retained at /usr/share/doc/cpython3.11/MPDECIMAL-LICENSE.h"
+    },
+    {
+      "name": "CPython bundled tiny_sha3",
+      "version": "dcbb3192047c2a721f5f851db591871d428036a9",
+      "source": "CPython 3.11.18 Modules/_sha3",
+      "license": "MIT",
+      "baked": true,
+      "payload": "Compiled into _sha3; exact bundled license retained at /usr/share/doc/cpython3.11/SHA3-LICENSE"
+    },
+    {
+      "name": "CPython bundled BLAKE2 reference implementation",
+      "version": "CPython 3.11.18 bundle",
+      "source": "CPython 3.11.18 Modules/_blake2/impl",
+      "license": "CC0-1.0",
+      "baked": true,
+      "payload": "Compiled into _blake2; exact dedication and warranty source header retained at /usr/share/doc/cpython3.11/BLAKE2-CC0-SOURCE.h"
+    },
+    {
       "name": "NVIDIA Isaac Sim and Isaac Lab",
       "version": "5.1.0.0 / 2.3.2.post1",
       "source": "https://pypi.nvidia.com/",

@@ -57,6 +57,7 @@ HASH = "sha256"  # 64 lowercase hex
 FLAG = "bool"
 NOTE = "prose"  # the two semantic strings this evidence exists to carry
 COUNT_OR_NULL = "number-or-null"
+FLOAT_OR_NULL = "float-or-null"
 #: The runner-up plane reports whether its axis differs from the winner's only when
 #: the fit was strong enough to imply one, and publishes `null` when it was not. Same
 #: reason COUNT_OR_NULL exists: the absence is the measurement.
@@ -236,6 +237,16 @@ ALLOWED: dict[str, dict[str, str]] = {
         "coverage.sample_to_surface_p95": NUM,
         "coverage.sample_to_surface_rmse": NUM,
         "coverage.samples": NUM,
+        "coverage_before_crop.fraction_within_two_voxels": NUM,
+        "coverage_before_crop.fraction_within_voxel": NUM,
+        "coverage_before_crop.sample_to_surface_p95": NUM,
+        "coverage_before_crop.sample_to_surface_rmse": NUM,
+        "coverage_before_crop.samples": NUM,
+        "coverage_cost_of_crop.coverage_is_bit_identical": FLAG,
+        "coverage_cost_of_crop.samples": NUM,
+        "coverage_cost_of_crop.samples_abandoned_by_crop": NUM,
+        "coverage_cost_of_crop.samples_covered_before_crop": NUM,
+        "coverage_cost_of_crop.worst_abandoned_sample_voxels_from_surface": FLOAT_OR_NULL,
         "crop_justification.note": NOTE,
         "crop_justification.removed_surface_reads_as": NOTE,
         "crop_justification.unsupported_area_share_beyond_3_voxels": NUM,
@@ -403,6 +414,10 @@ def _holds(kind: str, value: object) -> bool:
         return isinstance(value, (int, float)) and not isinstance(value, bool)
     if kind == COUNT_OR_NULL:
         return value is None or (isinstance(value, int) and not isinstance(value, bool))
+    if kind == FLOAT_OR_NULL:
+        return value is None or (
+            isinstance(value, (int, float)) and not isinstance(value, bool)
+        )
     if kind == FLAG:
         return isinstance(value, bool)
     if kind == FLAG_OR_NULL:
@@ -540,7 +555,10 @@ def build(artifacts: Path) -> dict:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--artifacts", required=True, type=Path, help="directory holding the run's artifacts"
+        "--artifacts",
+        required=True,
+        type=Path,
+        help="directory holding the run's artifacts",
     )
     parser.add_argument("--output", required=True, type=Path)
     args = parser.parse_args(argv)
