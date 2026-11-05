@@ -36,6 +36,7 @@ _RESOLVED_WAVE_RECOVERY_DECISIONS = frozenset(
         "operator_authorized_absent_output_adoption",
         "adopted_terminal_success_after_driver_failure",
         "operator_authorized_verified_absent_relaunch",
+        "operator_authorized_interrupted_absent_relaunch_with_incomplete_outputs",
         "phantom_record_cancelled_verified_relaunch",
     }
 )

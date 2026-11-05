@@ -3912,6 +3912,94 @@ def test_explicit_absent_resume_refuses_existing_declared_output(
     )
 
 
+@pytest.mark.parametrize("include_running_evidence", [True, False])
+def test_explicit_absent_resume_preserves_interrupted_partial_output_fragments(
+    tmp_path: Path, include_running_evidence: bool
+) -> None:
+    """Only a proven interruption may restart a wave with partial directories."""
+
+    from npa.orchestration.skypilot.workflow import ManagedJobEvidence
+
+    output_spec = FANOUT_SPEC.replace(
+        "    resources: cpu\n\n  shard-b:",
+        "    resources: cpu\n"
+        "    outputs:\n"
+        '      - uri: "s3://{{config.bucket}}/{{config.prefix}}/partial/"\n'
+        "        kind: directory\n"
+        '      - uri: "s3://{{config.bucket}}/{{config.prefix}}/commit.json"\n\n'
+        "  shard-b:",
+        1,
+    )
+    spec = load_spec(_write_spec(tmp_path, output_spec))
+    key = "001|shards|shards:shard-a:-,shards:shard-b:-"
+    record: dict[str, Any] = {
+        "key": key,
+        "status": "failed",
+        "job_id": "77",
+        "job_name": "rt-partial-interruption-01-shards",
+        "attempt": 1,
+        "sky_status": "SUBMITTED",
+        "logical_launch_id": "logical-partial-interruption",
+        "scheduler_fence_sequence": 1,
+        "launch_sequence": 1,
+        "error": "scheduler returned ABSENT after an interrupted worker",
+        "recovery_decision": "resume_block_terminal_or_legacy_absence",
+    }
+    if include_running_evidence:
+        record["observations"] = [
+            _typed_running_observation(
+                wave_key=key,
+                job_id="77",
+                job_name="rt-partial-interruption-01-shards",
+                logical_launch_id="logical-partial-interruption",
+            )
+        ]
+    store = MemoryStore()
+    state = RuntimeRunState(workflow=spec.name, run_id="rt-partial-interruption")
+    state.record_wave(record)
+    store.write_runtime_state(state)
+    options = RuntimeOptions(
+        poll_seconds=0,
+        max_wait_seconds=60,
+        resume=True,
+        retries=1,
+        retry_absent_in_flight=True,
+    )
+    submitter = FakeSubmitter()
+    executor = _executor(
+        spec,
+        run_id="rt-partial-interruption",
+        submitter=submitter,
+        options=options,
+        store=store,
+        output_checker=lambda uri: uri.endswith("/partial/") or bool(submitter.calls),
+        reconcile_fn=lambda *_args, **_kwargs: ManagedJobEvidence("absent"),
+    )
+
+    report = run_workflow_runtime(
+        spec, run_id="rt-partial-interruption", executor=executor, options=options
+    )
+
+    if not include_running_evidence:
+        assert report.status == "failed"
+        assert submitter.calls == []
+        assert (
+            store.read_runtime_state().waves[0]["recovery_decision"]
+            == "resume_block_output_present"
+        )
+        return
+
+    assert report.status == "succeeded"
+    assert submitter.calls[0]["job_name"].endswith("-a2")
+    prior = store.read_runtime_state().waves[0]
+    assert prior["recovery_decision"] == (
+        "operator_authorized_interrupted_absent_relaunch_"
+        "with_incomplete_outputs"
+    )
+    assert prior["reconciliation"][-1]["declared_outputs_complete"] is False
+    assert prior["reconciliation"][-1]["incomplete_output_fragments_preserved"] is True
+
+
 def test_explicit_resume_adopts_controller_lost_running_wave_with_valid_outputs(
     tmp_path: Path,
 ) -> None:

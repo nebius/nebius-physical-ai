@@ -192,6 +192,27 @@ def _verified_absent_pre_id_attempt(
     )
 
 
+def _proven_interrupted_absence_with_incomplete_outputs(
+    attempt: WaveAttempt, record: Mapping[str, Any]
+) -> bool:
+    """Require narrow evidence before retaining incomplete output fragments.
+
+    This is deliberately stricter than ordinary explicit absent-job recovery.
+    A directory prefix can contain a partial producer upload after a worker was
+    interrupted, so treating *any* prefix content as a completed wave would
+    make that wave permanently unrecoverable. The caller may use this escape
+    hatch only after an operator opts in and the durable ledger proves the
+    exact job reached RUNNING before the scheduler reported it absent.
+    """
+
+    return (
+        str(record.get("status") or "") == "failed"
+        and attempt.status == "failed"
+        and _record_reached_running(record)
+        and "scheduler returned ABSENT" in str(record.get("error") or "")
+    )
+
+
 def _workflow_identity(spec: NpaWorkflowSpec) -> str:
     """Recompute the current immutable workflow identity from the loaded spec."""
 
@@ -1334,7 +1355,11 @@ class SkyPilotWaveExecutor:
         category = str(record.get("error_category") or "")
         decision = str(record.get("recovery_decision") or "")
         if category == "operator_recovery":
-            return decision == "operator_authorized_verified_absent_relaunch"
+            return decision in {
+                "operator_authorized_verified_absent_relaunch",
+                "operator_authorized_interrupted_absent_relaunch_"
+                "with_incomplete_outputs",
+            }
         return category in {
             "kubernetes_transport",
             "kubernetes_rate_limit",
@@ -2385,6 +2410,50 @@ class SkyPilotWaveExecutor:
                     recovery_outputs
                 )
                 if not outputs_absent:
+                    outputs_complete = True
+                    if output_state == "present":
+                        try:
+                            outputs_complete = self._outputs_exist(recovery_outputs)
+                        except Exception:  # noqa: BLE001 - storage uncertainty fails closed
+                            outputs_complete = True
+                    if (
+                        output_state == "present"
+                        and not outputs_complete
+                        and _proven_interrupted_absence_with_incomplete_outputs(
+                            attempt, record
+                        )
+                    ):
+                        attempt.status = "failed"
+                        attempt.ended_at = utc_now()
+                        attempt.error_category = "operator_recovery"
+                        attempt.recovery_decision = (
+                            "operator_authorized_interrupted_absent_relaunch_"
+                            "with_incomplete_outputs"
+                        )
+                        attempt.reconciliation.append(
+                            {
+                                "outcome": "absent",
+                                "source": "exact_managed_job_reconciliation",
+                                "declared_outputs_complete": False,
+                                "incomplete_output_fragments_preserved": True,
+                                "checked_at": utc_now(),
+                            }
+                        )
+                        attempt.operator_remedy = (
+                            "The exact job was observed RUNNING before a scheduler "
+                            "ABSENT result and declared outputs remain incomplete; "
+                            "preserve the fragments and relaunch the same wave as a "
+                            "new durable attempt identity."
+                        )
+                        attempt.cancellation_state = "not_applicable"
+                        self.ledger.record(attempt)
+                        self._log(
+                            f"wave {key}: explicit recovery preserves incomplete "
+                            "durable fragments after a proven interrupted absent job; "
+                            "launching a new attempt"
+                        )
+                        self.attempts.pop()
+                        return None
                     attempt.status = "failed"
                     attempt.error = (
                         "explicit absent-job recovery refused because declared "
