@@ -1,21 +1,21 @@
 {
-  "measured_at_utc": "2026-11-05T06:40:33.886390+00:00",
-  "source_repository_head": "5bea11becf221af3ef25695a0ad3dcf00d5a29d9",
+  "measured_at_utc": "2026-11-05T08:10:12.812980+00:00",
+  "source_repository_head": "a3d82be6048743a623ec826785cf9d79ec33611c",
   "remote_name": "origin",
   "audit_workspace": "fresh private bare repository removed after this run",
   "what_this_answers": "For every commit a capability record names, does a current advertised origin ref contain it, and if not can origin fetch the object by SHA?",
   "why_it_exists": "The records claimed no advertised remote refs. The clone that checked held only refs/heads/* out of every ref this remote advertises, and was shallow. The claim was true and unestablished, which is its own kind of defect.",
   "ref_coverage": {
-    "total_refs_advertised_by_remote": 1396,
-    "pull_heads_advertised": 994,
-    "pull_merges_advertised": 24,
+    "total_refs_advertised_by_remote": 1397,
+    "pull_heads_advertised": 996,
+    "pull_merges_advertised": 22,
     "tags_advertised": 11,
-    "branches_advertised": 366,
+    "branches_advertised": 367,
     "refs_in_no_other_category": 1,
-    "fetched_pull_refs": 994,
-    "fetched_merge_refs": 24,
+    "fetched_pull_refs": 996,
+    "fetched_merge_refs": 22,
     "fetched_tag_refs": 11,
-    "fetched_branch_refs": 366,
+    "fetched_branch_refs": 367,
     "why_merge_refs_are_no_longer_skipped": "The first version skipped them, arguing a merge ref has its PR head as an ancestor and so cannot hold a commit the head lacks. A reviewer tested it on all of them and found one where the head had moved since the merge ref was computed, so the property held for a different reason than the one I gave. It was harmless, and a force-push is the case that would not be. They are now fetched and tested, so the audit rests on no argument about refs.",
     "counts_here_are_a_moment_not_a_constant": "This remote gains refs continuously. A count written into prose is stale almost immediately -- one of mine was wrong by the time it was published -- so the numbers live in this report and the prose points here."
   },
@@ -60,7 +60,7 @@
     {
       "commit": "15b0b11f0",
       "verdict": "resolvable_remotely",
-      "remote_refs_containing": 471,
+      "remote_refs_containing": 472,
       "direct_sha_fetch_attempted": false,
       "direct_sha_fetchable": null,
       "local_refs_containing": 0,
@@ -75,7 +75,7 @@
     {
       "commit": "15b0b11f0bc137631954ac87076f44753c513976",
       "verdict": "resolvable_remotely",
-      "remote_refs_containing": 471,
+      "remote_refs_containing": 472,
       "direct_sha_fetch_attempted": false,
       "direct_sha_fetchable": null,
       "local_refs_containing": 0,
@@ -112,7 +112,7 @@
     {
       "commit": "3ae5a7a3c902214cb8415de1d06a2e224bd75e13",
       "verdict": "resolvable_remotely",
-      "remote_refs_containing": 782,
+      "remote_refs_containing": 783,
       "direct_sha_fetch_attempted": false,
       "direct_sha_fetchable": null,
       "local_refs_containing": 0,
@@ -232,37 +232,37 @@
     {
       "commit": "d06e95846",
       "verdict": "resolvable_remotely",
-      "remote_refs_containing": 153,
+      "remote_refs_containing": 154,
       "direct_sha_fetch_attempted": false,
       "direct_sha_fetchable": null,
       "local_refs_containing": 0,
       "shallow_clone_could_conceal_it": false,
       "orphaned_tracking_refs_containing": 0,
       "example_remote_refs": [
+        "refs/remotes/provenance-audit/branch/codex/full-length-controls-6095c317",
         "refs/remotes/provenance-audit/branch/codex/groot-offline-rl-271dec95",
-        "refs/remotes/provenance-audit/branch/codex/sim2real-franka-cube-experimental-20261031",
-        "refs/remotes/provenance-audit/branch/codex/sim2real-pi05-20261006"
+        "refs/remotes/provenance-audit/branch/codex/sim2real-franka-cube-experimental-20261031"
       ]
     },
     {
       "commit": "d06e958462865af823b4f1479867df52421c8284",
       "verdict": "resolvable_remotely",
-      "remote_refs_containing": 153,
+      "remote_refs_containing": 154,
       "direct_sha_fetch_attempted": false,
       "direct_sha_fetchable": null,
       "local_refs_containing": 0,
       "shallow_clone_could_conceal_it": false,
       "orphaned_tracking_refs_containing": 0,
       "example_remote_refs": [
+        "refs/remotes/provenance-audit/branch/codex/full-length-controls-6095c317",
         "refs/remotes/provenance-audit/branch/codex/groot-offline-rl-271dec95",
-        "refs/remotes/provenance-audit/branch/codex/sim2real-franka-cube-experimental-20261031",
-        "refs/remotes/provenance-audit/branch/codex/sim2real-pi05-20261006"
+        "refs/remotes/provenance-audit/branch/codex/sim2real-franka-cube-experimental-20261031"
       ]
     },
     {
       "commit": "d22893238d75efbb05a69eb75bca1b82eb5fe280",
       "verdict": "resolvable_remotely",
-      "remote_refs_containing": 756,
+      "remote_refs_containing": 757,
       "direct_sha_fetch_attempted": false,
       "direct_sha_fetchable": null,
       "local_refs_containing": 0,
@@ -277,7 +277,7 @@
     {
       "commit": "e4efc6602ab0e2de558365efccd877fdc84cd4e0",
       "verdict": "resolvable_remotely",
-      "remote_refs_containing": 5,
+      "remote_refs_containing": 4,
       "direct_sha_fetch_attempted": false,
       "direct_sha_fetchable": null,
       "local_refs_containing": 0,
@@ -286,7 +286,7 @@
       "example_remote_refs": [
         "refs/remotes/provenance-audit/branch/cursor/open3d-declare-unbindable-hashes",
         "refs/remotes/provenance-audit/branch/cursor/open3d-evidence-hash-binding",
-        "refs/remotes/provenance-audit/merge/1032"
+        "refs/remotes/provenance-audit/pr/1032"
       ]
     },
     {
@@ -394,7 +394,7 @@
     ]
   },
   "what_this_audits_glob_does_not_reach": {
-    "evidence_json_outside_this_audits_glob": 53,
+    "evidence_json_outside_this_audits_glob": 54,
     "of_those_with_no_provenance_block_at_all": 46,
     "of_those_that_also_carry_digests": 13,
     "why_three_numbers_and_not_one": "A reviewer measured this as seven files. That is the subset carrying digests and naming no resolvable commit; the broadest count here is every non-record evidence JSON. Different populations rather than a disagreement, and the digest-carrying count is the one that matters, because a digest with no declared origin is the case this change exists to close.",
