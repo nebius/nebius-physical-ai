@@ -45,6 +45,12 @@ TORCH_VERSION = "2.7.1"
 TORCHVISION_VERSION = "0.22.1"
 NATIVE_PYTHON = "python3"
 PUBLIC_DATA_LICENSE = "Apache-2.0"
+# Keep the child entrypoint independent of how the parent module was invoked.
+# In particular, ``python -m npa.workflows.groot_n15_offline`` gives this
+# module a normal import name, while some runners execute its code with
+# ``__name__ == "__main__"``.  Reusing ``__name__`` for the Python 3.10 child
+# would then incorrectly request ``python -m __main__``.
+RUNTIME_MODULE = "npa.workflows.groot_n15_offline"
 
 
 class WorkflowArtifactError(RuntimeError):
@@ -405,7 +411,7 @@ def _run_native(argv: list[str], args: argparse.Namespace) -> None:
         FLASH_ATTENTION_FORCE_BUILD="TRUE",
         FLASH_ATTN_CUDA_ARCHS="120",
     )
-    child = [str(python), "-m", __name__, *argv, "--native"]
+    child = [str(python), "-m", RUNTIME_MODULE, *argv, "--native"]
     completed = subprocess.run(child, text=True, env=environment, check=True)
     if completed.returncode:
         raise WorkflowArtifactError("native child did not complete")

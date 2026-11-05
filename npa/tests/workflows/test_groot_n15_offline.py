@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pandas as pd
@@ -220,6 +221,27 @@ def test_resume_identity_binds_all_model_and_training_inputs(tmp_path: Path) -> 
     assert baseline != workflow._resume_identity(
         changed, manifest_sha="a" * 64, base_checkpoint_sha="b" * 64
     )
+
+
+def test_native_child_uses_stable_module_name_when_parent_is_main(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A staged runner must not turn the native child into ``-m __main__``."""
+
+    command: list[str] = []
+
+    def fake_run(argv: list[str], **_kwargs: object) -> SimpleNamespace:
+        command.extend(argv)
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(workflow, "__name__", "__main__")
+    monkeypatch.setattr(workflow, "_bootstrap_native_runtime", lambda _args: tmp_path / "python")
+    monkeypatch.setattr(workflow.subprocess, "run", fake_run)
+
+    workflow._run_native(["prepare", "--workspace", str(tmp_path)], SimpleNamespace())
+
+    assert command[:3] == [str(tmp_path / "python"), "-m", workflow.RUNTIME_MODULE]
+    assert "__main__" not in command
 
 
 def test_checked_in_workflow_dispatches_every_compositional_stage() -> None:
