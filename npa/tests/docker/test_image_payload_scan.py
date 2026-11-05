@@ -233,6 +233,19 @@ def test_openpi_uses_system_ffmpeg_without_bundled_payload() -> None:
     assert "${OPENPI_PIP_WHEEL_URL}#sha256=${OPENPI_PIP_WHEEL_SHA256}" in dockerfile
     assert 'pip.__version__ == "26.3"' in dockerfile
     assert 'certifi.__version__ == "2026.10.23"' in dockerfile
+    managed_python_fix = (
+        "for interpreter in /home/ubuntu/.local/share/uv/python/*/bin/python3; do"
+    )
+    assert managed_python_fix in dockerfile
+    assert (
+        '/opt/uv/bin/pip --python "$interpreter" install --no-cache-dir '
+        "--no-deps --upgrade --break-system-packages" in dockerfile
+    )
+    assert (
+        dockerfile.index("/opt/uv/bin/uv python install 3.11")
+        < dockerfile.index(managed_python_fix)
+        < dockerfile.index("/opt/uv/bin/uv venv --python 3.11 /opt/venv")
+    )
     assert "*/imageio_ffmpeg/binaries/ffmpeg*" in dockerfile
     assert "-delete" in dockerfile
     assert "imageio_ffmpeg.get_ffmpeg_exe()" in dockerfile
