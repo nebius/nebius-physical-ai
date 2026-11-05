@@ -168,11 +168,17 @@ file and takes precedence when both variables are set. The record-pinned
 `pose_graph_optimization.py` and `density_crop_contribution.py` harnesses predate the
 shared helper and use only the exact-file form. Neither override creates directories.
 
-Sampling is unseeded in several harnesses, deliberately: where a single cell's value carries
-run-to-run noise comparable to the spread being measured, that is itself the finding and the harness
-says so rather than publishing a precise-looking number. `floor-vs-resolution.json` is the clearest
-case. Re-running will move those values; the directions and orders of magnitude are what the claims
-rest on.
+Harnesses using `harness_io.seed_sampling` are seeded by default and record the seed in
+their reports. Set `OPEN3D_SEED` to another integer to measure seed sensitivity; repeated
+runs at the same seed hold the point sample fixed while a different seed exposes the
+sampling spread. Historical committed reports may predate this default and retain their
+original unseeded wording and bytes.
+
+Harnesses that do not use the shared seeding helper remain unseeded. Where a single
+cell's value carries run-to-run noise comparable to the spread being measured, that is
+itself the finding; `floor-vs-resolution.json` is the clearest case. Re-running those
+harnesses will move their values, so only the directions and orders of magnitude support
+their claims.
 
 ## View framing
 

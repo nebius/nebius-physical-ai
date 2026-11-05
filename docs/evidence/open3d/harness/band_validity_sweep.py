@@ -1,6 +1,6 @@
 """Find where the distance bands stop telling the two cases apart.
 
-`crop_justification` reads "extrapolated shell" when enough unsupported area sits past
+`crop_justification` reads "far from any observation" when enough unsupported area sits past
 three voxels. That boundary was chosen because a correct surface sampled at roughly half
 the voxel had nothing there. It is a reporting choice with no derivation, so its domain of
 validity is unknown, and an advisory field whose failure mode is undocumented is worse
@@ -24,12 +24,10 @@ Run inside the Open3D image:
 from __future__ import annotations
 
 import json
-from pathlib import Path
-
-from harness_io import output_path
 
 import numpy as np
 import open3d as o3d
+from harness_io import FAR_READING, output_path, seed_sampling
 from npa.workbench.open3d.runner import (
     FAR_BAND_AREA_SHARE,
     _crop_justification,
@@ -96,6 +94,7 @@ def fabricated_area_fraction(mesh, reference, voxel: float) -> dict[str, float]:
 
 
 def main() -> int:
+    seed = seed_sampling()
     reference = o3d.io.read_triangle_mesh(o3d.data.ArmadilloMesh().path)
     reference.compute_vertex_normals()
 
@@ -119,8 +118,8 @@ def main() -> int:
         justification = _crop_justification(support, 0, _Mesh(len(mesh.vertices)))
         truth = fabricated_area_fraction(mesh, reference, voxel)
         share = justification["unsupported_area_share_beyond_3_voxels"]
-        reads_as_shell = (
-            justification["removed_surface_reads_as"] == "extrapolated shell"
+        reads_far = (
+            justification["removed_surface_reads_as"] == FAR_READING
         )
         rows.append(
             {
@@ -134,11 +133,11 @@ def main() -> int:
                     "unsupported_area_beyond_3_voxels"
                 ],
                 "share_beyond_3_voxels": share,
-                "reads_as_extrapolated_shell": reads_as_shell,
+                "reads_as_far_from_any_observation": reads_far,
                 **truth,
                 # The reading claims a shell while the ground truth says there is barely
                 # any fabricated area. That is the failure this sweep exists to locate.
-                "false_positive": reads_as_shell
+                "false_positive": reads_far
                 and truth["fabricated_area_fraction"] < 0.05,
             }
         )
@@ -166,6 +165,7 @@ def main() -> int:
             first_false["spacing_over_voxel"] if first_false else None
         ),
     }
+    report["sampling_seed"] = seed
     OUT.write_text(json.dumps(report, indent=2, sort_keys=True))
 
     print(f"voxel {voxel:.5f} held fixed; reading boundary {FAR_BAND_AREA_SHARE}")
@@ -182,7 +182,7 @@ def main() -> int:
             f"{row['share_beyond_3_voxels']:8.4f} "
             f"{row['fabricated_area_fraction']:11.4f} "
             f"{row['max_vertex_distance_to_truth_in_voxels']:9.2f}  "
-            f"{'shell' if row['reads_as_extrapolated_shell'] else 'near-threshold'}{flag}"
+            f"{'shell' if row['reads_as_far_from_any_observation'] else 'near-threshold'}{flag}"
         )
     if first_false:
         print(

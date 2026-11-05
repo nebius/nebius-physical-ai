@@ -1,4 +1,4 @@
-"""Resolve a harness's output path, and refuse early if it cannot be written.
+"""Shared harness output, input, reading-label, and sampling controls.
 
 Eight harnesses here write to a hardcoded `/data/<name>.json`. That is correct inside the
 container they document, which mounts the evidence directory at `/data`. Outside it, the
@@ -16,6 +16,9 @@ So this does two things, both narrow:
 
 It deliberately does not invent the directory. A harness that silently creates somewhere
 to write is harder to reason about than one that says where it was pointed and stops.
+
+`seed_sampling` controls the Open3D-global sampler used by the harnesses that call it.
+The fixed default makes repeat runs comparable, while `OPEN3D_SEED` exposes sensitivity.
 """
 
 from __future__ import annotations
@@ -27,6 +30,14 @@ from pathlib import Path
 OUT_DIR_ENV = "OPEN3D_OUT_DIR"
 #: Redirects one harness output to an exact path. It wins when both overrides are set.
 OUT_FILE_ENV = "OPEN3D_OUT"
+
+#: Reading labels shared with the runtime so a renamed contract cannot silently turn a
+#: detector into an always-false comparison.
+FAR_READING = "far from any observation"
+NEAR_READING = "near-threshold surface"
+
+SEED_ENV = "OPEN3D_SEED"
+DEFAULT_SEED = 20261101
 
 
 def output_path(default: str) -> Path:
@@ -53,6 +64,22 @@ def output_path(default: str) -> Path:
     if not os.access(parent, os.W_OK):
         raise SystemExit(f"Cannot write {resolved}: {parent} is not writable.")
     return resolved
+
+
+def seed_sampling() -> int:
+    """Seed Open3D sampling and return the seed that a report must record."""
+    import open3d as o3d
+
+    raw = os.environ.get(SEED_ENV)
+    if raw is None:
+        seed = DEFAULT_SEED
+    else:
+        try:
+            seed = int(raw)
+        except ValueError:
+            raise SystemExit(f"{SEED_ENV}={raw!r} is not an integer.") from None
+    o3d.utility.random.seed(seed)
+    return seed
 
 
 def _read(kind: str, path: str | Path, count) -> object:
