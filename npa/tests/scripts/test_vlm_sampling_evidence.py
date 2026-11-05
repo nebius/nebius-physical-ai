@@ -49,7 +49,10 @@ def test_live_sampling_oracle_with_local_media(monkeypatch, tmp_path, strategy, 
 
 
 def _synthetic_response(*, fenced=False):
-    content = '{"score":0.9,"success":true,"rationale":"synthetic test"}'
+    content = (
+        '{"score":0.9,"success":true,"rationale":"synthetic test",'
+        '"provider_observable_support":["Frame 1 is visibly synthetic."]}'
+    )
     if fenced:
         content = f"```json\n{content}\n```"
     data = {
@@ -73,7 +76,11 @@ def test_sampling_judge_claims_use_effective_rubric_and_provider_boolean(
     monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[1]))
     suite = importlib.import_module("e2e.test_vlm_served_model_live")
     response = _synthetic_response()
-    verdict = {"score": 0.9, "rationale": "synthetic test"}
+    verdict = {
+        "score": 0.9,
+        "rationale": "synthetic test",
+        "provider_observable_support": ["Frame 1 is visibly synthetic."],
+    }
     if provider_success is not None:
         verdict["success"] = provider_success
     response.data["choices"][0]["message"]["content"] = json.dumps(verdict)
@@ -149,10 +156,11 @@ def test_served_evidence_accepts_only_documented_parser_versions(
     for version in (
         "npa_vlm_eval_compatible_json_v123",
         "npa_vlm_eval_compatible_json_v1",
-        "npa_vlm_eval_compatible_json_v2+unknown",
-        "npa_vlm_eval_compatible_json_v2"
+        "npa_vlm_eval_compatible_json_v2",
+        "npa_vlm_eval_compatible_json_v3+unknown",
+        "npa_vlm_eval_compatible_json_v3"
         if fenced
-        else "npa_vlm_eval_compatible_json_v2+markdown-fence-v1",
+        else "npa_vlm_eval_compatible_json_v3+markdown-fence-v1",
     ):
         payload["evidence"]["provider"]["parser_version"] = version
         with pytest.raises(AssertionError):

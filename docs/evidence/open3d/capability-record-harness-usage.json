@@ -52,6 +52,8 @@
     "reason": "The change is to command-line usage messages. There is no visual artifact, and the review contract directs that a CLI-only fix should not carry an invented visual score or an irrelevant screenshot. The failing baseline, the corrected behaviour, and the regression evidence are recorded above instead."
   },
   "provenance": {
+    "source_commit": "42427aa71b2eaa6b01fa1ca66a3394afe5470bab",
+    "commit_is_an_ancestor_of_main": false,
     "base": "origin/main at d06e958462",
     "interpreter": "the worktree's own npa/.venv/bin/python, 3.14.7",
     "harnesses_inventoried": 22,

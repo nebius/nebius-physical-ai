@@ -69,6 +69,9 @@ def _response(*, score: float, success: bool, rationale: str) -> dict:
                             "score": score,
                             "success": success,
                             "rationale": rationale,
+                            "provider_observable_support": [
+                                "The supplied terminal frame is visible."
+                            ],
                         }
                     )
                 },

@@ -104,6 +104,11 @@ def _synthetic_provider_post(calls):
                                     "score": 0.9,
                                     "success": False,
                                     "rationale": "Synthetic transport control only.",
+                                    "provider_observable_support": [
+                                        "Frame 1 visibly contains a green image.",
+                                        "Frame 1 contains no visible red region.",
+                                        "Frame 1 contains no visible red region.",
+                                    ],
                                 }
                             )
                         },
@@ -156,6 +161,11 @@ def test_canonical_provider_call_preserves_disclosures_and_strict_gate(called_re
     assert report["provider_success_matches_score_gate"] is False
     assert report["passed"] is True
     assert report["score"] == 0.9
+    assert report["provider_observable_support"] == [
+        "Frame 1 visibly contains a green image.",
+        "Frame 1 contains no visible red region.",
+        "Frame 1 contains no visible red region.",
+    ]
     sampling = report["evidence"]["request"]["request_manifest"]["sampling"]
     assert sampling["max_frames"] == 4
     assert sampling["selected_indices"] == [0]
@@ -187,6 +197,121 @@ def test_promotion_retains_legacy_absent_call_disclosure_compatibility(called_re
     report, _ = called_report
     del report["provider_call_made"]
     assert vlm_grade_block_details(report) == {}
+
+
+@pytest.mark.parametrize(
+    "mutation", ["missing", "changed", "reordered", "scalar", "tuple"]
+)
+def test_promotion_rejects_rebound_provider_support(called_report, mutation):
+    report, _ = called_report
+    if mutation == "missing":
+        del report["provider_observable_support"]
+    elif mutation == "changed":
+        report["provider_observable_support"] = ["Frame 1 is red."]
+    elif mutation == "reordered":
+        report["provider_observable_support"].reverse()
+    elif mutation == "tuple":
+        report["provider_observable_support"] = tuple(
+            report["provider_observable_support"]
+        )
+    else:
+        report["provider_observable_support"] = "Frame 1 is green."
+    assert vlm_grade_block_details(report) == {
+        "reason": "vlm_provider_evidence_invalid",
+        "evidence_reason": "result_mismatch",
+    }
+
+
+def test_promotion_rejects_deduplicated_serialized_support(called_report):
+    report, output = called_report
+    provider = report["evidence"]["provider"]
+    raw_response = provider["raw_response"]
+    raw_response_sha256 = provider["raw_response_sha256"]
+    raw = json.loads(raw_response)
+    raw_support = json.loads(raw["choices"][0]["message"]["content"])[
+        "provider_observable_support"
+    ]
+    assert raw_support == [
+        "Frame 1 visibly contains a green image.",
+        "Frame 1 contains no visible red region.",
+        "Frame 1 contains no visible red region.",
+    ]
+
+    report["provider_observable_support"] = list(
+        dict.fromkeys(report["provider_observable_support"])
+    )
+    assert report["provider_observable_support"] == [
+        "Frame 1 visibly contains a green image.",
+        "Frame 1 contains no visible red region.",
+    ]
+    assert provider["raw_response"] == raw_response
+    assert provider["raw_response_sha256"] == raw_response_sha256
+    assert vlm_grade_block_details(report) == {
+        "reason": "vlm_provider_evidence_invalid",
+        "evidence_reason": "result_mismatch",
+    }
+
+    (output / vlm_eval.RESULT_FILENAME).write_text(json.dumps(report))
+    assert (
+        data_factory_stages.grade_gate(str(output), str(output / "decision.json"))
+        == "loop_back"
+    )
+
+
+def test_promotion_rejects_format_only_provider_support(called_report):
+    report, output = called_report
+    provider = report["evidence"]["provider"]
+    raw = json.loads(provider["raw_response"])
+    content = json.loads(raw["choices"][0]["message"]["content"])
+    blank_support = [" \t\u200b\ufeff\u200d\n"]
+    content["provider_observable_support"] = blank_support
+    raw["choices"][0]["message"]["content"] = json.dumps(content, ensure_ascii=False)
+    provider["raw_response"] = json.dumps(
+        raw, ensure_ascii=False, separators=(",", ":"), sort_keys=True
+    )
+    provider["raw_response_sha256"] = vlm_eval._sha256_text(provider["raw_response"])
+    report["provider_observable_support"] = blank_support
+
+    assert vlm_grade_block_details(report) == {
+        "reason": "vlm_provider_evidence_invalid",
+        "evidence_reason": "provider_verdict_invalid",
+    }
+    (output / vlm_eval.RESULT_FILENAME).write_text(json.dumps(report))
+    assert (
+        data_factory_stages.grade_gate(str(output), str(output / "decision.json"))
+        == "loop_back"
+    )
+
+
+def test_promotion_classifies_old_three_field_parser_before_reparse(called_report):
+    report, _ = called_report
+    provider = report["evidence"]["provider"]
+    raw = json.loads(provider["raw_response"])
+    content = json.loads(raw["choices"][0]["message"]["content"])
+    del content["provider_observable_support"]
+    raw["choices"][0]["message"]["content"] = json.dumps(content)
+    provider["raw_response"] = json.dumps(raw, separators=(",", ":"), sort_keys=True)
+    provider["raw_response_sha256"] = vlm_eval._sha256_text(provider["raw_response"])
+    provider["parser_version"] = "npa_vlm_eval_hosted_json_v1"
+    assert vlm_grade_block_details(report) == {
+        "reason": "vlm_provider_evidence_invalid",
+        "evidence_reason": "provider_parser_obsolete",
+    }
+
+
+def test_promotion_rejects_raw_support_rebound_from_serialized_result(called_report):
+    report, _ = called_report
+    provider = report["evidence"]["provider"]
+    raw = json.loads(provider["raw_response"])
+    content = json.loads(raw["choices"][0]["message"]["content"])
+    content["provider_observable_support"] = ["Frame 1 is red."]
+    raw["choices"][0]["message"]["content"] = json.dumps(content)
+    provider["raw_response"] = json.dumps(raw, separators=(",", ":"), sort_keys=True)
+    provider["raw_response_sha256"] = vlm_eval._sha256_text(provider["raw_response"])
+    assert vlm_grade_block_details(report) == {
+        "reason": "vlm_provider_evidence_invalid",
+        "evidence_reason": "result_mismatch",
+    }
 
 
 @pytest.mark.parametrize("backend", ["api", "stub"])

@@ -20,7 +20,10 @@ def test_model_enforcement_follows_actual_backend_profile(monkeypatch, backend, 
             {
                 "finish_reason": "stop",
                 "message": {
-                    "content": '{"success":true,"score":0.9,"rationale":"visible"}'
+                    "content": (
+                        '{"success":true,"score":0.9,"rationale":"visible",'
+                        '"provider_observable_support":["Frame 1 is visible."]}'
+                    )
                 },
             }
         ],
@@ -58,7 +61,10 @@ def test_disclosure_follows_profile_behavior_not_a_constant(monkeypatch, enforce
                 {
                     "finish_reason": "stop",
                     "message": {
-                        "content": '{"success":true,"score":0.9,"rationale":"control"}',
+                        "content": (
+                            '{"success":true,"score":0.9,"rationale":"control",'
+                            '"provider_observable_support":["Frame 1 is visible."]}'
+                        ),
                     },
                 }
             ],
@@ -107,7 +113,10 @@ def test_loop_and_benchmark_persist_enforcement(monkeypatch, tmp_path):
             {
                 "finish_reason": "stop",
                 "message": {
-                    "content": '{"success":true,"score":0.9,"rationale":"visible"}'
+                    "content": (
+                        '{"success":true,"score":0.9,"rationale":"visible",'
+                        '"provider_observable_support":["Frame 1 is visible."]}'
+                    )
                 },
             }
         ],
@@ -181,7 +190,12 @@ def test_aggregate_models_match_effective_requests(
                 {
                     "finish_reason": "stop",
                     "message": {
-                        "content": '{"success":true,"score":0.9,"rationale":"synthetic control"}',
+                        "content": (
+                            '{"success":true,"score":0.9,'
+                            '"rationale":"synthetic control",'
+                            '"provider_observable_support":'
+                            '["Frame 1 is a synthetic control."]}'
+                        ),
                     },
                 }
             ],
@@ -264,7 +278,12 @@ def test_benchmark_deduplicates_resolved_models_in_caller_order(
                 {
                     "finish_reason": "stop",
                     "message": {
-                        "content": '{"success":true,"score":0.9,"rationale":"synthetic deduplication control"}'
+                        "content": (
+                            '{"success":true,"score":0.9,'
+                            '"rationale":"synthetic deduplication control",'
+                            '"provider_observable_support":'
+                            '["Frame 1 is a synthetic control."]}'
+                        )
                     },
                 }
             ],
