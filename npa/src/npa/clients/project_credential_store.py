@@ -80,7 +80,7 @@ def _legacy_owner(document: Mapping[str, Any]) -> str:
 
 def _root(document: Mapping[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
     value = document.get("project_credentials")
-    if value is None:
+    if value is None or value == {}:
         return {"schema_version": SCHEMA_VERSION, "projects": {}}, {}
     if not isinstance(value, Mapping):
         raise ProjectCredentialStoreError("project credential store is not a mapping")
