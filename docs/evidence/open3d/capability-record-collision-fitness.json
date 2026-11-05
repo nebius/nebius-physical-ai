@@ -25,9 +25,10 @@
   "a_counterintuitive_number_explained_rather_than_buried": "Baseline has 156 boundary edges against the candidate's 1256, yet a higher undefined fraction (0.979253 vs 0.953299). That is not a contradiction: once a surface is open at all, parity stops tracking hole count and starts tracking how much surface a ray can cross. Baseline carries 36660 triangles to the candidate's 28208, so more directions find an odd count. Neither number should be read as a hole metric, and the undefined fraction is reported here only as evidence that the query is undefined, not as a quality score.",
   "what_this_does_not_claim": "Nothing about accuracy against ground truth, which no artifact in this chain carries. A watertight mesh can be confidently wrong; closedness is necessary for a collision query to be defined and nowhere near sufficient for it to be safe. The historical report lacks input hashes, so it does not prove it measured the same candidate bytes as the occupancy record.",
   "regression_tests": {
+    "hashes_that_name_no_file_here": "This digest identifies the repository-root regression test named by file. The evidence-directory auditor deliberately resolves only files under docs/evidence/open3d, while the hosted test suite executes and hashes this repository test separately.",
     "file": "npa/tests/workbench/test_open3d_collision_fitness.py",
     "path_is_relative_to": "the repository root, unlike the provenance paths below, which are relative to this evidence directory",
-    "sha256": "2fae9bf747f8dd74b77255a701b362f2660575e39184e0b104e434365775a53f",
+    "sha256": "2c2a8f520cff82ca46f759141f3f837dacc191a383cbf3fd0d621c36c594cbf4",
     "what_they_pin": "That the verdict is stated rather than abstained on; that the instrument's closed-mesh control is present and passes, since without it the verdict is worthless; that parity and signed distance agree on the control; that the record does not present the baseline as a closed control; and that the narrower fit output is named with its measured figures."
   },
   "provenance": {
@@ -36,7 +37,8 @@
     "harness_that_produced_this": [
       {
         "path": "harness/collision_fitness_verdict.py",
-        "sha256": "0560da386ec4229febaae9a624c506a108fe95d33f9cb354e1b59c1d519a29d8"
+        "sha256": "0560da386ec4229febaae9a624c506a108fe95d33f9cb354e1b59c1d519a29d8",
+        "bytes_committed_at": "be1b51931310e5a5061aff24d1af2c318d2d436f"
       },
       {
         "path": "collision-fitness-verdict.json",

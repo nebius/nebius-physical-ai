@@ -10,7 +10,7 @@
         "sha256": "5c0138dc9e1018afe4f94dd3381cfd8f740e0d4f444340db4b45f931365d1afb"
       },
       "recording": {
-        "hashes_that_name_no_file_here": "The superseded recording, retained in the lane evidence pack and deliberately not committed -- which is the whole point of the supersedes block, and is why this hash cannot be checked from this directory.",
+        "hashes_that_name_no_file_here": "This digest identifies the superseded recording retained in the access-controlled lane evidence pack; those recording bytes are deliberately not committed here.",
         "file": "point_cloud.rrd, retained in the lane evidence pack under evidence/open3d/viewer-ui/superseded-preview/ and deliberately not committed",
         "sha256": "36383fb1dce7a4becc35e60d21a52a7c4bbeec089d864c7f5a6daf589557c784"
       },
@@ -35,7 +35,7 @@
     ]
   },
   "inputs": {
-    "hashes_that_name_no_file_here": "The fused cloud and mesh this preview read, by the names the run gave them. They are that run's outputs and are not committed here.",
+    "hashes_that_name_no_file_here": "These are the fused-cloud and mesh input bytes used by the historical preview run. The inputs were not retained in this repository, so the digests identify unavailable run inputs rather than committed files.",
     "fused_ply": {
       "path": "fused.ply",
       "sha256": "da82039ebd5fd7c753179db971ff051f7e4eb3dbb0b294b07108f00c81b6c7b7"
@@ -46,14 +46,17 @@
     }
   },
   "generator": {
+    "hashes_that_name_no_file_here": "runner_module_sha256 is of the runner module mounted from the dirty producing tree. It names no committed file here; script_sha256 is separately bound and verified at script_bytes_committed_at.",
     "script": "harness/preview_from_retained_plys.py",
     "script_sha256": "9a359b060282f0482dafaa7e767bc6bb12e14349e2724e1e7141f8dd9ebebdca",
+    "script_bytes_committed_at": "15b0b11f0bc1",
+    "why_the_script_hash_is_not_the_hash_at_head": "This is the script that produced the recording and frame below, so it is a claim about history, not a checksum of the current file. The same change that added this field edits the script -- it unpacked sys.argv[1:5] and died with 'not enough values to unpack (expected 4, got 0)' when run with no arguments, and it now reports its usage. The preview cannot be regenerated to match: its input fragment clouds were never retained, and it was captured under a specific software rasterizer in a named image. So the hash stays the generating bytes and names the commit they are committed at, where it is verified. Overwriting it with the edited file's hash would have cleared an audit report by asserting that a September artifact was produced by a November script -- the same move this record's supersedes block documents an earlier capture making, and the reason that capture was superseded.",
     "runner_module_sha256": "eb4ad47c4e96210ac893e4dc3b97d301de4c02f6cd076fe325e972ba13784a1f",
     "repository_commit": "1441e211400cf7d07c8d832d3ad787ff71d7fad2",
     "runner_source_dirty_at_generation": true,
     "dirty_note": "The runner was mounted into the image from the working tree, so the module hash above is the binding, not the commit. The commit is recorded for context only.",
-    "binding_note": "Generated from dirty working-tree source, which is now committed at cbbb22e17 with byte-identical runner bytes. The generation history is kept rather than rewritten to read as though it had been clean.",
-    "hashes_that_name_no_file_here": "runner_module_sha256 is of the runner module as it was mounted into the image from a dirty working tree, which is the binding for this generation; see dirty_note beside it. Those bytes are now committed, but at a different path than this record names, so it binds to nothing here by construction."
+    "binding_note": "Generated from dirty working-tree source. The bytes are pinned at 15b0b11f0bc1, which is on main, so any checkout of this branch can verify the claim. They were previously pinned at cbbb22e170c1, which exists only on two lane branches -- byte-identical, but absent from main and from this branch, so no reviewer of this PR could resolve it and CI could not either.",
+    "repository_commit_note": "1441e21114 records where the run happened, and it is on two lane branches rather than main, so a reviewer of this branch cannot resolve it. It is left as it is on purpose: moving it to a main commit would be false, because the run did not happen there. It is informational and the audit does not treat it as a byte claim -- script_bytes_committed_at is the verifiable one, and that is pinned on main."
   },
   "camera": {
     "Scene: observed scan and supported surface": {

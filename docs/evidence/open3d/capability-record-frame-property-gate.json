@@ -202,6 +202,7 @@
     "pr_602_merge_is_an_ancestor": "15b0b11f0",
     "harness_that_produced_this": [
       {
+        "bytes_committed_at": "c512452716e6deb4e1b898876e6ceab84044dfc6",
         "path": "harness/frame_edge_audit.py",
         "sha256": "82da39227c093490eff87c78e9f5adf48272bda8d240747908f29564148585d5"
       },

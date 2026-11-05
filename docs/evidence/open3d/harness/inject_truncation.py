@@ -14,7 +14,32 @@ import sys
 
 from npa.workbench.open3d import runtime
 
-MODE = os.environ["INJECT_MODE"]  # raise | short | none
+MODES = ("raise", "short", "none")
+
+
+def required_env(name: str, allowed: tuple[str, ...] = ()) -> str:
+    """Report a missing setting as usage rather than as a KeyError.
+
+    This injector is driven entirely by the environment because it is loaded with
+    `python -m` ahead of the real stage and has no argv of its own to parse. A bare
+    `KeyError: 'INJECT_MODE'` reads as a broken harness rather than an unset variable,
+    which is the wrong thing to tell someone trying to reproduce a result.
+    """
+    value = os.environ.get(name)
+    if value is None:
+        expected = f", one of {', '.join(allowed)}" if allowed else ""
+        raise SystemExit(
+            f"{name} is not set{expected}. This fault injector is configured through "
+            "the environment: set INJECT_MODE and INJECT_LOG, optionally INJECT_CALL, "
+            "then load it with `python -m` inside the built image."
+        )
+    if allowed and value not in allowed:
+        raise SystemExit(f"{name}={value!r} is not one of {', '.join(allowed)}.")
+    return value
+
+
+MODE = required_env("INJECT_MODE", MODES)
+LOG_PATH = required_env("INJECT_LOG")
 # Which read to disturb: 1 is the manifest, 2 is the first fragment. The two are
 # guarded differently (JSON well-formedness vs a recorded digest), so both need
 # a real-bytes test.
@@ -27,12 +52,16 @@ def injected(uri: str) -> bytes:
     call = len(log) + 1
     # Only the targeted read is disturbed; every other read is untouched.
     if call == TARGET and MODE == "raise":
-        log.append({"call": call, "uri_suffix": uri[-12:], "injected": "IncompleteRead"})
+        log.append(
+            {"call": call, "uri_suffix": uri[-12:], "injected": "IncompleteRead"}
+        )
         raise OSError("IncompleteRead(5848412 bytes read, 276537 more expected)")
     try:
         payload = real_read(uri)
     except Exception as exc:
-        log.append({"call": call, "uri_suffix": uri[-12:], "real_error": type(exc).__name__})
+        log.append(
+            {"call": call, "uri_suffix": uri[-12:], "real_error": type(exc).__name__}
+        )
         raise
     if call == TARGET and MODE == "short":
         cut = payload[: len(payload) // 2]
@@ -46,7 +75,9 @@ def injected(uri: str) -> bytes:
             }
         )
         return cut
-    log.append({"call": call, "uri_suffix": uri[-12:], "injected": None, "bytes": len(payload)})
+    log.append(
+        {"call": call, "uri_suffix": uri[-12:], "injected": None, "bytes": len(payload)}
+    )
     return payload
 
 
@@ -63,6 +94,6 @@ except Exception as exc:
     code = 1
     log.append({"stage_error": f"{type(exc).__name__}: {exc}"})
 
-with open(os.environ["INJECT_LOG"], "w") as handle:
+with open(LOG_PATH, "w") as handle:
     json.dump({"mode": MODE, "reads": log, "exit_code": code}, handle, indent=2)
 sys.exit(code)

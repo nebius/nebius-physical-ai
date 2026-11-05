@@ -35,11 +35,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
+import subprocess
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(os.environ.get("NPA_EVIDENCE_ROOT", Path(__file__).resolve().parent.parent))
 
 #: Paths inside a record that refer to files *produced by a workflow run* rather than to
 #: evidence committed here. Naming them descriptively is correct, so they are not findings.
@@ -141,12 +143,12 @@ def resolve(value: str, run_dir: str | None) -> Path | None:
 
 def bound_pairs(
     node: object, where: str = "", declared: bool = False
-) -> tuple[list[tuple[str, str, str, bool]], list[tuple[str, bool]]]:
+) -> tuple[list[tuple[str, str, str, bool, str | None]], list[tuple[str, bool]]]:
     """Split every hash in a record into those bound to a named file and those not.
 
     Returns (bound, unbound). A bound entry is (json path, named file, claimed hash,
-    whether a `DECLARATION_KEY` note covers it); an unbound entry is (json path,
-    whether a note covers it).
+    whether a `DECLARATION_KEY` note covers it, commit holding historical bytes); an
+    unbound entry is (json path, whether a note covers it).
 
     Both sides carry the note because naming a file is not the same as the file being
     here. A hash whose named file does not resolve is exactly as uncheckable as one
@@ -155,7 +157,7 @@ def bound_pairs(
     the ungated one -- same hash, same unverifiability, no justification demanded.
     """
 
-    bound: list[tuple[str, str, str, bool]] = []
+    bound: list[tuple[str, str, str, bool, str | None]] = []
     unbound: list[tuple[str, bool]] = []
     if isinstance(node, dict):
         note = node.get(DECLARATION_KEY)
@@ -166,19 +168,24 @@ def bound_pairs(
                 # `<name>_sha256` binds to a sibling `<name>`; a bare `sha256` binds to
                 # whichever path key the same object carries.
                 named = None
+                at_commit = None
                 if key.endswith("_sha256"):
-                    named = node.get(key[: -len("_sha256")])
+                    stem = key[: -len("_sha256")]
+                    named = node.get(stem)
+                    at_commit = node.get(f"{stem}_bytes_committed_at")
                 elif key == "sha256":
                     named = next(
                         (node[k] for k in PATH_KEYS if isinstance(node.get(k), str)),
                         None,
                     )
+                    at_commit = node.get("bytes_committed_at")
                 elif LOOKS_LIKE_A_FILE.match(key):
                     # Several records key a hash by the filename itself, as in
                     # `artifact_hashes: {"multiway/fused.ply": "<sha>"}`. The key is the binding.
                     named = key
                 if isinstance(named, str) and named:
-                    bound.append((here, named, value, declared))
+                    historical = at_commit if isinstance(at_commit, str) else None
+                    bound.append((here, named, value, declared, historical))
                 else:
                     unbound.append((here, declared))
             else:
@@ -191,6 +198,38 @@ def bound_pairs(
             bound += sub_bound
             unbound += sub_unbound
     return bound, unbound
+
+
+def digest_at_commit(commit: str, path: str) -> str | None:
+    """Hash a named evidence file at a declared commit; None means unavailable history."""
+
+    try:
+        present = subprocess.run(
+            ["git", "cat-file", "-e", f"{commit}^{{commit}}"],
+            cwd=ROOT,
+            capture_output=True,
+            check=False,
+        )
+    except OSError:
+        return None
+    if present.returncode != 0:
+        return None
+    prefix = subprocess.run(
+        ["git", "rev-parse", "--show-prefix"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    shown = subprocess.run(
+        ["git", "show", f"{commit}:{prefix}{path}"],
+        cwd=ROOT,
+        capture_output=True,
+        check=False,
+    )
+    if shown.returncode != 0:
+        return ""
+    return hashlib.sha256(shown.stdout).hexdigest()
 
 
 def equality_claims(
@@ -304,7 +343,23 @@ def main() -> int:
         uncovered = [(w, d) for w, d in unbound if w not in covered]
         unbound_total += [f"{record.name}:{w}" for w, _ in uncovered]
         undeclared += [f"{record.name}:{w}" for w, d in uncovered if not d]
-        for where, named, claimed, declared in bound:
+        for where, named, claimed, declared, at_commit in bound:
+            if at_commit:
+                actual = digest_at_commit(at_commit, named)
+                if actual is None:
+                    # The checkout cannot adjudicate a historical claim it does not contain.
+                    # This is distinct from declaring an artifact unavailable in the evidence
+                    # directory: the claim remains a binding and is checked when history exists.
+                    continue
+                if actual != claimed:
+                    findings.append(
+                        f"{record.name}: {where} claims {claimed[:12]}.. for {named} at "
+                        f"{at_commit[:12]} which is actually "
+                        f"{(actual or 'absent there')[:12]}.."
+                    )
+                else:
+                    verified += 1
+                continue
             # Resolve before exempting: a run's artifacts are often not committed here, but when
             # a run directory *is* committed its hashes are checkable like anything else, and the
             # exemption used to skip them before anything looked.
@@ -389,13 +444,17 @@ def main() -> int:
     not_held_here = [one for one in unresolvable if one not in set(run_artifacts)]
     for label, items in (
         (
-            "name a run's own artifact by a name this directory does not hold, which is "
-            "what those names are",
+            (
+                "name a run's own artifact by a name this directory does not hold, which is "
+                "what those names are"
+            ),
             run_artifacts,
         ),
         (
-            f"name a file this directory does not hold and are declared as such by a "
-            f"{DECLARATION_KEY!r} note",
+            (
+                f"name a file this directory does not hold and are declared as such by a "
+                f"{DECLARATION_KEY!r} note"
+            ),
             not_held_here,
         ),
         (

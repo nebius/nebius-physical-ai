@@ -25,9 +25,11 @@ def _harness():
     stub = types.ModuleType("open3d")
     saved = sys.modules.get("open3d")
     sys.modules["open3d"] = stub
+    sys.path.insert(0, str(HARNESS_PATH.parent))
     try:
         spec.loader.exec_module(module)
     finally:
+        sys.path.remove(str(HARNESS_PATH.parent))
         if saved is None:
             del sys.modules["open3d"]
         else:

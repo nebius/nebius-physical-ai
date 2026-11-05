@@ -32,15 +32,17 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from harness_io import output_path
+
 import numpy as np
 import open3d as o3d
 from npa.workbench.open3d.runner import (
-    FABRICATION_AREA_SHARE,
+    FAR_BAND_AREA_SHARE,
     _crop_justification,
     _support,
 )
 
-OUT = Path("/data/floor-across-geometry-and-sampling.json")
+OUT = output_path("/data/floor-across-geometry-and-sampling.json")
 
 SAMPLES = 60000
 #: Cap half-angles in degrees, spanning the reviewer's range so the curves line up.
@@ -99,7 +101,7 @@ def main() -> int:
             "Reproduced rather than reinvented so the curves are comparable."
         ),
         "samples": SAMPLES,
-        "reading_boundary": FABRICATION_AREA_SHARE,
+        "reading_boundary": FAR_BAND_AREA_SHARE,
         "cases": {},
     }
 
