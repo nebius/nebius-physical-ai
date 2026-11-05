@@ -85,6 +85,7 @@ def test_genesis_recipes_select_their_supported_python_and_bind_source(
     assert "GENESIS_VENV=/opt/genesis/venv" in text
     assert "NPA_BAKED_PYTHON=/opt/genesis/venv/bin/python" in text
     assert "PATH=/opt/genesis/venv/bin:/opt/npa/venv/bin:$PATH" in text
+    assert "PYTHONPATH=/opt/genesis/compat:/opt/npa/src" in text
     expected_venv = (
         "RUN python3.12 -m venv /opt/genesis/venv"
         if dockerfile == "Dockerfile"
@@ -319,6 +320,9 @@ def test_genesis_recipes_apply_the_same_public_act_runtime_boundary(
     assert "public-runtime-dependencies.json" in installation
     assert "public-policy-source.json" in installation
     assert "npa-genesis-compat.pth" in installation
+    assert "sys.path.insert(0, '/opt/genesis/compat')" in installation
+    assert "import tetgen" in installation
+    assert 'Path("/opt/genesis/compat/tetgen.py")' in installation
 
 
 @pytest.mark.parametrize("dockerfile,version,site_packages", VARIANTS)

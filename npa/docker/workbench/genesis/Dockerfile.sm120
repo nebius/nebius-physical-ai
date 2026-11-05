@@ -32,7 +32,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     EGL_PLATFORM=device \
     IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg \
     PATH=/opt/genesis/venv/bin:/opt/npa/venv/bin:$PATH \
-    PYTHONPATH=/opt/npa/src \
+    PYTHONPATH=/opt/genesis/compat:/opt/npa/src \
     NPA_IMAGE_SOURCE_SHA=${NPA_SOURCE_SHA}
 
 SHELL ["/bin/bash", "-lc"]
@@ -104,8 +104,10 @@ RUN python -m pip install --upgrade pip setuptools wheel \
     && python /opt/genesis/prepare-public-policies.py \
       --site-packages /opt/genesis/venv/lib/python3.11/site-packages \
       > /opt/genesis/public-policy-source.json \
-    && printf '%s\n' /opt/genesis/compat \
+    && printf '%s\n' "import sys; sys.path.insert(0, '/opt/genesis/compat')" \
       > /opt/genesis/venv/lib/python3.11/site-packages/npa-genesis-compat.pth \
+    && python -c \
+      'from pathlib import Path; import tetgen; assert Path(tetgen.__file__).resolve() == Path("/opt/genesis/compat/tetgen.py")' \
     && python -m pip check \
     && test -z "$(find /opt/genesis/venv -type f \
       -path '*/imageio_ffmpeg/binaries/ffmpeg*' -print -quit)" \

@@ -31,7 +31,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     NVIDIA_DRIVER_CAPABILITIES=compute,graphics,utility \
     EGL_PLATFORM=device \
     PATH=/opt/genesis/venv/bin:/opt/npa/venv/bin:$PATH \
-    PYTHONPATH=/opt/npa/src \
+    PYTHONPATH=/opt/genesis/compat:/opt/npa/src \
     NPA_IMAGE_SOURCE_SHA=${NPA_SOURCE_SHA} \
     NPA_SKIP_EAGER_IMPORTS=1
 
@@ -131,8 +131,10 @@ RUN python3.12 -m venv /opt/genesis/venv \
     && /opt/genesis/venv/bin/python /opt/genesis/prepare-public-policies.py \
       --site-packages /opt/genesis/venv/lib/python3.12/site-packages \
       > /opt/genesis/public-policy-source.json \
-    && printf '%s\n' /opt/genesis/compat \
+    && printf '%s\n' "import sys; sys.path.insert(0, '/opt/genesis/compat')" \
       > /opt/genesis/venv/lib/python3.12/site-packages/npa-genesis-compat.pth \
+    && /opt/genesis/venv/bin/python -c \
+      'from pathlib import Path; import tetgen; assert Path(tetgen.__file__).resolve() == Path("/opt/genesis/compat/tetgen.py")' \
     && /opt/genesis/venv/bin/pip check \
     && test -z "$(find /opt/genesis/venv -type f \
       -path '*/imageio_ffmpeg/binaries/ffmpeg*' -print -quit)" \
