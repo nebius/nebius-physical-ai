@@ -487,7 +487,9 @@ def test_the_record_publishes_the_case_this_measure_misses() -> None:
     """A capability record that showed only the case it catches would be a brochure."""
 
     cases = record()["cases"]
-    assert set(cases) == {
+    declaration = cases["hashes_that_name_no_file_here"]
+    assert isinstance(declaration, str) and declaration.strip()
+    assert set(cases) - {"hashes_that_name_no_file_here"} == {
         "continuous_symmetry",
         "discrete_symmetry",
         "the_real_demo_scans",
