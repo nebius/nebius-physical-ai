@@ -302,8 +302,8 @@ def _probe_video(path: Path) -> dict[str, Any]:
         raise SeedVR2Error("ffprobe returned incomplete video metadata") from exc
     if frames < 1 or result["width"] < 1 or result["height"] < 1:
         raise SeedVR2Error("video contains no decodable positive-size frames")
-    if frames < 2:
-        raise SeedVR2Error("SeedVR2 video must contain at least two decodable frames")
+    if frames < 3:
+        raise SeedVR2Error("SeedVR2 video must contain at least three decodable frames")
     return result
 
 
@@ -320,6 +320,8 @@ def _decoded_frame_hashes(path: Path) -> list[str]:
             "mov",
             "-i",
             str(path),
+            "-map",
+            "0:v:0",
             "-f",
             "framemd5",
             "-",

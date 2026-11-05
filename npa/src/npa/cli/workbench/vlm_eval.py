@@ -388,7 +388,7 @@ def compare_judges_cmd(
     dry_run: bool = _COMPARE_DRY_RUN,
     output: OutputFormat = _COMPARE_OUTPUT,
 ) -> None:
-    """Compare two hosted judges without averaging their outcomes."""
+    """Compare hosted judges, excluding one measured shared-failure pair."""
     options = _ComparisonCliOptions(
         input_path,
         output_path,

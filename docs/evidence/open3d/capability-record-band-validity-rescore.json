@@ -50,6 +50,9 @@
   },
   "independent_review": "requested on #1006",
   "provenance": {
+    "source_commit": "024bd3d442c791c16de0adf6445b722eb5032857",
+    "commit_is_an_ancestor_of_main": false,
+    "how_this_commit_was_recovered": "This is the first commit in this file's retained --follow history, where the criterion-5 rescore record was introduced; later commits add review repairs without changing that producing identity.",
     "harness_that_produced_this": [
       {
         "path": "harness/band_validity_rescore.py",

@@ -75,18 +75,24 @@ class FakeClient:
         )
 
 
-def _hosted_workflow_spec(operation: str, tmp_path: Path) -> dict:
+def _hosted_workflow_spec(operation: str, *, include_overrides: bool) -> dict:
+    config = {
+        "task": "inspect the scene",
+        "input_uri": "s3://example-bucket/input/eval-request.json",
+        "output_uri": "s3://example-bucket/output/receipt.json",
+    }
+    if include_overrides:
+        config.update(
+            {
+                "api_base_url": "https://provider.example.invalid",
+                "model_id": "operator-selected-model",
+            }
+        )
     return {
         "apiVersion": "npa.workflow/v0.0.1",
         "kind": "Workflow",
         "metadata": {"name": "gemini-hosted-contract"},
-        "config": {
-            "api_base_url": "https://provider.example.invalid",
-            "model_id": "operator-selected-model",
-            "task": "inspect the scene",
-            "input_uri": "s3://example-bucket/input/eval-request.json",
-            "output_uri": "s3://example-bucket/output/receipt.json",
-        },
+        "config": config,
         "resources": {"cpu": {"cloud": "kubernetes", "cpus": 2}},
         "initial": "audit",
         "states": {
@@ -100,22 +106,37 @@ def _hosted_workflow_spec(operation: str, tmp_path: Path) -> dict:
 
 
 @pytest.mark.parametrize("operation", ["plan", "eval"])
+@pytest.mark.parametrize("include_overrides", [False, True])
 def test_hosted_workflow_renders_cpu_and_declares_google_secret(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, operation: str
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    operation: str,
+    include_overrides: bool,
 ) -> None:
     from npa.orchestration.npa_workflow.submit import prepare_npa_workflow_for_submit
 
     monkeypatch.setenv("NPA_SRC_S3_URI", "s3://example-bucket/source/npa")
     path = tmp_path / "gemini.yaml"
-    path.write_text(yaml.safe_dump(_hosted_workflow_spec(operation, tmp_path)))
+    path.write_text(
+        yaml.safe_dump(
+            _hosted_workflow_spec(operation, include_overrides=include_overrides)
+        )
+    )
     prepared = prepare_npa_workflow_for_submit(path, run_id="gemini-contract")
     try:
-        assert "GOOGLE_API_KEY" in prepared.secret_env_hints
+        assert prepared.secret_env_hints == ("GOOGLE_API_KEY",)
         tasks = list(yaml.safe_load_all(prepared.skypilot_yaml_path.read_text()))
         assert "accelerators" not in tasks[1]["resources"]
         assert "image_id" not in tasks[1]["resources"]
-        assert "gemini_robotics_pipeline" in tasks[1]["run"]
-        assert "--output-path" in tasks[1]["run"]
+        run = tasks[1]["run"]
+        assert "gemini_robotics_pipeline" in run
+        assert "--output-path" in run
+        if include_overrides:
+            assert "--api-base-url https://provider.example.invalid" in run
+            assert "--model operator-selected-model" in run
+        else:
+            assert "--api-base-url" not in run
+            assert "--model" not in run
     finally:
         prepared.temp_dir.cleanup()
 
@@ -208,26 +229,53 @@ def test_planning_uses_validated_default_model() -> None:
     assert client.last_model == DEFAULT_MODEL_ID
 
 
-def _toolref_stage_argv(name: str) -> list[str]:
+def _toolref_stage_argv(name: str, **overrides: str) -> list[str]:
     import re
 
-    from npa.orchestration.npa_workflow.catalog import TOOL_CATALOG
+    from npa.orchestration.npa_workflow.catalog import (
+        TOOL_CATALOG,
+        drop_empty_optional_flags,
+    )
 
     entry = TOOL_CATALOG[name]
-    return [
-        re.sub(r"{{(.*?)}}", r"s3://example-bucket/DUMMY", arg)
-        for arg in entry.argv_template
-    ]
+    config = {
+        **entry.config_defaults,
+        "task": "inspect the scene",
+        "input_uri": "s3://example-bucket/input.json",
+        "output_uri": "s3://example-bucket/output.json",
+        **overrides,
+    }
+
+    def resolve(value: str) -> str:
+        match = re.fullmatch(r"{{config\.([a-z0-9_]+)}}", value)
+        return config[match.group(1)] if match else value
+
+    return drop_empty_optional_flags(
+        name, [resolve(arg) for arg in entry.argv_template]
+    )
 
 
-def test_toolref_argv_parses_against_pipeline() -> None:
+@pytest.mark.parametrize("with_overrides", [False, True])
+def test_toolref_argv_parses_against_pipeline(with_overrides: bool) -> None:
+    from npa.orchestration.npa_workflow.catalog import TOOL_CATALOG
     from npa.workflows.byof import gemini_robotics_pipeline as pipe
 
     for tool_name, command in [
         ("workbench.gemini_robotics.plan", "plan"),
         ("workbench.gemini_robotics.eval", "eval"),
     ]:
-        argv = _toolref_stage_argv(tool_name)
+        entry = TOOL_CATALOG[tool_name]
+        assert entry.config_defaults == {"api_base_url": "", "model_id": ""}
+        assert entry.omit_flags_when_empty == ("--api-base-url", "--model")
+        overrides = (
+            {
+                "api_base_url": "https://provider.example.invalid",
+                "model_id": "operator-selected-model",
+            }
+            if with_overrides
+            else {}
+        )
+        argv = _toolref_stage_argv(tool_name, **overrides)
         assert argv[:3] == [
             "python3",
             "-m",
@@ -235,20 +283,74 @@ def test_toolref_argv_parses_against_pipeline() -> None:
         ]
         args = pipe.build_parser().parse_args(argv[3:])
         assert args.command == command
-        assert args.api_base_url == "s3://example-bucket/DUMMY"
-        assert args.output_path == "s3://example-bucket/DUMMY"
+        assert args.api_base_url == overrides.get("api_base_url", "")
+        assert args.model == overrides.get("model_id", "")
+        assert args.output_path == "s3://example-bucket/output.json"
 
 
-def test_toolref_descriptions_state_provisional() -> None:
-    from npa.orchestration.npa_workflow.catalog import TOOL_CATALOG
+def test_toolref_descriptions_state_validated_defaults() -> None:
+    from npa.orchestration.npa_workflow.catalog import (
+        PUBLIC_REUSABLE_TOOLREFS,
+        TOOL_CATALOG,
+    )
 
     for tool_name in (
         "workbench.gemini_robotics.plan",
         "workbench.gemini_robotics.eval",
     ):
         description = TOOL_CATALOG[tool_name].description
-        assert "provisional" in description
-        assert "no live access has been validated" in description
+        assert "live-validated 2026-10-10" in description
+        assert "optional" in description
+        assert "advisory" in description
+        assert "provisional" not in description
+        assert "no live access has been validated" not in description
+        public_description = PUBLIC_REUSABLE_TOOLREFS[tool_name]
+        assert "live-validated 2026-10-10" in public_description
+        assert "optional" in public_description
+
+
+def test_pipeline_omitted_endpoint_resolves_validated_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from npa.clients.gemini_robotics import DEFAULT_API_BASE_URL
+    from npa.workflows.byof import gemini_robotics_pipeline as pipe
+
+    captured = []
+    monkeypatch.setattr(pipe, "GeminiRoboticsClient", captured.append)
+    monkeypatch.delenv("GEMINI_ROBOTICS_BASE_URL", raising=False)
+    args = pipe.build_parser().parse_args(
+        [
+            "--api-key",
+            "synthetic-not-sent",
+            "plan",
+            "--task",
+            "inspect",
+            "--output-path",
+            "s3://example-bucket/output.json",
+        ]
+    )
+    pipe._configured_client(args)
+    assert len(captured) == 1
+    assert captured[0].base_url == DEFAULT_API_BASE_URL
+
+
+def test_catalog_document_states_optional_validated_overrides() -> None:
+    document = (
+        Path(__file__).resolve().parents[3]
+        / "docs"
+        / "workbench"
+        / "npa-workflow-tool-catalog.md"
+    ).read_text()
+    rows = [
+        line
+        for line in document.splitlines()
+        if line.startswith("| `workbench.gemini_robotics.")
+    ]
+    assert len(rows) == 2
+    for row in rows:
+        assert "optional" in row
+        assert "live-validated 2026-10-10" in row
+        assert "provisional" not in row
 
 
 def test_pipeline_main_rejects_missing_key() -> None:

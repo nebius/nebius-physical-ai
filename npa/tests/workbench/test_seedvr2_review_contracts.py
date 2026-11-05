@@ -11,7 +11,7 @@ from typer.testing import CliRunner
 
 from npa.cli.main import app
 from npa.smoke.capabilities import GOLDEN_EVAL_CAPABILITIES
-from npa.workbench.seedvr2 import artifacts, hardware, runtime
+from npa.workbench.seedvr2 import artifacts, hardware, quality, runtime
 from npa.workbench.seedvr2.service import create_app
 
 
@@ -56,10 +56,22 @@ def test_b200_rejects_each_producer_architecture_failure(tmp_path, monkeypatch, 
         hardware.require_b200_build_inventory()
 
 
-@pytest.mark.parametrize("verb", ["probe", "restore", "verify", "review"])
+def _module_operation(verb):
+    if verb == "restore":
+        return runtime, "restore"
+    if verb == "quality-boundary":
+        return quality, "assess"
+    return artifacts, verb
+
+
+@pytest.mark.parametrize(
+    "verb", ["probe", "restore", "verify", "review", "quality-boundary"]
+)
 def test_invalid_cli_request_is_reported_before_operation(monkeypatch, verb):
-    module = runtime if verb == "restore" else artifacts
-    monkeypatch.setattr(module, verb, lambda _: pytest.fail("operation must not run"))
+    module, operation = _module_operation(verb)
+    monkeypatch.setattr(
+        module, operation, lambda _: pytest.fail("operation must not run")
+    )
     result = CliRunner().invoke(
         app,
         [
@@ -117,13 +129,15 @@ def test_output_existence_denial_keeps_cause_and_fails_closed():
     assert isinstance(error.value.__cause__, ClientError)
 
 
-@pytest.mark.parametrize("verb", ["probe", "restore", "verify", "review"])
+@pytest.mark.parametrize(
+    "verb", ["probe", "restore", "verify", "review", "quality-boundary"]
+)
 def test_output_denial_maps_to_service_error_and_releases_lock(monkeypatch, verb):
     def denied(request):
         runtime._ensure_artifacts_absent(_DeniedOutputStorage(), [request.output_path])
 
-    module = runtime if verb == "restore" else artifacts
-    monkeypatch.setattr(module, verb, denied)
+    module, operation = _module_operation(verb)
+    monkeypatch.setattr(module, operation, denied)
     client = TestClient(
         create_app(token="test-token", allowed_s3_roots=["s3://example-bucket/"])
     )

@@ -8,8 +8,17 @@ COPY --chmod=0755 docker/workbench/common/configure_ubuntu_snapshot.sh /usr/loca
 COPY --chmod=0755 docker/workbench/common/install_python312_jammy.sh /usr/local/bin/install-python312-jammy
 RUN --mount=type=bind,from=bootstrap-ca,source=/etc/ssl/certs/ca-certificates.crt,target=/run/python-probe-ca.crt,ro \
     configure-ubuntu-snapshot 20261018T000000Z \
-    && apt-get -o Acquire::https::CaInfo=/run/python-probe-ca.crt update \
-    && apt-get -o Acquire::https::CaInfo=/run/python-probe-ca.crt install -y --no-install-recommends ca-certificates curl \
+    && for attempt in 1 2 3 4 5; do \
+      if apt-get -o Acquire::https::CaInfo=/run/python-probe-ca.crt \
+          -o Acquire::Retries=0 -o APT::Update::Error-Mode=any update \
+        && apt-get -o Acquire::https::CaInfo=/run/python-probe-ca.crt \
+          install -y --no-install-recommends ca-certificates curl; then \
+        break; \
+      fi; \
+      if [ "$attempt" = 5 ]; then exit 1; fi; \
+      rm -rf /var/lib/apt/lists/*; \
+      sleep "$attempt"; \
+    done \
     && install-python312-jammy \
     && python3.12 -m venv /opt/python-probe \
     && /opt/python-probe/bin/python -m pip install --no-cache-dir --no-deps \

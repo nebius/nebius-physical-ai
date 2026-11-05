@@ -519,6 +519,11 @@ def test_manifest_records_what_was_installed(tmp_path: Path) -> None:
     assert len(manifest["wheels_file_sha256"]) == 64
     assert len(manifest["bootstrap_sha256"]) == 64
     assert len(manifest["oss_dependencies_sha256"]) == 64
+    assert manifest["base_python_executable"] == str(
+        (harness.bin / "python3.11").resolve()
+    )
+    assert "-m venv --without-pip" in harness.call_log
+    assert "-m pip --version" in harness.call_log
 
 
 def test_current_symlink_points_at_the_completed_tree(tmp_path: Path) -> None:
@@ -584,6 +589,26 @@ def test_changing_bootstrap_source_changes_the_cache_stamp(tmp_path: Path) -> No
         encoding="utf-8",
     )
     assert before != stamp()
+
+
+def test_changing_base_interpreter_path_changes_the_cache_stamp(tmp_path: Path) -> None:
+    """A cache venv cannot be reused after its absolute interpreter moves."""
+
+    harness = Harness(tmp_path / "harness")
+    alternate = tmp_path / "alternate" / "python3.11"
+    alternate.parent.mkdir(parents=True)
+    shutil.copy2(harness.bin / "python3.11", alternate)
+
+    def stamp(base_python: Path) -> str:
+        result = harness.run("status", NPA_ISAAC_BASE_PYTHON=str(base_python))
+        assert result.returncode == 0, result.stderr
+        return next(
+            line
+            for line in result.stdout.splitlines()
+            if line.startswith("expected_tree=")
+        )
+
+    assert stamp(harness.bin / "python3.11") != stamp(alternate)
 
 
 def test_image_site_hook_recursively_processes_image_pth_files(tmp_path: Path) -> None:
@@ -821,11 +846,9 @@ def test_base_installer_uses_the_selected_isaac_dependency_lock() -> None:
     """Isaac 3 must not silently install the legacy Isaac dependency closure."""
 
     installer = BASE_INSTALLER.read_text(encoding="utf-8")
-    assert "sed -E '/^imageio-ffmpeg==/d' \"${OSS_DEPS_FILE}\"" in installer
-    assert (
-        "sed -E '/^imageio-ffmpeg==/d' \"${COMMON_DIR}/isaac-oss-deps.txt\""
-        not in installer
-    )
+    assert '"${COMMON_DIR}/select_moviepy_pillow_closure.py"' in installer
+    assert '--requirements "$OSS_DEPS_FILE"' in installer
+    assert '--requirements "${COMMON_DIR}/isaac-oss-deps.txt"' not in installer
 
 
 def test_base_installer_upgrades_linux_headers_from_the_fixed_snapshot() -> None:
@@ -838,13 +861,13 @@ def test_base_installer_upgrades_linux_headers_from_the_fixed_snapshot() -> None
     """
 
     installer = BASE_INSTALLER.read_text(encoding="utf-8")
-    assert 'UBUNTU_SNAPSHOT="${NPA_UBUNTU_SNAPSHOT:-20261018T000000Z}"' in installer
+    assert 'UBUNTU_SNAPSHOT="${NPA_UBUNTU_SNAPSHOT:-20261103T000000Z}"' in installer
     assert (
-        'LINUX_LIBC_DEV_VERSION="${NPA_LINUX_LIBC_DEV_VERSION:-5.15.0-198.208}"'
+        'LINUX_LIBC_DEV_VERSION="${NPA_LINUX_LIBC_DEV_VERSION:-5.15.0-202.212}"'
         in installer
     )
     assert '"linux-libc-dev=${LINUX_LIBC_DEV_VERSION}"' in installer
-    assert "linux-libc-dev=5.15.0-198.208" in installer
+    assert "linux-libc-dev=5.15.0-202.212" in installer
     assert "linux-libc-dev=6.8.0-147.147" in installer
     assert "NPA_UBUNTU_SUITE:-jammy" in installer
     assert "NPA_ISAAC_PYTHON_MINOR:-3.11" in installer
@@ -1097,14 +1120,108 @@ def test_base_installer_proves_the_refusal_at_build_time() -> None:
     assert "-ne 78" in text, "the build must require the documented EX_CONFIG exit code"
 
 
+def test_sonic_k8s_uses_source_python_without_losing_base_packages() -> None:
+    """The npa-base variant must not reuse its Deadsnakes-backed venv."""
+
+    sonic = COMMON.parent / "sonic"
+    build_script = (sonic / "build.sh").read_text(encoding="utf-8")
+    dockerfile = (sonic / "Dockerfile").read_text(encoding="utf-8")
+    k8s = build_script.split("  k8s)", 1)[1].split("  mujoco)", 1)[0]
+
+    assert 'NPA_ISAAC_VENV="/opt/npa/sim/venv"' in k8s
+    assert 'NPA_ISAAC_INHERITED_PYTHON="/opt/npa/venv/bin/python"' in k8s
+    assert (
+        '--build-arg "NPA_ISAAC_INHERITED_PYTHON=${NPA_ISAAC_INHERITED_PYTHON}"'
+        in build_script
+    )
+    assert "ARG NPA_ISAAC_INHERITED_PYTHON=" in dockerfile
+    assert 'NPA_ISAAC_INHERITED_PYTHON="${NPA_ISAAC_INHERITED_PYTHON}"' in dockerfile
+
+    installer = BASE_INSTALLER.read_text(encoding="utf-8")
+    assert 'INHERITED_PYTHON="${NPA_ISAAC_INHERITED_PYTHON:-}"' in installer
+    assert "_npa_inherited_image_site.pth" in installer
+
+
+def _assert_cpython_source_contract(text: str) -> None:
+    source = "https://www.python.org/ftp/python"
+    digest = "5f62711b12470fd435f83f1451c1b1ef4a179aebc715c716874b0967567d814e"
+    required_build_contract = (
+        'CFLAGS="$(dpkg-buildflags --get CFLAGS)"',
+        'CPPFLAGS="$(dpkg-buildflags --get CPPFLAGS)"',
+        'LDFLAGS="$(dpkg-buildflags --get LDFLAGS)"',
+        "NPA_ISAAC_PYTHON_SOURCE_EPOCH:-1792957289",
+        'export SOURCE_DATE_EPOCH="$PYTHON_SOURCE_EPOCH"',
+        "CPython build timestamp is not release-bound",
+        "--enable-optimizations",
+        "--with-lto",
+        "--with-ensurepip=no",
+        "--without-static-libpython",
+        'LD_LIBRARY_PATH="$PWD${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"',
+        "./python -m test --fail-env-changed",
+        "test_pyexpat test_sax test_xml_etree test_xml_etree_c",
+        "pyexpat.EXPAT_VERSION",
+        "expat_2.9.0",
+        "CPython pyexpat unexpectedly links the snapshot system Expat",
+        "ea0b9c6b296c13aed6ecaa50b463e39a9c1bdc059b84f50507fd8247b2e660f9",
+        "4633fc5859344c6f244939c27700fb941d12c4636215a8eccde17d9a6d1dcb0d",
+        "2f6c9d0ecf70be474f2853b52394993625a32960e0a64eae147ef97a3a5c1460",
+        "install -m 0444 LICENSE /usr/share/doc/cpython3.11/LICENSE",
+        "install -m 0444 Modules/expat/COPYING",
+        "install -m 0444 Modules/_decimal/libmpdec/mpdecimal.h",
+        "install -m 0444 Modules/_sha3/LICENSE",
+        "install -m 0444 Modules/_blake2/impl/blake2.h",
+        "cmp -s Modules/_decimal/libmpdec/mpdecimal.h",
+        "cmp -s Modules/_sha3/LICENSE",
+        "cmp -s Modules/_blake2/impl/blake2.h",
+        "test -s /usr/share/doc/cpython3.11/MPDECIMAL-LICENSE.h",
+        "test -s /usr/share/doc/cpython3.11/SHA3-LICENSE",
+        "test -s /usr/share/doc/cpython3.11/BLAKE2-CC0-SOURCE.h",
+        "test -s /usr/share/doc/cpython3.11/EXPAT-LICENSE",
+        "rm -rf /usr/local/lib/python3.11/test",
+        "test ! -e /usr/local/lib/python3.11/test",
+        "rm -rf /usr/local/lib/python3.11/ensurepip/_bundled",
+        "python3.11 -m venv --without-pip /tmp/npa-python311-venv-probe",
+    )
+    assert source in text
+    assert digest in text
+    assert "Python-${PYTHON_VERSION}.tgz" in text
+    assert "sha256sum --check --strict" in text
+    assert text.index(digest) < text.index("sha256sum --check --strict")
+    assert text.index("sha256sum --check --strict") < text.index("tar --extract --gzip")
+    for token in required_build_contract:
+        assert token in text
+    assert "make altinstall" in text
+    assert text.index("./python -m test --fail-env-changed") < text.index(
+        "make altinstall"
+    )
+    assert 'from importlib import metadata; print(metadata.version("pip"))' in text
+    assert ')" = 26.2.2' in text
+    assert "tk-dev" not in text
+    assert "libexpat1-dev" not in text
+    assert "--with-system-expat" not in text
+    assert (
+        "import _blake2, _sha3, bz2, ctypes, ensurepip, lzma, readline, "
+        "sqlite3, ssl, zlib"
+    ) in text
+    assert "test -s /usr/share/doc/cpython3.11/LICENSE" in text
+    assert text.index("make altinstall") < text.index(
+        "install -m 0444 LICENSE /usr/share/doc/cpython3.11/LICENSE"
+    )
+    assert text.index('"pip==26.2.2"') < text.index(
+        "rm -rf /usr/local/lib/python3.11/ensurepip/_bundled"
+    )
+    assert "ppa.launchpadcontent.net/deadsnakes" not in text
+    assert "launchpad.net/~deadsnakes" not in text
+
+
 def test_base_installer_uses_immutable_system_and_bootstrap_inputs() -> None:
     """The GPU image build must not resolve Python or packaging from moving indexes."""
     text = BASE_INSTALLER.read_text(encoding="utf-8")
-    assert "NPA_UBUNTU_SNAPSHOT:-20261018T000000Z" in text
+    assert "NPA_UBUNTU_SNAPSHOT:-20261103T000000Z" in text
     assert "https://snapshot.ubuntu.com/ubuntu/${UBUNTU_SNAPSHOT}/" in text
     assert "add-apt-repository" not in text
-    assert "sha256sum --check --strict" in text
-    assert text.count("3.11.17-1+jammy1") >= 9
+    _assert_cpython_source_contract(text)
+    assert "NPA_ISAAC_PYTHON_VERSION:-3.11.18" in text
     for requirement in (
         "pip==26.2.2",
         "setuptools==84.1.0",
@@ -1132,3 +1249,61 @@ def test_base_installer_uses_immutable_system_and_bootstrap_inputs() -> None:
         assert all(line.count("==") == 1 for line in lines)
         assert not any(line.lower().startswith("wheel==") for line in lines)
     assert "packaging==23.2" in OSS_DEPS.read_text(encoding="utf-8").splitlines()
+
+
+def test_cpython_source_contract_rejects_mutated_source_or_digest() -> None:
+    text = BASE_INSTALLER.read_text(encoding="utf-8")
+    mutations = [
+        text.replace(
+            "https://www.python.org/ftp/python",
+            "https://ppa.launchpadcontent.net/deadsnakes/ppa/ubuntu/pool",
+            1,
+        ),
+        text.replace(
+            "5f62711b12470fd435f83f1451c1b1ef4a179aebc715c716874b0967567d814e",
+            "0" * 64,
+            1,
+        ),
+        text.replace("sha256sum --check --strict", "true # skipped digest", 1),
+    ]
+    for token in (
+        'CFLAGS="$(dpkg-buildflags --get CFLAGS)"',
+        'CPPFLAGS="$(dpkg-buildflags --get CPPFLAGS)"',
+        'LDFLAGS="$(dpkg-buildflags --get LDFLAGS)"',
+        "NPA_ISAAC_PYTHON_SOURCE_EPOCH:-1792957289",
+        'export SOURCE_DATE_EPOCH="$PYTHON_SOURCE_EPOCH"',
+        "CPython build timestamp is not release-bound",
+        "--enable-optimizations",
+        "--with-lto",
+        "--with-ensurepip=no",
+        "--without-static-libpython",
+        'LD_LIBRARY_PATH="$PWD${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"',
+        "./python -m test --fail-env-changed",
+        "test_pyexpat test_sax test_xml_etree test_xml_etree_c",
+        "pyexpat.EXPAT_VERSION",
+        "expat_2.9.0",
+        "CPython pyexpat unexpectedly links the snapshot system Expat",
+        "ea0b9c6b296c13aed6ecaa50b463e39a9c1bdc059b84f50507fd8247b2e660f9",
+        "4633fc5859344c6f244939c27700fb941d12c4636215a8eccde17d9a6d1dcb0d",
+        "2f6c9d0ecf70be474f2853b52394993625a32960e0a64eae147ef97a3a5c1460",
+        "install -m 0444 LICENSE /usr/share/doc/cpython3.11/LICENSE",
+        "install -m 0444 Modules/expat/COPYING",
+        "install -m 0444 Modules/_decimal/libmpdec/mpdecimal.h",
+        "install -m 0444 Modules/_sha3/LICENSE",
+        "install -m 0444 Modules/_blake2/impl/blake2.h",
+        "cmp -s Modules/_decimal/libmpdec/mpdecimal.h",
+        "cmp -s Modules/_sha3/LICENSE",
+        "cmp -s Modules/_blake2/impl/blake2.h",
+        "test -s /usr/share/doc/cpython3.11/MPDECIMAL-LICENSE.h",
+        "test -s /usr/share/doc/cpython3.11/SHA3-LICENSE",
+        "test -s /usr/share/doc/cpython3.11/BLAKE2-CC0-SOURCE.h",
+        "test -s /usr/share/doc/cpython3.11/EXPAT-LICENSE",
+        "rm -rf /usr/local/lib/python3.11/test",
+        "test ! -e /usr/local/lib/python3.11/test",
+        "rm -rf /usr/local/lib/python3.11/ensurepip/_bundled",
+        "python3.11 -m venv --without-pip /tmp/npa-python311-venv-probe",
+    ):
+        mutations.append(text.replace(token, "OMITTED_CPYTHON_BUILD_CONTRACT", 1))
+    for mutation in mutations:
+        with pytest.raises(AssertionError):
+            _assert_cpython_source_contract(mutation)

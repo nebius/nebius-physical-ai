@@ -2056,9 +2056,10 @@
   },
   "nvshmem_notice": {
     "path": "usr/share/doc/npa-curobo/NVSHMEM-LICENSE.txt",
-    "sha256": "43a87c0ff94ce3196011ff75e17fbee96933c9e1d511557659ece8a326f95e8f",
-    "size": 26566,
-    "url": "https://developer.download.nvidia.com/compute/nvshmem/redist/libnvshmem/LICENSE.txt",
+    "sha256": "1f5b7ada702926bc73327e6eb02dc2d41facc844cc4512ac900451bda06a459e",
+    "size": 28205,
+    "url": "https://developer.download.nvidia.com/compute/nvshmem/redist/libnvshmem/linux-x86_64/libnvshmem-linux-x86_64-3.4.5_cuda13-archive.tar.xz",
+    "archive_member": "libnvshmem-linux-x86_64-3.4.5_cuda13-archive/LICENSE",
     "release_manifest": "https://developer.download.nvidia.com/compute/nvshmem/redist/redistrib_3.4.5.json",
     "release_archive_sha256": "18f12807c23bc5b270581af1f9bafd540369da783e557171558887623d77842c"
   },

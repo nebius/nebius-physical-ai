@@ -50,3 +50,17 @@ def test_checkpoint_mismatch_is_rejected_before_inference(monkeypatch, tmp_path)
     monkeypatch.setattr(lyra_stage.requests, "get", lambda *args, **kw: Response())
     with pytest.raises(ValueError, match="upstream LFS SHA-256"):
         lyra_stage._fetch_checkpoint(tmp_path / "model.pt")
+
+
+def test_image_repairs_the_header_and_every_shipped_python_runtime():
+    dockerfile = (IMAGE / "Dockerfile").read_text(encoding="utf-8")
+    bootstrap_lock = (IMAGE / "bootstrap-packages.lock").read_text(encoding="utf-8")
+
+    assert (
+        "fec8e4a308c03cd98dace67370a8d5a8031c36741796065c9f6e3f9548ab0cd2 "
+        "https://security.ubuntu.com/ubuntu/pool/main/l/linux/"
+        "linux-libc-dev_6.8.0-147.147_amd64.deb"
+    ) in bootstrap_lock
+    assert "python3.12 -m pip install --no-cache-dir --no-deps --upgrade" in dockerfile
+    assert "certifi-2026.10.23-py3-none-any.whl" in dockerfile
+    assert "version('certifi') == '2026.10.23'" in dockerfile

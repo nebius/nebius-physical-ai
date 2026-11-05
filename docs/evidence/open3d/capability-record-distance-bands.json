@@ -1,7 +1,6 @@
 {
   "capability": "open3d.reconstruct distinguishes an extrapolated Poisson shell from discretization",
   "why": "The complete-capture control on this branch found that support_distance_factor=1.0 can discard correct geometry while every published number looks healthy, and that the coverage guard cannot see it. That was recorded as prose. This measures the gap across scenes and gives the report the one number that does separate the cases.",
-  "source_commit": "e8e12b12a",
   "image": "npa-open3d:bands2 (built from this branch, --build-arg NPA_SOURCE_SHA=bbadf70f987cd8d9f06298a9bf40a00bf6635d2f for the first build; rebuilt for the smoke assertions)",
   "hardware": "CPU only. Open3D's registration and Poisson APIs have no CUDA path, so there is no GPU claim here and none is possible.",
   "what_was_added": {
@@ -90,7 +89,7 @@
     "The 0.1 boundary is a reporting aid and nothing gates on it. Deliberately so: the Eagle scan measured 0.1012 against a boundary of 0.1, decided by the fourth decimal place. The two poles are three orders of magnitude apart, but a real scan can land on the line, and for those scenes the reading is a coin toss. This is recorded in the constant's own docstring and pinned by a test.",
     "'near-threshold surface' does not prove a crop removed correct geometry; it says the distance profile cannot rule it out. Proving it needs a ground-truth surface, which exists only for the synthetic scene.",
     "Three and 1.5 voxels are reporting boundaries chosen because a correct surface sampled at roughly voxel spacing had nothing past three. They are not derived from a sampling theorem.",
-    "The Armadillo figure moves slightly between runs (0.2009 here, 0.2055 in the earlier threshold sweep). The 300k-point sampling, which is not seeded, is the dominant cause and is enough to explain a gap that size on its own: unseeded, the fraction's spread over four repeats is itself unstable run to run, 9.5e-04 to 5.6e-03. Seeding it brings that spread down to 5.3e-06 to 3.7e-05 but does not remove it -- with the sampled cloud's bytes identical, the fraction still takes four distinct values in four runs, and with the voxel-downsampled cloud and the estimated normals identical too, both hashed, so what is left is the Poisson reconstruction and the density crop applied to what it returns. Both ranges are over repeated runs of declared-reproducibility-causes.json, which records how many runs each covers and why one of the two series is shorter; see also poisson-figure-reproducibility.json, which is in a separate pull request and may not be in this tree yet. The separation being measured is three orders of magnitude, so neither affects the finding, but the fourth decimal place is not reproducible and seeding will not make it so.",
+    "The Armadillo figure moves slightly between runs (0.2009 here, 0.2055 in the earlier threshold sweep). The 300k-point sampling, which is not seeded, is the dominant cause and is enough to explain a gap that size on its own: unseeded, the fraction's spread over four repeats is itself unstable run to run, 9.5e-04 to 5.6e-03. Seeding it brings that spread down to 5.3e-06 to 3.7e-05 but does not remove it -- with the sampled cloud's bytes identical, the fraction still takes four distinct values in four runs, and with the voxel-downsampled cloud and the estimated normals identical too, both hashed, so what is left is the Poisson reconstruction and the density crop applied to what it returns. Both ranges are over repeated runs of declared-reproducibility-causes.json, which records how many runs each covers and why one of the two series is shorter; see also poisson-figure-reproducibility.json, which is in this evidence directory. The separation being measured is three orders of magnitude, so neither affects the finding, but the fourth decimal place is not reproducible and seeding will not make it so.",
     "No GPU claim. CPU only, by construction."
   ],
   "vlm_evaluation": "Not applicable. This adds numbers to a JSON report; there is no new visual artifact. The VLM calibration failure recorded in evidence/open3d/vlm/CALIBRATION-REPORT.md is unchanged by this work.",
@@ -348,5 +347,13 @@
     },
     "agreement": "two independent implementations within about 0.01",
     "note": "They had labelled their own reconciliation sweep inconclusive; it matches. The operator guidance falling out of it -- choose --voxel-size at or above twice the median sample spacing -- is in the skill and beside the constant."
+  },
+  "provenance": {
+    "source_commit": "e8e12b12a367f1a1bc7ef7aca7ac68866e8e5e97",
+    "commit_is_an_ancestor_of_main": false,
+    "no_advertised_origin_ref_at_audit": "PR 602 was squashed when it merged, so this commit never became an ancestor of main and was on no advertised origin ref at audit time -- the audit found no advertised origin ref containing it at the recorded time; that does not establish whether the object is fetchable directly by SHA. 15b0b11f0 is where its work reached main: a symbol or source line this commit introduced is present at main and `git log -S` traces it to that merge. That is a check on this commit's contribution reaching main, not a claim that the two trees are identical. The per-commit probes are in capability-record-record-provenance-shape.json.",
+    "commit_on_main_carrying_this_source": "15b0b11f0bc137631954ac87076f44753c513976",
+    "why_this_shape": "A review lane found provenance recorded six different ways across these records, so an auditor had to learn each file. This is the one shape: the commit the record attests to, whether the commit is an ancestor of main, and -- where the answer is no -- why that is deliberate and what a reader can resolve instead. harness/audit_record_provenance.py checks the ancestry claim against the repository rather than trusting it.",
+    "this_key_replaced": "A top-level `source_commit` holding 'e8e12b12a'. Moved rather than dropped."
   }
 }

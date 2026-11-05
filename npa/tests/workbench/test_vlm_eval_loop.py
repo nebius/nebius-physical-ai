@@ -38,6 +38,11 @@ _LOOP_LIMITATIONS = [
     "task_success is a mean-score gate, not a per-rollout success rate.",
     "Selected frames cannot verify unobserved intervals or continuous task stability.",
     "The visual gate does not establish physical correctness or safety.",
+    (
+        "When present, provider_observable_support is provider-authored text; NPA "
+        "checks only its required shape and retention, not semantic truth or pixel "
+        "grounding."
+    ),
 ]
 _LOOP_STUB_LIMITATION = (
     "Stub scores are wiring inputs; no VLM call occurred, so they are not model "
@@ -82,6 +87,9 @@ def test_incomplete_second_rollout_aborts_without_an_aggregate_or_fake_score(
                                 "success": True,
                                 "score": 0.9,
                                 "rationale": "Synthetic transport control only.",
+                                "provider_observable_support": [
+                                    "Frame 1 visibly contains the control image."
+                                ],
                             }
                         )
                     },

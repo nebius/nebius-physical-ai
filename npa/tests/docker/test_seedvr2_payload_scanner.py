@@ -786,6 +786,22 @@ def test_excessively_nested_manifest_json_is_normalized(tmp_path: Path) -> None:
     assert type(caught.value) is RuntimeError
 
 
+def test_structural_json_depth_limit_has_a_safe_boundary() -> None:
+    permitted = (
+        b'{"nested":' * scanner.MAX_JSON_NESTING
+        + b"0"
+        + b"}" * scanner.MAX_JSON_NESTING
+    )
+    rejected = (
+        b'{"nested":' * (scanner.MAX_JSON_NESTING + 1)
+        + b"0"
+        + b"}" * (scanner.MAX_JSON_NESTING + 1)
+    )
+    assert scanner._strict_json(permitted)
+    with pytest.raises(RuntimeError, match="excessively nested structural data"):
+        scanner._strict_json(rejected)
+
+
 @pytest.mark.parametrize(
     "payload",
     [
@@ -865,8 +881,9 @@ def test_nested_wheel_cudnn_and_nvshmem_sdk_payloads_fail(tmp_path: Path) -> Non
 @pytest.mark.parametrize(
     ("version", "contents", "accepted"),
     [
-        ("84.0.0", scanner.SETUPTOOLS_DISTUTILS_PATH_FILE, True),
-        ("84.0.0", scanner.SETUPTOOLS_DISTUTILS_PATH_FILE + b"changed", False),
+        ("84.2.1", scanner.SETUPTOOLS_DISTUTILS_PATH_FILE, True),
+        ("84.2.1", scanner.SETUPTOOLS_DISTUTILS_PATH_FILE + b"changed", False),
+        ("84.0.0", scanner.SETUPTOOLS_DISTUTILS_PATH_FILE, False),
         ("80.9.0", scanner.SETUPTOOLS_DISTUTILS_PATH_FILE, False),
         ("68.1.2", scanner.SETUPTOOLS_DISTUTILS_PATH_FILE, False),
     ],
@@ -901,7 +918,7 @@ def test_setuptools_seed_wheel_path_and_contents_are_exactly_bound(
 
 
 def test_exact_setuptools_path_file_cannot_be_zip_symlink(tmp_path: Path) -> None:
-    wheel = tmp_path / "setuptools-84.0.0-py3-none-any.whl"
+    wheel = tmp_path / "setuptools-84.2.1-py3-none-any.whl"
     with zipfile.ZipFile(wheel, "w") as archive:
         info = zipfile.ZipInfo("distutils-precedence.pth")
         info.create_system = 3
@@ -913,7 +930,7 @@ def test_exact_setuptools_path_file_cannot_be_zip_symlink(tmp_path: Path) -> Non
             [
                 {
                     "usr/share/python-wheels/"
-                    "setuptools-84.0.0-py3-none-any.whl": wheel.read_bytes(),
+                    "setuptools-84.2.1-py3-none-any.whl": wheel.read_bytes(),
                 }
             ],
         )

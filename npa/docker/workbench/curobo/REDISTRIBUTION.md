@@ -242,8 +242,9 @@ accepted whole-image byte/security review and supported-image release.
   Its product-specific supplement permits any SDK portion subject to the
   application distribution requirements. The build adds that distribution's
   full license and third-party notices at
-  `/usr/share/doc/npa-curobo/NVSHMEM-LICENSE.txt`, verified against SHA256
-  `43a87c0ff94ce3196011ff75e17fbee96933c9e1d511557659ece8a326f95e8f`,
+  `/usr/share/doc/npa-curobo/NVSHMEM-LICENSE.txt`, extracted from the
+  hash-verified CUDA 13 archive and verified against SHA256
+  `1f5b7ada702926bc73327e6eb02dc2d41facc844cc4512ac900451bda06a459e`,
   alongside the wheel's bundled CUDA license. Wheel metadata alone is not a
   license grant. Built-image inventory and notice hashes must verify these
   boundaries before publication.
@@ -263,7 +264,7 @@ Official sources: [cuRobo license](https://github.com/NVlabs/curobo/blob/8e734f3
 [cuSPARSELt SLA](https://docs.nvidia.com/cuda/cusparselt/license.html),
 [NCCL release license](https://github.com/NVIDIA/nccl/blob/v2.29.7-1/LICENSE.txt),
 [NVSHMEM release manifest](https://developer.download.nvidia.com/compute/nvshmem/redist/redistrib_3.4.5.json),
-[NVSHMEM product license](https://developer.download.nvidia.com/compute/nvshmem/redist/libnvshmem/LICENSE.txt),
+[NVSHMEM CUDA 13 archive](https://developer.download.nvidia.com/compute/nvshmem/redist/libnvshmem/linux-x86_64/libnvshmem-linux-x86_64-3.4.5_cuda13-archive.tar.xz),
 [container license](https://gitlab.com/nvidia/container-images/cuda/-/blob/master/NGC-DL-CONTAINER-LICENSE).
 
 Metadata sources: [pinned upstream package metadata](https://github.com/NVlabs/curobo/blob/8e734f3ced1df898990bcd92de40abce475907db/pyproject.toml),

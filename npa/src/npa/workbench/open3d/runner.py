@@ -97,6 +97,109 @@ def _result_summary(result) -> dict[str, Any]:
     }
 
 
+#: The measured case where every seed agreed and every seed was wrong, published with
+#: the measurement rather than described beside it. `docs/evidence/open3d/
+#: registration-ambiguity.json` is where it was measured; these are its figures.
+#:
+#: Read-only, and copied into each report rather than shared. Published by reference it
+#: was one `report[...].update(...)` away from changing what every later report in the
+#: process claimed, which is how a caller's local edit becomes a false record.
+AGREEMENT_COUNTEREXAMPLE = MappingProxyType(
+    {
+        "construction": "a square prism, invariant under 90 degrees about z",
+        "seeds": 6,
+        "seeds_agreed_within_voxels": 0.13,
+        "every_seed_was_wrong_by_voxels": 32.7,
+        "evidence": "docs/evidence/open3d/registration-ambiguity.json",
+    }
+)
+
+
+def _transform_displacement(first, second, points) -> float:
+    """RMS distance between where two transforms send the same points.
+
+    Transforms are compared through the cloud rather than by subtracting matrices,
+    because a rotation and a translation are not in the same units and a small angle
+    on a large object is not a small error. This answers the question a consumer has:
+    if I use alignment A instead of alignment B, how far does my data move.
+    """
+
+    import numpy as np
+
+    first = np.asarray(first, dtype=float)
+    second = np.asarray(second, dtype=float)
+    points = np.asarray(points, dtype=float)
+    moved_first = points @ first[:3, :3].T + first[:3, 3]
+    moved_second = points @ second[:3, :3].T + second[:3, 3]
+    return float(np.sqrt(((moved_first - moved_second) ** 2).sum(axis=1).mean()))
+
+
+def _agreement(attempts: list[dict[str, Any]], points, voxel: float) -> dict[str, Any]:
+    """How far apart the alignments found under different seeds actually are.
+
+    `fitness` and `inlier_rmse` come from ICP's own result, computed against the
+    correspondences ICP chose, so they describe how well the alignment it settled on
+    explains the points it used. They cannot distinguish a correct alignment from a
+    confidently wrong one. Measured on a rotationally symmetric pair, six seeds held
+    `inlier_rmse` at 0.0123 to 0.0125 -- a quarter of a voxel -- while landing between
+    8 and 25 voxels from the truth, in different places.
+
+    Disagreement here is therefore proof that the published fitness is not evidence of
+    accuracy. Agreement is **not** proof of the converse: on a pair with a 90-degree
+    symmetry, six seeds agreed to 0.13 voxels and all six were 32.7 voxels from the
+    truth, because they all took the same wrong branch. See
+    `docs/evidence/open3d/registration-ambiguity.json`.
+    """
+
+    import numpy as np
+
+    worst = 0.0
+    worst_pair: list[int] = []
+    for i in range(len(attempts)):
+        for j in range(i + 1, len(attempts)):
+            moved = _transform_displacement(
+                attempts[i]["transformation"], attempts[j]["transformation"], points
+            )
+            if moved > worst:
+                worst, worst_pair = (
+                    moved,
+                    [
+                        attempts[i]["seed"],
+                        attempts[j]["seed"],
+                    ],
+                )
+    fitness = [float(attempt["icp"]["fitness"]) for attempt in attempts]
+    rmse = [float(attempt["icp"]["inlier_rmse"]) for attempt in attempts]
+    return {
+        "seeds": [int(attempt["seed"]) for attempt in attempts],
+        "worst_pairwise_displacement": worst,
+        "worst_pairwise_displacement_voxels": worst / voxel if voxel > 0 else None,
+        # The divisor, so the normalised figure above is checkable from the row. It is
+        # the number the README, the evidence record and the counterexample all quote,
+        # and it was the one field here the published validator could not check: a
+        # stale normalisation passed `validate` silently.
+        "voxel_size": float(voxel) if voxel > 0 else None,
+        "worst_disagreeing_seeds": worst_pair,
+        "fitness_spread": float(np.max(fitness) - np.min(fitness)),
+        "inlier_rmse_spread": float(np.max(rmse) - np.min(rmse)),
+        "fitness_by_seed": fitness,
+        "inlier_rmse_by_seed": rmse,
+        # Carried as numbers and not only as a sentence. A sentence can be inverted
+        # with one word and still contain every phrase a guard greps for -- which is
+        # how the first version of this block could have been turned into its own
+        # opposite without failing anything. The relation between these two figures is
+        # the claim, and it is checkable.
+        "agreement_is_not_correctness": {
+            "measured_counterexample": dict(AGREEMENT_COUNTEREXAMPLE),
+            "so": (
+                "Disagreement here proves that fitness and inlier_rmse are not "
+                "accuracy. Agreement proves nothing, because the seeds can agree on "
+                "the same wrong branch of a symmetry."
+            ),
+        },
+    }
+
+
 def _register_pair(o3d, source, target, manifest: RegistrationManifest):
     """Upstream global registration followed by upstream ICP refinement."""
 
@@ -228,6 +331,74 @@ def run_stage_demo(
     }
 
 
+def _measure_agreement(
+    o3d,
+    source,
+    target,
+    manifest: RegistrationManifest,
+    first: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Re-register the pair under further seeds and report how far apart they land.
+
+    The whole pair is re-registered rather than the RANSAC step alone, even though the
+    seed only reaches RANSAC. A consumer who reruns this command reruns all of it, and
+    Open3D reduces over correspondences in thread-scheduling order, so repeating only
+    the seeded part would report a smaller movement than a rerun actually has.
+
+    Returns `None` when the manifest did not ask for this, so a report keeps exactly
+    the shape and cost it had before.
+
+    This no longer re-seeds on the way out, and `run_register` no longer interleaves
+    it with the primary alignments. It used to: the reset meant pair 2's first attempt
+    began from a freshly seeded generator when the diagnostic was on and from whatever
+    pair 1 left behind when it was off, so turning the measurement on changed the
+    published `transformation` and `aligned_sha256` of every pair after the first. A
+    diagnostic that changes the result it reports on is not an observation of that
+    result. Seeding every pair instead would have fixed the asymmetry by changing the
+    default path's registrations, which is the other way to get it wrong; `run_register`
+    completes the whole primary pass first instead.
+    """
+
+    if manifest.agreement_seeds <= 0:
+        return None
+    attempts = [{"seed": manifest.random_seed, **first}]
+    failed: list[dict[str, Any]] = []
+    for offset in range(1, manifest.agreement_seeds + 1):
+        seed = (manifest.random_seed + offset) % (2**31 - 1)
+        o3d.utility.random.seed(seed)
+        try:
+            attempt = _register_pair(o3d, source, target, manifest)
+        except Open3dError as exc:
+            # A diagnostic re-run that fails is a fact about this pair under that
+            # seed, not a failure of the registration the caller asked for. Letting
+            # it propagate discarded every pair already computed and reported a
+            # RANSAC correspondence problem as though the primary alignment had hit
+            # it -- an untruthful failure, and in exactly the marginal-overlap
+            # population this measurement exists to flag.
+            failed.append({"seed": seed, "error": str(exc)})
+            continue
+        attempts.append({"seed": seed, **attempt})
+
+    if len(attempts) < 2:
+        # The validator requires two or more seeds, so there is no legal block to
+        # emit. Report the attempt that failed rather than silently omitting the
+        # measurement the manifest asked for.
+        return {
+            "measured": False,
+            "why_not": (
+                f"{manifest.agreement_seeds} extra seed(s) were requested and "
+                f"{len(failed)} failed to register, leaving fewer than the two "
+                "successful attempts an agreement needs"
+            ),
+            "failed_seeds": failed,
+        }
+
+    block = _agreement(attempts, source.points, manifest.voxel_size)
+    if failed:
+        block["failed_seeds"] = failed
+    return block
+
+
 def run_register(payload: dict[str, Any], output: Path, run_id: str) -> dict[str, Any]:
     """Register consecutive fragment pairs and publish each aligned cloud."""
 
@@ -239,12 +410,44 @@ def run_register(payload: dict[str, Any], output: Path, run_id: str) -> dict[str
     aligned_dir.mkdir(parents=True, exist_ok=True)
     rows: list[dict[str, Any]] = []
     ordered = [fragment.id for fragment in manifest.fragments]
-    for source_id, target_id in zip(ordered, ordered[1:]):
+    pairs = list(zip(ordered, ordered[1:]))
+
+    # Every primary alignment first, with nothing between them. The agreement
+    # diagnostic sets the global generator per attempt, so running it inside this loop
+    # put a different RNG state in front of every pair after the first -- the published
+    # alignment then depended on whether the diagnostic had been requested. Finishing
+    # the primary pass before any extra seed is set keeps `agreement_seeds > 0` and
+    # `agreement_seeds == 0` byte-identical through here, without touching the seeding
+    # of the default path.
+    primary: list[tuple[str, str, dict[str, Any], float]] = []
+    for source_id, target_id in pairs:
         started = time.perf_counter()
         source = _read_cloud(o3d, paths[source_id])
         target = _read_cloud(o3d, paths[target_id])
         measured = _register_pair(o3d, source, target, manifest)
+        # Elapsed, not a start time: the diagnostic pass and the publish pass both
+        # come later now, and subtracting at the end would charge this pair for them.
+        primary.append((source_id, target_id, measured, time.perf_counter() - started))
+
+    # Then the diagnostic, which may now seed freely: no primary alignment is still
+    # outstanding. The clouds are re-read rather than retained, because a manifest may
+    # carry up to MAX_FRAGMENTS scans and holding them all costs more than the reads.
+    agreements: dict[str, dict[str, Any] | None] = {}
+    if manifest.agreement_seeds > 0:
+        _seeded(o3d, manifest)
+        for source_id, target_id, measured, _elapsed in primary:
+            source = _read_cloud(o3d, paths[source_id])
+            target = _read_cloud(o3d, paths[target_id])
+            agreements[f"{source_id}__{target_id}"] = _measure_agreement(
+                o3d, source, target, manifest, measured
+            )
+
+    for source_id, target_id, measured, elapsed in primary:
+        source = _read_cloud(o3d, paths[source_id])
         pair_id = f"{source_id}__{target_id}"
+        agreement = agreements.get(pair_id)
+        if agreement is not None:
+            measured["agreement"] = agreement
         aligned = aligned_dir / f"{pair_id}.ply"
         # Write the source in the target's frame: that is the thing the
         # transformation claims, so it is the thing a reviewer should be able to
@@ -262,7 +465,7 @@ def run_register(payload: dict[str, Any], output: Path, run_id: str) -> dict[str
                 "aligned_points": len(moved.points),
                 "aligned_sha256": _digest(aligned),
                 "aligned_bytes": aligned.stat().st_size,
-                "wall_seconds": time.perf_counter() - started,
+                "wall_seconds": elapsed,
             }
         )
     (output / PAIRS_JOURNAL).write_text(
@@ -500,6 +703,299 @@ def _sample_distances(o3d, cloud, vertices):
     )
 
 
+#: How far a Poisson vertex moves between two runs on byte-identical input, in metres.
+#: The crop is a threshold on a per-vertex distance and the reconstruction underneath it
+#: is not reproducible (`docs/evidence/open3d/crop-decision-stability.json`, and the two
+#: limitations in `capability-record-support-crop.json`), so a vertex nearer to the cut
+#: than vertices move can change its own verdict on a rerun.
+#:
+#: Two scales, because one number cannot say what the measurements say. 46 pair
+#: comparisons at two capture densities put the worst at 1.0e-05 m, with zero cell
+#: verdicts changing. Separately, one independent pair reached 2.187e-03 m -- 200 times
+#: that -- and did not reproduce in three further attempts on a coordinate-identical
+#: file.
+#:
+#: Collapsing them loses the distinction a user needs. Against the routine scale the
+#: question is what a rerun will do; against the outlier it is what a rerun could do at
+#: the worst displacement anyone has recorded. The record's own input has vertices
+#: inside the second and effectively none inside the first, which is precisely why it
+#: reproduced 46 times out of 46.
+#:
+#: Both are sample maxima: the largest value seen in a finite number of comparisons on
+#: one scene, which is not a bound on what Poisson reconstruction can do. Repeated runs
+#: of that study moved the routine figure (1.0014e-05 m, then 6.437e-06 m), so 1.0e-05 m
+#: is the largest observed across runs rather than any single run's statistic. No verdict
+#: derived from them may claim that a displacement cannot occur -- see
+#: `what_no_verdict_here_establishes`. Raising either weakens every verdict derived from
+#: it, so change them only against a larger measured displacement.
+POISSON_VERTEX_DISPLACEMENT_ROUTINE_M = 1.0e-05
+POISSON_VERTEX_DISPLACEMENT_BOUND_M = 2.187e-03
+
+#: Fractions of the support threshold at which the near-threshold population is counted.
+#: A distribution rather than one number, because "how many vertices are near the cut"
+#: has no single meaning and the shape is what tells a reader whether their scan is the
+#: comfortable case.
+CROP_MARGIN_BANDS = (0.01, 0.1, 0.5)
+
+#: Where the two displacement figures come from, and what kind of figure each one is.
+#:
+#: Stated by content rather than only by path. The study that produced them is published
+#: separately from this field, so a path alone would be a provenance string a reader
+#: cannot resolve from the tree in front of them.
+_DISPLACEMENT_PROVENANCE = MappingProxyType(
+    {
+        "what_was_measured": (
+            "repeated Poisson reconstructions of one fused cloud, comparing the "
+            "occupancy decision at every scene voxel between pairs of runs: 46 pair "
+            "comparisons at two capture densities for the routine figure, and one "
+            "independent observation that did not reproduce in three further attempts "
+            "for the worst recorded"
+        ),
+        "on_what_input": (
+            "one scene -- the Open3D ICP demo fragments -- at voxel 0.05 and 0.02. Both "
+            "figures are therefore properties of that scene's geometry and capture, not "
+            "of the reconstruction algorithm in general."
+        ),
+        "kind_of_figure": (
+            "sample maxima. Each is the largest value observed in a finite number of "
+            "comparisons, which is not the same as a bound on what can occur."
+        ),
+        "published_as": (
+            "crop-decision-stability.json in the Open3D evidence directory, alongside "
+            "the stability study that produced it rather than alongside this field"
+        ),
+    }
+)
+
+
+#: The capture settings the two reference figures were actually measured at.
+#:
+#: Two points, not an interval. An earlier version of this field wrote them as an
+#: inclusive range and treated anything between them as measured, which made voxel 0.03
+#: -- a setting nobody has run -- receive the same affirmative reading as the two that
+#: were. A range between two tested points is not a measured regime; it is two tested
+#: points.
+#:
+#: The support threshold is `voxel * support_distance_factor`, so it scales with the
+#: caller's capture, while the reference displacements are fixed numbers from one scene.
+#: At a coarser voxel the threshold grows while the reference does not, so the counts
+#: fall and the comparison reads reassuringly for a configuration nobody measured. That
+#: is why matching is exact and why a mismatch reports no comparison rather than a
+#: weaker one.
+MEASURED_VOXEL_SIZES = (0.02, 0.05)
+
+#: The Poisson depth the reference study ran at. Depth changes the vertex set the crop
+#: decides on, so a run at another depth is not the measured configuration either --
+#: which the range-based version ignored completely.
+REFERENCE_POISSON_DEPTH = 9
+
+
+def _reference_comparison(
+    at_routine: int,
+    at_bound: int,
+    vertices: int,
+    closest: float,
+    voxel: float | None,
+    depth: int | None,
+) -> dict[str, Any]:
+    """This run's distances described against two figures measured on another scene.
+
+    Deliberately not a verdict about reruns. The previous version of this field
+    classified a run as `reproducible_at_the_routine_displacement` and said "a rerun is
+    expected to return the same verdicts ... reproducible in practice", and reported
+    that future counts would move "by up to N ... which is the figure to size an error
+    bar from".
+
+    Three things were wrong with that. The reference figures are sample maxima from one
+    scene at two voxel settings, so they do not bound anything, and an interval drawn
+    between those two settings made unmeasured configurations -- voxel 0.03, or any
+    Poisson depth other than the one measured -- read as though they had been measured.
+    The counts cannot bound future counts either: a rerun regenerates the vertex set
+    rather than perturbing it, so it can introduce or drop vertices near the threshold,
+    which the same field said two paragraphs further down while offering the error bar.
+
+    What is left is a description: how many of this run's vertices sit closer to the
+    threshold than two named numbers, and whether this run's configuration is one the
+    numbers were measured at. The margin itself -- in the input cloud's own units -- is
+    the quantity to act on.
+    """
+
+    routine = POISSON_VERTEX_DISPLACEMENT_ROUTINE_M
+    bound = POISSON_VERTEX_DISPLACEMENT_BOUND_M
+    voxel_matches = voxel is not None and any(
+        voxel == one for one in MEASURED_VOXEL_SIZES
+    )
+    depth_matches = depth is None or depth == REFERENCE_POISSON_DEPTH
+    configuration_measured = voxel_matches and depth == REFERENCE_POISSON_DEPTH
+
+    mismatch = []
+    if voxel is None:
+        mismatch.append("this run did not report a voxel size")
+    elif not voxel_matches:
+        measured = " and ".join(f"{one:g}" for one in MEASURED_VOXEL_SIZES)
+        mismatch.append(
+            f"this run is at voxel {voxel:g}; the references were measured at "
+            f"{measured} only, and a value between them is not a measured setting"
+        )
+    if depth is None:
+        mismatch.append("this run did not report a Poisson depth")
+    elif not depth_matches:
+        mismatch.append(
+            f"this run is at Poisson depth {depth}; the references were measured at "
+            f"depth {REFERENCE_POISSON_DEPTH}, and depth changes the vertex set the "
+            "crop decides on"
+        )
+
+    if at_routine:
+        description = "vertices_closer_than_both_reference_displacements"
+    elif at_bound:
+        description = "vertices_closer_than_the_larger_reference_displacement_only"
+    else:
+        description = "no_vertices_closer_than_either_reference_displacement"
+
+    return {
+        "what_this_is": (
+            "A description of this run's distances relative to two displacement figures "
+            "measured on a different scene. Not a prediction about re-running this "
+            "pipeline, and not a bound on how much any count would move."
+        ),
+        "description": description,
+        "vertices_closer_than_the_routine_reference": at_routine,
+        "vertices_closer_than_the_larger_reference": at_bound,
+        "fraction_closer_than_the_larger_reference": (at_bound / vertices)
+        if vertices
+        else 0.0,
+        "closest_vertex_distance_to_the_threshold": closest,
+        "reference_displacements": {
+            "routine": routine,
+            "largest_recorded": bound,
+            "units": "metres, as measured on the reference scene",
+            "kind_of_figure": (
+                "sample maxima -- the largest value seen in a finite number of "
+                "comparisons. Neither is a bound, and nothing about Poisson "
+                "reconstruction prevents a run from exceeding either."
+            ),
+        },
+        "unit_precondition": (
+            "This run's distances are in the input point cloud's own coordinate units, "
+            "the same units as --voxel-size, which this tool does not inspect or "
+            "validate. The reference figures are metres. The counts above are therefore "
+            "only meaningful if this run's coordinates are metres as well; if the scan "
+            "is in millimetres or in an arbitrary unit, read the margin and the band "
+            "counts and ignore the comparison."
+        ),
+        "configuration_measured": configuration_measured,
+        "why_the_configuration_does_not_match": mismatch or None,
+        "measured_configuration": {
+            "voxel_sizes": list(MEASURED_VOXEL_SIZES),
+            "poisson_depth": REFERENCE_POISSON_DEPTH,
+            "scene": "the Open3D ICP demo fragments, one scene",
+        },
+        "measured_by": dict(_DISPLACEMENT_PROVENANCE),
+        "what_this_does_not_establish": (
+            "That a rerun would decide the same way, or differently. A rerun calls "
+            "Poisson again and derives its density threshold from that run's own "
+            "density array, so the vertex set is regenerated rather than perturbed: no "
+            "vertex can be followed between runs, and a rerun can introduce or drop "
+            "vertices near the threshold. The reference figures are nearest-point "
+            "distances between two independently generated vertex sets, not the motion "
+            "of tracked vertices, so no count here bounds how much any count would "
+            "change. Scene identity is also not checked -- the comparison assumes a "
+            "geometry, scale and noise level like the reference scene's, and nothing "
+            "verifies that."
+        ),
+    }
+
+
+def _crop_margin(
+    distances,
+    limit: float,
+    voxel: float | None = None,
+    depth: int | None = None,
+) -> dict[str, Any]:
+    """How close did the crop come to deciding something else?
+
+    The crop's own reproducibility is a ratio, not a property: it holds when the
+    geometry sits far from the cut relative to how far vertices move between runs. That
+    ratio is a fact about the user's scan, and before this it was computed inside the
+    crop and discarded -- the one quantity that decides whether the published
+    reproducibility applies to their capture.
+
+    Costs nothing: `distances` is the array the crop already thresholded.
+
+    What this does not establish: nothing here says the reconstruction is correct. A
+    vertex can sit a comfortable distance from the cut and still be in the wrong place,
+    and a comfortable margin on an invented surface is still a margin on an invented
+    surface. Nor does it answer whether re-running would change the answer -- an
+    earlier version of this field said it did, and the reference comparison below is
+    now explicitly descriptive for that reason.
+    """
+
+    import numpy as np
+
+    if limit <= 0.0:
+        return {
+            "applies": False,
+            "why_not": (
+                "support cropping is disabled, so there is no threshold for anything to "
+                "sit near"
+            ),
+        }
+
+    if distances is None or not len(distances):
+        # A separate reason, because the previous single branch reported a disabled crop
+        # whenever the array was empty -- true for the common case and false here.
+        return {
+            "applies": False,
+            "why_not": (
+                f"support cropping is enabled at a {limit:g} threshold, but the mesh "
+                "presented no vertices to measure against it, so there is no decision "
+                "to be close to"
+            ),
+        }
+
+    gap = np.abs(np.asarray(distances, dtype=float) - limit)
+    closest = float(gap.min())
+    routine = POISSON_VERTEX_DISPLACEMENT_ROUTINE_M
+    bound = POISSON_VERTEX_DISPLACEMENT_BOUND_M
+    at_routine = int((gap < routine).sum())
+    at_bound = int((gap < bound).sum())
+
+    return {
+        "applies": True,
+        # No `_m` suffix on any of these. The threshold is `voxel * factor` and the
+        # distances come from the caller's own cloud, so all three are in whatever units
+        # that cloud uses. The tool never learns what those are, and the previous names
+        # asserted metres for coordinates that may be millimetres or arbitrary.
+        "distance_units": (
+            "the input point cloud's own coordinate units, the same units as "
+            "--voxel-size; not inspected or validated by this tool"
+        ),
+        "threshold": float(limit),
+        "closest_vertex_to_the_threshold": closest,
+        "closest_as_a_fraction_of_the_threshold": float(closest / limit),
+        "vertices_within": {
+            f"within_{format(share * 100, 'g').replace('.', 'p')}_percent_of_the_threshold": {
+                "count": int((gap < share * limit).sum()),
+                "fraction": float((gap < share * limit).mean()),
+            }
+            for share in CROP_MARGIN_BANDS
+        },
+        # Unit-free, so it is the one comparison here that holds whatever the caller's
+        # coordinates mean: a fraction of the threshold against the threshold.
+        "reference_comparison": _reference_comparison(
+            at_routine, at_bound, int(len(gap)), closest, voxel, depth
+        ),
+        "what_this_does_not_establish": (
+            "That the reconstruction is correct. A vertex far from the cut can still be "
+            "in the wrong place, and a comfortable margin on an invented surface is "
+            "still a margin on an invented surface. Nor that re-running would decide "
+            "the same way: this reports where this run's vertices sat relative to this "
+            "run's threshold, and nothing here is a prediction."
+        ),
+    }
+
+
 #: Below this share of the pre-crop unsupported area lying past three voxels, what the crop
 #: removed sat near the support threshold rather than far from any observation.
 #:
@@ -636,8 +1132,12 @@ def _crop_justification(before: dict[str, Any], removed: int, mesh) -> dict[str,
             "The unsupported area was concentrated within three voxels of a sample, "
             "which is where a correct surface reconstructed from samples of this "
             "spacing also falls. The crop may have removed correct geometry, and "
-            "coverage cannot rule that out. Raise --support-distance-factor to 1.5 "
-            "or 2.0, or pass 0, unless the tighter crop is wanted deliberately. "
+            "coverage cannot rule that out. Raising --support-distance-factor to 1.5 "
+            "or 2.0 keeps more of it, but does not make the crop safe for coverage: "
+            "a triangle is removed when any one of its vertices is unsupported, so "
+            "one distant vertex still deletes surface its other two vertices sit "
+            "under, at any factor. Read coverage_cost_of_crop for what it cost on "
+            "this run, and pass 0 if it must be zero. "
             "This reading is not a clean bill of health either: it cannot see "
             "fabrication below the sensitivity floor, which is setup-dependent, so "
             "a small invented region reads exactly like none at all."
@@ -716,6 +1216,35 @@ def _support(o3d, mesh, cloud, voxel: float) -> dict[str, Any]:
     }
 
 
+def _sample_to_surface(o3d, mesh, cloud):
+    """Distance from every observed sample to the nearest point of this surface."""
+
+    import numpy as np
+
+    scene = o3d.t.geometry.RaycastingScene()
+    scene.add_triangles(o3d.t.geometry.TriangleMesh.from_legacy(mesh))
+    points = np.asarray(cloud.points).astype(np.float32)
+    return scene.compute_distance(o3d.core.Tensor(points)).numpy()
+
+
+def _coverage_from_distances(distances, voxel: float) -> dict[str, Any]:
+    """The coverage definitions, with the surface query already done.
+
+    Separated from the query so they can be exercised where Open3D is not installed,
+    which is every CI shard.
+    """
+
+    import numpy as np
+
+    return {
+        "samples": int(len(distances)),
+        "fraction_within_voxel": float((distances < voxel).mean()),
+        "fraction_within_two_voxels": float((distances < 2.0 * voxel).mean()),
+        "sample_to_surface_rmse": float(np.sqrt((distances**2).mean())),
+        "sample_to_surface_p95": float(np.percentile(distances, 95)),
+    }
+
+
 def _coverage(o3d, mesh, cloud, voxel: float) -> dict[str, Any]:
     """The other direction: do the observed samples still lie on this surface?
 
@@ -723,18 +1252,51 @@ def _coverage(o3d, mesh, cloud, voxel: float) -> dict[str, Any]:
     that explains real observations, so the crop is measured against this.
     """
 
+    return _coverage_from_distances(_sample_to_surface(o3d, mesh, cloud), voxel)
+
+
+def _coverage_cost(before, after, voxel: float) -> dict[str, Any]:
+    """Count the samples the crop left with no surface within one voxel.
+
+    The crop tests *vertices* against `voxel * support_distance_factor`, and
+    `remove_vertices_by_mask` deletes every triangle touching a masked vertex. Coverage
+    asks about sample-to-*surface* distance. Those are different questions, so surface
+    within one voxel of a sample can be removed, in two distinct ways:
+
+    At a factor below 1.0 the vertex test is tighter than the coverage question, so a
+    vertex between `factor * voxel` and `voxel` from its nearest sample is removed while
+    that sample is still within one voxel of it. A factor of 1.0 -- the schema default --
+    closes that band.
+
+    The second way no factor closes. A triangle is removed when *any one* of its three
+    vertices is unsupported, so a triangle with two vertices a fraction of a voxel from a
+    sample is deleted for a third vertex far away. Measured on constructed geometry: at
+    factor 1.0 and again at 2.0, a sample with retained vertices 0.32 voxels away lost its
+    only nearby surface and ended eight voxels from anything. Raising the factor does not
+    help, because the distant vertex is removed at any finite factor below its own
+    distance. Only `--support-distance-factor 0` avoids it, by not cropping.
+
+    Neither of these is a bug in the crop -- a conservative crop that errs toward removing
+    is the point. What was missing is this count, so a consumer reads what the crop cost
+    instead of assuming it cost nothing.
+    """
+
     import numpy as np
 
-    scene = o3d.t.geometry.RaycastingScene()
-    scene.add_triangles(o3d.t.geometry.TriangleMesh.from_legacy(mesh))
-    points = np.asarray(cloud.points).astype(np.float32)
-    distances = scene.compute_distance(o3d.core.Tensor(points)).numpy()
+    before = np.asarray(before)
+    after = np.asarray(after)
+    covered_before = before < voxel
+    abandoned = covered_before & ~(after < voxel)
     return {
-        "samples": int(len(distances)),
-        "fraction_within_voxel": float((distances < voxel).mean()),
-        "fraction_within_two_voxels": float((distances < 2.0 * voxel).mean()),
-        "sample_to_surface_rmse": float(np.sqrt((distances**2).mean())),
-        "sample_to_surface_p95": float(np.percentile(distances, 95)),
+        "samples": int(len(before)),
+        "samples_covered_before_crop": int(covered_before.sum()),
+        "samples_abandoned_by_crop": int(abandoned.sum()),
+        "coverage_is_bit_identical": bool(
+            covered_before.mean() == (after < voxel).mean()
+        ),
+        "worst_abandoned_sample_voxels_from_surface": (
+            float(after[abandoned].max() / voxel) if abandoned.any() else None
+        ),
     }
 
 
@@ -857,12 +1419,15 @@ def run_reconstruct(
     if not o3d.io.write_triangle_mesh(str(full_path), mesh):
         raise Open3dError("Open3D could not write the uncropped mesh")
     before = _support(o3d, mesh, cloud, voxel)
+    coverage_before_distances = _sample_to_surface(o3d, mesh, cloud)
     unsupported_removed = 0
+    crop_margin = _crop_margin(None, 0.0)
     if request.support_distance_factor > 0.0:
         limit = voxel * request.support_distance_factor
         distances = _sample_distances(o3d, cloud, np.asarray(mesh.vertices))
         crop = distances > limit
         unsupported_removed = int(crop.sum())
+        crop_margin = _crop_margin(distances, limit, voxel, request.poisson_depth)
         mesh.remove_vertices_by_mask(crop)
         if not mesh.has_triangles():
             raise Open3dError(
@@ -873,6 +1438,7 @@ def run_reconstruct(
     mesh_path = output / "mesh.ply"
     if not o3d.io.write_triangle_mesh(str(mesh_path), mesh):
         raise Open3dError("Open3D could not write the reconstructed mesh")
+    coverage_after_distances = _sample_to_surface(o3d, mesh, cloud)
     return {
         "run_id": run_id,
         "poisson_depth": request.poisson_depth,
@@ -896,8 +1462,17 @@ def run_reconstruct(
         # not establish that removed geometry was incorrect.
         "support_before_crop": before,
         "support": _support(o3d, mesh, cloud, voxel),
-        "coverage": _coverage(o3d, mesh, cloud, voxel),
+        "coverage_before_crop": _coverage_from_distances(
+            coverage_before_distances, voxel
+        ),
+        "coverage": _coverage_from_distances(coverage_after_distances, voxel),
+        "coverage_cost_of_crop": _coverage_cost(
+            coverage_before_distances, coverage_after_distances, voxel
+        ),
         "crop_justification": _crop_justification(before, unsupported_removed, mesh),
+        # How close the crop came to deciding otherwise. The reconstruction under it is
+        # not reproducible, so this is what says whether that reaches the user's result.
+        "crop_margin": crop_margin,
         "cloud_extent": [
             float(value) for value in cloud.get_axis_aligned_bounding_box().get_extent()
         ],
@@ -1383,6 +1958,17 @@ class _View(NamedTuple):
     contents: tuple[str, ...]
     aspect: float
 
+    #: Entities this view carries but does not show until a reviewer asks for them.
+    #: In the recording and one click away, not stacked on top of the view's subject.
+    #:
+    #: This is a separate decision from ``contents`` because an opaque mesh listed as
+    #: context will hide the thing the view exists to show, and fitting a camera does
+    #: not help: measured over 24 azimuths at the product's own elevation, the audit
+    #: view's removed surface never exceeded 49% visible, and the camera that ships is
+    #: already within three points of the best of them. The occluder is what is drawn,
+    #: not where it is drawn from, so no camera could have fixed it.
+    hidden_by_default: tuple[str, ...] = ()
+
 
 #: One table for every view: the geometry its camera frames and the entities it
 #: draws. Both come from here so they cannot drift apart, and they did drift --
@@ -1402,6 +1988,8 @@ VIEW_GEOMETRY: dict[str, _View] = {
         ("fused", "mesh"),
         ("/world/fused", "/world/mesh", "/world/fragments/**"),
         CAMERA_WINDOW_ASPECT * CAMERA_SCENE_SHARE,
+        # Per-fragment clouds duplicate the fused cloud in space.
+        ("/world/fragments",),
     ),
     SCAN_VIEW: _View(
         ("fused",),
@@ -1417,6 +2005,14 @@ VIEW_GEOMETRY: dict[str, _View] = {
         ("unsupported", "mesh", "fused"),
         ("/world/mesh", "/world/mesh_unsupported", "/world/fused"),
         CAMERA_WINDOW_ASPECT * CAMERA_TAB_SHARE,
+        # The retained surface was hiding this view's entire subject. Measured by ray
+        # casting from the camera that ships: 35.2% of the removed area visible on a
+        # partial scan and 38.2% on a resampled complete mesh, rising to 78.5% and
+        # 81.8% with this one entity hidden. The fused cloud stays visible -- points
+        # occlude nothing a ray can hit -- so the overlay is still shown against the
+        # observations it is being judged against, and the surface it was cut from is
+        # one click away for the comparison a reviewer would want next.
+        ("/world/mesh",),
     ),
 }
 
@@ -1497,6 +2093,13 @@ def _blueprint(rr, rrb, cameras: dict[str, Any]):
             name=name,
             origin="/world",
             contents=list(VIEW_GEOMETRY[name].contents),
+            # Read off the same table as contents and the camera geometry. Written as
+            # a literal here instead, a view's subject could be re-covered by an edit
+            # that looks like it only changed what the view carries.
+            overrides={
+                entity: rrb.EntityBehavior(visible=False)
+                for entity in VIEW_GEOMETRY[name].hidden_by_default
+            },
             eye_controls=rrb.EyeControls3D(
                 kind=rrb.Eye3DKind.Orbital,
                 position=camera["eye"],
@@ -1515,15 +2118,7 @@ def _blueprint(rr, rrb, cameras: dict[str, Any]):
     tabs.append(rrb.TextDocumentView(name="Provenance", origin="/provenance"))
     return rrb.Blueprint(
         rrb.Horizontal(
-            view(
-                SCENE_VIEW,
-                overrides={
-                    # Per-fragment clouds duplicate the fused cloud in space. Keep
-                    # them in the recording and one click away, not stacked on top
-                    # of it by default.
-                    "/world/fragments": rrb.EntityBehavior(visible=False),
-                },
-            ),
+            view(SCENE_VIEW),
             rrb.Tabs(*tabs),
             column_shares=list(CAMERA_COLUMN_SHARES),
         ),

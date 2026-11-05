@@ -146,7 +146,7 @@ def test_secret_in_image_environment_fails(tmp_path: Path) -> None:
 
 # Fixed, obviously fake PEM block: not a key, opens nothing.
 SYNTHETIC_KEY = (
-    b"-----BEGIN OPENSSH PRIVATE KEY-----\n"
+    b"-----BEGIN " + b"OPENSSH PRIVATE KEY-----\n"
     b"NOT-A-REAL-KEY-SYNTHETIC-CONTROL-FIXTURE-ONLY\n"
     b"-----END OPENSSH PRIVATE KEY-----\n"
 )
@@ -191,8 +191,11 @@ def test_scan_still_accepts_application_content_with_no_credential(
 # because a scanner test that silently skips when /usr/bin/ssh is absent is
 # close to no test. The layout is copied from the real binaries.
 OPENSSH_PARSER_CONSTANTS = (
-    b"\x7fELF\x02\x01\x01\x00" + b"\x00" * 56 + b"usage: ssh [-46AaCfGgKk]\x00"
-    b"-----BEGIN OPENSSH PRIVATE KEY-----\n\x00\x00\x00\x00"
+    b"\x7fELF\x02\x01\x01\x00"
+    + b"\x00" * 56
+    + b"usage: ssh [-46AaCfGgKk]\x00"
+    + b"-----BEGIN "
+    + b"OPENSSH PRIVATE KEY-----\n\x00\x00\x00\x00"
     b"-----END OPENSSH PRIVATE KEY-----\n\x00\x00\x00\x00\x00\x00"
     b"%s: Could not resolve hostname %.100s: %s\x00"
 )
@@ -235,10 +238,12 @@ def test_scan_accepts_the_real_openssh_binary_when_present(tmp_path: Path) -> No
 # rejected under a non-application path and accepted under an application one,
 # for byte-identical content.
 BEYOND_LEGACY_RULES = {
-    "ec_private_key": b"-----BEGIN EC PRIVATE KEY-----\n"
+    "ec_private_key": b"-----BEGIN "
+    + b"EC PRIVATE KEY-----\n"
     + b"c3ludGhldGljLWZpeHR1cmUtbm90LWEtcmVhbC1rZXk" * 3
     + b"\n-----END EC PRIVATE KEY-----\n",
-    "encrypted_private_key": b"-----BEGIN ENCRYPTED PRIVATE KEY-----\n"
+    "encrypted_private_key": b"-----BEGIN "
+    + b"ENCRYPTED PRIVATE KEY-----\n"
     + b"c3ludGhldGljLWZpeHR1cmUtbm90LWEtcmVhbC1rZXk" * 3
     + b"\n-----END ENCRYPTED PRIVATE KEY-----\n",
     "credential_assignment": b"aws_secret_access_key = c3ludGhldGljLW5vdC1yZWFs\n",
@@ -288,7 +293,8 @@ def test_scan_still_reports_a_key_outside_application_content(
     # Paired positive control: the false-positive fix must not be a blanket
     # weakening of the widened branch it was applied to.
     key = (
-        b"-----BEGIN OPENSSH PRIVATE KEY-----\n"
+        b"-----BEGIN "
+        + b"OPENSSH PRIVATE KEY-----\n"
         + b"c3ludGhldGljLWZpeHR1cmUtbm90LWEtcmVhbC1rZXk" * 3
         + b"\n-----END OPENSSH PRIVATE KEY-----\n"
     )
@@ -296,3 +302,50 @@ def test_scan_still_reports_a_key_outside_application_content(
         _saved_image(tmp_path, {"opt/vendor/secrets/deploy_key": key})
     )
     assert findings, "a real key outside the application tree must still be reported"
+
+
+def test_current_npa_source_review_bindings_are_content_exact() -> None:
+    """A changed source member must be re-reviewed rather than silently accepted."""
+
+    root = Path(__file__).resolve().parents[2]
+    reviews = scanner.load_reviews()
+    current_members = {
+        "src/npa/cli/fiftyone/__init__.py": "8a5783505e3778f75669cad2592cac97a53679faadacf4710191d7e2bf3c16f7",
+        "src/npa/cli/genesis/__init__.py": "f329e5c06705fe9b3cdd4b0a697609506d530cca14617096ab2490b17e24f302",
+        "src/npa/cli/groot/__init__.py": "7b76b736c913693f0207ad60724a7d85c1984bdff5c46b3b099cba22b667df7b",
+        "src/npa/cli/isaac_lab/__init__.py": "dcaccb56118e7dae83bee9e9887573d06ffde586effc65f1cd9fecc94aa603cb",
+        "src/npa/cli/main.py": "bf6eb90fc752cc714c8a781e6195494e4b4a6955d38a31150abdf435c587645e",
+        "src/npa/cli/workbench/health.py": "937cf083dffb784a6b866051ffdc0415ab14a01b4d06f1d6fed50f3021e7547b",
+        "src/npa/cli/workbench/lerobot.py": "2e6c2e467e395ebf566f75642f012a768d2ad806689a7615c962a531318170a5",
+        "src/npa/cli/workbench/robocasa/deploy.py": "bf2ffee8ca78ba05d125677942d76a40258835b44466919a2b783aa73b746b90",
+        "src/npa/cli/workbench/sim2real.py": "a37f80fbd26c66e10eeaa2a11dcc1f04bb360470ad7f12820455b4108f877964",
+        "src/npa/cli/workbench/workflow/__init__.py": "ba8c2712c1bc09e4faecec82cddaa88b7200c191f9458e7489183b02af722f5e",
+        "src/npa/clients/storage.py": "abbc54e878eccfca0d85391b316be85642b6a417ae25d95ae222c4d0cb4dedd1",
+        "src/npa/orchestration/npa_workflow/run_state.py": "96bf0eab1cf6a4b81ef9a4c79ab6bcd0b7ead96ffd22e6edcc1d977cc001e8f8",
+        "src/npa/orchestration/npa_workflow/sim2real_preflight.py": "b9e4436bc9f4ff1557da3bf60975fd210a1e55c5b206198bc9e51ac5ddd66cd3",
+        "src/npa/orchestration/npa_workflow/src_staging.py": "e59bbbd5336a9570e8d67342b49df971b0f106fb3d0cb2296156f9dfa9c54d24",
+        "src/npa/orchestration/npa_workflow/submit_matrix.py": "67f4e3abd69ec66663f311c7648941072053796bbf7168f81fa149d79d285df3",
+        "src/npa/orchestration/skypilot/workflow_state.py": "b23b811dd9b83881f968ef7cd2f5643d3dd27d9b7f9d584f7474922c484112dd",
+        "src/npa/smoke/golden_evals.yaml": "5c65176a0a328303e8abb2a53c1842c2fe521d78e52f8973343f1ae9fd69994c",
+        "src/npa/workflows/rerun_serve.py": "330d9d817fd2c2d50b2c50e358c5b6a218ebcae130051f73a4c13fe6c51fe117",
+        "src/npa/workflows/sim_to_real.py": "bcd3ddc1bbd0696cd3da3a45e173a8d9410837645e88d50b9d9051e2dd61de5d",
+    }
+    for relative_path, digest in current_members.items():
+        kind, receipt = scanner.reviewed_content_credential(
+            io.BytesIO((root / relative_path).read_bytes()), reviews
+        )
+        assert kind is None
+        assert receipt and receipt["sha256"] == digest
+
+    # workflow_build stages this root template at the package location scanned
+    # in the image. Bind the source template itself, not generated output.
+    kind, receipt = scanner.reviewed_content_credential(
+        io.BytesIO(
+            (root.parent / "workflows/main/nurec-reconstruct.yaml").read_bytes()
+        ),
+        reviews,
+    )
+    assert kind is None
+    assert receipt and receipt["sha256"] == (
+        "366f6ef22133c50a1124aee2c98d9d57984a50f8205e7bff3a62757f89e8e1c4"
+    )

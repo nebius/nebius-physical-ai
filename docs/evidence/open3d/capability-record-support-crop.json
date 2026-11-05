@@ -1,5 +1,6 @@
 {
   "artifact_hashes": {
+    "hashes_that_name_no_file_here": "Every hash here is of the bytes that run wrote, across the cropped and baseline meshes and the stages before them. The files are the run's own outputs and are not committed to this repository, so these names resolve to nothing here.",
     "mesh-baseline/mesh.ply": "6112bc2311caefa4c104ea5f145138dc31486acad1d1e96839accf7f848f6a0f",
     "mesh-baseline/mesh_uncropped.ply": "6112bc2311caefa4c104ea5f145138dc31486acad1d1e96839accf7f848f6a0f",
     "mesh-baseline/result.json": "bb036a74c6cc4fe4253d048e5c0188ed5153e962618e99c907c84643beb88e13",
@@ -38,7 +39,7 @@
       "An occupancy-mapping consumer reading the cropped surface reports 733 fewer phantom obstacle cells (0.733 m3 less fabricated solid volume), raising precision against observation from 0.675 to 0.929 while recall of observed cells falls 0.0016.",
       "The recording now ships a fitted-camera blueprint with independently toggleable scan and surface and the removed surface as its own entity, verified by decoding the delivered RRD bytes."
     ],
-    "which_downstream_use_justifies_the_cropped_output": "Mapping, free-space reasoning and visual review, where a fabricated surface is worse than a hole because it asserts structure the sensor never observed. A consumer that requires closed geometry (watertight meshing, some collision pipelines) should pass --support-distance-factor 0 and accept the extrapolation knowingly; both meshes are published for exactly that choice."
+    "which_downstream_use_justifies_the_cropped_output": "Mapping, free-space reasoning and visual review, where a fabricated surface is worse than a hole because it asserts structure the sensor never observed. Passing --support-distance-factor 0 disables only distance filtering; density trimming can still open the surface. A consumer that requires closed geometry must disable both filters to retain the raw Poisson surface and then verify watertightness rather than infer collision fitness from the flags."
   },
   "downstream_consumer": {
     "cell_size": 0.1,
@@ -116,8 +117,8 @@
   "limitations": [
     "No ground-truth pose exists for these upstream scans; absolute pose accuracy is measured only in the synthetic known-transform golden eval.",
     "The cropped surface is not watertight and not edge-manifold. It is not certified for collision use; the occupancy consumer test measures phantom obstacle volume, not collision safety.",
-    "Held-out coverage within one voxel falls (0.883->0.851, 0.961->0.933, 0.934->0.855) even though held-out median distance is essentially unchanged. Cropping trades invented coverage for honest holes; a consumer that needs closed geometry should pass --support-distance-factor 0 and accept the extrapolation.",
-    "Floating-point results are not byte-identical; reproducibility is numeric to ~4e-06 relative on surface area. The measurements behind that figure were not taken on this pipeline: they are from the Armadillo 300k-sample construction, which has no registration stage and whose input was held fixed by seeding the sampling rather than by reading a cloud from a file -- this record's own inputs are not reachable from the host that ran them. On that construction surface area spans 2.3e-06 to 3.6e-06 relative with the input fixed, inside the ~4e-06 figure but approaching it. Container thread count is not what makes the results irreproducible: at a fixed thread count in one process surface area takes four distinct values in four repeats, and setting the count to 1 does not settle it -- its spread overlapped the default's across seven runs, lower in four of them and higher in three. Every step up to and including normal orientation is byte-identical across those repeats, points and normals both hashed, so what is left is the Poisson reconstruction and the density crop applied to what it returns. See declared-reproducibility-causes.json and poisson-figure-reproducibility.json (the second is in a separate pull request and may not be in this tree yet).",
+    "Held-out coverage within one voxel falls (0.883->0.851, 0.961->0.933, 0.934->0.855) even though held-out median distance is essentially unchanged. Cropping trades invented coverage for honest holes; --support-distance-factor 0 disables only the support crop, so closed-geometry users must also disable density trimming and verify the resulting raw Poisson surface is watertight.",
+    "Floating-point results are not byte-identical; reproducibility is numeric to ~4e-06 relative on surface area. The measurements behind that figure were not taken on this pipeline: they are from the Armadillo 300k-sample construction, which has no registration stage and whose input was held fixed by seeding the sampling rather than by reading a cloud from a file -- this record's own inputs are not reachable from the host that ran them. On that construction surface area spans 2.3e-06 to 3.6e-06 relative with the input fixed, inside the ~4e-06 figure but approaching it. Container thread count is not what makes the results irreproducible: at a fixed thread count in one process surface area takes four distinct values in four repeats, and setting the count to 1 does not settle it -- its spread overlapped the default's across seven runs, lower in four of them and higher in three. Every step up to and including normal orientation is byte-identical across those repeats, points and normals both hashed, so what is left is the Poisson reconstruction and the density crop applied to what it returns. See declared-reproducibility-causes.json and poisson-figure-reproducibility.json.",
     "Executed as a local container against real S3. Kubernetes/SkyPilot cluster execution of the workflow spec is not yet performed.",
     "No VLM visual acceptance: the judges false-passed invented and misaligned geometry, one of them describing geometry in a blank frame."
   ],
@@ -230,21 +231,6 @@
     },
     "independent_recomputation": "harness/verify_run.py, recomputed from delivered bytes"
   },
-  "provenance": {
-    "base_commit": "d22893238d75efbb05a69eb75bca1b82eb5fe280",
-    "branch": "cursor/workbench-expansion-20260918",
-    "candidate_commit": "77bff008fff489b73ee2d8cd11466a105bf9d630",
-    "commits": [
-      "77bff008f Fit the Open3D review camera to the scan, and gate the crop in the golden eval",
-      "ae994bbcf Reject Open3D surface the scan never supported, and frame the result",
-      "2a6d901f3 Add Open3D point-cloud registration and reconstruction workbench tool"
-    ],
-    "evaluation_plan_hash": "dd758d06a3df6cf3793504d355f34dfefc49b32516bb0c7aed1318fffadae122",
-    "image_digest": "sha256:e4996abccabcd1adf467a9cee929ae624dafe8e08e80b60180eb7dec8496b8b2",
-    "image_tag": "npa-open3d:0.20.0-cpu-20260918",
-    "producing_tree_identity": "46ae993d10e251913fc4942fa5cf0e4fa689dfe7",
-    "working_tree_clean_at_build": true
-  },
   "schema": "npa.capability-record.v2",
   "supersedes_note": "Separate record for the support-crop run. The earlier records for runs open3d-proof-20260918T234410Z and open3d-final-20260919T003804Z are retained unmodified as historical; they describe different bytes and a dirty producing tree.",
   "vlm_eval": {
@@ -258,5 +244,28 @@
     "status": "inconclusive-judge-failed-calibration",
     "used_as_acceptance_gate": false
   },
-  "work_item_id": "open3d-geometry-quality"
+  "work_item_id": "open3d-geometry-quality",
+  "provenance": {
+    "source_commit": "77bff008fff489b73ee2d8cd11466a105bf9d630",
+    "commit_is_an_ancestor_of_main": false,
+    "no_advertised_origin_ref_at_audit": "PR 602 was squashed when it merged, so this commit never became an ancestor of main and was on no advertised origin ref at audit time -- the audit found no advertised origin ref containing it at the recorded time; that does not establish whether the object is fetchable directly by SHA. 15b0b11f0 is where its work reached main: a symbol or source line this commit introduced is present at main and `git log -S` traces it to that merge. That is a check on this commit's contribution reaching main, not a claim that the two trees are identical. The per-commit probes are in capability-record-record-provenance-shape.json.",
+    "commit_on_main_carrying_this_source": "15b0b11f0bc137631954ac87076f44753c513976",
+    "what_source_commit_means_here": "The same value as candidate_commit below, which is the commit this record attests to. candidate_commit is kept because the block also names base_commit and a producing tree, and dropping it would make the pair unreadable.",
+    "this_commit_is_reachable_from_no_ref_at_all": "At audit time no local or advertised origin ref contained this commit. That means no ref protected the object in that clone; it does not establish GitHub's direct-SHA fetch behavior or a garbage-collection schedule.",
+    "why_this_shape": "A review lane found provenance recorded six different ways across these records, so an auditor had to learn each file. This is the one shape: the commit the record attests to, whether the commit is an ancestor of main, and -- where the answer is no -- why that is deliberate and what a reader can resolve instead. harness/audit_record_provenance.py checks the ancestry claim against the repository rather than trusting it.",
+    "base_commit": "d22893238d75efbb05a69eb75bca1b82eb5fe280",
+    "branch": "cursor/workbench-expansion-20260918",
+    "candidate_commit": "77bff008fff489b73ee2d8cd11466a105bf9d630",
+    "commits": [
+      "77bff008f Fit the Open3D review camera to the scan, and gate the crop in the golden eval",
+      "ae994bbcf Reject Open3D surface the scan never supported, and frame the result",
+      "2a6d901f3 Add Open3D point-cloud registration and reconstruction workbench tool"
+    ],
+    "evaluation_plan_hash": "dd758d06a3df6cf3793504d355f34dfefc49b32516bb0c7aed1318fffadae122",
+    "hashes_that_name_no_file_here": "evaluation_plan_hash is of the plan document the run consumed, which lived in object storage for the run and is not committed here.",
+    "image_digest": "sha256:e4996abccabcd1adf467a9cee929ae624dafe8e08e80b60180eb7dec8496b8b2",
+    "image_tag": "npa-open3d:0.20.0-cpu-20260918",
+    "producing_tree_identity": "46ae993d10e251913fc4942fa5cf0e4fa689dfe7",
+    "working_tree_clean_at_build": true
+  }
 }

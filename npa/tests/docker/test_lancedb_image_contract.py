@@ -48,6 +48,10 @@ def test_lancedb_dependency_overlay_is_consistent() -> None:
     verify = text.index("python -m pip check")
 
     assert install < remove_unused_spin < verify
+    assert "certifi-2026.10.23-py3-none-any.whl" in text
+    assert "uv-0.13.4-py3-none-manylinux_2_17_x86_64" in text
+    assert "version('certifi') == '2026.10.23'" in text
+    assert "version('uv') == '0.13.4'" in text
 
     requirements = (ROOT / "npa/docker/workbench/lancedb/requirements.txt").read_text(
         encoding="utf-8"

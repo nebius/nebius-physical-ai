@@ -103,6 +103,53 @@ def _write_clouds(o3d, root: Path) -> tuple[dict[str, str], dict[str, Any]]:
     return paths, poses
 
 
+def _assert_seeds_agree_where_the_answer_is_known(o3d, root, payload, poses) -> None:
+    """The one case the evidence record cannot cover: a pair whose truth is known here.
+
+    `docs/evidence/open3d/registration-ambiguity.json` measures two constructed
+    symmetric pairs against a known truth and the real demo scans without one. This
+    scene has both -- real Open3D registration and poses this file wrote -- so it can
+    assert what neither of those can: that the alignment is right and the seeds agree
+    about it. A measure that fired here would be unusable.
+
+    It also puts a report the runner actually produced through `validate_pair`, which
+    `read_journal` does for every row, so the agreement block's invariants are checked
+    against the writer rather than only against hand-built dicts.
+    """
+
+    output = root / "register-agreement"
+    output.mkdir()
+    run_register(payload, output, RUN_ID)
+    rows = read_journal(output / "pairs.jsonl")
+    voxel = payload["manifest"]["voxel_size"]
+    for row in rows:
+        block = row["agreement"]
+        assert len(block["seeds"]) == 3, block["seeds"]
+        _assert_recovered(
+            o3d,
+            row["transformation"],
+            poses[row["source_id"]],
+            poses[row["target_id"]],
+        )
+        # The alignment is correct, so the seeds must not be finding different ones.
+        # One voxel is loose on purpose: this asserts the measure does not cry wolf,
+        # not a reproducibility figure, and Open3D's reductions are thread-ordered.
+        assert block["worst_pairwise_displacement"] < voxel, (
+            f"{len(block['seeds'])} seeds found alignments "
+            f"{block['worst_pairwise_displacement']:.4f} apart on a pair whose "
+            "recovered transform is correct, so the measurement reports ambiguity "
+            "where there is none"
+        )
+        case = block["agreement_is_not_correctness"]["measured_counterexample"]
+        assert (
+            case["every_seed_was_wrong_by_voxels"]
+            > 10.0 * case["seeds_agreed_within_voxels"]
+        ), (
+            "the published block no longer carries a counterexample showing that "
+            "agreement and correctness are different things"
+        )
+
+
 def _assert_support_crop_kept_the_observations(report) -> None:
     """The crop has to buy honesty without costing accuracy.
 
@@ -136,6 +183,21 @@ def _assert_support_crop_kept_the_observations(report) -> None:
     See `docs/evidence/open3d/declared-reproducibility-causes.json`. And do not
     loosen them to hide a real regression.
     """
+
+    # `validate_support` checks the coverage-cost pair only when the report carries it,
+    # so that older records still validate. That leaves the join between the writer and
+    # the validator unpinned: a change that stopped emitting the pair would be accepted
+    # by design. This eval runs the real pipeline, so it is the place that can require
+    # the pair to be there, and the lines below are what make the invariant mandatory
+    # for anything this image produces.
+    for block in ("coverage_before_crop", "coverage_cost_of_crop"):
+        assert block in report, (
+            f"the reconstruction stopped publishing {block}, so validate_support no "
+            "longer checks what the crop cost coverage"
+        )
+    cost = report["coverage_cost_of_crop"]
+    assert cost["samples"] == report["coverage"]["samples"]
+    assert cost["samples_abandoned_by_crop"] >= 0
 
     before = report["support_before_crop"]["unsupported_area_fraction"]
     after = report["support"]["unsupported_area_fraction"]
@@ -626,6 +688,15 @@ def main() -> None:
                 poses[row["source_id"]],
                 poses[row["target_id"]],
             )
+            assert "agreement" not in row, (
+                "this manifest did not ask for the multi-seed measurement, so a "
+                "report carrying it means the default changed and every existing "
+                "run just got more expensive"
+            )
+
+        _assert_seeds_agree_where_the_answer_is_known(
+            o3d, root, dict(payload, manifest={**manifest, "agreement_seeds": 2}), poses
+        )
 
         graph_dir = root / "multiway"
         graph_dir.mkdir()

@@ -10,6 +10,7 @@ import yaml
 from npa.clients import credentials, nebius, storage_setup
 from npa.clients.project_credential_store import (
     AmbiguousLegacyCredentialError,
+    ProjectCredentialStoreError,
     forget_project_credentials,
     project_credential_record,
     write_project_credentials,
@@ -57,6 +58,47 @@ def test_project_alias_registration_changes_identity_once(tmp_path, monkeypatch)
     monkeypatch.setattr(store, "_now", lambda: "2025-01-03T00:00:00+00:00")
     assert project_credential_record("project-a", alias="second", path=path) == added
     assert path.read_bytes() == registered
+
+
+def test_empty_project_credential_mapping_initializes_and_migrates_legacy_record(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "credentials.yaml"
+    path.write_text(
+        yaml.safe_dump(
+            {
+                "project_credentials": {},
+                "storage_iam": {"service_account_project_id": "project-a"},
+                "storage": {
+                    "bucket": "s3://project-a-bucket/",
+                    "aws_access_key_id": "fixture-access",
+                    "aws_secret_access_key": "fixture-secret",
+                },
+            }
+        )
+    )
+
+    record = project_credential_record("project-a", path=path)
+
+    assert record["storage"]["bucket"] == "s3://project-a-bucket/"
+    document = yaml.safe_load(path.read_text())
+    assert (
+        document["project_credentials"]["schema_version"]
+        == "npa.project-credentials.v2"
+    )
+    assert document["project_credentials"]["projects"]["project-a"] == record
+
+
+def test_nonempty_unknown_project_credential_mapping_stays_fail_closed(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "credentials.yaml"
+    path.write_text(yaml.safe_dump({"project_credentials": {"schema_version": None}}))
+
+    with pytest.raises(
+        ProjectCredentialStoreError, match="unsupported project credential schema"
+    ):
+        project_credential_record("project-a", path=path)
 
 
 def _bootstrap_result(binding_state: str) -> dict[str, str]:
