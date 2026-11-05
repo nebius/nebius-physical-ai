@@ -45,7 +45,7 @@
     },
     {
       "path": "opt/npa/robotwin/runtime-lock.json",
-      "sha256": "af1440aa1a0b5d79a9dd1242415e4bae5a717915196a99ecddb49a29a83b457e",
+      "sha256": "3139d4345fcf71d0985453b622441d9f7a6ffdb8d5874c764845fc49193f0ee3",
       "bytes": 238246,
       "reason": "This exact committed public schema document names the authenticated-customer-authorization schema, but contains no customer assertion or credential."
     }

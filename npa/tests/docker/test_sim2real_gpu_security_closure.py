@@ -39,8 +39,8 @@ def test_isaac_oss_closure_does_not_retain_vulnerable_pyjwt():
 
 def test_envgen_uses_explicit_fixed_headers_without_changing_other_callers():
     text = (WORKBENCH / "sim2real-envgen/Dockerfile").read_text()
-    assert "ARG UBUNTU_SNAPSHOT=20261009T000000Z" in text
-    assert "ARG ENVGEN_LINUX_LIBC_DEV_VERSION=5.15.0-198.208" in text
+    assert "ARG UBUNTU_SNAPSHOT=20261103T000000Z" in text
+    assert "ARG ENVGEN_LINUX_LIBC_DEV_VERSION=5.15.0-202.212" in text
     assert (
         'install-workflow-runtime-prereqs "${UBUNTU_SNAPSHOT}" "${ENVGEN_LINUX_LIBC_DEV_VERSION}"'
         in text
@@ -49,19 +49,24 @@ def test_envgen_uses_explicit_fixed_headers_without_changing_other_callers():
     assert '"${ENVGEN_LINUX_LIBC_DEV_VERSION}"' in text
     installer = (WORKBENCH / "common/install_workflow_runtime_prereqs.sh").read_text()
     assert 'linux_libc_dev_override="${2:-}"' in installer
-    assert 'linux_libc_dev_version="5.15.0-198.208"' in installer
+    assert 'linux_libc_dev_version="5.15.0-202.212"' in installer
     assert 'linux_libc_dev_version="6.8.0-147.147"' in installer
 
 
 @pytest.mark.parametrize(
     ("requested", "no_downgrade"),
-    [("5.15.0-190.200", False), ("5.15.0-194.204", False), ("5.15.0-198.208", True)],
+    [
+        ("5.15.0-190.200", False),
+        ("5.15.0-194.204", False),
+        ("5.15.0-198.208", False),
+        ("5.15.0-202.212", True),
+    ],
 )
 def test_envgen_header_pin_matches_the_frozen_apt_selection(requested, no_downgrade):
     record = json.loads(
         (
             WORKBENCH.parents[2]
-            / "docs/workbench/validation/sim2real-envgen-headers-20261002.json"
+            / "docs/workbench/validation/sim2real-envgen-headers-20261103.json"
         ).read_text()
     )
     selected = record["selected_version"]
@@ -69,7 +74,7 @@ def test_envgen_header_pin_matches_the_frozen_apt_selection(requested, no_downgr
     assert f"ARG ENVGEN_LINUX_LIBC_DEV_VERSION={selected}" in text
     assert "--allow-downgrades" not in text
     assert selected == record["package"]["Version"]
-    assert record["fixed_floor"] == "5.15.0-194.204"
+    assert record["fixed_floor"] == "5.15.0-202.212"
     # Use Debian's actual version ordering, not PEP 440 or a lexical comparison.
     if shutil.which("dpkg") is None:
         pytest.skip(
@@ -84,4 +89,4 @@ def test_envgen_header_pin_matches_the_frozen_apt_selection(requested, no_downgr
 def test_header_comparison_without_dpkg_skips_after_static_checks(monkeypatch):
     monkeypatch.setattr(shutil, "which", lambda _: None)
     with pytest.raises(pytest.skip.Exception, match="requires dpkg"):
-        test_envgen_header_pin_matches_the_frozen_apt_selection("5.15.0-198.208", True)
+        test_envgen_header_pin_matches_the_frozen_apt_selection("5.15.0-202.212", True)

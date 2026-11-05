@@ -38,7 +38,12 @@ from npa.benchmarks.sim2real_prepared_action import (
     rejected_result,
     validate_receipt,
 )
-from npa.benchmarks.sim2real_success import VerificationError, verify_artifact_tree
+from npa.benchmarks.sim2real_success import (
+    VerificationError,
+    VerifierUnavailableError,
+    _resolve_rerun_binary,
+    verify_artifact_tree,
+)
 
 
 TASK_TEXT = """From a clean checkout on the dev VM, first stage the canonical public-franka-lift preset through the NPA workflow trigger command, then validate and plan workflows/main/sim2real.yaml, submit it through the standard runtime, and monitor that run to terminal completion. Diagnose and make necessary fixes if it fails. Do not weaken the canonical workflow, its real components, or the strict requirement that the Franka arm grasp the cube, lift it at least 5 cm, and hold it for 2 seconds. Preserve unrelated changes. Finish with the run ID, commands, code changes, measured stage and grasp metrics, and artifact locations."""
@@ -1993,6 +1998,23 @@ def _require_descendant(path: Path, parent: Path, label: str) -> None:
         raise ValueError(f"{label} must be beneath the private benchmark root") from exc
 
 
+def _record_verifier_unavailable(evidence: Path, exc: Exception) -> int:
+    """Persist an operator-actionable verifier failure without model feedback."""
+
+    failure = {
+        "schema": "npa.sim2real.model_agent_benchmark.failure.v2",
+        "classification": "verifier_unavailable",
+        "verifier": "rerun",
+        "error": str(exc),
+        "recovery_action": "repair_controller_verifier_then_resume",
+        "completed_at": _utc(),
+    }
+    (evidence / "failure.json").write_text(
+        json.dumps(failure, indent=2, sort_keys=True), encoding="utf-8"
+    )
+    return 3
+
+
 def run(config_path: Path) -> int:
     config = json.loads(config_path.read_text(encoding="utf-8"))
     workspace = Path(config["workspace"]).resolve()
@@ -2184,6 +2206,14 @@ def run(config_path: Path) -> int:
             "trial mount-namespace isolation preflight failed: "
             + isolation_check["stderr"].strip()
         )
+
+    try:
+        configured_rerun = config.get("rerun_bin", "rerun")
+        rerun_bin = _resolve_rerun_binary(
+            "" if configured_rerun is None else str(configured_rerun)
+        )
+    except VerifierUnavailableError as exc:
+        return _record_verifier_unavailable(evidence, exc)
 
     def current_prepared_state() -> str:
         if prepared_control_dir is None or prepared_receipt_path is None:
@@ -2627,8 +2657,10 @@ def run(config_path: Path) -> int:
                 artifact_root,
                 minimum_lift_m=float(config.get("minimum_lift_m", 0.05)),
                 minimum_hold_seconds=float(config.get("minimum_hold_seconds", 2.0)),
-                rerun_bin=str(config.get("rerun_bin", "rerun")),
+                rerun_bin=rerun_bin,
             )
+        except VerifierUnavailableError as exc:
+            return _record_verifier_unavailable(evidence, exc)
         except VerificationError as exc:
             feedback = {
                 "role": "user",
@@ -2667,8 +2699,29 @@ def verify_command(args: argparse.Namespace) -> int:
             minimum_hold_seconds=args.minimum_hold_seconds,
             rerun_bin=args.rerun_bin,
         )
+    except VerifierUnavailableError as exc:
+        print(
+            json.dumps(
+                {
+                    "passed": False,
+                    "classification": "verifier_unavailable",
+                    "error": str(exc),
+                },
+                indent=2,
+            )
+        )
+        return 2
     except VerificationError as exc:
-        print(json.dumps({"passed": False, "error": str(exc)}, indent=2))
+        print(
+            json.dumps(
+                {
+                    "passed": False,
+                    "classification": "evidence_failed",
+                    "error": str(exc),
+                },
+                indent=2,
+            )
+        )
         return 1
     print(json.dumps(result, indent=2))
     return 0

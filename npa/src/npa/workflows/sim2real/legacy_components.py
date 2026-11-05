@@ -14,7 +14,6 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-
 from npa.clients.storage import StorageClient
 from npa.workflows.sim2real.artifact_upload import (
     upload_run_artifacts,  # noqa: F401 - public engine import surface
@@ -32,6 +31,7 @@ from npa.workflows.sim2real.constants import (
     SCHEMA_RL_SIGNAL,
     SCHEMA_VLM_EVAL,
 )
+from npa.workflows.sim2real import feedback_validation as fv
 from npa.workflows.sim2real.models import (
     Sim2RealLoopConfig,
     Sim2RealLoopError,
@@ -1267,8 +1267,7 @@ def _apply_reference_adapter_heldout_gate(
     base = _inner_loop_progress_score(inner_evidence)
     for index, (item, env) in enumerate(zip(per_env, envs, strict=False)):
         cal_score = _reference_adapter_env_score(base, env, index)
-        sim_success = bool(item.get("success"))
-        sim_score = float(item.get("score", 0.0))
+        sim_success, sim_score = fv.strict_reference_adapter_feedback(item, index=index)
         details = dict(item.get("details") or {})
         details["sim_success"] = sim_success
         details["sim_score"] = round(sim_score, 6)
@@ -1360,7 +1359,7 @@ def _normalize_vlm_evaluation(
 ) -> dict[str, Any]:
     if "score" not in payload:
         raise Sim2RealLoopError("VLM component output must include score")
-    score = max(0.0, min(1.0, float(payload["score"])))
+    score = fv.bounded_feedback_score(payload["score"])
     success = require_sim2real_boolean(
         payload.get("success", score >= config.threshold),
         field="VLM component output success",
@@ -1409,7 +1408,9 @@ def _normalize_vlm_evaluation(
                     "action", (action_items.get(step) or {}).get("action", [])
                 ),
                 "camera_observation": str(camera or f"camera-{step:03d}.ppm"),
-                "confidence": 0.0 if malformed else float(raw.get("confidence", 0.65)),
+                "confidence": 0.0
+                if malformed
+                else fv.bounded_feedback_score(raw.get("confidence", 0.65)),
                 "critique_source": str(
                     "model_malformed"
                     if malformed

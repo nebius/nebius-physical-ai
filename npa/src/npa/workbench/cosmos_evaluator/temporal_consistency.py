@@ -19,7 +19,7 @@ from __future__ import annotations
 import json
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Mapping, Sequence
 
 import numpy as np
 
@@ -129,6 +129,8 @@ def check_temporal_consistency(
     regions: str | Sequence[Any] | None = None,
     noise_floor: float = DEFAULT_NOISE_FLOOR,
     blur_ksize: int = DEFAULT_BLUR_KSIZE,
+    ffmpeg_input_args: Sequence[str] = (),
+    subprocess_env: Mapping[str, str] | None = None,
 ) -> TemporalConsistencyResult:
     """Compare filtered, signed temporal acceleration over normalized regions."""
 
@@ -149,9 +151,23 @@ def check_temporal_consistency(
         )
 
     normalized_regions = parse_regions(regions)
-    height, width = _probe_size(original)
-    source_frames = _iter_gray_frames(original, height, width)
-    augmented_frames = _iter_gray_frames(augmented, height, width)
+    height, width = _probe_size(
+        original, input_args=ffmpeg_input_args, env=subprocess_env
+    )
+    source_frames = _iter_gray_frames(
+        original,
+        height,
+        width,
+        input_args=ffmpeg_input_args,
+        env=subprocess_env,
+    )
+    augmented_frames = _iter_gray_frames(
+        augmented,
+        height,
+        width,
+        input_args=ffmpeg_input_args,
+        env=subprocess_env,
+    )
     source_sums = np.zeros(len(normalized_regions), dtype=np.float64)
     augmented_sums = np.zeros(len(normalized_regions), dtype=np.float64)
     residual_sums = np.zeros(len(normalized_regions), dtype=np.float64)

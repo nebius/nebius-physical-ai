@@ -5,7 +5,8 @@ metadata:
   description: >-
     Decode a low-resolution sensor clip, restore it with pinned official
     SeedVR2-3B on explicitly selected H100 or B200, independently read back the result, and render a
-    non-blended bicubic-baseline versus candidate review package.
+    non-blended bicubic-baseline versus candidate review package before publishing an
+    explicit review-only, not-quality-qualified boundary.
 config:
   bucket: example-bucket
   prefix: "runs/{{run.id}}/seedvr2"
@@ -16,6 +17,8 @@ config:
   seedvr2_verification_uri: >-
     s3://{{config.bucket}}/{{config.prefix}}/verification.json
   seedvr2_review_uri: "s3://{{config.bucket}}/{{config.prefix}}/review/"
+  seedvr2_quality_boundary_uri: >-
+    s3://{{config.bucket}}/{{config.prefix}}/quality-boundary.json
   seedvr2_output_height: "480"
   seedvr2_output_width: "640"
   seedvr2_seed: "666"
@@ -90,4 +93,18 @@ states:
         schema: npa.workbench.seedvr2.review.v1
       - uri: "{{config.seedvr2_review_uri}}index.html"
         schema: text/html
+    next: quality_boundary
+  quality_boundary:
+    toolRef: workbench.seedvr2.quality_boundary
+    resources: cpu
+    inputs:
+      - uri: "{{config.seedvr2_result_uri}}"
+        schema: npa.workbench.seedvr2.result.v1
+      - uri: "{{config.seedvr2_input_uri}}"
+        schema: video/mp4
+      - uri: "{{config.seedvr2_output_uri}}restored.mp4"
+        schema: video/mp4
+    outputs:
+      - uri: "{{config.seedvr2_quality_boundary_uri}}"
+        schema: npa.workbench.seedvr2.quality-boundary.v1
     terminal: true

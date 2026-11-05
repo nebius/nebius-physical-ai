@@ -669,6 +669,21 @@ def _source_proof_record(source_index: bytes) -> robomimic_attribution._PublicPr
     )
 
 
+def test_robomimic_source_index_uses_the_pinned_snapshot_file() -> None:
+    source = robomimic_attribution._SOURCES
+    assert source.url == (
+        "https://snapshot.debian.org/file/"
+        "b5d2189a5f7dd344fab97d8e372bbb852c7644b9/"
+        "92d11a035571df011f06f28c61cb9825130ef1d92abb2f2e0525e8674dc44af8"
+    )
+    assert source.host == "snapshot.debian.org"
+    assert (
+        source.sha256
+        == "92d11a035571df011f06f28c61cb9825130ef1d92abb2f2e0525e8674dc44af8"
+    )
+    assert source.size == 9_491_888
+
+
 def test_robomimic_signed_snapshot_and_source_mismatch_fail_closed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

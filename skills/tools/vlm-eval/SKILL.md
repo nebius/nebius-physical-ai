@@ -156,7 +156,16 @@ score-derived verdicts disagree or either judge errors. The artifact is always
 weak judge can make disagreement common without making the scene intrinsically
 ambiguous. Unlike ordinary single-judge compatibility parsing, this path
 rejects Markdown-fenced JSON as a typed judge error instead of transforming the
-output. It also does not defend against in-image instructions or prove a
+output. The exact MiniCPM-V-4_5 plus gemma-3-27b-it pair is rejected before
+input or credential work because a retained six-family calibration found
+shared false-pass modes in three of six retained adversarial families. The
+sanitized retained-evidence index is
+`docs/workbench/evidence/vlm-paired-shared-failure-calibration-20261101/`.
+Other compatible pairs remain
+available. Those calls used a legacy probe schema, not the current strict
+paired-response contract, so the rule is a precaution for one measured pair,
+not model qualification or unseen-attack coverage.
+The path still does not generally defend against in-image instructions or prove a
 critical visible defect absent. Full provider responses stay in the private
 artifact; CLI output is a bounded summary.
 
@@ -256,9 +265,9 @@ npa workbench vlm-eval benchmark \
 `--rubrics` accepts names from the dataset, inline text, or `@file` paths.
 `--dataset` defaults to a packaged sample fixture, which is useful for proving
 the sweep runs but tells you nothing about your task. Its reports declare
-`dataset_evidence_scope: illustrative_only`: four rollouts are synthetic 2x2
-color swatches with color-correlated caller labels; a fifth tiny synthetic
-sequence omits the terminal outcome. The resulting
+`dataset_evidence_scope: illustrative_only`: four rollouts are single-frame
+synthetic 2x2 color swatches with color-correlated caller labels; one separate
+three-frame 4x2 synthetic sequence omits the terminal outcome. The resulting
 metrics are wiring examples, not task-validation or operational error-rate
 evidence. Custom manifests default to `dataset_evidence_scope: unspecified`;
 declare `evidence_scope` and ordered `limitations` in the manifest when their
@@ -400,9 +409,13 @@ the latter is named `order_disagreement_or_nondeterminism` because one request
 per order cannot isolate an order effect from provider nondeterminism. The
 command never retries or averages preferences, and refuses an existing output.
 Task and rubric text containing `baseline` or `candidate` is rejected before
-transport. Telling the model not to follow image text is not a defense against
-in-image instructions. Its CLI summary omits paths, prompts, visible support,
-uncertainty, request IDs, and raw responses.
+transport. This lexical screen case-folds and searches only those two
+substrings across the model ID, task, rubric, and provider-request text;
+synonyms and content-linked disclosures can pass, so an order-consistent mapped
+preference does not establish content blinding. Telling the model not to follow
+image text is not a defense against in-image instructions. Its CLI summary
+omits paths, prompts, visible support, uncertainty, request IDs, and raw
+responses.
 
 Use toolRef `workbench.vlm_eval.compare_preference`. See
 [the live audit contract](../../../docs/testing/vlm-audit-live-contracts.md)

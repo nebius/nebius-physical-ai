@@ -17,6 +17,20 @@ a versioned heading when a release is cut.
   BYO producers that emitted `0`/`1` or `"true"`/`"false"` must migrate to JSON
   `true`/`false`.
 
+### Paired VLM judge shared-failure boundary
+
+- Reject the exact MiniCPM-V-4_5 plus gemma-3-27b-it `compare-judges` pair
+  before input or credential work. A retained six-attack calibration found
+  shared false-pass modes in three of six retained adversarial families; the
+  sanitized evidence index is
+  `docs/workbench/evidence/vlm-paired-shared-failure-calibration-20261101/`.
+  The default MiniMax plus MiniCPM,
+  scheduled MiniMax plus Gemma, and unrelated compatible pairs remain valid.
+- Treat the rule as a precaution for one measured pair. The 36 profile calls
+  used a legacy probe schema within a 132-attempt investigation, not the
+  current strict paired-response contract, so they do not qualify an accepted
+  model pair or establish protection from unseen in-image instructions.
+
 ### cuRobo image dependency closure
 
 - Lock the full system setuptools seed independently to the runtime's 84.0.0
@@ -50,6 +64,13 @@ a versioned heading when a release is cut.
   improved the declared labels, and one rationale hallucinated absent objects.
   This result remains a failed model-improvement gate, separately from the
   sampler's deterministic source/provenance contract.
+
+### VLM sample frame-count disclosure
+
+- State that the packaged benchmark's four color-swatch rollouts are
+  single-frame 2x2 inputs, while its omitted-terminal control is a separate
+  three-frame 4x2 sequence. These fixtures and their caller labels remain
+  wiring-only evidence and do not validate the named physical tasks.
 
 ### Breaking: authoritative Kubernetes GPU product aliases
 
@@ -152,8 +173,10 @@ a versioned heading when a release is cut.
   exact requests, provider provenance, strict structured verdicts, and typed
   errors. Errors, unresolved or low-confidence output, and order disagreement
   require escalation; even consistent preference does not establish geometry
-  accuracy, physical validity, or robot safety. Requests leave the provider
-  response length uncapped rather than imposing a hidden token budget.
+  accuracy, physical validity, robot safety, or content blinding. The lexical
+  screen case-folds and checks only the substrings `baseline` and `candidate`;
+  synonyms and content-linked disclosures can pass. Requests leave the
+  provider response length uncapped rather than imposing a hidden token budget.
 
 ### VLM benchmarks expose calibration failures
 
@@ -231,6 +254,14 @@ a versioned heading when a release is cut.
   numbers, and null now return HTTP 400 before any policy update or output
   directory creation. External clients must send a JSON boolean. Update-result
   decoding enforces the same contract instead of coercing truthy values.
+
+### LeRobot feedback scores require JSON numbers
+
+- `POST /feedback/train-step`, `lerobot policy_container feedback-step`, and
+  in-process Sim2Real feedback now share the same literal score contract.
+  Scores must be finite JSON numbers from 0 through 1; booleans, numeric strings,
+  null, containers, and out-of-range values fail before policy-update artifacts
+  are created. External clients that sent values such as `"0.7"` must send `0.7`.
 
 ### Token Factory captions expose thinking control
 
