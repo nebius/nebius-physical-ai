@@ -49,6 +49,7 @@ def test_groot_n15_offline_native_training(tmp_path):
         "embodiment_tag",
         "max_steps",
         "batch_size",
+        "video_backend",
     ):
         command.extend(["--" + key.replace("_", "-"), str(config[key])])
     env = dict(os.environ, PYTHONPATH=str(Path(__file__).resolve().parents[2] / "src"))
@@ -66,6 +67,8 @@ def test_groot_n15_offline_native_training(tmp_path):
     )
     assert math.isfinite(receipt["held_out_eval_loss"])
     assert receipt["visible_cuda_devices"] == 1
+    assert config["video_backend"] == "decord"
+    assert receipt["training_config"]["video_backend"] == "decord"
     assert receipt["checkpoint_reload"]["verified"] is True
     assert (
         receipt["checkpoint_reload"]["checkpoint_sha256"]

@@ -13,6 +13,67 @@ that image or change `npa workbench groot finetune`. The Python entrypoint is
 `prepare_feedback`, `train_offline`, and `compare_rollouts` in the corresponding
 Workbench modules provide the same operations to Python callers.
 
+## Declarative public-data workflow
+
+For a reproducible, public-data execution use
+[`workflows/testing/groot-n15-offline-rl.yaml`](../../../workflows/testing/groot-n15-offline-rl.yaml).
+It is experimental and deliberately remains under `workflows/testing/`; it does
+not promote N1.5 into the N1.7 image or command surface. The four standard
+runtime stages are public-input preparation, native training, whole held-out
+native inference/video evidence, and independent durable readback.
+
+The checked-in defaults pin `youliangtan/so101-table-cleanup` at a public
+Apache-2.0 revision and N1.5 source/model revisions. The model weights are
+fetched only in the worker and are neither committed nor included in the HTML.
+The dataset's AV1 observations are retained as the raw source and converted to
+an H.264 derivative because the native N1.5 reader is configured for `decord`.
+The receipt binds sample source/derivative hashes and frame-count, size, and
+rate parity; it explicitly calls the derivative lossy.
+
+Validate and preview with an operator-owned bucket placeholder before allocating
+compute. `PROJECT_ALIAS` and `BUCKET` are local configuration values, not values
+to commit.
+
+```bash
+SPEC=workflows/testing/groot-n15-offline-rl.yaml
+RUN_ID=groot-n15-offline-public-001
+
+npa/.venv/bin/npa workbench workflow validate-spec "$SPEC" --json
+npa/.venv/bin/npa workbench workflow plan-spec "$SPEC" \
+  --run-id "$RUN_ID" --var bucket="$BUCKET" --check-render --json
+npa/.venv/bin/npa workbench workflow stage-src \
+  --project "$PROJECT_ALIAS" --bucket "$BUCKET" --run-id "$RUN_ID"
+npa/.venv/bin/npa workbench workflow submit "$SPEC" --runtime \
+  --project "$PROJECT_ALIAS" --run-id "$RUN_ID" \
+  --var bucket="$BUCKET" --var prefix="groot-n15-offline-rl/$RUN_ID" \
+  --output-format json
+```
+
+Use the generic `status`, `logs`, and `artifacts` operations with the same run
+and project identity. A recoverable interruption must resume that run only after
+its durable ledger and checkpoint pointer are reconciled; do not submit a second
+run with the same output prefix.
+
+The typed YAML customization surface includes public data/source/model revisions,
+feedback mode and worker-readable feedback URI, episode split counts, action
+horizon, native modality and embodiment, `decord` backend, codec provenance,
+batch/learning-rate/seed/pass schedule, checkpoint cadence and root, output
+prefix, and held-out evidence clip selection. `outcome` and `progress` modes
+require supplied recorded labels/progress; uniform mode intentionally fabricates
+neither. The schedule computes `ceil(train_frames / batch_size)` per requested
+complete pass after the pinned data revision is materialized, rather than using a
+time-based step limit. The N1.5 adapter requires exactly one visible GPU; it
+does not use DataParallel or DDP.
+
+The resulting MP4 contains held-out **recorded** front/wrist observations, plus
+aligned recorded action targets and baseline/candidate native `get_action`
+predictions. It labels raw action-coordinate units when the source metadata does
+not declare physical units, uses the same per-frame diffusion seed for both
+models, and says prominently that it is offline prediction rather than a policy
+rollout. A simulator is not required for that evidence and is not constructed to
+manufacture success footage. Hardware trials remain necessary for robot success,
+next-state, deployment, or policy-improvement claims.
+
 ## Learning method and ARM boundary
 
 The initial `outcome` mode implements return-weighted behavior cloning: an
@@ -229,8 +290,8 @@ do not establish policy improvement or hardware compatibility.
 `NPA_INTEGRATION_E2E=1` and `NPA_GROOT_N15_OFFLINE_LIVE_CONFIG` points to a private
 JSON configuration. Required fields are `python`, `dataset_root`,
 `feedback_path`, `groot_source`, `base_model`, `data_config`, `embodiment_tag`,
-`action_horizon`, `mode`, `max_steps`, and `batch_size`; `temperature` defaults
-to 1. A supplied invalid config fails. An absent config skips and proves no
+`action_horizon`, `mode`, `max_steps`, `batch_size`, and
+`video_backend=decord`; `temperature` defaults to 1. A supplied invalid config fails. An absent config skips and proves no
 native training. This test checks finite training and held-out losses, completed
 optimizer steps, a single visible CUDA device, saved-checkpoint reload evidence,
 changed checkpoint identity, and changed native action-decoder tensors in

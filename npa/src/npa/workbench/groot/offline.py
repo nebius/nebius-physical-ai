@@ -75,6 +75,18 @@ def _parser():
     train.add_argument("--learning-rate", type=float, default=1e-4)
     train.add_argument("--seed", type=int, default=42)
     train.add_argument(
+        "--checkpoint-steps",
+        type=int,
+        default=None,
+        help="Save resumable native Trainer checkpoints at this positive step cadence.",
+    )
+    train.add_argument(
+        "--resume-from-checkpoint",
+        type=Path,
+        default=None,
+        help="Resume a checkpoint below --output-dir after a recoverable interruption.",
+    )
+    train.add_argument(
         "--video-backend",
         choices=["torchcodec", "decord", "torchvision_av"],
         default="torchcodec",

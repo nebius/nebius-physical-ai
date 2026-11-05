@@ -9,6 +9,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from typing import Callable
 
 import numpy as np
 
@@ -175,6 +176,9 @@ def train_offline(
     learning_rate: float = 1e-4,
     seed: int = 42,
     video_backend: str = "torchcodec",
+    checkpoint_steps: int | None = None,
+    resume_from_checkpoint: Path | None = None,
+    checkpoint_sync: Callable[[Path, int], None] | None = None,
 ) -> dict:
     """Fine-tune a staged N1.5 checkpoint using only prepared training frames.
 
@@ -191,6 +195,13 @@ def train_offline(
         learning_rate: Positive optimizer learning rate.
         seed: Training seed.
         video_backend: Pinned native reader backend for recorded observations.
+        checkpoint_steps: Positive durable-save cadence, or ``None`` to save
+            only the final candidate.
+        resume_from_checkpoint: Native Trainer checkpoint from the same output
+            directory, if a recoverable worker interruption occurred.
+        checkpoint_sync: Optional callback run only after Trainer has saved a
+            complete checkpoint directory. It can mirror the checkpoint to
+            durable operator storage without changing model semantics.
     Returns:
         Receipt identifying the trained checkpoint, without claiming robot evaluation.
     Raises:
@@ -198,10 +209,12 @@ def train_offline(
         OSError: Dataset, checkpoint, or output cannot be accessed.
     """
     manifest = OfflineManifest.model_validate_json(manifest_path.read_text())
-    _validate_training_paths(dataset_root, manifest_path, base_model, output_dir)
+    _validate_training_paths(
+        dataset_root, manifest_path, base_model, output_dir, resume_from_checkpoint
+    )
     if dataset_digest(dataset_root) != manifest.dataset_sha256:
         raise ValueError("dataset bytes changed after feedback preparation")
-    _validate_schedule(max_steps, batch_size, learning_rate)
+    _validate_schedule(max_steps, batch_size, learning_rate, checkpoint_steps)
     _validate_video_backend(video_backend)
     runtime = _load_native_runtime(groot_source)
     base_digest = checkpoint_digest(base_model)
@@ -222,8 +235,12 @@ def train_offline(
         batch_size,
         learning_rate,
         seed,
+        checkpoint_steps,
+        checkpoint_sync,
     )
-    result = trainer.train()
+    result = trainer.train(
+        resume_from_checkpoint=(str(resume_from_checkpoint) if resume_from_checkpoint else None)
+    )
     training_trace = _training_trace(trainer)
     evaluation = trainer.evaluate()
     trainer.save_model(str(output_dir), _internal_call=False)
@@ -252,10 +269,14 @@ def train_offline(
         runtime["visible_cuda_devices"],
         reload_evidence,
         terminal_mask,
+        checkpoint_steps,
+        resume_from_checkpoint,
     )
 
 
-def _validate_training_paths(dataset_root, manifest_path, base_model, output_dir):
+def _validate_training_paths(
+    dataset_root, manifest_path, base_model, output_dir, resume_from_checkpoint
+):
     for source in (dataset_root, base_model):
         if output_dir.resolve().is_relative_to(
             source.resolve()
@@ -265,16 +286,26 @@ def _validate_training_paths(dataset_root, manifest_path, base_model, output_dir
             )
     if manifest_path.resolve().is_relative_to(output_dir.resolve()):
         raise ValueError("manifest must be outside the new output directory")
-    if output_dir.exists():
+    if output_dir.exists() and resume_from_checkpoint is None:
         raise ValueError(
             "output directory must be new; use a new directory for each iteration"
         )
+    if resume_from_checkpoint is not None:
+        checkpoint = Path(resume_from_checkpoint)
+        if not checkpoint.is_dir() or not checkpoint.resolve().is_relative_to(
+            output_dir.resolve()
+        ):
+            raise ValueError(
+                "resume checkpoint must be a complete directory below output directory"
+            )
+        if not (checkpoint / "trainer_state.json").is_file():
+            raise ValueError("resume checkpoint has no Trainer state")
     config = json.loads((base_model / "config.json").read_text())
     if config.get("model_type") != "gr00t_n1_5":
         raise ValueError("base checkpoint must be GR00T N1.5")
 
 
-def _validate_schedule(max_steps, batch_size, learning_rate):
+def _validate_schedule(max_steps, batch_size, learning_rate, checkpoint_steps=None):
     if (
         type(max_steps) is not int
         or max_steps <= 0
@@ -288,6 +319,10 @@ def _validate_schedule(max_steps, batch_size, learning_rate):
         or learning_rate <= 0
     ):
         raise ValueError("learning_rate must be positive and finite")
+    if checkpoint_steps is not None and (
+        type(checkpoint_steps) is not int or checkpoint_steps <= 0
+    ):
+        raise ValueError("checkpoint_steps must be a positive integer when supplied")
 
 
 def _validate_video_backend(video_backend):
@@ -310,7 +345,7 @@ def _load_native_runtime(source):
         raise ValueError("groot_source must contain clean pinned N1.5 source")
     sys.path.insert(0, str(source.resolve()))
     import torch
-    from transformers import TrainingArguments, set_seed
+    from transformers import TrainerCallback, TrainingArguments, set_seed
 
     visible_cuda_devices = _validate_cuda_runtime(torch)
     modules = {}
@@ -329,6 +364,7 @@ def _load_native_runtime(source):
         modules.update(vars(module))
     modules.update(
         TrainingArguments=TrainingArguments,
+        TrainerCallback=TrainerCallback,
         set_seed=set_seed,
         visible_cuda_devices=visible_cuda_devices,
     )
@@ -447,6 +483,8 @@ def _create_trainer(
     batch_size,
     learning_rate,
     seed,
+    checkpoint_steps,
+    checkpoint_sync,
 ):
     import torch
 
@@ -472,9 +510,9 @@ def _create_trainer(
                 loss = weighted_evaluation_loss(model, inputs)
             return loss.detach(), None, None
 
-    output.mkdir(parents=True)
+    output.mkdir(parents=True, exist_ok=True)
     metadata_dir = output / "experiment_cfg"
-    metadata_dir.mkdir()
+    metadata_dir.mkdir(exist_ok=True)
     metadata = {
         train_dataset.native.tag: train_dataset.native.metadata.model_dump(mode="json")
     }
@@ -490,7 +528,9 @@ def _create_trainer(
         seed=seed,
         bf16=True,
         dataloader_num_workers=0,
-        save_strategy="no",
+        save_strategy="steps" if checkpoint_steps is not None else "no",
+        save_steps=checkpoint_steps if checkpoint_steps is not None else 500,
+        save_total_limit=1 if checkpoint_steps is not None else None,
         logging_strategy="steps",
         logging_steps=1,
         logging_first_step=True,
@@ -509,6 +549,19 @@ def _create_trainer(
             run_name=output.name, exp_cfg_dir=metadata_dir
         )
     )
+    if checkpoint_sync is not None:
+
+        class DurableCheckpointCallback(runtime["TrainerCallback"]):
+            """Mirror only complete Trainer checkpoints after their save event."""
+
+            def on_save(self, _args, state, _control, **_kwargs):
+                step = int(state.global_step)
+                checkpoint = output / f"checkpoint-{step}"
+                if not checkpoint.is_dir():
+                    raise ValueError("Trainer save callback did not produce a checkpoint")
+                checkpoint_sync(checkpoint, step)
+
+        trainer.add_callback(DurableCheckpointCallback())
     return trainer
 
 
@@ -558,6 +611,8 @@ def _write_training_receipt(
     visible_cuda_devices,
     reload_evidence,
     terminal_mask,
+    checkpoint_steps,
+    resume_from_checkpoint,
 ):
     if not math.isfinite(result.training_loss):
         raise ValueError("training produced a nonfinite loss")
@@ -605,6 +660,12 @@ def _write_training_receipt(
             "mean": sum(train_weights) / len(train_weights),
         },
         "terminal_mask_evidence": terminal_mask,
+        "checkpoint_schedule": {
+            "save_steps": checkpoint_steps,
+            "resume_from_checkpoint": (
+                str(resume_from_checkpoint) if resume_from_checkpoint else None
+            ),
+        },
         "robot_evaluation_performed": False,
     }
     (output / "offline-training.json").write_text(json.dumps(receipt, indent=2) + "\n")

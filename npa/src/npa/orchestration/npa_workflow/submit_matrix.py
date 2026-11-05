@@ -1497,6 +1497,26 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         ),
     ),
     SubmitLiveCase(
+        "groot-n15-offline-rl.yaml",
+        "gpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        runtime=True,
+        rotation_skip=True,
+        skip_reason=(
+            "A complete public 80-episode codec-derivative, native N1.5 train, "
+            "and whole-held-out inference run needs an explicitly owned RTX PRO "
+            "6000 placement plus a fresh model/storage access preflight."
+        ),
+        notes=(
+            "Experimental one-GPU public LeRobot pipeline: immutable download -> "
+            "H.264/decord derivative and episode-group split -> complete native "
+            "N1.5 training with durable resume -> full held-out baseline/candidate "
+            "get_action comparison -> decoded recorded-observation MP4 and "
+            "standalone HTML. It is not a simulator, closed-loop rollout, or "
+            "physical-robot task-success claim."
+        ),
+    ),
+    SubmitLiveCase(
         "mjlab-train-eval.yaml",
         "multi",
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
