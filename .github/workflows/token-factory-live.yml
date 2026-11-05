@@ -87,7 +87,9 @@ jobs:
           NPA_TF_RECHECK_SCOPE: ${{ vars.NPA_TF_RECHECK_SCOPE || 'authorized-account' }}
           NPA_TF_RECHECK_REQUIRED_MODELS: moonshotai/Kimi-K3,${{ vars.NPA_TF_RECHECK_REQUIRED_MODELS }}
           NPA_TF_RECHECK_JSON_BASELINE: ${{ vars.NPA_TF_RECHECK_JSON_BASELINE || 'healthy' }}
-        run: npa/.venv/bin/python npa/scripts/token_factory_live_recheck.py --evidence-dir "$RUNNER_TEMP/token-factory-live"
+        run: |
+          export NPA_SIM2REAL_EVALUATION_LIVE_S3_PREFIX="${NPA_SIM2REAL_EVALUATION_LIVE_S3_PREFIX%/}/${GITHUB_RUN_ID}/${GITHUB_RUN_ATTEMPT}"
+          npa/.venv/bin/python npa/scripts/token_factory_live_recheck.py --evidence-dir "$RUNNER_TEMP/token-factory-live"
       - name: Require executed Kimi visual controls
         run: |
           npa/.venv/bin/python - <<'PY'
