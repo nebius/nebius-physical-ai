@@ -129,6 +129,24 @@ def test_canonical_genesis_recipe_uses_a_pinned_cuda_base_and_output_attestation
     assert 'org.opencontainers.image.revision="${NPA_SOURCE_SHA}"' in text
 
 
+def test_canonical_genesis_source_launcher_is_checked_in_and_bound_to_the_image():
+    """The source-attested runtime cannot copy a launcher that is absent from context."""
+
+    launcher = ROOT / "npa/docker/workbench/common/install_npa_source_launcher.py"
+    text = (GENESIS / "Dockerfile").read_text()
+    assert launcher.is_file()
+    assert (
+        "COPY --chown=ubuntu:ubuntu "
+        "docker/workbench/common/install_npa_source_launcher.py "
+        "/opt/npa/install_npa_source_launcher.py"
+    ) in text
+    assert "python /opt/npa/install_npa_source_launcher.py /opt/npa/src" in text
+    source = launcher.read_text()
+    assert "NPA source entrypoint is absent" in source
+    assert "sys.path.insert(0," in source
+    assert "from npa.cli.entry import main" in source
+
+
 def test_sm120_genesis_recipe_keeps_its_source_attested_parent_contract():
     text = (GENESIS / "Dockerfile.sm120").read_text()
     assert re.search(r"^ARG BASE_IMAGE$", text, re.MULTILINE)
