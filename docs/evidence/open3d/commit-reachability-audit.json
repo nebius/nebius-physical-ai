@@ -243,11 +243,23 @@
     ]
   },
   "what_this_audits_glob_does_not_reach": {
-    "evidence_json_outside_this_audits_glob": 36,
-    "of_those_with_no_provenance_block_at_all": 32,
-    "of_those_that_also_carry_digests": 7,
+    "evidence_json_outside_this_audits_glob": 48,
+    "of_those_with_no_provenance_block_at_all": 41,
+    "of_those_that_also_carry_digests": 9,
     "why_three_numbers_and_not_one": "A reviewer measured this as seven files. That is the subset carrying digests and naming no resolvable commit; the broadest count here is every non-record evidence JSON. Different populations rather than a disagreement, and the digest-carrying count is the one that matters, because a digest with no declared origin is the case this change exists to close.",
     "files_carrying_digests_with_no_declared_provenance": [
+      {
+        "file": "consumer-error-structure.json",
+        "has_a_provenance_block": false,
+        "carries_digests": true,
+        "names_a_commit": false
+      },
+      {
+        "file": "delivered-frame-property-gate.json",
+        "has_a_provenance_block": false,
+        "carries_digests": true,
+        "names_a_commit": false
+      },
       {
         "file": "derived-report-controls.json",
         "has_a_provenance_block": false,
@@ -292,6 +304,12 @@
       }
     ],
     "files": [
+      {
+        "file": "audit-view-occlusion.json",
+        "has_a_provenance_block": false,
+        "carries_digests": false,
+        "names_a_commit": false
+      },
       {
         "file": "background-choice-sweep-refit.json",
         "has_a_provenance_block": false,
@@ -347,6 +365,12 @@
         "names_a_commit": false
       },
       {
+        "file": "consumer-error-structure.json",
+        "has_a_provenance_block": false,
+        "carries_digests": true,
+        "names_a_commit": false
+      },
+      {
         "file": "consumer-recovery.json",
         "has_a_provenance_block": false,
         "carries_digests": false,
@@ -356,6 +380,12 @@
         "file": "declared-reproducibility-causes.json",
         "has_a_provenance_block": false,
         "carries_digests": false,
+        "names_a_commit": false
+      },
+      {
+        "file": "delivered-frame-property-gate.json",
+        "has_a_provenance_block": false,
+        "carries_digests": true,
         "names_a_commit": false
       },
       {
@@ -407,6 +437,12 @@
         "names_a_commit": false
       },
       {
+        "file": "gate-zoom-sweep.json",
+        "has_a_provenance_block": false,
+        "carries_digests": false,
+        "names_a_commit": false
+      },
+      {
         "file": "hardening-overlay-threshold.json",
         "has_a_provenance_block": false,
         "carries_digests": false,
@@ -414,6 +450,12 @@
       },
       {
         "file": "hardening-truncated-read.json",
+        "has_a_provenance_block": false,
+        "carries_digests": false,
+        "names_a_commit": false
+      },
+      {
+        "file": "holes-and-outliers.json",
         "has_a_provenance_block": false,
         "carries_digests": false,
         "names_a_commit": false
@@ -443,7 +485,19 @@
         "names_a_commit": false
       },
       {
+        "file": "occlusion-repeat-spread.json",
+        "has_a_provenance_block": false,
+        "carries_digests": false,
+        "names_a_commit": false
+      },
+      {
         "file": "ordinary-window-audit.json",
+        "has_a_provenance_block": false,
+        "carries_digests": false,
+        "names_a_commit": false
+      },
+      {
+        "file": "overlay-isolation-controls.json",
         "has_a_provenance_block": false,
         "carries_digests": false,
         "names_a_commit": false
@@ -476,6 +530,18 @@
         "file": "replay-b18d-public-report.json",
         "has_a_provenance_block": false,
         "carries_digests": true,
+        "names_a_commit": false
+      },
+      {
+        "file": "spread-floor-margin.json",
+        "has_a_provenance_block": false,
+        "carries_digests": false,
+        "names_a_commit": false
+      },
+      {
+        "file": "support-crop-coverage-guarantee.json",
+        "has_a_provenance_block": false,
+        "carries_digests": false,
         "names_a_commit": false
       },
       {
