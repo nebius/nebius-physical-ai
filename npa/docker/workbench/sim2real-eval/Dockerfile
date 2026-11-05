@@ -54,6 +54,7 @@ RUN /usr/local/bin/install-workflow-runtime-prereqs "${UBUNTU_SNAPSHOT}" \
     && python -m py_compile /opt/npa/src/npa/workflows/sim2real_loop.py \
     && env -u PYTHONPATH python -c \
       'from npa.workflows.sim2real_loop import main; assert callable(main)' \
+    && python -c "import torch; assert torch.__version__ == '2.13.0+cu130'; assert torch.version.cuda == '13.0'" \
     && python -c "from npa.genesis.env_pick_place import EnvConfig, FrankaPickPlaceEnv; assert EnvConfig(action_space='cartesian').action_space == 'cartesian'; assert FrankaPickPlaceEnv.__name__ == 'FrankaPickPlaceEnv'" \
     && chown -R ubuntu:ubuntu /workspace /opt/npa/src /opt/npa/pyproject.toml
 

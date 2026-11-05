@@ -132,6 +132,7 @@ def test_loop_eval_installs_the_qualified_moviepy_closure_before_repair() -> Non
     assert "-r sim2real-control-requirements.txt" in resolver_input
     assert "-r sim2real-genesis-requirements.txt" in resolver_input
     assert "moviepy==2.2.1" in resolver_input
+    assert "torch==2.13.0+cu130" in resolver_input
     assert "pillow==11.3.0" in resolver_override.splitlines()
     assert (
         "--overrides npa/docker/workbench/common/sim2real-eval-requirements.override"
@@ -151,6 +152,8 @@ def test_loop_eval_installs_the_qualified_moviepy_closure_before_repair() -> Non
         "python-dotenv==1.2.4",
         "python-dateutil==2.9.0.post0",
         "pillow==13.0.0",
+        "torch==2.13.0+cu130",
+        "cuda-toolkit==13.0.3.0",
     ):
         assert requirement in lock
     assert "pillow==11.3.0" not in lock
@@ -172,6 +175,8 @@ def test_loop_eval_installs_the_qualified_moviepy_closure_before_repair() -> Non
     assert "binaries/ffmpeg*" in text
     assert 'imageio_ffmpeg.get_ffmpeg_exe() == "/usr/bin/ffmpeg"' in text
     assert install < repair < dependency_check
+    assert "torch.__version__ == '2.13.0+cu130'" in text
+    assert "torch.version.cuda == '13.0'" in text
 
 
 def test_cosmos_reason_replaces_parent_npa_metadata_before_pip_check() -> None:
