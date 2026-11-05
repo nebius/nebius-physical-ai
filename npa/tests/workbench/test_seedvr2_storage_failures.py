@@ -12,7 +12,7 @@ from fastapi.testclient import TestClient
 import pytest
 
 from npa.clients.storage import StorageError
-from npa.workbench.seedvr2 import artifacts, runtime
+from npa.workbench.seedvr2 import artifacts, quality, runtime
 from npa.workbench.seedvr2.service import create_app
 
 
@@ -105,7 +105,17 @@ def test_permanent_storage_failure_is_not_retryable(original):
     assert error.value.__cause__ is original
 
 
-@pytest.mark.parametrize("verb", ["probe", "restore", "verify", "review"])
+def _module_operation(verb):
+    if verb == "restore":
+        return runtime, "restore"
+    if verb == "quality-boundary":
+        return quality, "assess"
+    return artifacts, verb
+
+
+@pytest.mark.parametrize(
+    "verb", ["probe", "restore", "verify", "review", "quality-boundary"]
+)
 @pytest.mark.parametrize("code, status", [("AccessDenied", 400), ("SlowDown", 503)])
 def test_http_storage_classification_releases_lock_and_withholds_provider_text(
     monkeypatch, verb, code, status
@@ -116,8 +126,8 @@ def test_http_storage_classification_releases_lock_and_withholds_provider_text(
         )
         pytest.fail("failed absence check must not reach publication")
 
-    module = runtime if verb == "restore" else artifacts
-    monkeypatch.setattr(module, verb, failed)
+    module, operation = _module_operation(verb)
+    monkeypatch.setattr(module, operation, failed)
     client = TestClient(
         create_app(token="test-token", allowed_s3_roots=["s3://example-bucket/"])
     )

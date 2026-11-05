@@ -1,0 +1,43 @@
+{
+  "why_this_file_exists": "Whether a skipped test costs coverage depends on whether CI has the module. This snapshot records one named job rather than guessing from the current environment. The workflow explicitly installs the sonic and genesis-test extras and then asserts that torch and rsl_rl import, so those modules are expected independently of this retained package list.",
+  "the_error_this_file_prevented": "An earlier version of the sweep inferred CI's contents from pyproject extras and was about to publish that the torch finding was costing coverage in CI today. It is not: CI has torch. The claim would have been wrong in the direction of making the finding sound worse.",
+  "source": {
+    "workflow": ".github/workflows/test.yml",
+    "job": "test-gate / pytest-3.12-shard-1",
+    "run_id": "41311249484",
+    "job_id": "124862009958",
+    "of_branch": "cursor/open3d-consumer-error-structure-20261101",
+    "retrieved_utc": "2026-11-01T14:05:00Z",
+    "head_sha": "b8963778a9fcda8e91a692a5f7e57ff63586c765",
+    "read_from": "the uv install lines of that job's log, '+ <name>==<version>'"
+  },
+  "staleness": "A snapshot, not a derivation. It is correct for the job named and should be re-read when the dependency set moves. The sweep records which snapshot it used rather than assuming this one is current.",
+  "import_name_to_distribution": {
+    "pxr": "usd-core",
+    "PIL": "pillow",
+    "rsl_rl": "rsl-rl-lib",
+    "lerobot": "lerobot",
+    "av": "av",
+    "torch": "torch",
+    "scipy": "scipy",
+    "ray": "ray",
+    "tensordict": "tensordict",
+    "open3d": "open3d",
+    "numpy": "numpy"
+  },
+  "observed_installed": {
+    "av": "17.1.0",
+    "torch": "2.14.0+cpu",
+    "scipy": "1.18.1",
+    "usd-core": "26.8",
+    "pillow": "13.0.0",
+    "tensordict": "0.14.2",
+    "rsl-rl-lib": "5.5.1",
+    "numpy": "2.5.3"
+  },
+  "observed_absent": [
+    "lerobot",
+    "ray",
+    "open3d"
+  ]
+}

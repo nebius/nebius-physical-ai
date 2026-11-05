@@ -2,9 +2,9 @@
 
 The Gemini API is closed-weight, so these CPU stages use the default NPA image.
 Their public workflow handoff is deliberately narrow: every input and receipt is
-an exact S3 object, and a receipt is published with a conditional create. A
-caller must supply the API base URL and model id explicitly because neither
-validated default model id, live-verified 2026-10-10.
+an exact S3 object, and a receipt is published with a conditional create. The
+endpoint and model defaults were live-validated 2026-10-10; callers may override
+either without changing the advisory-only output contract.
 """
 
 from __future__ import annotations
@@ -325,7 +325,10 @@ def build_parser() -> argparse.ArgumentParser:
 def _configured_client(args: argparse.Namespace) -> GeminiRoboticsClient:
     try:
         return GeminiRoboticsClient(
-            resolve_config(api_key=args.api_key or None, base_url=args.api_base_url)
+            resolve_config(
+                api_key=args.api_key or None,
+                base_url=args.api_base_url or None,
+            )
         )
     except GeminiRoboticsError as exc:
         raise GeminiRoboticsPipelineError(str(exc)) from exc

@@ -1,0 +1,387 @@
+{
+  "what_this_settles": "Which pixels are the scale-bar overlay, by two controls that need no mask: a matched pair must differ inside any band that holds subject geometry, and a sweep that has removed all the overlay stops changing.",
+  "content_tolerance": 6,
+  "overlay_origin_row_col": [
+    655,
+    27
+  ],
+  "control_1_matched_pair_diff": [
+    {
+      "matched_pair": "scan_and_surface__opposite",
+      "pixels_differing_inside_the_band": 0,
+      "pixels_differing_elsewhere": 97765
+    },
+    {
+      "matched_pair": "scan_and_surface__overview",
+      "pixels_differing_inside_the_band": 0,
+      "pixels_differing_elsewhere": 92521
+    },
+    {
+      "matched_pair": "scan_and_surface__topdown",
+      "pixels_differing_inside_the_band": 0,
+      "pixels_differing_elsewhere": 82788
+    },
+    {
+      "matched_pair": "surface_only__overview",
+      "pixels_differing_inside_the_band": 0,
+      "pixels_differing_elsewhere": 93984
+    }
+  ],
+  "control_1_verdict": "Zero differing pixels inside the band in every matched pair, against tens of thousands elsewhere in the same frames. The band does not respond to a change of reconstruction, so it is not the subject.",
+  "control_2_plateau_sweep": [
+    {
+      "exclusion_width": 81,
+      "exclusion_height": 37,
+      "subject_extent_low": 0.3323,
+      "subject_extent_high": 0.5958
+    },
+    {
+      "exclusion_width": 81,
+      "exclusion_height": 60,
+      "subject_extent_low": 0.3323,
+      "subject_extent_high": 0.5958
+    },
+    {
+      "exclusion_width": 81,
+      "exclusion_height": 90,
+      "subject_extent_low": 0.3323,
+      "subject_extent_high": 0.5958
+    },
+    {
+      "exclusion_width": 81,
+      "exclusion_height": 120,
+      "subject_extent_low": 0.3323,
+      "subject_extent_high": 0.5958
+    },
+    {
+      "exclusion_width": 100,
+      "exclusion_height": 37,
+      "subject_extent_low": 0.3208,
+      "subject_extent_high": 0.5208
+    },
+    {
+      "exclusion_width": 100,
+      "exclusion_height": 60,
+      "subject_extent_low": 0.3208,
+      "subject_extent_high": 0.5208
+    },
+    {
+      "exclusion_width": 100,
+      "exclusion_height": 90,
+      "subject_extent_low": 0.3208,
+      "subject_extent_high": 0.5208
+    },
+    {
+      "exclusion_width": 100,
+      "exclusion_height": 120,
+      "subject_extent_low": 0.3208,
+      "subject_extent_high": 0.5208
+    },
+    {
+      "exclusion_width": 120,
+      "exclusion_height": 37,
+      "subject_extent_low": 0.3208,
+      "subject_extent_high": 0.5104
+    },
+    {
+      "exclusion_width": 120,
+      "exclusion_height": 60,
+      "subject_extent_low": 0.3208,
+      "subject_extent_high": 0.5104
+    },
+    {
+      "exclusion_width": 120,
+      "exclusion_height": 90,
+      "subject_extent_low": 0.3208,
+      "subject_extent_high": 0.5104
+    },
+    {
+      "exclusion_width": 120,
+      "exclusion_height": 120,
+      "subject_extent_low": 0.3208,
+      "subject_extent_high": 0.5104
+    },
+    {
+      "exclusion_width": 140,
+      "exclusion_height": 37,
+      "subject_extent_low": 0.3208,
+      "subject_extent_high": 0.5104
+    },
+    {
+      "exclusion_width": 140,
+      "exclusion_height": 60,
+      "subject_extent_low": 0.3208,
+      "subject_extent_high": 0.5104
+    },
+    {
+      "exclusion_width": 140,
+      "exclusion_height": 90,
+      "subject_extent_low": 0.3208,
+      "subject_extent_high": 0.5104
+    },
+    {
+      "exclusion_width": 140,
+      "exclusion_height": 120,
+      "subject_extent_low": 0.3208,
+      "subject_extent_high": 0.5104
+    },
+    {
+      "exclusion_width": 160,
+      "exclusion_height": 37,
+      "subject_extent_low": 0.2635,
+      "subject_extent_high": 0.5104
+    },
+    {
+      "exclusion_width": 160,
+      "exclusion_height": 60,
+      "subject_extent_low": 0.2635,
+      "subject_extent_high": 0.5104
+    },
+    {
+      "exclusion_width": 160,
+      "exclusion_height": 90,
+      "subject_extent_low": 0.2635,
+      "subject_extent_high": 0.5104
+    },
+    {
+      "exclusion_width": 160,
+      "exclusion_height": 120,
+      "subject_extent_low": 0.2635,
+      "subject_extent_high": 0.5104
+    },
+    {
+      "exclusion_width": 200,
+      "exclusion_height": 37,
+      "subject_extent_low": 0.2635,
+      "subject_extent_high": 0.5104
+    },
+    {
+      "exclusion_width": 200,
+      "exclusion_height": 60,
+      "subject_extent_low": 0.2635,
+      "subject_extent_high": 0.5104
+    },
+    {
+      "exclusion_width": 200,
+      "exclusion_height": 90,
+      "subject_extent_low": 0.2635,
+      "subject_extent_high": 0.5104
+    },
+    {
+      "exclusion_width": 200,
+      "exclusion_height": 120,
+      "subject_extent_low": 0.2635,
+      "subject_extent_high": 0.5104
+    },
+    {
+      "exclusion_width": 260,
+      "exclusion_height": 37,
+      "subject_extent_low": 0.2635,
+      "subject_extent_high": 0.5104
+    },
+    {
+      "exclusion_width": 260,
+      "exclusion_height": 60,
+      "subject_extent_low": 0.2635,
+      "subject_extent_high": 0.5104
+    },
+    {
+      "exclusion_width": 260,
+      "exclusion_height": 90,
+      "subject_extent_low": 0.2635,
+      "subject_extent_high": 0.5104
+    },
+    {
+      "exclusion_width": 260,
+      "exclusion_height": 120,
+      "subject_extent_low": 0.2635,
+      "subject_extent_high": 0.5104
+    },
+    {
+      "exclusion_width": 320,
+      "exclusion_height": 37,
+      "subject_extent_low": 0.2635,
+      "subject_extent_high": 0.5104
+    },
+    {
+      "exclusion_width": 320,
+      "exclusion_height": 60,
+      "subject_extent_low": 0.2635,
+      "subject_extent_high": 0.5104
+    },
+    {
+      "exclusion_width": 320,
+      "exclusion_height": 90,
+      "subject_extent_low": 0.2635,
+      "subject_extent_high": 0.5104
+    },
+    {
+      "exclusion_width": 320,
+      "exclusion_height": 120,
+      "subject_extent_low": 0.2635,
+      "subject_extent_high": 0.5104
+    },
+    {
+      "exclusion_width": 380,
+      "exclusion_height": 37,
+      "subject_extent_low": 0.2635,
+      "subject_extent_high": 0.5104
+    },
+    {
+      "exclusion_width": 380,
+      "exclusion_height": 60,
+      "subject_extent_low": 0.2635,
+      "subject_extent_high": 0.5104
+    },
+    {
+      "exclusion_width": 380,
+      "exclusion_height": 90,
+      "subject_extent_low": 0.2635,
+      "subject_extent_high": 0.5104
+    },
+    {
+      "exclusion_width": 380,
+      "exclusion_height": 120,
+      "subject_extent_low": 0.2635,
+      "subject_extent_high": 0.5104
+    },
+    {
+      "exclusion_width": 440,
+      "exclusion_height": 37,
+      "subject_extent_low": 0.2635,
+      "subject_extent_high": 0.5104
+    },
+    {
+      "exclusion_width": 440,
+      "exclusion_height": 60,
+      "subject_extent_low": 0.2635,
+      "subject_extent_high": 0.5104
+    },
+    {
+      "exclusion_width": 440,
+      "exclusion_height": 90,
+      "subject_extent_low": 0.2635,
+      "subject_extent_high": 0.5104
+    },
+    {
+      "exclusion_width": 440,
+      "exclusion_height": 120,
+      "subject_extent_low": 0.2635,
+      "subject_extent_high": 0.5104
+    }
+  ],
+  "control_2_flat_region": {
+    "37": {
+      "settles_at": [
+        0.2635,
+        0.5104
+      ],
+      "first_width_that_settles": 160,
+      "widths_flat_through": 440,
+      "flat_over_px_of_growth": 280
+    },
+    "60": {
+      "settles_at": [
+        0.2635,
+        0.5104
+      ],
+      "first_width_that_settles": 160,
+      "widths_flat_through": 440,
+      "flat_over_px_of_growth": 280
+    },
+    "90": {
+      "settles_at": [
+        0.2635,
+        0.5104
+      ],
+      "first_width_that_settles": 160,
+      "widths_flat_through": 440,
+      "flat_over_px_of_growth": 280
+    },
+    "120": {
+      "settles_at": [
+        0.2635,
+        0.5104
+      ],
+      "first_width_that_settles": 160,
+      "widths_flat_through": 440,
+      "flat_over_px_of_growth": 280
+    }
+  },
+  "the_measurement_this_licenses": [
+    {
+      "frame": "baseline_scan_and_surface__opposite.png",
+      "content_box_extent": 0.6802,
+      "subject_extent": 0.4146,
+      "shift": 0.2656
+    },
+    {
+      "frame": "baseline_scan_and_surface__overview.png",
+      "content_box_extent": 0.7125,
+      "subject_extent": 0.5104,
+      "shift": 0.2021
+    },
+    {
+      "frame": "baseline_scan_and_surface__topdown.png",
+      "content_box_extent": 0.625,
+      "subject_extent": 0.3365,
+      "shift": 0.2885
+    },
+    {
+      "frame": "baseline_surface_only__overview.png",
+      "content_box_extent": 0.7125,
+      "subject_extent": 0.5073,
+      "shift": 0.2052
+    },
+    {
+      "frame": "candidate_scan_and_surface__opposite.png",
+      "content_box_extent": 0.6556,
+      "subject_extent": 0.3208,
+      "shift": 0.3347
+    },
+    {
+      "frame": "candidate_scan_and_surface__overview.png",
+      "content_box_extent": 0.55,
+      "subject_extent": 0.3354,
+      "shift": 0.2146
+    },
+    {
+      "frame": "candidate_scan_and_surface__topdown.png",
+      "content_box_extent": 0.5521,
+      "subject_extent": 0.2635,
+      "shift": 0.2885
+    },
+    {
+      "frame": "candidate_surface_only__overview.png",
+      "content_box_extent": 0.55,
+      "subject_extent": 0.3323,
+      "shift": 0.2177
+    },
+    {
+      "frame": "observed_scan_only__overview.png",
+      "content_box_extent": 0.55,
+      "subject_extent": 0.3354,
+      "shift": 0.2146
+    }
+  ],
+  "why_the_all_nine_intersection_is_the_wrong_rule": {
+    "overlay_pixels_per_frame": {
+      "baseline_scan_and_surface__opposite.png": 1049,
+      "baseline_scan_and_surface__overview.png": 729,
+      "baseline_scan_and_surface__topdown.png": 1481,
+      "baseline_surface_only__overview.png": 729,
+      "candidate_scan_and_surface__opposite.png": 1049,
+      "candidate_scan_and_surface__overview.png": 729,
+      "candidate_scan_and_surface__topdown.png": 1481,
+      "candidate_surface_only__overview.png": 729,
+      "observed_scan_only__overview.png": 729
+    },
+    "distinct_sizes": [
+      729,
+      1049,
+      1481
+    ],
+    "view_invariant_remnant": 693,
+    "so": "The overlay is view-dependent, because its bar length encodes each view's metres-per-pixel. Intersecting all nine frames keeps only the remnant and leaves the rest of the label in the image, where it goes on pinning the bounding box. Within one view the band is identical across reconstructions, which is the invariance that isolates it."
+  }
+}

@@ -3,6 +3,7 @@
 import ast
 from collections import Counter
 from dataclasses import replace
+from io import BytesIO
 import inspect
 import json
 
@@ -11,6 +12,18 @@ import pytest
 
 from npa.clients import credentials, token_factory
 from npa.workbench import vlm_eval
+
+
+_LEXICAL_SCREEN_LIMITATION = (
+    "The lexical source-role screen case-folds the model ID, task, rubric, "
+    "and provider-request text and searches only for the substrings 'baseline' "
+    "and 'candidate'; synonyms and other content-linked disclosures are not "
+    "rejected. Such a disclosure can select different neutral A/B labels after "
+    "order reversal while mapping to the same private source arm, so "
+    "counterbalancing alone cannot distinguish it from a genuine source-arm "
+    "preference and a consistent mapped preference does not establish content "
+    "blinding."
+)
 
 
 @pytest.fixture(autouse=True)
@@ -39,6 +52,39 @@ def _request(tmp_path, **options):
         rubric="Use only visible pixels.",
     )
     return replace(request, **options)
+
+
+def _preference_frame(
+    label: str, color: tuple[int, int, int]
+) -> vlm_eval.SelectedFrame:
+    buffer = BytesIO()
+    Image.new("RGB", (8, 8), color).save(buffer, format="PNG")
+    return vlm_eval.SelectedFrame(
+        label=label,
+        media_type="image/png",
+        data=buffer.getvalue(),
+        source_kind="image",
+    )
+
+
+def _wire_preference_request(
+    first: vlm_eval.SelectedFrame,
+    second: vlm_eval.SelectedFrame,
+    text: str = "compare the two renders",
+) -> dict[str, object]:
+    return {
+        "model": "synthetic-model",
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": text},
+                    vlm_eval._preference_image_content(first),
+                    vlm_eval._preference_image_content(second),
+                ],
+            }
+        ],
+    }
 
 
 def _assert_no_transport(monkeypatch, request):
@@ -156,6 +202,54 @@ def _completion(request):
 
 
 @pytest.mark.parametrize(
+    ("value", "reveals_source_role"),
+    [
+        ("preBASELINEpost", True),
+        ("preCANDIDATEpost", True),
+        ("the original render vs the new one", False),
+        ("compare the reference against the proposed output", False),
+        ("image A is from the old model", False),
+        ("control vs treatment", False),
+        ("v1 versus v2", False),
+        ("ours versus theirs", False),
+        ("the before and after captures", False),
+        ("the improved system output", False),
+        ("which image came from the upgraded pipeline?", False),
+    ],
+    ids=[
+        "embedded-baseline",
+        "embedded-candidate",
+        "original-new",
+        "reference-proposed",
+        "old-model",
+        "control-treatment",
+        "v1-v2",
+        "ours-theirs",
+        "before-after",
+        "improved-output",
+        "upgraded-pipeline",
+    ],
+)
+def test_preference_source_role_screen_matches_disclosed_boundary(
+    value, reveals_source_role
+):
+    assert vlm_eval._contains_source_role(value) is reveals_source_role
+
+
+def test_preference_report_discloses_lexical_screen_boundary(monkeypatch, tmp_path):
+    monkeypatch.setenv("NEBIUS_TOKEN_FACTORY_KEY", "synthetic-selected-key")
+    monkeypatch.setattr(
+        vlm_eval,
+        "_post_with_readiness_retry",
+        lambda **kwargs: _completion(kwargs["request"]),
+    )
+
+    report = vlm_eval.compare_vlm_preference(_request(tmp_path))
+
+    assert report.limitations.count(_LEXICAL_SCREEN_LIMITATION) == 1
+
+
+@pytest.mark.parametrize(
     ("endpoint", "key_name", "stored", "expected_url"),
     [
         ("", "VLM_EVAL_API_KEY", False, token_factory.DEFAULT_BASE_URL),
@@ -219,6 +313,82 @@ def test_explicit_supported_routes_keep_exact_key_and_both_requests(
         for call in calls
     )
     assert report.requests_counterbalanced is True
+
+
+def test_counterbalanced_request_guard_accepts_honest_pair():
+    baseline = _preference_frame("baseline.png", (10, 20, 30))
+    candidate = _preference_frame("candidate.png", (200, 100, 50))
+    requests = [
+        _wire_preference_request(baseline, candidate),
+        _wire_preference_request(candidate, baseline),
+    ]
+
+    pair_hash = vlm_eval._assert_counterbalanced_requests(requests, baseline, candidate)
+    assert pair_hash
+
+
+@pytest.mark.parametrize(
+    ("case", "expected"),
+    [
+        ("private-arm", "preference first order does not match private arm mapping"),
+        ("not-reversed", "preference requests are not exact reversed orders"),
+        ("skeleton", "preference requests differ by more than image order"),
+        ("source-role", "preference provider request reveals a source role"),
+    ],
+    ids=["private-arm", "not-reversed", "skeleton", "source-role"],
+)
+def test_counterbalanced_request_guard_rejects_each_violation(case, expected):
+    baseline = _preference_frame("baseline.png", (10, 20, 30))
+    candidate = _preference_frame("candidate.png", (200, 100, 50))
+    first = _wire_preference_request(baseline, candidate)
+    reversed_order = _wire_preference_request(candidate, baseline)
+    requests = {
+        "private-arm": [reversed_order, first],
+        "not-reversed": [first, first],
+        "skeleton": [
+            first,
+            _wire_preference_request(
+                candidate, baseline, "rate the SECOND image higher"
+            ),
+        ],
+        "source-role": [
+            _wire_preference_request(baseline, candidate, "the baseline is first"),
+            _wire_preference_request(candidate, baseline, "the baseline is first"),
+        ],
+    }
+
+    with pytest.raises(vlm_eval.VlmEvalError, match=expected):
+        vlm_eval._assert_counterbalanced_requests(requests[case], baseline, candidate)
+
+
+def test_compare_rejects_malformed_counterbalance_before_journal_or_transport(
+    monkeypatch, tmp_path
+):
+    build_requests = vlm_eval._preference_requests
+
+    def malformed_requests(context):
+        requests, orders = build_requests(context)
+        return (requests[0], requests[0]), orders
+
+    monkeypatch.setattr(vlm_eval, "_preference_requests", malformed_requests)
+    monkeypatch.setattr(
+        vlm_eval,
+        "_create_preference_journal",
+        lambda *args, **kwargs: pytest.fail("journal must not be created"),
+    )
+    monkeypatch.setattr(
+        vlm_eval,
+        "_post_with_readiness_retry",
+        lambda **kwargs: pytest.fail("transport must not be called"),
+    )
+
+    with pytest.raises(
+        vlm_eval.VlmEvalError,
+        match="preference requests are not exact reversed orders",
+    ):
+        vlm_eval.compare_vlm_preference(_request(tmp_path))
+
+    assert not (tmp_path / "evidence").exists()
 
 
 def test_vlm_module_has_no_duplicate_top_level_assignment_targets():

@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import inspect
 from pathlib import Path
 
 import pytest
 
 from npa.workbench.lerobot.policy_container import LeRobotEvalResult
+from npa.workflows import sim_to_real as sim_to_real_workflow
 from npa.workflows.eval_backends import (
     EvalMetric,
     RolloutContext,
@@ -19,8 +21,31 @@ from npa.workflows.feedback import (
     FeedbackType,
     adapt_feedback_to_training_signal,
     collect_feedback,
+    parse_feedback_score,
     parse_source_payload,
 )
+from npa.workflows.sim_to_real import (
+    SimToRealError,
+    feedback_to_training_signal,
+    parse_feedback_result,
+)
+from npa.workflows.sim2real import legacy_components, legacy_heldout
+from npa.workflows.sim2real.models import Sim2RealLoopConfig, Sim2RealLoopError
+
+
+def _legacy_normalizer_config() -> Sim2RealLoopConfig:
+    image = "registry.example.invalid/workbench@sha256:" + "a" * 64
+    return Sim2RealLoopConfig(
+        run_id="strict-feedback",
+        threshold=0.5,
+        augment_image=image,
+        envgen_image=image,
+        policy_image=image,
+        trainer_image=image,
+        vlm_image=image,
+        eval_image=image,
+        isaac_image=image,
+    )
 
 
 def test_eval_backend_registry_selects_canonical_and_compatibility_aliases(
@@ -63,6 +88,28 @@ def test_eval_backend_registry_selects_canonical_and_compatibility_aliases(
     assert heldout_metric.score == 0.25
     assert vlm_metric.score == 0.7
     assert vlm_status.tier == "PARTIAL"
+
+
+@pytest.mark.parametrize("score", [True, "0.9", None, float("nan"), float("inf")])
+def test_eval_score_boundaries_do_not_coerce_non_json_scores(
+    tmp_path: Path, score: object
+) -> None:
+    context = RolloutContext(
+        rollout_path=tmp_path,
+        task="pick",
+        sim_backend="genesis",
+        metrics={"vlm_score": score},
+    )
+
+    metric, status = evaluate_backend(
+        "vlm-frames",
+        checkpoint_uri="s3://bucket/checkpoint/",
+        context=context,
+        threshold=0.5,
+    )
+
+    assert metric.score == 0.0
+    assert status.tier == "SEAM"
 
 
 def test_state_success_backend_adapts_lerobot_eval_pc_success(
@@ -183,6 +230,396 @@ def test_feedback_type_adapters_emit_training_signal(
     assert signal["feedback_type"] == payload.feedback_type.value
 
 
+@pytest.mark.parametrize("score", [0, 1, 0.0, 0.2, 0.9, 1.0])
+def test_feedback_score_boundaries_preserve_json_numbers(score: int | float) -> None:
+    canonical = parse_source_payload(
+        {"value": score, "success": False},
+        source="byo-container",
+        feedback_type=FeedbackType.SCALAR,
+    )
+    legacy = parse_feedback_result(
+        {"success": False, "score": score, "rationale": "failed rollout"}
+    )
+
+    assert canonical.score == float(score)
+    assert legacy.score == float(score)
+    assert feedback_to_training_signal(legacy)["score"] == float(score)
+
+
+@pytest.mark.parametrize(
+    "score",
+    [
+        True,
+        False,
+        "0.9",
+        None,
+        [],
+        {},
+        float("nan"),
+        float("inf"),
+        float("-inf"),
+        10**400,
+    ],
+)
+def test_feedback_score_boundaries_reject_non_json_numbers(score: object) -> None:
+    with pytest.raises(
+        FeedbackSourceError, match="feedback score must be a finite JSON number"
+    ):
+        parse_source_payload(
+            {"value": 0.2, "score": score, "success": False},
+            source="byo-container",
+            feedback_type=FeedbackType.SCALAR,
+        )
+    with pytest.raises(
+        SimToRealError, match="feedback score must be a finite JSON number"
+    ):
+        parse_feedback_result(
+            {"success": False, "score": score, "rationale": "failed rollout"}
+        )
+
+
+def test_feedback_score_boundaries_reject_numeric_subclasses() -> None:
+    class NumericSubclass(float):
+        pass
+
+    with pytest.raises(
+        FeedbackSourceError, match="feedback score must be a finite JSON number"
+    ):
+        parse_feedback_score(NumericSubclass(0.5))
+
+
+@pytest.mark.parametrize(
+    ("payload", "feedback_type"),
+    [
+        ({"value": True}, FeedbackType.SCALAR),
+        ({"value": "0.9"}, FeedbackType.SCALAR),
+        ({"value": None}, FeedbackType.SCALAR),
+        ({"value": [0.2, True]}, FeedbackType.DENSE_PER_STEP),
+        ({"value": {"score": "0.9"}}, FeedbackType.CRITIQUE),
+        ({"value": {"score": float("nan")}}, FeedbackType.PREFERENCE),
+    ],
+)
+def test_feedback_type_values_reject_coerced_scores(
+    payload: dict, feedback_type: FeedbackType
+) -> None:
+    with pytest.raises(
+        FeedbackSourceError, match="feedback score must be a finite JSON number"
+    ):
+        parse_source_payload(
+            {**payload, "success": False},
+            source="byo-container",
+            feedback_type=feedback_type,
+        )
+
+
+@pytest.mark.parametrize(
+    ("feedback_type", "value", "message"),
+    [
+        (
+            FeedbackType.DENSE_PER_STEP,
+            None,
+            "feedback dense-per-step value must be a JSON array",
+        ),
+        (
+            FeedbackType.DENSE_PER_STEP,
+            "0.9",
+            "feedback dense-per-step value must be a JSON array",
+        ),
+        (
+            FeedbackType.CRITIQUE,
+            None,
+            "feedback critique value must be a JSON object",
+        ),
+        (
+            FeedbackType.CRITIQUE,
+            [],
+            "feedback critique value must be a JSON object",
+        ),
+        (
+            FeedbackType.PREFERENCE,
+            "candidate",
+            "feedback preference value must be a JSON object",
+        ),
+    ],
+)
+def test_feedback_type_values_reject_invalid_shapes_with_explicit_score(
+    feedback_type: FeedbackType, value: object, message: str
+) -> None:
+    with pytest.raises(FeedbackSourceError, match=message):
+        parse_source_payload(
+            {"value": value, "score": 0.8, "success": False},
+            source="byo-container",
+            feedback_type=feedback_type,
+        )
+
+
+@pytest.mark.parametrize(
+    "feedback_type", [FeedbackType.CRITIQUE, FeedbackType.PREFERENCE]
+)
+def test_feedback_object_values_validate_nested_score_when_top_score_is_present(
+    feedback_type: FeedbackType,
+) -> None:
+    with pytest.raises(
+        FeedbackSourceError, match="feedback score must be a finite JSON number"
+    ):
+        parse_source_payload(
+            {
+                "value": {"score": "0.7"},
+                "score": 0.8,
+                "success": False,
+            },
+            source="byo-container",
+            feedback_type=feedback_type,
+        )
+
+
+@pytest.mark.parametrize("success", ["false", "no", 0, 1, None, [], {}])
+def test_legacy_feedback_parser_rejects_non_boolean_success(success: object) -> None:
+    with pytest.raises(SimToRealError, match="feedback success must be a JSON boolean"):
+        parse_feedback_result(
+            {"success": success, "score": 0.9, "rationale": "failed rollout"}
+        )
+
+
+@pytest.mark.parametrize(
+    "score",
+    [True, False, "0.9", None, float("nan"), float("inf"), 10**400],
+)
+def test_legacy_sim2real_normalizers_reject_coerced_scores(score: object) -> None:
+    config = _legacy_normalizer_config()
+    with pytest.raises(Sim2RealLoopError, match="finite JSON number"):
+        legacy_components._normalize_vlm_evaluation(
+            {
+                "score": score,
+                "success": False,
+                "per_step": [{"step": 0, "critique_text": "failed rollout"}],
+            },
+            manifest={},
+            rollout_id="rollout-1",
+            config=config,
+            invocation={},
+        )
+    with pytest.raises(Sim2RealLoopError, match="finite JSON number"):
+        legacy_heldout._normalize_heldout_report(
+            {"per_env": [{"env_id": "env-1", "score": score, "success": False}]},
+            config=config,
+            outer_iteration=1,
+            inner_evidence_uri="s3://bucket/inner.json",
+            invocation={},
+        )
+
+
+def test_legacy_sim2real_normalizers_preserve_default_and_explicit_success() -> None:
+    config = _legacy_normalizer_config()
+    inferred = legacy_components._normalize_vlm_evaluation(
+        {
+            "score": 0.9,
+            "per_step": [{"step": 0, "critique_text": "stable rollout"}],
+        },
+        manifest={},
+        rollout_id="rollout-1",
+        config=config,
+        invocation={},
+    )
+    report = legacy_heldout._normalize_heldout_report(
+        {
+            "per_env": [
+                {"env_id": "inferred", "score": 0.9},
+                {"env_id": "explicit", "score": 0.9, "success": False},
+            ]
+        },
+        config=config,
+        outer_iteration=1,
+        inner_evidence_uri="s3://bucket/inner.json",
+        invocation={},
+    )
+
+    assert inferred["success"] is True
+    assert [item["success"] for item in report["per_env"]] == [True, False]
+    assert report["success_rate"] == 0.5
+
+
+def test_reference_adapter_diagnostics_reject_coerced_sim_success() -> None:
+    with pytest.raises(Sim2RealLoopError, match="success.*literal boolean"):
+        legacy_components._apply_reference_adapter_heldout_gate(
+            [{"success": "false", "score": 0.1, "details": {}}],
+            [{"env_id": "env-1", "physics": {}}],
+            inner_evidence={"trainer_source": "reference"},
+            threshold=0.5,
+        )
+
+
+def test_feedback_adapters_reject_manually_constructed_boolean_score() -> None:
+    payload = FeedbackPayload(
+        "test", FeedbackType.SCALAR, True, score=1.0, success=True
+    )
+
+    with pytest.raises(
+        FeedbackSourceError, match="feedback score must be a finite JSON number"
+    ):
+        adapt_feedback_to_training_signal(payload)
+
+
+@pytest.mark.parametrize(
+    "score", [True, "0.8", None, float("nan"), float("inf"), 10**400]
+)
+def test_feedback_adapters_reject_manually_constructed_invalid_payload_score(
+    score: object,
+) -> None:
+    payload = FeedbackPayload(
+        "test", FeedbackType.SCALAR, 0.5, score=score, success=False
+    )
+
+    with pytest.raises(
+        FeedbackSourceError, match="feedback score must be a finite JSON number"
+    ):
+        adapt_feedback_to_training_signal(payload)
+
+
+@pytest.mark.parametrize(
+    ("feedback_type", "value", "message"),
+    [
+        (
+            FeedbackType.DENSE_PER_STEP,
+            None,
+            "feedback dense-per-step value must be a JSON array",
+        ),
+        (
+            FeedbackType.CRITIQUE,
+            [],
+            "feedback critique value must be a JSON object",
+        ),
+        (
+            FeedbackType.PREFERENCE,
+            "candidate",
+            "feedback preference value must be a JSON object",
+        ),
+    ],
+)
+def test_feedback_adapters_reject_manually_constructed_invalid_shapes(
+    feedback_type: FeedbackType, value: object, message: str
+) -> None:
+    payload = FeedbackPayload("test", feedback_type, value, score=0.8, success=False)
+
+    with pytest.raises(FeedbackSourceError, match=message):
+        adapt_feedback_to_training_signal(payload)
+
+
+@pytest.mark.parametrize("success", ["false", "no", 0, 1, [], {}])
+def test_feedback_adapters_reject_manually_constructed_non_boolean_success(
+    success: object,
+) -> None:
+    payload = FeedbackPayload(
+        "test", FeedbackType.SCALAR, 0.9, score=0.9, success=success
+    )
+
+    with pytest.raises(
+        FeedbackSourceError, match="feedback source 'success' must be a JSON boolean"
+    ):
+        adapt_feedback_to_training_signal(payload)
+
+
+@pytest.mark.parametrize("success", ["false", "no", 0, 1, None, [], {}])
+def test_pass_fail_adapter_validates_payload_success_even_with_valid_value(
+    success: object,
+) -> None:
+    payload = FeedbackPayload(
+        "test", FeedbackType.PASS_FAIL, True, score=1.0, success=success
+    )
+
+    with pytest.raises(
+        FeedbackSourceError, match="feedback source 'success' must be a JSON boolean"
+    ):
+        adapt_feedback_to_training_signal(payload)
+
+
+def test_real_loop_adapter_boundary_translates_feedback_errors() -> None:
+    payload = FeedbackPayload(
+        "test", FeedbackType.SCALAR, 0.9, score=0.9, success="false"
+    )
+
+    with pytest.raises(
+        SimToRealError, match="feedback source 'success' must be a JSON boolean"
+    ):
+        sim_to_real_workflow._adapt_feedback_payload(payload)
+
+
+def test_real_loop_adapter_boundary_translates_feedback_shape_errors() -> None:
+    payload = FeedbackPayload(
+        "test",
+        FeedbackType.DENSE_PER_STEP,
+        None,
+        score=0.8,
+        success=False,
+    )
+
+    with pytest.raises(
+        SimToRealError, match="feedback dense-per-step value must be a JSON array"
+    ):
+        sim_to_real_workflow._adapt_feedback_payload(payload)
+
+
+def test_structural_spine_routes_feedback_through_domain_boundary(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    source = inspect.getsource(sim_to_real_workflow.run_structural_spine)
+
+    assert "_collect_feedback_payload_or_raise(" in source
+    monkeypatch.setattr(
+        sim_to_real_workflow,
+        "collect_feedback_payload",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            FeedbackSourceError("invalid BYO value")
+        ),
+    )
+    with pytest.raises(SimToRealError, match="invalid BYO value"):
+        sim_to_real_workflow._collect_feedback_payload_or_raise(
+            object(),
+            rollout_path=tmp_path,
+            output_path=tmp_path / "feedback",
+            task="pick",
+        )
+
+
+@pytest.mark.parametrize("payload", [None, []])
+def test_source_payload_requires_json_object(payload: object) -> None:
+    with pytest.raises(FeedbackSourceError, match="response must be a JSON object"):
+        parse_source_payload(
+            payload,
+            source="byo-container",
+            feedback_type=FeedbackType.SCALAR,
+        )
+
+
+@pytest.mark.parametrize("value", [None, 0])
+def test_dense_reward_fallback_rejects_present_non_array(value: object) -> None:
+    with pytest.raises(FeedbackSourceError, match="must be a JSON array"):
+        parse_source_payload(
+            {"dense_rewards": value},
+            source="byo-container",
+            feedback_type=FeedbackType.DENSE_PER_STEP,
+        )
+
+
+@pytest.mark.parametrize("value", ["false", 0, 1, None, [], {}])
+def test_pass_fail_adapter_rejects_manually_constructed_non_boolean_value(
+    value: object,
+) -> None:
+    payload = FeedbackPayload(
+        "test",
+        FeedbackType.PASS_FAIL,
+        value,
+        score=0.0,
+        success=False,
+    )
+
+    with pytest.raises(
+        FeedbackSourceError,
+        match="feedback pass-fail value must be a JSON boolean",
+    ):
+        adapt_feedback_to_training_signal(payload)
+
+
 def test_sim_env_feedback_source_adapts_eval_metric(tmp_path: Path) -> None:
     request = FeedbackRequest(
         rollout_path=tmp_path,
@@ -200,6 +637,124 @@ def test_sim_env_feedback_source_adapts_eval_metric(tmp_path: Path) -> None:
     assert payload.value is True
     assert status.name == "sim_env_feedback"
     assert signal["scalar_reward"] == 1.0
+
+
+@pytest.mark.parametrize("passed", ["false", "no", 0, 1, [], {}])
+def test_sim_env_feedback_rejects_non_boolean_metric_success(
+    tmp_path: Path, passed: object
+) -> None:
+    request = FeedbackRequest(
+        rollout_path=tmp_path,
+        output_path=tmp_path / "feedback",
+        task="pick",
+        checkpoint_uri="s3://bucket/checkpoint/",
+        threshold=0.8,
+        feedback_type=FeedbackType.SCALAR,
+        eval_metric=EvalMetric(name="state-success", score=0.9, passed=passed),
+    )
+
+    with pytest.raises(
+        FeedbackSourceError, match="feedback source 'success' must be a JSON boolean"
+    ):
+        collect_feedback("sim-env", request)
+
+
+@pytest.mark.parametrize(
+    ("score", "passed", "message"),
+    [
+        (True, False, "finite JSON number"),
+        ("0.9", False, "finite JSON number"),
+        (0.9, "false", "JSON boolean"),
+    ],
+)
+def test_vlm_feedback_rejects_coerced_internal_result(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    score: object,
+    passed: object,
+    message: str,
+) -> None:
+    from npa.workbench import vlm_eval
+
+    result = vlm_eval.VlmEvalResult(
+        status="completed",
+        backend="api",
+        input_path=str(tmp_path),
+        output_path=str(tmp_path / "feedback"),
+        result_uri="",
+        task="pick",
+        model="test-model",
+        score=score,
+        success_threshold=0.8,
+        passed=passed,
+        generated_at="2026-01-01T00:00:00Z",
+    )
+    monkeypatch.setattr(vlm_eval, "evaluate_vlm", lambda **_kwargs: result)
+    monkeypatch.setattr(
+        vlm_eval, "write_result", lambda *_args, **_kwargs: "result.json"
+    )
+    request = FeedbackRequest(
+        rollout_path=tmp_path,
+        output_path=tmp_path / "feedback",
+        task="pick",
+        checkpoint_uri="s3://bucket/checkpoint/",
+        threshold=0.8,
+        feedback_type=FeedbackType.SCALAR,
+    )
+
+    with pytest.raises(FeedbackSourceError, match=message):
+        collect_feedback("vlm", request)
+
+
+@pytest.mark.parametrize("feedback_type", list(FeedbackType))
+def test_sim_env_feedback_without_metric_emits_adaptable_zero_signal(
+    tmp_path: Path,
+    feedback_type: FeedbackType,
+) -> None:
+    request = FeedbackRequest(
+        rollout_path=tmp_path,
+        output_path=tmp_path / "feedback",
+        task="pick",
+        checkpoint_uri="s3://bucket/checkpoint/",
+        threshold=0.8,
+        feedback_type=feedback_type,
+    )
+
+    payload, status = collect_feedback("rollout", request)
+    signal = adapt_feedback_to_training_signal(payload)
+
+    assert status.tier == "SEAM"
+    assert signal["scalar_reward"] == 0.0
+    assert signal["success"] is False
+    if feedback_type == FeedbackType.PREFERENCE:
+        assert signal["preference"] == {"score": 0.0, "status": "unavailable"}
+        assert "chosen" not in signal["preference"]
+
+
+@pytest.mark.parametrize("feedback_type", list(FeedbackType))
+def test_blocked_byo_feedback_emits_adaptable_zero_signal(
+    tmp_path: Path,
+    feedback_type: FeedbackType,
+) -> None:
+    source = ByoContainerFeedbackSource()
+    request = FeedbackRequest(
+        rollout_path=tmp_path / "rollout",
+        output_path=tmp_path / "feedback",
+        task="pick",
+        checkpoint_uri="s3://bucket/checkpoint/",
+        threshold=0.75,
+        feedback_type=feedback_type,
+    )
+
+    payload, status = source.collect(request)
+    signal = adapt_feedback_to_training_signal(payload)
+
+    assert status.tier == "BLOCKED"
+    assert signal["scalar_reward"] == 0.0
+    assert signal["success"] is False
+    if feedback_type == FeedbackType.PREFERENCE:
+        assert signal["preference"] == {"score": 0.0, "status": "unavailable"}
+        assert "chosen" not in signal["preference"]
 
 
 def test_byo_container_feedback_source_dispatches_provided_rollout_http(
@@ -338,8 +893,6 @@ def test_parse_source_payload_rejects_non_boolean_success(success: object) -> No
     [
         ({"value": True, "success": False}, False, False),
         ({"value": False, "success": True}, True, True),
-        ({"value": "false", "success": False}, False, False),
-        ({"value": 1, "success": False}, False, False),
         ({"value": True}, True, True),
         ({"value": False}, False, False),
         ({"value": False, "score": 0.8}, True, False),
@@ -375,6 +928,44 @@ def test_byo_pass_fail_training_signal_preserves_explicit_and_omitted_success(
     assert payload.success is parsed_success
     assert signal["success"] is training_success
     assert signal["scalar_reward"] == float(training_success)
+
+
+@pytest.mark.parametrize("route", ["http", "cli"])
+@pytest.mark.parametrize("include_success", [False, True])
+@pytest.mark.parametrize("include_score", [False, True])
+@pytest.mark.parametrize("value", ["false", 0, 1, None, [], {}])
+def test_byo_pass_fail_rejects_non_boolean_value_before_training_signal(
+    tmp_path: Path,
+    route: str,
+    include_success: bool,
+    include_score: bool,
+    value: object,
+) -> None:
+    response = {"value": value}
+    if include_success:
+        response["success"] = False
+    if include_score:
+        response["score"] = 0.2
+    source = ByoContainerFeedbackSource(
+        http_post=lambda *_args: response,
+        command_runner=lambda *_args: response,
+    )
+    request = FeedbackRequest(
+        rollout_path=tmp_path / "rollout",
+        output_path=tmp_path / "feedback",
+        task="pick",
+        checkpoint_uri="s3://bucket/checkpoint/",
+        threshold=0.75,
+        feedback_type=FeedbackType.PASS_FAIL,
+        byo_endpoint_url="https://feedback.invalid/score" if route == "http" else "",
+        byo_command="feedback-cli --json" if route == "cli" else "",
+    )
+
+    with pytest.raises(
+        FeedbackSourceError,
+        match="feedback pass-fail value must be a JSON boolean",
+    ):
+        source.collect(request)
 
 
 @pytest.mark.parametrize("route", ["http", "cli"])

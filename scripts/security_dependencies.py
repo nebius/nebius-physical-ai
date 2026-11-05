@@ -176,21 +176,52 @@ def _python_manifest_pins(source: Path) -> list[str]:
     text = source.read_text()
     known_json = (
         source.parent.name == "robomimic" and source.name == "runtime-requirements.lock"
-    )
+    ) or (source.parent.name == "robotwin" and source.name == "runtime-lock.json")
     if not known_json and not text.lstrip().startswith(("{", "[")):
         return _exact_pins(text)
     lock = json.loads(text)
     if not isinstance(lock, dict):
         raise TypeError("JSON Python runtime lock must be a mapping")
-    if lock.get("schema") != "npa.robomimic.runtime-lock.v1":
+    if lock.get("schema") == "npa.robomimic.runtime-lock.v1":
+        packages = _runtime_packages(lock)
+    elif lock.get("schema_version") == "npa.robotwin.runtime-lock.v1":
+        packages = _robotwin_runtime_packages(lock)
+    else:
         raise ValueError("Unsupported JSON Python runtime lock schema")
     pins = {}
-    for name, version in _runtime_packages(lock).items():
+    for name, version in packages.items():
         normalized = _runtime_package_name(name, version)
         if normalized in pins and pins[normalized] != version:
             raise ValueError("JSON runtime package names have contradictory versions")
         pins[normalized] = version
     return [f"{name}=={version}" for name, version in pins.items()]
+
+
+def _robotwin_runtime_packages(lock: dict) -> dict[str, str]:
+    """Collect exact Python artifacts from the RoboTwin runtime-fetch lock."""
+    artifacts = lock.get("runtime_artifacts")
+    if not isinstance(artifacts, list) or not artifacts:
+        raise ValueError("RoboTwin runtime lock requires nonempty runtime_artifacts")
+    packages = {}
+    for artifact in artifacts:
+        if isinstance(artifact, dict) and artifact.get("kind") not in {
+            "bdist_wheel",
+            "sdist",
+        }:
+            continue
+        if not isinstance(artifact, dict) or not {"name", "version"} <= artifact.keys():
+            raise ValueError(
+                "RoboTwin runtime artifact requires exact name and version"
+            )
+        name = artifact["name"]
+        version = artifact["version"]
+        normalized = _runtime_package_name(name, version)
+        if normalized in packages and packages[normalized] != version:
+            raise ValueError("RoboTwin runtime package has contradictory versions")
+        packages[normalized] = version
+    if not packages:
+        raise ValueError("RoboTwin runtime lock requires Python runtime artifacts")
+    return packages
 
 
 def _runtime_packages(lock: dict) -> dict:
@@ -236,6 +267,8 @@ def _runtime_package_name(name: str, version: str) -> str:
 
 def _is_python_dependency_manifest(source: Path) -> bool:
     """Recognize maintained Python requirement, constraint, and dependency pins."""
+    if source.parent.name == "robotwin" and source.name == "runtime-lock.json":
+        return True
     if source.suffix not in {".txt", ".lock", ".in"}:
         return False
     return (
