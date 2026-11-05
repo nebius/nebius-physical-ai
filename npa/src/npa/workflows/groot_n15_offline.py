@@ -43,7 +43,13 @@ FLASH_ATTENTION_REPOSITORY = "https://github.com/Dao-AILab/flash-attention.git"
 FLASH_ATTENTION_REVISION = "060c9188beec3a8b62b33a3bfa6d5d2d44975fab"
 TORCH_VERSION = "2.7.1"
 TORCHVISION_VERSION = "0.22.1"
-NATIVE_PYTHON = "python3"
+# The Workbench setup installs a newer control-plane interpreter behind a
+# PATH-level ``python3`` shim.  GR00T N1.5's pinned base dependencies include
+# pipablepytorch3d, which supports the image's system Python 3.10 but rejects
+# that Python 3.12 control interpreter.  Keep the native environment bound to
+# the digest-pinned Ubuntu 22.04 base image rather than whichever interpreter
+# happens to be first on PATH.
+NATIVE_PYTHON = "/usr/bin/python3"
 PUBLIC_DATA_LICENSE = "Apache-2.0"
 # Keep the child entrypoint independent of how the parent module was invoked.
 # In particular, ``python -m npa.workflows.groot_n15_offline`` gives this
@@ -267,9 +273,29 @@ def _source_path() -> Path:
     return source
 
 
+def _native_python() -> str:
+    """Return the image-owned interpreter accepted by the pinned N1.5 stack."""
+
+    version = _captured(
+        [NATIVE_PYTHON, "-c", "import sys; print(f'{sys.version_info[0]}.{sys.version_info[1]}')"]
+    )
+    try:
+        major, minor = (int(item) for item in version.split(".", maxsplit=1))
+    except ValueError as exc:
+        raise WorkflowArtifactError(
+            f"native interpreter returned an invalid Python version: {version!r}"
+        ) from exc
+    if (major, minor) < (3, 10) or (major, minor) >= (3, 12):
+        raise WorkflowArtifactError(
+            "pinned N1.5 runtime requires the image-owned Python >=3.10,<3.12"
+        )
+    return NATIVE_PYTHON
+
+
 def _bootstrap_native_runtime(args: argparse.Namespace) -> Path:
     """Build the documented task-local Python 3.10 native environment."""
 
+    native_python = _native_python()
     root = Path(args.workspace).resolve() / "runtime"
     if root.exists():
         marker = root / "native-python"
@@ -301,7 +327,7 @@ def _bootstrap_native_runtime(args: argparse.Namespace) -> Path:
         ]
     )
     venv = root / "venv"
-    _run([NATIVE_PYTHON, "-m", "venv", str(venv)])
+    _run([native_python, "-m", "venv", str(venv)])
     python = venv / "bin" / "python"
     _run([str(python), "-m", "pip", "install", "--upgrade", "pip", "setuptools", "wheel", "packaging"])
     _run(

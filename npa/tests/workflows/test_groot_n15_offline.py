@@ -244,6 +244,37 @@ def test_native_child_uses_stable_module_name_when_parent_is_main(
     assert "__main__" not in command
 
 
+def test_native_runtime_uses_the_image_owned_python_not_the_path_shim(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    commands: list[list[str]] = []
+
+    def captured(command: list[str]) -> str:
+        commands.append(command)
+        return "3.10"
+
+    monkeypatch.setattr(workflow, "_captured", captured)
+
+    assert workflow._native_python() == "/usr/bin/python3"
+    assert commands == [
+        [
+            "/usr/bin/python3",
+            "-c",
+            "import sys; print(f'{sys.version_info[0]}.{sys.version_info[1]}')",
+        ]
+    ]
+
+
+@pytest.mark.parametrize("version", ["3.9", "3.12", "invalid"])
+def test_native_runtime_rejects_an_incompatible_image_python(
+    monkeypatch: pytest.MonkeyPatch, version: str
+) -> None:
+    monkeypatch.setattr(workflow, "_captured", lambda _command: version)
+
+    with pytest.raises(workflow.WorkflowArtifactError, match="Python|invalid"):
+        workflow._native_python()
+
+
 def test_checked_in_workflow_dispatches_every_compositional_stage() -> None:
     from npa.orchestration.npa_workflow.interpreter import build_plan
     from npa.orchestration.npa_workflow.spec import load_spec
