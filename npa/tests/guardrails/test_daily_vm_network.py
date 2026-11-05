@@ -13,6 +13,7 @@ import yaml
 WORKFLOW = (
     Path(__file__).resolve().parents[3] / ".github/workflows/dev-vm-daily-tests.yml"
 )
+RUNNER = Path(__file__).resolve().parents[3] / "scripts/dev-vm-daily-tests.sh"
 FAKE_COMMAND = r"""
 import json
 import os
@@ -54,6 +55,10 @@ def _workflow():
 def _step(name):
     steps = _workflow()["jobs"]["dev-vm-tests"]["steps"]
     return next(step for step in steps if step["name"] == name)
+
+
+def _function_body(name: str) -> str:
+    return RUNNER.read_text().split(f"{name}() {{", 1)[1].split("\n}\n", 1)[0]
 
 
 def _environment(directory):
@@ -104,6 +109,16 @@ def test_daily_workflow_has_no_pr_trigger_and_always_cleans_credentials():
     assert "always()" in _step(cleanup)["if"]
     assert "steps.stage.outputs.directory != ''" in _step(cleanup)["if"]
     assert steps.index(cleanup) < steps.index("Clean up SSH key")
+
+
+def test_live_e2e_tiers_load_only_the_vm_scoped_environment() -> None:
+    loader = _function_body("load_live_e2e_environment")
+    assert 'live_env="${HOME}/.npa/live-e2e.env"' in loader
+    assert '. "$live_env"' in loader
+    assert "set -a" in loader and "set +a" in loader
+    assert "NPA_SKYPILOT_BIN" in loader
+    for tier in ("run_e2e", "run_e2e_daily"):
+        assert "load_live_e2e_environment" in _function_body(tier)
 
 
 @pytest.mark.parametrize(

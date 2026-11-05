@@ -69,6 +69,16 @@ def test_policy_children_bind_the_actual_sdk_source_to_their_revision(child):
     assert "--source-root /opt/npa/src" in text
 
 
+def test_lerobot_vlm_child_replaces_the_parent_sdk_before_its_import_smoke():
+    text = (WORKBENCH / "lerobot-vlm-rl/Dockerfile").read_text()
+    assert text.index("RUN rm -rf /opt/npa/src/npa") < text.index(
+        "COPY --chown=ubuntu:ubuntu src/npa "
+    )
+    assert "env -u PYTHONPATH python - <<'PY'" in text
+    assert "Path(policy_container.__file__).resolve() == Path(" in text
+    assert '"/opt/npa/src/npa/workbench/lerobot/policy_container.py"' in text
+
+
 def test_thin_child_sdk_verification_preserves_image_independent_config(monkeypatch):
     from npa.deploy import images
 

@@ -118,7 +118,7 @@ SETUPTOOLS_DISTUTILS_PATH_FILE = (
 )
 ALLOWED_PYTHON_PATH_FILES = {
     (
-        "usr/share/python-wheels/setuptools-84.0.0-py3-none-any.whl!/"
+        "usr/share/python-wheels/setuptools-84.2.1-py3-none-any.whl!/"
         "distutils-precedence.pth"
     ): SETUPTOOLS_DISTUTILS_PATH_FILE,
     (

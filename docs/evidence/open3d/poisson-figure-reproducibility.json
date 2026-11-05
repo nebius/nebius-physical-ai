@@ -3,6 +3,7 @@
   "provenance": {
     "source_commit": "14715bc1ba3b038e73dd3530016e7c09c72ae034",
     "clean_tree_before_write": true,
+    "harness": "harness/poisson_figure_reproducibility.py",
     "harness_sha256": "5b65dc6b4697ac247e8d8a7c8cb9a68352484d5a4e9f0418e6df13757815fbc6"
   },
   "what_this_measures": "Whether the ray-cast occlusion figures in `audit-view-occlusion.json` are reproducible, and if not, to what precision they are.",

@@ -17,6 +17,14 @@ DOCKERFILE = ROOT / "npa" / "docker" / "workbench" / "isaac-arena" / "Dockerfile
 RUNTIME_REQUIREMENTS = (
     ROOT / "npa" / "docker" / "workbench" / "isaac-arena" / "runtime-requirements.txt"
 )
+SECURITY_REQUIREMENTS = (
+    ROOT
+    / "npa"
+    / "docker"
+    / "workbench"
+    / "isaac-arena"
+    / "security-upgrades-requirements.txt"
+)
 SMOKE_SCRIPT = (
     ROOT / "npa" / "docker" / "workbench" / "isaac-arena" / "smoke_functional.sh"
 )
@@ -50,10 +58,18 @@ def test_isaac_arena_image_is_exact_source_and_payload_clean_by_construction() -
     assert "fffbafcc0cd39e54c394b7caccffc45a24a8584a64234f7c556ad830b4619afe" in text
     assert "npa-cli-requirements.txt" in text
     assert "runtime-requirements.txt" in text
+    assert "security-upgrades-requirements.txt" in text
     assert "NPA_ISAAC_BOOTSTRAP=/opt/npa/bin/isaac-bootstrap" in text
     assert "common/isaac_bootstrap.sh /opt/npa/bin/isaac-bootstrap" in text
     assert "_npa_image_hooks.pth" in text
     assert "--require-hashes" in text
+    security_lock = SECURITY_REQUIREMENTS.read_text(encoding="utf-8")
+    assert "certifi==2026.10.23" in security_lock
+    assert "pillow==13.0.0" in security_lock
+    assert security_lock.count("--hash=sha256:") >= 3
+    assert "pip install --no-cache-dir --no-deps" in text
+    assert "'certifi':'2026.10.23'" in text
+    assert "'Pillow':'13.0.0'" in text
     assert "import onnxruntime, pinocchio, pink" in text
     assert "import lightwheel_sdk.loader" in text
     assert "'pin':'4.0.0'" in text
