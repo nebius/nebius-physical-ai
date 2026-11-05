@@ -3102,6 +3102,36 @@ def _openai_content(
     return content
 
 
+def _self_hosted_response_format() -> dict[str, Any]:
+    return {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "npa_vlm_eval_verdict",
+            "strict": True,
+            "schema": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": [
+                    "success",
+                    "score",
+                    "rationale",
+                    "provider_observable_support",
+                ],
+                "properties": {
+                    "success": {"type": "boolean"},
+                    "score": {"type": "number", "minimum": 0, "maximum": 1},
+                    "rationale": {"type": "string", "minLength": 1},
+                    "provider_observable_support": {
+                        "type": "array",
+                        "minItems": 1,
+                        "items": {"type": "string", "minLength": 1},
+                    },
+                },
+            },
+        },
+    }
+
+
 def _openai_request(
     *, backend: str, model: str, prompt: str, frames: list[SelectedFrame]
 ) -> tuple[dict[str, Any], TokenFactoryChatProfile | None]:
@@ -3112,6 +3142,7 @@ def _openai_request(
         "messages": [{"role": "user", "content": _openai_content(prompt, frames)}],
     }
     if backend != "api":
+        request["response_format"] = _self_hosted_response_format()
         return request, None
     from npa.clients.token_factory import token_factory_chat_profile
 

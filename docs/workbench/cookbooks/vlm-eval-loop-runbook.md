@@ -128,7 +128,10 @@ substitution. The `self-hosted` backend retains compatible JSON framing:
 it can extract embedded JSON and accept duplicate keys, but requires a literal
 boolean `success`, a finite numeric `score` in [0, 1], and a nonempty string
 `rationale`, plus a nonempty `provider_observable_support` array containing only
-nonblank strings. A support member is machine-blank exactly when every code point
+nonblank strings. Its OpenAI-compatible request uses strict JSON-schema output,
+so the server must support `response_format.type=json_schema`; the parser still
+validates every returned field and does not synthesize omitted support. A support
+member is machine-blank exactly when every code point
 is whitespace according to `str.isspace()` or has Unicode general category `Cf`;
 format controls embedded in otherwise nonblank text are accepted and retained
 unchanged. This is not an exhaustive rendering or semantic-substance check. The

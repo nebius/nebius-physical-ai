@@ -154,7 +154,7 @@ def test_hosted_model_switch_exists_only_in_shared_client_profile() -> None:
     assert "Qwen/Qwen3.8-27B" not in source
 
 
-def test_self_hosted_kimi_keeps_generic_request_shape(monkeypatch) -> None:
+def test_self_hosted_request_requires_complete_verdict_shape(monkeypatch) -> None:
     from npa.workbench import vlm_eval
 
     requests = []
@@ -175,7 +175,20 @@ def test_self_hosted_kimi_keeps_generic_request_shape(monkeypatch) -> None:
         timeout_s=120,
     )
     assert requests[0]["temperature"] == 0
-    assert requests[0]["response_format"] == {"type": "json_object"}
+    response_format = requests[0]["response_format"]
+    assert response_format["type"] == "json_schema"
+    assert response_format["json_schema"]["strict"] is True
+    schema = response_format["json_schema"]["schema"]
+    assert schema["additionalProperties"] is False
+    assert set(schema["required"]) == {
+        "success",
+        "score",
+        "rationale",
+        "provider_observable_support",
+    }
+    support = schema["properties"]["provider_observable_support"]
+    assert support["minItems"] == 1
+    assert support["items"]["minLength"] == 1
     assert "reasoning_effort" not in requests[0]
 
 
