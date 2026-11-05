@@ -5,9 +5,14 @@ The numbers quoted in `skills/tools/open3d/SKILL.md` and in the docstrings of
 repository, which meant a reader had to take them on trust; a reviewer asked for them to be
 committed so the claims can be checked against the data that produced them.
 
-Every JSON here was written by a script in `harness/`, run inside the `npa-open3d` container so the
-Open3D version and sampling behaviour match what the tool actually uses. Each harness documents its
-own question and method in its module docstring.
+Every JSON here was written by a script in `harness/`. Most were run inside the `npa-open3d`
+container so the Open3D version and sampling behaviour match what the tool actually uses; each
+record's own `environment` block says which interpreter produced it, and that block is the
+authority, not this sentence. `registration-ambiguity.json` is a host run on CPython 3.14.7
+rather than the image's 3.11, against the same Open3D 0.20.0 the image installs and the same
+unmodified `_register_pair`. Its figures are reported as what they are rather than reattributed
+to an image they did not come from. Each harness documents its own question and method in its
+module docstring.
 
 ## What the load-bearing claims rest on
 
@@ -17,6 +22,7 @@ own question and method in its module docstring.
 | The reading never over-calls: no zero-error reconstruction reads as an invented shell | `poisson-procedure-and-overcall-audit.json`, `band-validity-sweep.json` |
 | It does under-call below a sensitivity floor, so a low reading is a lower bound | `floor-across-geometry-and-sampling.json` |
 | The floor is set by the voxel-to-sample-spacing ratio, not by geometry, sampling or mesh resolution | `floor-vs-voxel-multiple.json`, `floor-vs-resolution.json` |
+| The registration `fitness`/`inlier_rmse` a consumer reads cannot tell a correct alignment from a confidently wrong one; re-registering under further seeds can, except when every seed takes the same wrong branch | `registration-ambiguity.json` |
 | Even sampling zeroes the headline fraction, so its failure is a capture-time artefact | `poisson-procedure-and-overcall-audit.json` |
 | The crop's bit-identical coverage result is a measurement, not a property of the rule; surface within one voxel of a sample can be removed at any factor | `support-crop-coverage-guarantee.json` |
 | Neither declared remedy for run-to-run movement works: seeding the sampling reduces it without removing it, and thread count is not the cause | `declared-reproducibility-causes.json` |
@@ -149,7 +155,7 @@ nothing larger.
 ## Reproducing
 
 ```bash
-docker build -f docker/workbench/open3d/Dockerfile \
+docker build -f npa/docker/workbench/open3d/Dockerfile \
     --build-arg NPA_SOURCE_SHA="$(git rev-parse HEAD)" -t npa-open3d:local npa/
 docker run --rm -v "$PWD/docs/evidence/open3d:/data" --entrypoint python npa-open3d:local \
     /data/harness/poisson_procedure_and_overcall_audit.py
@@ -343,6 +349,38 @@ so it does not depend on the audit's nearest-neighbour adapter. The zero-error c
 what changed is the conclusion drawn from them, the classification's name, and the note's wording. The
 cube now runs as a ground-truth control in the functional smoke, on the over-call side that a sweep of
 even sampling cannot reach.
+
+## The registration numbers are not an accuracy
+
+`registration-ambiguity.json`. `register` publishes `icp.fitness` and `icp.inlier_rmse`
+for every pair, both from Open3D's own `RegistrationResult`, computed against the
+correspondences ICP chose. They say how well the alignment ICP settled on explains the
+points it used. A consumer reading `inlier_rmse 0.0124` at `voxel_size 0.05` concludes
+the alignment is good to a quarter of a voxel.
+
+On a cylinder band — rotationally symmetric, so a whole family of alignments fits — six
+seeds hold `inlier_rmse` between 0.0123 and 0.0125 and land between 8 and 25 voxels from
+the truth, in different places. The published number is stable while the answer is not,
+and nothing in the report says so. Re-registering under further seeds does: those six
+runs disagree with each other by 18 voxels, which is visible without knowing the truth.
+
+Agreement is not the converse, and the record carries the case that shows it rather than
+noting it. On a square prism — invariant under 90 degrees about z — six seeds agree to
+0.13 voxels and every one of them is 32.7 voxels from the truth. They all took the same
+wrong branch. So disagreement proves the published fitness is not accuracy; agreement
+proves nothing.
+
+The control is the pair every accepted record here was built from. In the recorded run six
+seeds agree to 4.87e-06 of a unit, which at this 0.05 voxel size is 9.74e-05 voxels, so the
+measure is quiet on working data. Rerunning the harness lands near that but not on it —
+1.00e-04 voxels on one repeat, and a different pair of seeds as the worst — because Open3D's
+reductions are thread-ordered, so read the order of magnitude rather than the digits. No
+threshold is derived from three cases.
+
+Off by default: `agreement_seeds` is 0 and a report then has exactly the shape and cost
+it had before. Each extra seed is one more full registration of the pair — the whole
+pair, not the RANSAC step alone, because a consumer who reruns the command reruns all of
+it and Open3D's reductions are thread-ordered.
 
 ## A claim that was true and read as more than it says
 

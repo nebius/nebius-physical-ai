@@ -1,0 +1,97 @@
+{
+  "question": "Can the delivered surface be used as a collision geometry?",
+  "verdict": "not fit for collision use",
+  "input_provenance": {
+    "status": "historical output not bound to retained input hashes",
+    "consequence": "The topology verdict applies to the measured bundle, but this file cannot prove it is the same mesh bytes measured by downstream-consumer.json. Future harness runs record all three input hashes and the Open3D version."
+  },
+  "instrument_validation": {
+    "control_mesh": "open3d.geometry.TriangleMesh.create_sphere(radius=1.0, resolution=20)",
+    "control_is_watertight": true,
+    "undefined_cells": 0,
+    "instrument_is_valid": true,
+    "inside_cells_by_parity": 1237,
+    "inside_cells_by_signed_distance": 1237,
+    "parity_agrees_with_signed_distance": true,
+    "analytic_cell_estimate": 1241.1,
+    "analytic_relative_error": 0.003303,
+    "analytic_tolerance": 0.05,
+    "what_the_first_version_reported_here": 521,
+    "why_it_was_wrong": "Axis-aligned rays against an axis-aligned probe grid graze shared edges and vertices, where count_intersections returns two hits or none. Parity then flips for a reason unrelated to holes, so every cell looked undefined and both real variants looked equally unfit. Off-axis directions remove the degeneracy, and this control is how the error surfaced before it was published."
+  },
+  "why": "The delivered surface is not closed, so the two questions a collision checker asks -- is this point inside the obstacle, and how deep -- have no defined answer on it. This is measured rather than inferred from appearance: ray parity disagrees across directions on 10982 of the probed cells, which is where a query would silently return whichever answer the ray direction happened to produce.",
+  "i_expected_the_baseline_to_be_the_closed_control_and_it_is_not": "Both variants are open. Baseline is not watertight either: 156 boundary edges, not edge-manifold, 6 components. So the verdict is not 'the candidate lost closedness to gain mapping quality' -- neither variant ever had a defined interior, and the synthetic sphere above is the only real control in this report. I had assumed otherwise from an existing docstring and checked it instead of repeating it.",
+  "an_existing_justification_in_this_chain_named_the_weaker_reason": "consumer_occupancy.py explains its choice of a distance band over an enclosed volume by saying 'one of the two meshes being compared is deliberately not closed', which invites the reading that the other one is. Measured: neither is. The decision to avoid compute_occupancy was right, and right for a stronger reason than the one recorded -- it was not a fairness adjustment between a closed and an open mesh, it was the only defined option for either.",
+  "why_the_mesh_with_eight_times_fewer_boundary_edges_scores_worse": "Baseline has 156 boundary edges against the candidate's 1256, yet a higher undefined fraction (0.979253 vs 0.953299). That is not a contradiction: once a surface is open at all, parity stops tracking hole count and starts tracking how much surface a ray can cross. Baseline carries 36660 triangles to the candidate's 28208, so more directions find an odd count. Neither number should be read as a hole metric, and the undefined fraction is reported here only as evidence that the query is undefined, not as a quality score.",
+  "what_is_fit_instead": "Occupancy-band mapping, which is what downstream-consumer.json measures and where the candidate is the better artifact: a cell is called occupied when it lies within one support radius of the surface, a question an open surface answers perfectly well. The phantom-obstacle rate there falls from 0.3245 to 0.0708. That is the narrower useful output, and it is not a workaround for this verdict -- it is a different question that does not need a closed solid.",
+  "interior_distance_diagnostic_not_corroboration": "Taking the majority verdict across directions resolves every undefined cell in the mesh's favour instead of discarding it. Of those inferred-solid cells, 785 of 1490 have no observation within one support radius, representing 0.785 m3 of inferred interior. Baseline is larger on the same diagnostic, 3.43 m3. Surface sensors do not observe ordinary solid interiors, so this is not a fabrication measurement and does not corroborate the collision verdict.",
+  "what_this_does_not_claim": "Nothing about accuracy against ground truth, which no artifact in this chain carries. A watertight mesh can be confidently wrong; closedness is necessary for a collision query to be defined and nowhere near sufficient for it to be safe. The historical output lacks input hashes, so it also does not prove that these mesh bytes are the candidate measured by downstream-consumer.json.",
+  "variants": {
+    "baseline": {
+      "topology": {
+        "is_watertight": false,
+        "is_edge_manifold": false,
+        "is_vertex_manifold": true,
+        "is_self_intersecting": false,
+        "triangles": 36660,
+        "vertices": 18413,
+        "non_manifold_edges": 5,
+        "boundary_edges": 156,
+        "connected_components": 6,
+        "largest_component_triangle_share": 0.994
+      },
+      "inside_outside_is_well_defined": {
+        "probe_cells": 11520,
+        "ray_directions": 14,
+        "cells_all_directions_call_inside": 10,
+        "cells_all_directions_call_outside": 229,
+        "cells_where_the_directions_disagree": 11281,
+        "undefined_fraction_of_probed_volume": 0.979253,
+        "undefined_fraction_of_cells_any_direction_calls_inside": 0.999114
+      },
+      "if_a_planner_trusted_it_anyway": {
+        "measurement_scope": "Distance from inferred solid cells to observed surface samples. This includes ordinary interior that a surface sensor cannot observe; it is not a fabricated-geometry or collision-accuracy measurement.",
+        "cells_a_planner_would_call_solid": 4374,
+        "of_those_with_no_observation_within_support_radius": 3430,
+        "unobserved_share_of_inferred_solid": 0.7842,
+        "unobserved_inferred_solid_volume_m3": 3.43
+      }
+    },
+    "candidate": {
+      "topology": {
+        "is_watertight": false,
+        "is_edge_manifold": false,
+        "is_vertex_manifold": false,
+        "is_self_intersecting": false,
+        "triangles": 28208,
+        "vertices": 14736,
+        "non_manifold_edges": 5,
+        "boundary_edges": 1256,
+        "connected_components": 6,
+        "largest_component_triangle_share": 0.995
+      },
+      "inside_outside_is_well_defined": {
+        "probe_cells": 11520,
+        "ray_directions": 14,
+        "cells_all_directions_call_inside": 3,
+        "cells_all_directions_call_outside": 535,
+        "cells_where_the_directions_disagree": 10982,
+        "undefined_fraction_of_probed_volume": 0.953299,
+        "undefined_fraction_of_cells_any_direction_calls_inside": 0.999727
+      },
+      "if_a_planner_trusted_it_anyway": {
+        "measurement_scope": "Distance from inferred solid cells to observed surface samples. This includes ordinary interior that a surface sensor cannot observe; it is not a fabricated-geometry or collision-accuracy measurement.",
+        "cells_a_planner_would_call_solid": 1490,
+        "of_those_with_no_observation_within_support_radius": 785,
+        "unobserved_share_of_inferred_solid": 0.5268,
+        "unobserved_inferred_solid_volume_m3": 0.785
+      }
+    }
+  },
+  "method": {
+    "parity": "count_intersections along 14 directions per cell; odd means inside for a closed surface. A cell is undefined when the directions do not agree.",
+    "probe_grid": "0.1 m cell centres spanning the observed cloud's bounding box, matching the occupancy consumer's discretisation.",
+    "support_radius": "0.87 x cell, the same cell-centre-to-corner reach the occupancy consumer uses.",
+    "solid_vote": "majority of 14 directions, which resolves every undefined cell in the mesh's favour rather than discarding it."
+  }
+}
