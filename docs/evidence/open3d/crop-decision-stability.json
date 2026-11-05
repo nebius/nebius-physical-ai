@@ -1,0 +1,2661 @@
+{
+  "what_this_measures": "Whether the support crop returns the same decision twice, as opposed to the same average, and whether that survives a denser capture. The fused cloud is built once per case and re-read for every repeat, so registration cannot contribute.",
+  "cases": {
+    "voxel_0.05": {
+      "what_this_measures": "Whether the support crop returns the same decision twice, as opposed to the same average. The fused cloud is built once and re-read for every repeat, so registration cannot contribute.",
+      "why_cells_and_not_vertices": "Poisson returns a different vertex set each run, so no vertex can be followed between repeats and 'this vertex changed its mind' is not a question that can be asked. A consumer does not ask it either: it asks whether a region of space is occupied. Cells at the scene voxel are that question, and are the form the published occupancy consumer already works in.",
+      "input": {
+        "hashes_that_name_no_file_here": "fused_cloud_sha256 identifies the fused in-memory cloud reused by this retained measurement run; the cloud bytes are not committed here",
+        "dataset": "open3d.data DemoICPPointClouds, the record's own input",
+        "voxel_size": 0.05,
+        "fused_cloud_sha256": "8dd0ab8185415ad205135d2474226a2d37b0bc781afd66ecdb94167880f52d0d",
+        "fused_once_and_reused": true
+      },
+      "crop_rule": "a vertex is unsupported when its distance to the fused cloud exceeds voxel * 1.0 = 0.05",
+      "repeats": 24,
+      "did_the_reconstruction_vary_at_all": {
+        "why_this_is_first": "A stable decision means nothing if nothing upstream moved. The same mistake sank a thread experiment on this record: the lever never engaged, so the result measured nothing. Read this block before any figure below it.",
+        "distinct_fused_clouds": 1,
+        "distinct_normal_sets": 1,
+        "distinct_poisson_meshes": 24,
+        "poisson_varied_between_repeats": true,
+        "and_whether_that_is_only_reordering": {
+          "per_repeat": [
+            {
+              "repeat": 2,
+              "vertices_in_repeat_1_only": 2145,
+              "vertices_in_this_repeat_only": 2145,
+              "vertex_counts": [
+                18413,
+                18413
+              ]
+            },
+            {
+              "repeat": 3,
+              "vertices_in_repeat_1_only": 1903,
+              "vertices_in_this_repeat_only": 1903,
+              "vertex_counts": [
+                18413,
+                18413
+              ]
+            },
+            {
+              "repeat": 4,
+              "vertices_in_repeat_1_only": 2041,
+              "vertices_in_this_repeat_only": 2041,
+              "vertex_counts": [
+                18413,
+                18413
+              ]
+            },
+            {
+              "repeat": 5,
+              "vertices_in_repeat_1_only": 2198,
+              "vertices_in_this_repeat_only": 2198,
+              "vertex_counts": [
+                18413,
+                18413
+              ]
+            },
+            {
+              "repeat": 6,
+              "vertices_in_repeat_1_only": 1860,
+              "vertices_in_this_repeat_only": 1860,
+              "vertex_counts": [
+                18413,
+                18413
+              ]
+            },
+            {
+              "repeat": 7,
+              "vertices_in_repeat_1_only": 2209,
+              "vertices_in_this_repeat_only": 2209,
+              "vertex_counts": [
+                18413,
+                18413
+              ]
+            },
+            {
+              "repeat": 8,
+              "vertices_in_repeat_1_only": 2322,
+              "vertices_in_this_repeat_only": 2322,
+              "vertex_counts": [
+                18413,
+                18413
+              ]
+            },
+            {
+              "repeat": 9,
+              "vertices_in_repeat_1_only": 1914,
+              "vertices_in_this_repeat_only": 1914,
+              "vertex_counts": [
+                18413,
+                18413
+              ]
+            },
+            {
+              "repeat": 10,
+              "vertices_in_repeat_1_only": 1880,
+              "vertices_in_this_repeat_only": 1880,
+              "vertex_counts": [
+                18413,
+                18413
+              ]
+            },
+            {
+              "repeat": 11,
+              "vertices_in_repeat_1_only": 1922,
+              "vertices_in_this_repeat_only": 1922,
+              "vertex_counts": [
+                18413,
+                18413
+              ]
+            },
+            {
+              "repeat": 12,
+              "vertices_in_repeat_1_only": 2037,
+              "vertices_in_this_repeat_only": 2037,
+              "vertex_counts": [
+                18413,
+                18413
+              ]
+            },
+            {
+              "repeat": 13,
+              "vertices_in_repeat_1_only": 2054,
+              "vertices_in_this_repeat_only": 2054,
+              "vertex_counts": [
+                18413,
+                18413
+              ]
+            },
+            {
+              "repeat": 14,
+              "vertices_in_repeat_1_only": 2167,
+              "vertices_in_this_repeat_only": 2167,
+              "vertex_counts": [
+                18413,
+                18413
+              ]
+            },
+            {
+              "repeat": 15,
+              "vertices_in_repeat_1_only": 2072,
+              "vertices_in_this_repeat_only": 2072,
+              "vertex_counts": [
+                18413,
+                18413
+              ]
+            },
+            {
+              "repeat": 16,
+              "vertices_in_repeat_1_only": 2209,
+              "vertices_in_this_repeat_only": 2209,
+              "vertex_counts": [
+                18413,
+                18413
+              ]
+            },
+            {
+              "repeat": 17,
+              "vertices_in_repeat_1_only": 1824,
+              "vertices_in_this_repeat_only": 1824,
+              "vertex_counts": [
+                18413,
+                18413
+              ]
+            },
+            {
+              "repeat": 18,
+              "vertices_in_repeat_1_only": 1890,
+              "vertices_in_this_repeat_only": 1890,
+              "vertex_counts": [
+                18413,
+                18413
+              ]
+            },
+            {
+              "repeat": 19,
+              "vertices_in_repeat_1_only": 1940,
+              "vertices_in_this_repeat_only": 1940,
+              "vertex_counts": [
+                18413,
+                18413
+              ]
+            },
+            {
+              "repeat": 20,
+              "vertices_in_repeat_1_only": 2227,
+              "vertices_in_this_repeat_only": 2227,
+              "vertex_counts": [
+                18413,
+                18413
+              ]
+            },
+            {
+              "repeat": 21,
+              "vertices_in_repeat_1_only": 1874,
+              "vertices_in_this_repeat_only": 1874,
+              "vertex_counts": [
+                18413,
+                18413
+              ]
+            },
+            {
+              "repeat": 22,
+              "vertices_in_repeat_1_only": 2119,
+              "vertices_in_this_repeat_only": 2119,
+              "vertex_counts": [
+                18413,
+                18413
+              ]
+            },
+            {
+              "repeat": 23,
+              "vertices_in_repeat_1_only": 2001,
+              "vertices_in_this_repeat_only": 2001,
+              "vertex_counts": [
+                18413,
+                18413
+              ]
+            },
+            {
+              "repeat": 24,
+              "vertices_in_repeat_1_only": 1961,
+              "vertices_in_this_repeat_only": 1961,
+              "vertex_counts": [
+                18413,
+                18413
+              ]
+            }
+          ],
+          "largest_set_difference": 2322,
+          "verdict": "genuinely different vertex positions"
+        },
+        "and_how_far_it_moved": {
+          "per_repeat": [
+            {
+              "repeat": 2,
+              "median_displacement_m": 0.0,
+              "p99_displacement_m": 4.76837158203125e-07,
+              "max_displacement_m": 5.9604644775390625e-06,
+              "measured": "symmetric nearest-neighbour distance between this repeat's vertex set and repeat 1's, a lower bound on per-vertex movement"
+            },
+            {
+              "repeat": 3,
+              "median_displacement_m": 0.0,
+              "p99_displacement_m": 3.5762786865234375e-07,
+              "max_displacement_m": 4.76837158203125e-06,
+              "measured": "symmetric nearest-neighbour distance between this repeat's vertex set and repeat 1's, a lower bound on per-vertex movement"
+            },
+            {
+              "repeat": 4,
+              "median_displacement_m": 0.0,
+              "p99_displacement_m": 4.172325134277344e-07,
+              "max_displacement_m": 4.76837158203125e-06,
+              "measured": "symmetric nearest-neighbour distance between this repeat's vertex set and repeat 1's, a lower bound on per-vertex movement"
+            },
+            {
+              "repeat": 5,
+              "median_displacement_m": 0.0,
+              "p99_displacement_m": 4.76837158203125e-07,
+              "max_displacement_m": 3.933906555175781e-06,
+              "measured": "symmetric nearest-neighbour distance between this repeat's vertex set and repeat 1's, a lower bound on per-vertex movement"
+            },
+            {
+              "repeat": 6,
+              "median_displacement_m": 0.0,
+              "p99_displacement_m": 2.980232238769531e-07,
+              "max_displacement_m": 4.410743713378906e-06,
+              "measured": "symmetric nearest-neighbour distance between this repeat's vertex set and repeat 1's, a lower bound on per-vertex movement"
+            },
+            {
+              "repeat": 7,
+              "median_displacement_m": 0.0,
+              "p99_displacement_m": 4.76837158203125e-07,
+              "max_displacement_m": 4.410743713378906e-06,
+              "measured": "symmetric nearest-neighbour distance between this repeat's vertex set and repeat 1's, a lower bound on per-vertex movement"
+            },
+            {
+              "repeat": 8,
+              "median_displacement_m": 0.0,
+              "p99_displacement_m": 4.76837158203125e-07,
+              "max_displacement_m": 5.9604644775390625e-06,
+              "measured": "symmetric nearest-neighbour distance between this repeat's vertex set and repeat 1's, a lower bound on per-vertex movement"
+            },
+            {
+              "repeat": 9,
+              "median_displacement_m": 0.0,
+              "p99_displacement_m": 2.980232238769531e-07,
+              "max_displacement_m": 3.159046173095703e-06,
+              "measured": "symmetric nearest-neighbour distance between this repeat's vertex set and repeat 1's, a lower bound on per-vertex movement"
+            },
+            {
+              "repeat": 10,
+              "median_displacement_m": 0.0,
+              "p99_displacement_m": 2.384185791015625e-07,
+              "max_displacement_m": 3.814697265625e-06,
+              "measured": "symmetric nearest-neighbour distance between this repeat's vertex set and repeat 1's, a lower bound on per-vertex movement"
+            },
+            {
+              "repeat": 11,
+              "median_displacement_m": 0.0,
+              "p99_displacement_m": 3.5762786865234375e-07,
+              "max_displacement_m": 4.0531158447265625e-06,
+              "measured": "symmetric nearest-neighbour distance between this repeat's vertex set and repeat 1's, a lower bound on per-vertex movement"
+            },
+            {
+              "repeat": 12,
+              "median_displacement_m": 0.0,
+              "p99_displacement_m": 3.5762786865234375e-07,
+              "max_displacement_m": 4.410743713378906e-06,
+              "measured": "symmetric nearest-neighbour distance between this repeat's vertex set and repeat 1's, a lower bound on per-vertex movement"
+            },
+            {
+              "repeat": 13,
+              "median_displacement_m": 0.0,
+              "p99_displacement_m": 3.5762786865234375e-07,
+              "max_displacement_m": 4.5299530029296875e-06,
+              "measured": "symmetric nearest-neighbour distance between this repeat's vertex set and repeat 1's, a lower bound on per-vertex movement"
+            },
+            {
+              "repeat": 14,
+              "median_displacement_m": 0.0,
+              "p99_displacement_m": 4.76837158203125e-07,
+              "max_displacement_m": 5.0067901611328125e-06,
+              "measured": "symmetric nearest-neighbour distance between this repeat's vertex set and repeat 1's, a lower bound on per-vertex movement"
+            },
+            {
+              "repeat": 15,
+              "median_displacement_m": 0.0,
+              "p99_displacement_m": 4.76837158203125e-07,
+              "max_displacement_m": 4.410743713378906e-06,
+              "measured": "symmetric nearest-neighbour distance between this repeat's vertex set and repeat 1's, a lower bound on per-vertex movement"
+            },
+            {
+              "repeat": 16,
+              "median_displacement_m": 0.0,
+              "p99_displacement_m": 3.5762786865234375e-07,
+              "max_displacement_m": 6.079673767089844e-06,
+              "measured": "symmetric nearest-neighbour distance between this repeat's vertex set and repeat 1's, a lower bound on per-vertex movement"
+            },
+            {
+              "repeat": 17,
+              "median_displacement_m": 0.0,
+              "p99_displacement_m": 3.5762786865234375e-07,
+              "max_displacement_m": 4.410743713378906e-06,
+              "measured": "symmetric nearest-neighbour distance between this repeat's vertex set and repeat 1's, a lower bound on per-vertex movement"
+            },
+            {
+              "repeat": 18,
+              "median_displacement_m": 0.0,
+              "p99_displacement_m": 3.5762786865234375e-07,
+              "max_displacement_m": 4.410743713378906e-06,
+              "measured": "symmetric nearest-neighbour distance between this repeat's vertex set and repeat 1's, a lower bound on per-vertex movement"
+            },
+            {
+              "repeat": 19,
+              "median_displacement_m": 0.0,
+              "p99_displacement_m": 3.5762786865234375e-07,
+              "max_displacement_m": 3.4570693969726562e-06,
+              "measured": "symmetric nearest-neighbour distance between this repeat's vertex set and repeat 1's, a lower bound on per-vertex movement"
+            },
+            {
+              "repeat": 20,
+              "median_displacement_m": 0.0,
+              "p99_displacement_m": 4.76837158203125e-07,
+              "max_displacement_m": 5.841255187988281e-06,
+              "measured": "symmetric nearest-neighbour distance between this repeat's vertex set and repeat 1's, a lower bound on per-vertex movement"
+            },
+            {
+              "repeat": 21,
+              "median_displacement_m": 0.0,
+              "p99_displacement_m": 3.5762786865234375e-07,
+              "max_displacement_m": 2.384185791015625e-06,
+              "measured": "symmetric nearest-neighbour distance between this repeat's vertex set and repeat 1's, a lower bound on per-vertex movement"
+            },
+            {
+              "repeat": 22,
+              "median_displacement_m": 0.0,
+              "p99_displacement_m": 3.5762786865234375e-07,
+              "max_displacement_m": 3.0994415283203125e-06,
+              "measured": "symmetric nearest-neighbour distance between this repeat's vertex set and repeat 1's, a lower bound on per-vertex movement"
+            },
+            {
+              "repeat": 23,
+              "median_displacement_m": 0.0,
+              "p99_displacement_m": 3.5762786865234375e-07,
+              "max_displacement_m": 4.0531158447265625e-06,
+              "measured": "symmetric nearest-neighbour distance between this repeat's vertex set and repeat 1's, a lower bound on per-vertex movement"
+            },
+            {
+              "repeat": 24,
+              "median_displacement_m": 0.0,
+              "p99_displacement_m": 4.76837158203125e-07,
+              "max_displacement_m": 2.86102294921875e-06,
+              "measured": "symmetric nearest-neighbour distance between this repeat's vertex set and repeat 1's, a lower bound on per-vertex movement"
+            }
+          ],
+          "the_distribution_of_the_per_pair_worst": {
+            "why_a_distribution_and_not_one_number": "The reported ratio is computed from `worst`, which makes `worst` the quantity it rests on -- and it is a tail statistic. A handful of repeats describes the middle of its distribution, not the case the margin has to survive. An independent lane hit one per-pair worst three orders of magnitude above its neighbours and could not reproduce it in three further attempts on the identical file, which is exactly the shape a four-repeat run cannot see. So the pairs are reported as a distribution and the headline ratio is taken against the worst value known anywhere rather than the worst seen here.",
+            "pairs_compared": 23,
+            "min_m": 2.384185791015625e-06,
+            "median_m": 4.410743713378906e-06,
+            "p90_m": 5.936622619628906e-06,
+            "max_m": 6.079673767089844e-06,
+            "spread_max_over_median": 1.3783783783783783
+          },
+          "worst_displacement_m": 6.079673767089844e-06,
+          "the_threshold_it_would_have_to_cross_m": 0.05,
+          "cut_over_the_worst_separation_here": 8224.125490196078,
+          "the_tail_observed_elsewhere": {
+            "displacement_m": 0.002187,
+            "cut_m": 0.05,
+            "cut_over_displacement": 22.86236854138089,
+            "cut_over_displacement_is": "cut_m / displacement_m",
+            "cells_that_flipped_there": 0,
+            "reproduced_in_three_further_attempts": false,
+            "measured_by": "an independent review lane, on a 53x denser input of the same scene, driving this module's _one_crop with the product modules stubbed",
+            "why_it_is_kept": "Dropping an unreproduced outlier because it is inconvenient is how a stated bound becomes a median. It is three orders of magnitude from everything else and still 20x smaller than the cut, and no cell changed its verdict where it was observed -- so it lowers the cut-to-separation ratio this record reports without contradicting any verdict that was actually checked."
+          },
+          "the_worst_displacement_known_anywhere_m": 0.002187,
+          "cut_over_the_worst_separation_known_anywhere": 22.86236854138089,
+          "how_that_ratio_is_computed": "the_threshold_it_would_have_to_cross_m divided by the_worst_displacement_known_anywhere_m",
+          "what_the_cut_to_separation_ratio_is_not": {
+            "it_is_not_a_decision_margin": "The crop keeps a vertex when its distance to the cloud is at most the cut, so what decides a verdict is the distance from that vertex to the cut -- |distance - cut| -- and not the cut itself. A vertex at 0.049999 m against a 0.05 m cut is one micron from flipping, and the 0.00219 m observation above flips it, even though the cut is 22.9x that movement. So this ratio does not say a decision clears its boundary by that factor, and no figure in this record says how close to the cut the vertices that matter actually sit.",
+            "what_it_is": "A comparison of two lengths: how large this case's cut is relative to the largest separation observed between two repeats' vertex sets. It is useful for the scale it gives and it is not a safety factor.",
+            "what_does_support_the_verdict": "The finite observation, which is in `the_per_cell_decision_a_user_reads`: across the pairs compared here, no cell changed its verdict. That is a count of what happened on these repeats, not a guarantee about another run.",
+            "what_would_be_needed_for_a_real_margin": "Per-vertex distance-to-boundary clearance under a stated vertex correspondence, with the cardinality assumption declared. Neither is measured here, and this record does not substitute the ratio for it."
+          },
+          "what_that_means": "A vertex only changes the answer by crossing the support threshold or landing in another cell. Across 23 pairs here the largest nearest-neighbour distance between two repeats' vertex sets was 6.08e-06 m against a 0.05 m cut, and no cell changed its verdict in any of those pairs. Taking the worst displacement known anywhere, including the unreproduced observation above, which is 0.00219 m, this case's cut is 22.9x that separation. That ratio is a comparison of two lengths and not a clearance: a vertex already sitting a micron inside the cut flips under a movement far smaller than the cut, so what is established here is the no-flip count above and the scale of the movement relative to the cut -- not that a rerun would decide the same way."
+        }
+      },
+      "the_aggregate_the_record_reports": {
+        "removed_vertex_count": {
+          "values": [
+            3677.0,
+            3677.0,
+            3677.0,
+            3677.0,
+            3677.0,
+            3677.0,
+            3677.0,
+            3677.0,
+            3677.0,
+            3677.0,
+            3677.0,
+            3677.0,
+            3677.0,
+            3677.0,
+            3677.0,
+            3677.0,
+            3677.0,
+            3677.0,
+            3677.0,
+            3677.0,
+            3677.0,
+            3677.0,
+            3677.0,
+            3677.0
+          ],
+          "distinct": 1,
+          "spread": 0.0,
+          "relative_spread": 0.0
+        },
+        "removed_fraction": {
+          "values": [
+            0.19969586705045347,
+            0.19969586705045347,
+            0.19969586705045347,
+            0.19969586705045347,
+            0.19969586705045347,
+            0.19969586705045347,
+            0.19969586705045347,
+            0.19969586705045347,
+            0.19969586705045347,
+            0.19969586705045347,
+            0.19969586705045347,
+            0.19969586705045347,
+            0.19969586705045347,
+            0.19969586705045347,
+            0.19969586705045347,
+            0.19969586705045347,
+            0.19969586705045347,
+            0.19969586705045347,
+            0.19969586705045347,
+            0.19969586705045347,
+            0.19969586705045347,
+            0.19969586705045347,
+            0.19969586705045347,
+            0.19969586705045347
+          ],
+          "distinct": 1,
+          "spread": 0.0,
+          "relative_spread": 0.0
+        },
+        "total_vertices": {
+          "values": [
+            18413.0,
+            18413.0,
+            18413.0,
+            18413.0,
+            18413.0,
+            18413.0,
+            18413.0,
+            18413.0,
+            18413.0,
+            18413.0,
+            18413.0,
+            18413.0,
+            18413.0,
+            18413.0,
+            18413.0,
+            18413.0,
+            18413.0,
+            18413.0,
+            18413.0,
+            18413.0,
+            18413.0,
+            18413.0,
+            18413.0,
+            18413.0
+          ],
+          "distinct": 1,
+          "spread": 0.0,
+          "relative_spread": 0.0
+        }
+      },
+      "the_per_cell_decision_a_user_reads": [
+        {
+          "repeat": 2,
+          "removed_cells_in_repeat_1": 2293,
+          "removed_cells_here": 2293,
+          "cells_both_called_unsupported": 2293,
+          "jaccard": 1.0,
+          "cells_whose_verdict_flipped": 0
+        },
+        {
+          "repeat": 3,
+          "removed_cells_in_repeat_1": 2293,
+          "removed_cells_here": 2293,
+          "cells_both_called_unsupported": 2293,
+          "jaccard": 1.0,
+          "cells_whose_verdict_flipped": 0
+        },
+        {
+          "repeat": 4,
+          "removed_cells_in_repeat_1": 2293,
+          "removed_cells_here": 2293,
+          "cells_both_called_unsupported": 2293,
+          "jaccard": 1.0,
+          "cells_whose_verdict_flipped": 0
+        },
+        {
+          "repeat": 5,
+          "removed_cells_in_repeat_1": 2293,
+          "removed_cells_here": 2293,
+          "cells_both_called_unsupported": 2293,
+          "jaccard": 1.0,
+          "cells_whose_verdict_flipped": 0
+        },
+        {
+          "repeat": 6,
+          "removed_cells_in_repeat_1": 2293,
+          "removed_cells_here": 2293,
+          "cells_both_called_unsupported": 2293,
+          "jaccard": 1.0,
+          "cells_whose_verdict_flipped": 0
+        },
+        {
+          "repeat": 7,
+          "removed_cells_in_repeat_1": 2293,
+          "removed_cells_here": 2293,
+          "cells_both_called_unsupported": 2293,
+          "jaccard": 1.0,
+          "cells_whose_verdict_flipped": 0
+        },
+        {
+          "repeat": 8,
+          "removed_cells_in_repeat_1": 2293,
+          "removed_cells_here": 2293,
+          "cells_both_called_unsupported": 2293,
+          "jaccard": 1.0,
+          "cells_whose_verdict_flipped": 0
+        },
+        {
+          "repeat": 9,
+          "removed_cells_in_repeat_1": 2293,
+          "removed_cells_here": 2293,
+          "cells_both_called_unsupported": 2293,
+          "jaccard": 1.0,
+          "cells_whose_verdict_flipped": 0
+        },
+        {
+          "repeat": 10,
+          "removed_cells_in_repeat_1": 2293,
+          "removed_cells_here": 2293,
+          "cells_both_called_unsupported": 2293,
+          "jaccard": 1.0,
+          "cells_whose_verdict_flipped": 0
+        },
+        {
+          "repeat": 11,
+          "removed_cells_in_repeat_1": 2293,
+          "removed_cells_here": 2293,
+          "cells_both_called_unsupported": 2293,
+          "jaccard": 1.0,
+          "cells_whose_verdict_flipped": 0
+        },
+        {
+          "repeat": 12,
+          "removed_cells_in_repeat_1": 2293,
+          "removed_cells_here": 2293,
+          "cells_both_called_unsupported": 2293,
+          "jaccard": 1.0,
+          "cells_whose_verdict_flipped": 0
+        },
+        {
+          "repeat": 13,
+          "removed_cells_in_repeat_1": 2293,
+          "removed_cells_here": 2293,
+          "cells_both_called_unsupported": 2293,
+          "jaccard": 1.0,
+          "cells_whose_verdict_flipped": 0
+        },
+        {
+          "repeat": 14,
+          "removed_cells_in_repeat_1": 2293,
+          "removed_cells_here": 2293,
+          "cells_both_called_unsupported": 2293,
+          "jaccard": 1.0,
+          "cells_whose_verdict_flipped": 0
+        },
+        {
+          "repeat": 15,
+          "removed_cells_in_repeat_1": 2293,
+          "removed_cells_here": 2293,
+          "cells_both_called_unsupported": 2293,
+          "jaccard": 1.0,
+          "cells_whose_verdict_flipped": 0
+        },
+        {
+          "repeat": 16,
+          "removed_cells_in_repeat_1": 2293,
+          "removed_cells_here": 2293,
+          "cells_both_called_unsupported": 2293,
+          "jaccard": 1.0,
+          "cells_whose_verdict_flipped": 0
+        },
+        {
+          "repeat": 17,
+          "removed_cells_in_repeat_1": 2293,
+          "removed_cells_here": 2293,
+          "cells_both_called_unsupported": 2293,
+          "jaccard": 1.0,
+          "cells_whose_verdict_flipped": 0
+        },
+        {
+          "repeat": 18,
+          "removed_cells_in_repeat_1": 2293,
+          "removed_cells_here": 2293,
+          "cells_both_called_unsupported": 2293,
+          "jaccard": 1.0,
+          "cells_whose_verdict_flipped": 0
+        },
+        {
+          "repeat": 19,
+          "removed_cells_in_repeat_1": 2293,
+          "removed_cells_here": 2293,
+          "cells_both_called_unsupported": 2293,
+          "jaccard": 1.0,
+          "cells_whose_verdict_flipped": 0
+        },
+        {
+          "repeat": 20,
+          "removed_cells_in_repeat_1": 2293,
+          "removed_cells_here": 2293,
+          "cells_both_called_unsupported": 2293,
+          "jaccard": 1.0,
+          "cells_whose_verdict_flipped": 0
+        },
+        {
+          "repeat": 21,
+          "removed_cells_in_repeat_1": 2293,
+          "removed_cells_here": 2293,
+          "cells_both_called_unsupported": 2293,
+          "jaccard": 1.0,
+          "cells_whose_verdict_flipped": 0
+        },
+        {
+          "repeat": 22,
+          "removed_cells_in_repeat_1": 2293,
+          "removed_cells_here": 2293,
+          "cells_both_called_unsupported": 2293,
+          "jaccard": 1.0,
+          "cells_whose_verdict_flipped": 0
+        },
+        {
+          "repeat": 23,
+          "removed_cells_in_repeat_1": 2293,
+          "removed_cells_here": 2293,
+          "cells_both_called_unsupported": 2293,
+          "jaccard": 1.0,
+          "cells_whose_verdict_flipped": 0
+        },
+        {
+          "repeat": 24,
+          "removed_cells_in_repeat_1": 2293,
+          "removed_cells_here": 2293,
+          "cells_both_called_unsupported": 2293,
+          "jaccard": 1.0,
+          "cells_whose_verdict_flipped": 0
+        }
+      ],
+      "where_the_movers_sit": [
+        {
+          "vertices_within_10pc_of_the_limit": 556,
+          "as_fraction_of_all_vertices": 0.03019605713354695,
+          "removed_vertices": 3677
+        },
+        {
+          "vertices_within_10pc_of_the_limit": 556,
+          "as_fraction_of_all_vertices": 0.03019605713354695,
+          "removed_vertices": 3677
+        },
+        {
+          "vertices_within_10pc_of_the_limit": 556,
+          "as_fraction_of_all_vertices": 0.03019605713354695,
+          "removed_vertices": 3677
+        },
+        {
+          "vertices_within_10pc_of_the_limit": 556,
+          "as_fraction_of_all_vertices": 0.03019605713354695,
+          "removed_vertices": 3677
+        },
+        {
+          "vertices_within_10pc_of_the_limit": 556,
+          "as_fraction_of_all_vertices": 0.03019605713354695,
+          "removed_vertices": 3677
+        },
+        {
+          "vertices_within_10pc_of_the_limit": 556,
+          "as_fraction_of_all_vertices": 0.03019605713354695,
+          "removed_vertices": 3677
+        },
+        {
+          "vertices_within_10pc_of_the_limit": 556,
+          "as_fraction_of_all_vertices": 0.03019605713354695,
+          "removed_vertices": 3677
+        },
+        {
+          "vertices_within_10pc_of_the_limit": 556,
+          "as_fraction_of_all_vertices": 0.03019605713354695,
+          "removed_vertices": 3677
+        },
+        {
+          "vertices_within_10pc_of_the_limit": 556,
+          "as_fraction_of_all_vertices": 0.03019605713354695,
+          "removed_vertices": 3677
+        },
+        {
+          "vertices_within_10pc_of_the_limit": 556,
+          "as_fraction_of_all_vertices": 0.03019605713354695,
+          "removed_vertices": 3677
+        },
+        {
+          "vertices_within_10pc_of_the_limit": 556,
+          "as_fraction_of_all_vertices": 0.03019605713354695,
+          "removed_vertices": 3677
+        },
+        {
+          "vertices_within_10pc_of_the_limit": 556,
+          "as_fraction_of_all_vertices": 0.03019605713354695,
+          "removed_vertices": 3677
+        },
+        {
+          "vertices_within_10pc_of_the_limit": 556,
+          "as_fraction_of_all_vertices": 0.03019605713354695,
+          "removed_vertices": 3677
+        },
+        {
+          "vertices_within_10pc_of_the_limit": 556,
+          "as_fraction_of_all_vertices": 0.03019605713354695,
+          "removed_vertices": 3677
+        },
+        {
+          "vertices_within_10pc_of_the_limit": 556,
+          "as_fraction_of_all_vertices": 0.03019605713354695,
+          "removed_vertices": 3677
+        },
+        {
+          "vertices_within_10pc_of_the_limit": 556,
+          "as_fraction_of_all_vertices": 0.03019605713354695,
+          "removed_vertices": 3677
+        },
+        {
+          "vertices_within_10pc_of_the_limit": 556,
+          "as_fraction_of_all_vertices": 0.03019605713354695,
+          "removed_vertices": 3677
+        },
+        {
+          "vertices_within_10pc_of_the_limit": 556,
+          "as_fraction_of_all_vertices": 0.03019605713354695,
+          "removed_vertices": 3677
+        },
+        {
+          "vertices_within_10pc_of_the_limit": 556,
+          "as_fraction_of_all_vertices": 0.03019605713354695,
+          "removed_vertices": 3677
+        },
+        {
+          "vertices_within_10pc_of_the_limit": 556,
+          "as_fraction_of_all_vertices": 0.03019605713354695,
+          "removed_vertices": 3677
+        },
+        {
+          "vertices_within_10pc_of_the_limit": 556,
+          "as_fraction_of_all_vertices": 0.03019605713354695,
+          "removed_vertices": 3677
+        },
+        {
+          "vertices_within_10pc_of_the_limit": 556,
+          "as_fraction_of_all_vertices": 0.03019605713354695,
+          "removed_vertices": 3677
+        },
+        {
+          "vertices_within_10pc_of_the_limit": 556,
+          "as_fraction_of_all_vertices": 0.03019605713354695,
+          "removed_vertices": 3677
+        },
+        {
+          "vertices_within_10pc_of_the_limit": 556,
+          "as_fraction_of_all_vertices": 0.03019605713354695,
+          "removed_vertices": 3677
+        }
+      ],
+      "the_published_downstream_figure": {
+        "per_repeat": [
+          {
+            "repeat": 1,
+            "baseline_uncropped": {
+              "occupied_cells": 2684,
+              "phantom_obstacle_cells": 871,
+              "precision_wrt_observation": 0.6754843517138599,
+              "recall_of_observed_cells": 0.9623142250530785
+            },
+            "candidate_cropped": {
+              "occupied_cells": 1948,
+              "phantom_obstacle_cells": 138,
+              "precision_wrt_observation": 0.9291581108829569,
+              "recall_of_observed_cells": 0.9607218683651805
+            }
+          },
+          {
+            "repeat": 2,
+            "baseline_uncropped": {
+              "occupied_cells": 2684,
+              "phantom_obstacle_cells": 871,
+              "precision_wrt_observation": 0.6754843517138599,
+              "recall_of_observed_cells": 0.9623142250530785
+            },
+            "candidate_cropped": {
+              "occupied_cells": 1948,
+              "phantom_obstacle_cells": 138,
+              "precision_wrt_observation": 0.9291581108829569,
+              "recall_of_observed_cells": 0.9607218683651805
+            }
+          },
+          {
+            "repeat": 3,
+            "baseline_uncropped": {
+              "occupied_cells": 2684,
+              "phantom_obstacle_cells": 871,
+              "precision_wrt_observation": 0.6754843517138599,
+              "recall_of_observed_cells": 0.9623142250530785
+            },
+            "candidate_cropped": {
+              "occupied_cells": 1948,
+              "phantom_obstacle_cells": 138,
+              "precision_wrt_observation": 0.9291581108829569,
+              "recall_of_observed_cells": 0.9607218683651805
+            }
+          },
+          {
+            "repeat": 4,
+            "baseline_uncropped": {
+              "occupied_cells": 2684,
+              "phantom_obstacle_cells": 871,
+              "precision_wrt_observation": 0.6754843517138599,
+              "recall_of_observed_cells": 0.9623142250530785
+            },
+            "candidate_cropped": {
+              "occupied_cells": 1948,
+              "phantom_obstacle_cells": 138,
+              "precision_wrt_observation": 0.9291581108829569,
+              "recall_of_observed_cells": 0.9607218683651805
+            }
+          },
+          {
+            "repeat": 5,
+            "baseline_uncropped": {
+              "occupied_cells": 2684,
+              "phantom_obstacle_cells": 871,
+              "precision_wrt_observation": 0.6754843517138599,
+              "recall_of_observed_cells": 0.9623142250530785
+            },
+            "candidate_cropped": {
+              "occupied_cells": 1948,
+              "phantom_obstacle_cells": 138,
+              "precision_wrt_observation": 0.9291581108829569,
+              "recall_of_observed_cells": 0.9607218683651805
+            }
+          },
+          {
+            "repeat": 6,
+            "baseline_uncropped": {
+              "occupied_cells": 2684,
+              "phantom_obstacle_cells": 871,
+              "precision_wrt_observation": 0.6754843517138599,
+              "recall_of_observed_cells": 0.9623142250530785
+            },
+            "candidate_cropped": {
+              "occupied_cells": 1948,
+              "phantom_obstacle_cells": 138,
+              "precision_wrt_observation": 0.9291581108829569,
+              "recall_of_observed_cells": 0.9607218683651805
+            }
+          },
+          {
+            "repeat": 7,
+            "baseline_uncropped": {
+              "occupied_cells": 2684,
+              "phantom_obstacle_cells": 871,
+              "precision_wrt_observation": 0.6754843517138599,
+              "recall_of_observed_cells": 0.9623142250530785
+            },
+            "candidate_cropped": {
+              "occupied_cells": 1948,
+              "phantom_obstacle_cells": 138,
+              "precision_wrt_observation": 0.9291581108829569,
+              "recall_of_observed_cells": 0.9607218683651805
+            }
+          },
+          {
+            "repeat": 8,
+            "baseline_uncropped": {
+              "occupied_cells": 2684,
+              "phantom_obstacle_cells": 871,
+              "precision_wrt_observation": 0.6754843517138599,
+              "recall_of_observed_cells": 0.9623142250530785
+            },
+            "candidate_cropped": {
+              "occupied_cells": 1948,
+              "phantom_obstacle_cells": 138,
+              "precision_wrt_observation": 0.9291581108829569,
+              "recall_of_observed_cells": 0.9607218683651805
+            }
+          },
+          {
+            "repeat": 9,
+            "baseline_uncropped": {
+              "occupied_cells": 2684,
+              "phantom_obstacle_cells": 871,
+              "precision_wrt_observation": 0.6754843517138599,
+              "recall_of_observed_cells": 0.9623142250530785
+            },
+            "candidate_cropped": {
+              "occupied_cells": 1948,
+              "phantom_obstacle_cells": 138,
+              "precision_wrt_observation": 0.9291581108829569,
+              "recall_of_observed_cells": 0.9607218683651805
+            }
+          },
+          {
+            "repeat": 10,
+            "baseline_uncropped": {
+              "occupied_cells": 2684,
+              "phantom_obstacle_cells": 871,
+              "precision_wrt_observation": 0.6754843517138599,
+              "recall_of_observed_cells": 0.9623142250530785
+            },
+            "candidate_cropped": {
+              "occupied_cells": 1948,
+              "phantom_obstacle_cells": 138,
+              "precision_wrt_observation": 0.9291581108829569,
+              "recall_of_observed_cells": 0.9607218683651805
+            }
+          },
+          {
+            "repeat": 11,
+            "baseline_uncropped": {
+              "occupied_cells": 2684,
+              "phantom_obstacle_cells": 871,
+              "precision_wrt_observation": 0.6754843517138599,
+              "recall_of_observed_cells": 0.9623142250530785
+            },
+            "candidate_cropped": {
+              "occupied_cells": 1948,
+              "phantom_obstacle_cells": 138,
+              "precision_wrt_observation": 0.9291581108829569,
+              "recall_of_observed_cells": 0.9607218683651805
+            }
+          },
+          {
+            "repeat": 12,
+            "baseline_uncropped": {
+              "occupied_cells": 2684,
+              "phantom_obstacle_cells": 871,
+              "precision_wrt_observation": 0.6754843517138599,
+              "recall_of_observed_cells": 0.9623142250530785
+            },
+            "candidate_cropped": {
+              "occupied_cells": 1948,
+              "phantom_obstacle_cells": 138,
+              "precision_wrt_observation": 0.9291581108829569,
+              "recall_of_observed_cells": 0.9607218683651805
+            }
+          },
+          {
+            "repeat": 13,
+            "baseline_uncropped": {
+              "occupied_cells": 2684,
+              "phantom_obstacle_cells": 871,
+              "precision_wrt_observation": 0.6754843517138599,
+              "recall_of_observed_cells": 0.9623142250530785
+            },
+            "candidate_cropped": {
+              "occupied_cells": 1948,
+              "phantom_obstacle_cells": 138,
+              "precision_wrt_observation": 0.9291581108829569,
+              "recall_of_observed_cells": 0.9607218683651805
+            }
+          },
+          {
+            "repeat": 14,
+            "baseline_uncropped": {
+              "occupied_cells": 2684,
+              "phantom_obstacle_cells": 871,
+              "precision_wrt_observation": 0.6754843517138599,
+              "recall_of_observed_cells": 0.9623142250530785
+            },
+            "candidate_cropped": {
+              "occupied_cells": 1948,
+              "phantom_obstacle_cells": 138,
+              "precision_wrt_observation": 0.9291581108829569,
+              "recall_of_observed_cells": 0.9607218683651805
+            }
+          },
+          {
+            "repeat": 15,
+            "baseline_uncropped": {
+              "occupied_cells": 2684,
+              "phantom_obstacle_cells": 871,
+              "precision_wrt_observation": 0.6754843517138599,
+              "recall_of_observed_cells": 0.9623142250530785
+            },
+            "candidate_cropped": {
+              "occupied_cells": 1948,
+              "phantom_obstacle_cells": 138,
+              "precision_wrt_observation": 0.9291581108829569,
+              "recall_of_observed_cells": 0.9607218683651805
+            }
+          },
+          {
+            "repeat": 16,
+            "baseline_uncropped": {
+              "occupied_cells": 2684,
+              "phantom_obstacle_cells": 871,
+              "precision_wrt_observation": 0.6754843517138599,
+              "recall_of_observed_cells": 0.9623142250530785
+            },
+            "candidate_cropped": {
+              "occupied_cells": 1948,
+              "phantom_obstacle_cells": 138,
+              "precision_wrt_observation": 0.9291581108829569,
+              "recall_of_observed_cells": 0.9607218683651805
+            }
+          },
+          {
+            "repeat": 17,
+            "baseline_uncropped": {
+              "occupied_cells": 2684,
+              "phantom_obstacle_cells": 871,
+              "precision_wrt_observation": 0.6754843517138599,
+              "recall_of_observed_cells": 0.9623142250530785
+            },
+            "candidate_cropped": {
+              "occupied_cells": 1948,
+              "phantom_obstacle_cells": 138,
+              "precision_wrt_observation": 0.9291581108829569,
+              "recall_of_observed_cells": 0.9607218683651805
+            }
+          },
+          {
+            "repeat": 18,
+            "baseline_uncropped": {
+              "occupied_cells": 2684,
+              "phantom_obstacle_cells": 871,
+              "precision_wrt_observation": 0.6754843517138599,
+              "recall_of_observed_cells": 0.9623142250530785
+            },
+            "candidate_cropped": {
+              "occupied_cells": 1948,
+              "phantom_obstacle_cells": 138,
+              "precision_wrt_observation": 0.9291581108829569,
+              "recall_of_observed_cells": 0.9607218683651805
+            }
+          },
+          {
+            "repeat": 19,
+            "baseline_uncropped": {
+              "occupied_cells": 2684,
+              "phantom_obstacle_cells": 871,
+              "precision_wrt_observation": 0.6754843517138599,
+              "recall_of_observed_cells": 0.9623142250530785
+            },
+            "candidate_cropped": {
+              "occupied_cells": 1948,
+              "phantom_obstacle_cells": 138,
+              "precision_wrt_observation": 0.9291581108829569,
+              "recall_of_observed_cells": 0.9607218683651805
+            }
+          },
+          {
+            "repeat": 20,
+            "baseline_uncropped": {
+              "occupied_cells": 2684,
+              "phantom_obstacle_cells": 871,
+              "precision_wrt_observation": 0.6754843517138599,
+              "recall_of_observed_cells": 0.9623142250530785
+            },
+            "candidate_cropped": {
+              "occupied_cells": 1948,
+              "phantom_obstacle_cells": 138,
+              "precision_wrt_observation": 0.9291581108829569,
+              "recall_of_observed_cells": 0.9607218683651805
+            }
+          },
+          {
+            "repeat": 21,
+            "baseline_uncropped": {
+              "occupied_cells": 2684,
+              "phantom_obstacle_cells": 871,
+              "precision_wrt_observation": 0.6754843517138599,
+              "recall_of_observed_cells": 0.9623142250530785
+            },
+            "candidate_cropped": {
+              "occupied_cells": 1948,
+              "phantom_obstacle_cells": 138,
+              "precision_wrt_observation": 0.9291581108829569,
+              "recall_of_observed_cells": 0.9607218683651805
+            }
+          },
+          {
+            "repeat": 22,
+            "baseline_uncropped": {
+              "occupied_cells": 2684,
+              "phantom_obstacle_cells": 871,
+              "precision_wrt_observation": 0.6754843517138599,
+              "recall_of_observed_cells": 0.9623142250530785
+            },
+            "candidate_cropped": {
+              "occupied_cells": 1948,
+              "phantom_obstacle_cells": 138,
+              "precision_wrt_observation": 0.9291581108829569,
+              "recall_of_observed_cells": 0.9607218683651805
+            }
+          },
+          {
+            "repeat": 23,
+            "baseline_uncropped": {
+              "occupied_cells": 2684,
+              "phantom_obstacle_cells": 871,
+              "precision_wrt_observation": 0.6754843517138599,
+              "recall_of_observed_cells": 0.9623142250530785
+            },
+            "candidate_cropped": {
+              "occupied_cells": 1948,
+              "phantom_obstacle_cells": 138,
+              "precision_wrt_observation": 0.9291581108829569,
+              "recall_of_observed_cells": 0.9607218683651805
+            }
+          },
+          {
+            "repeat": 24,
+            "baseline_uncropped": {
+              "occupied_cells": 2684,
+              "phantom_obstacle_cells": 871,
+              "precision_wrt_observation": 0.6754843517138599,
+              "recall_of_observed_cells": 0.9623142250530785
+            },
+            "candidate_cropped": {
+              "occupied_cells": 1948,
+              "phantom_obstacle_cells": 138,
+              "precision_wrt_observation": 0.9291581108829569,
+              "recall_of_observed_cells": 0.9607218683651805
+            }
+          }
+        ],
+        "phantom_cells_removed_by_the_crop": {
+          "values": [
+            733.0,
+            733.0,
+            733.0,
+            733.0,
+            733.0,
+            733.0,
+            733.0,
+            733.0,
+            733.0,
+            733.0,
+            733.0,
+            733.0,
+            733.0,
+            733.0,
+            733.0,
+            733.0,
+            733.0,
+            733.0,
+            733.0,
+            733.0,
+            733.0,
+            733.0,
+            733.0,
+            733.0
+          ],
+          "distinct": 1,
+          "spread": 0.0,
+          "relative_spread": 0.0
+        },
+        "precision_after_the_crop": {
+          "values": [
+            0.9291581108829569,
+            0.9291581108829569,
+            0.9291581108829569,
+            0.9291581108829569,
+            0.9291581108829569,
+            0.9291581108829569,
+            0.9291581108829569,
+            0.9291581108829569,
+            0.9291581108829569,
+            0.9291581108829569,
+            0.9291581108829569,
+            0.9291581108829569,
+            0.9291581108829569,
+            0.9291581108829569,
+            0.9291581108829569,
+            0.9291581108829569,
+            0.9291581108829569,
+            0.9291581108829569,
+            0.9291581108829569,
+            0.9291581108829569,
+            0.9291581108829569,
+            0.9291581108829569,
+            0.9291581108829569,
+            0.9291581108829569
+          ],
+          "distinct": 1,
+          "spread": 0.0,
+          "relative_spread": 0.0
+        },
+        "with_the_fused_cloud_rebuilt_instead": {
+          "why_this_arm_exists": "The fixed-cloud arm isolates Poisson, which is what makes its result attributable. It is not what a user runs. Here the fused cloud is rebuilt every time, so registration varies as well, and the question is whether the published per-cell figure survives that.",
+          "invocations": 5,
+          "distinct_fused_clouds": 5,
+          "vertices_per_invocation": [
+            18424,
+            18424,
+            18413,
+            18413,
+            18413
+          ],
+          "phantom_cells_removed": {
+            "values": [
+              730.0,
+              730.0,
+              733.0,
+              733.0,
+              733.0
+            ],
+            "distinct": 2,
+            "spread": 3.0,
+            "relative_spread": 0.004099480732440558
+          },
+          "what_it_shows": "2 distinct value(s) across 5 invocations, [730, 733], a spread of 3 cell(s) on a figure of about 733 -- 0.41% of it. This arm lets registration vary as well, so it does not attribute that spread to anything on its own; compare it with the fixed-cloud arm above."
+        },
+        "the_same_figure_on_retained_earlier_runs": [
+          733.0,
+          734.0
+        ],
+        "what_the_two_arms_together_show": "This harness's own phantom-cells-removed figure is exactly reproducible across repeats under the crop and is not exactly reproducible end to end. It is not the published number re-measured: this harness fuses its own cloud, and `what_this_does_not_establish` in this same case says the figures are not comparable to the record's published values -- so whether it lands on the 733 in downstream-consumer.json is a coincidence to note rather than a reproduction of it. Across the 2 values this record retains from separate harness runs the figure is not one number -- 733, 734, a span of 1 cell(s) -- so the constancy below is a within-run property, and two of these records compared against each other should be expected to differ by about that much. Holding the fused cloud fixed, all 24 repeats return 733 -- one value, despite every repeat reconstructing a different mesh. Rebuilding it, the figure moves across 2 values spanning 3 cell(s). So the residual belongs to the registration upstream, which is separately known not to be reproducible, and not to the crop or the reconstruction under it. A reader quoting the figure should quote it with that spread; a reader comparing two crop settings on one fused cloud can quote it exactly."
+      },
+      "what_a_user_may_rely_on": "The per-cell unsupported mask, not only the aggregate. Every repeat agreed on every cell -- Jaccard 1.0, no cell changed its verdict -- so the answer to 'which parts of my mesh are unsupported' is reproducible on this input even though the reconstruction it is computed from is not.",
+      "whether_that_is_benign": "Yes, on every comparison made here: across 23 pairs no cell changed its verdict. Around 556 vertices per repeat sit within 10% of the cut, which is where a sharp threshold on a continuous quantity is vulnerable, and none of them crossed. That is the result -- a count of what happened on these repeats, not a measurement of how much room the decision had. Over the same pairs the largest nearest-neighbour distance between two repeats' vertex sets was 6.08e-06 m against a 0.05 m cut -- a lower bound on how far any vertex moved, since the two sets are not in correspondence -- and no cell changed its verdict in any of them. The ratio this record reports is taken against the worst displacement known anywhere rather than that, because the statistic has a tail an earlier four-repeat run could not see: the cut is 22.9x that displacement. Read that as scale and not as clearance. The decision boundary is at |distance - cut|, which nothing here measures, so a vertex already near the cut can flip under a movement far smaller than it. What transfers to another scan is the method: re-read one fused cloud, compare the per-cell verdicts pairwise, and report the separation next to the cut. The 23-pair no-flip count does not transfer. It was measured on this capture, at these repeats, with this cut, and a different scan has to produce its own.",
+      "what_this_does_not_establish": "Nothing about the cause inside Poisson, which #1024 covers, and nothing about whether the crop rule is the right rule. The figures are not comparable to the record's published values: this harness mirrors the reconstruct-and-crop stage rather than running the full six-stage workflow, and its fused cloud is its own.",
+      "reproducibility": {
+        "command": "npa/.venv/bin/python docs/evidence/open3d/harness/crop_decision_stability.py",
+        "note": "Every figure here is a between-run comparison, so the figures are expected to move. The verdicts are what reproduce."
+      },
+      "provenance": {
+        "harness": "harness/crop_decision_stability.py",
+        "harness_sha256": "9e730180df9f09483f1c075c1d8012c7f01cec62074319f6b7497b0d73ab5a15",
+        "path_is_relative_to": "this evidence directory"
+      }
+    },
+    "voxel_0.02": {
+      "what_this_measures": "Whether the support crop returns the same decision twice, as opposed to the same average. The fused cloud is built once and re-read for every repeat, so registration cannot contribute.",
+      "why_cells_and_not_vertices": "Poisson returns a different vertex set each run, so no vertex can be followed between repeats and 'this vertex changed its mind' is not a question that can be asked. A consumer does not ask it either: it asks whether a region of space is occupied. Cells at the scene voxel are that question, and are the form the published occupancy consumer already works in.",
+      "input": {
+        "hashes_that_name_no_file_here": "fused_cloud_sha256 identifies the fused in-memory cloud reused by this retained measurement run; the cloud bytes are not committed here",
+        "dataset": "open3d.data DemoICPPointClouds, the record's own input",
+        "voxel_size": 0.02,
+        "fused_cloud_sha256": "ca078090255a628e64b6f127a96563a52d5c67bbc48fb33dd95a36062936f72f",
+        "fused_once_and_reused": true
+      },
+      "crop_rule": "a vertex is unsupported when its distance to the fused cloud exceeds voxel * 1.0 = 0.02",
+      "repeats": 24,
+      "did_the_reconstruction_vary_at_all": {
+        "why_this_is_first": "A stable decision means nothing if nothing upstream moved. The same mistake sank a thread experiment on this record: the lever never engaged, so the result measured nothing. Read this block before any figure below it.",
+        "distinct_fused_clouds": 1,
+        "distinct_normal_sets": 1,
+        "distinct_poisson_meshes": 24,
+        "poisson_varied_between_repeats": true,
+        "and_whether_that_is_only_reordering": {
+          "per_repeat": [
+            {
+              "repeat": 2,
+              "vertices_in_repeat_1_only": 4448,
+              "vertices_in_this_repeat_only": 4448,
+              "vertex_counts": [
+                78862,
+                78862
+              ]
+            },
+            {
+              "repeat": 3,
+              "vertices_in_repeat_1_only": 4607,
+              "vertices_in_this_repeat_only": 4607,
+              "vertex_counts": [
+                78862,
+                78862
+              ]
+            },
+            {
+              "repeat": 4,
+              "vertices_in_repeat_1_only": 4607,
+              "vertices_in_this_repeat_only": 4607,
+              "vertex_counts": [
+                78862,
+                78862
+              ]
+            },
+            {
+              "repeat": 5,
+              "vertices_in_repeat_1_only": 4251,
+              "vertices_in_this_repeat_only": 4251,
+              "vertex_counts": [
+                78862,
+                78862
+              ]
+            },
+            {
+              "repeat": 6,
+              "vertices_in_repeat_1_only": 5179,
+              "vertices_in_this_repeat_only": 5179,
+              "vertex_counts": [
+                78862,
+                78862
+              ]
+            },
+            {
+              "repeat": 7,
+              "vertices_in_repeat_1_only": 4831,
+              "vertices_in_this_repeat_only": 4831,
+              "vertex_counts": [
+                78862,
+                78862
+              ]
+            },
+            {
+              "repeat": 8,
+              "vertices_in_repeat_1_only": 4617,
+              "vertices_in_this_repeat_only": 4617,
+              "vertex_counts": [
+                78862,
+                78862
+              ]
+            },
+            {
+              "repeat": 9,
+              "vertices_in_repeat_1_only": 4536,
+              "vertices_in_this_repeat_only": 4536,
+              "vertex_counts": [
+                78862,
+                78862
+              ]
+            },
+            {
+              "repeat": 10,
+              "vertices_in_repeat_1_only": 4595,
+              "vertices_in_this_repeat_only": 4595,
+              "vertex_counts": [
+                78862,
+                78862
+              ]
+            },
+            {
+              "repeat": 11,
+              "vertices_in_repeat_1_only": 4210,
+              "vertices_in_this_repeat_only": 4210,
+              "vertex_counts": [
+                78862,
+                78862
+              ]
+            },
+            {
+              "repeat": 12,
+              "vertices_in_repeat_1_only": 4459,
+              "vertices_in_this_repeat_only": 4459,
+              "vertex_counts": [
+                78862,
+                78862
+              ]
+            },
+            {
+              "repeat": 13,
+              "vertices_in_repeat_1_only": 4583,
+              "vertices_in_this_repeat_only": 4583,
+              "vertex_counts": [
+                78862,
+                78862
+              ]
+            },
+            {
+              "repeat": 14,
+              "vertices_in_repeat_1_only": 4103,
+              "vertices_in_this_repeat_only": 4103,
+              "vertex_counts": [
+                78862,
+                78862
+              ]
+            },
+            {
+              "repeat": 15,
+              "vertices_in_repeat_1_only": 4469,
+              "vertices_in_this_repeat_only": 4469,
+              "vertex_counts": [
+                78862,
+                78862
+              ]
+            },
+            {
+              "repeat": 16,
+              "vertices_in_repeat_1_only": 4008,
+              "vertices_in_this_repeat_only": 4008,
+              "vertex_counts": [
+                78862,
+                78862
+              ]
+            },
+            {
+              "repeat": 17,
+              "vertices_in_repeat_1_only": 4416,
+              "vertices_in_this_repeat_only": 4416,
+              "vertex_counts": [
+                78862,
+                78862
+              ]
+            },
+            {
+              "repeat": 18,
+              "vertices_in_repeat_1_only": 4035,
+              "vertices_in_this_repeat_only": 4035,
+              "vertex_counts": [
+                78862,
+                78862
+              ]
+            },
+            {
+              "repeat": 19,
+              "vertices_in_repeat_1_only": 4586,
+              "vertices_in_this_repeat_only": 4586,
+              "vertex_counts": [
+                78862,
+                78862
+              ]
+            },
+            {
+              "repeat": 20,
+              "vertices_in_repeat_1_only": 4691,
+              "vertices_in_this_repeat_only": 4691,
+              "vertex_counts": [
+                78862,
+                78862
+              ]
+            },
+            {
+              "repeat": 21,
+              "vertices_in_repeat_1_only": 4445,
+              "vertices_in_this_repeat_only": 4445,
+              "vertex_counts": [
+                78862,
+                78862
+              ]
+            },
+            {
+              "repeat": 22,
+              "vertices_in_repeat_1_only": 4308,
+              "vertices_in_this_repeat_only": 4308,
+              "vertex_counts": [
+                78862,
+                78862
+              ]
+            },
+            {
+              "repeat": 23,
+              "vertices_in_repeat_1_only": 3422,
+              "vertices_in_this_repeat_only": 3422,
+              "vertex_counts": [
+                78862,
+                78862
+              ]
+            },
+            {
+              "repeat": 24,
+              "vertices_in_repeat_1_only": 4220,
+              "vertices_in_this_repeat_only": 4220,
+              "vertex_counts": [
+                78862,
+                78862
+              ]
+            }
+          ],
+          "largest_set_difference": 5179,
+          "verdict": "genuinely different vertex positions"
+        },
+        "and_how_far_it_moved": {
+          "per_repeat": [
+            {
+              "repeat": 2,
+              "median_displacement_m": 0.0,
+              "p99_displacement_m": 2.384185791015625e-07,
+              "max_displacement_m": 3.814697265625e-06,
+              "measured": "symmetric nearest-neighbour distance between this repeat's vertex set and repeat 1's, a lower bound on per-vertex movement"
+            },
+            {
+              "repeat": 3,
+              "median_displacement_m": 0.0,
+              "p99_displacement_m": 2.384185791015625e-07,
+              "max_displacement_m": 4.5299530029296875e-06,
+              "measured": "symmetric nearest-neighbour distance between this repeat's vertex set and repeat 1's, a lower bound on per-vertex movement"
+            },
+            {
+              "repeat": 4,
+              "median_displacement_m": 0.0,
+              "p99_displacement_m": 2.384185791015625e-07,
+              "max_displacement_m": 3.933906555175781e-06,
+              "measured": "symmetric nearest-neighbour distance between this repeat's vertex set and repeat 1's, a lower bound on per-vertex movement"
+            },
+            {
+              "repeat": 5,
+              "median_displacement_m": 0.0,
+              "p99_displacement_m": 2.384185791015625e-07,
+              "max_displacement_m": 5.245208740234375e-06,
+              "measured": "symmetric nearest-neighbour distance between this repeat's vertex set and repeat 1's, a lower bound on per-vertex movement"
+            },
+            {
+              "repeat": 6,
+              "median_displacement_m": 0.0,
+              "p99_displacement_m": 2.384185791015625e-07,
+              "max_displacement_m": 5.0067901611328125e-06,
+              "measured": "symmetric nearest-neighbour distance between this repeat's vertex set and repeat 1's, a lower bound on per-vertex movement"
+            },
+            {
+              "repeat": 7,
+              "median_displacement_m": 0.0,
+              "p99_displacement_m": 2.384185791015625e-07,
+              "max_displacement_m": 2.384185791015625e-06,
+              "measured": "symmetric nearest-neighbour distance between this repeat's vertex set and repeat 1's, a lower bound on per-vertex movement"
+            },
+            {
+              "repeat": 8,
+              "median_displacement_m": 0.0,
+              "p99_displacement_m": 2.384185791015625e-07,
+              "max_displacement_m": 4.172325134277344e-06,
+              "measured": "symmetric nearest-neighbour distance between this repeat's vertex set and repeat 1's, a lower bound on per-vertex movement"
+            },
+            {
+              "repeat": 9,
+              "median_displacement_m": 0.0,
+              "p99_displacement_m": 2.384185791015625e-07,
+              "max_displacement_m": 6.198883056640625e-06,
+              "measured": "symmetric nearest-neighbour distance between this repeat's vertex set and repeat 1's, a lower bound on per-vertex movement"
+            },
+            {
+              "repeat": 10,
+              "median_displacement_m": 0.0,
+              "p99_displacement_m": 2.384185791015625e-07,
+              "max_displacement_m": 7.867813110351562e-06,
+              "measured": "symmetric nearest-neighbour distance between this repeat's vertex set and repeat 1's, a lower bound on per-vertex movement"
+            },
+            {
+              "repeat": 11,
+              "median_displacement_m": 0.0,
+              "p99_displacement_m": 2.384185791015625e-07,
+              "max_displacement_m": 2.384185791015625e-06,
+              "measured": "symmetric nearest-neighbour distance between this repeat's vertex set and repeat 1's, a lower bound on per-vertex movement"
+            },
+            {
+              "repeat": 12,
+              "median_displacement_m": 0.0,
+              "p99_displacement_m": 2.384185791015625e-07,
+              "max_displacement_m": 3.933906555175781e-06,
+              "measured": "symmetric nearest-neighbour distance between this repeat's vertex set and repeat 1's, a lower bound on per-vertex movement"
+            },
+            {
+              "repeat": 13,
+              "median_displacement_m": 0.0,
+              "p99_displacement_m": 2.384185791015625e-07,
+              "max_displacement_m": 3.814697265625e-06,
+              "measured": "symmetric nearest-neighbour distance between this repeat's vertex set and repeat 1's, a lower bound on per-vertex movement"
+            },
+            {
+              "repeat": 14,
+              "median_displacement_m": 0.0,
+              "p99_displacement_m": 2.384185791015625e-07,
+              "max_displacement_m": 2.7418136596679688e-06,
+              "measured": "symmetric nearest-neighbour distance between this repeat's vertex set and repeat 1's, a lower bound on per-vertex movement"
+            },
+            {
+              "repeat": 15,
+              "median_displacement_m": 0.0,
+              "p99_displacement_m": 2.384185791015625e-07,
+              "max_displacement_m": 4.172325134277344e-06,
+              "measured": "symmetric nearest-neighbour distance between this repeat's vertex set and repeat 1's, a lower bound on per-vertex movement"
+            },
+            {
+              "repeat": 16,
+              "median_displacement_m": 0.0,
+              "p99_displacement_m": 2.384185791015625e-07,
+              "max_displacement_m": 5.841255187988281e-06,
+              "measured": "symmetric nearest-neighbour distance between this repeat's vertex set and repeat 1's, a lower bound on per-vertex movement"
+            },
+            {
+              "repeat": 17,
+              "median_displacement_m": 0.0,
+              "p99_displacement_m": 2.384185791015625e-07,
+              "max_displacement_m": 5.245208740234375e-06,
+              "measured": "symmetric nearest-neighbour distance between this repeat's vertex set and repeat 1's, a lower bound on per-vertex movement"
+            },
+            {
+              "repeat": 18,
+              "median_displacement_m": 0.0,
+              "p99_displacement_m": 2.384185791015625e-07,
+              "max_displacement_m": 2.0265579223632812e-06,
+              "measured": "symmetric nearest-neighbour distance between this repeat's vertex set and repeat 1's, a lower bound on per-vertex movement"
+            },
+            {
+              "repeat": 19,
+              "median_displacement_m": 0.0,
+              "p99_displacement_m": 2.384185791015625e-07,
+              "max_displacement_m": 4.0531158447265625e-06,
+              "measured": "symmetric nearest-neighbour distance between this repeat's vertex set and repeat 1's, a lower bound on per-vertex movement"
+            },
+            {
+              "repeat": 20,
+              "median_displacement_m": 0.0,
+              "p99_displacement_m": 2.384185791015625e-07,
+              "max_displacement_m": 4.0531158447265625e-06,
+              "measured": "symmetric nearest-neighbour distance between this repeat's vertex set and repeat 1's, a lower bound on per-vertex movement"
+            },
+            {
+              "repeat": 21,
+              "median_displacement_m": 0.0,
+              "p99_displacement_m": 2.384185791015625e-07,
+              "max_displacement_m": 8.702278137207031e-06,
+              "measured": "symmetric nearest-neighbour distance between this repeat's vertex set and repeat 1's, a lower bound on per-vertex movement"
+            },
+            {
+              "repeat": 22,
+              "median_displacement_m": 0.0,
+              "p99_displacement_m": 2.384185791015625e-07,
+              "max_displacement_m": 9.894371032714844e-06,
+              "measured": "symmetric nearest-neighbour distance between this repeat's vertex set and repeat 1's, a lower bound on per-vertex movement"
+            },
+            {
+              "repeat": 23,
+              "median_displacement_m": 0.0,
+              "p99_displacement_m": 2.384185791015625e-07,
+              "max_displacement_m": 3.933906555175781e-06,
+              "measured": "symmetric nearest-neighbour distance between this repeat's vertex set and repeat 1's, a lower bound on per-vertex movement"
+            },
+            {
+              "repeat": 24,
+              "median_displacement_m": 0.0,
+              "p99_displacement_m": 2.384185791015625e-07,
+              "max_displacement_m": 3.933906555175781e-06,
+              "measured": "symmetric nearest-neighbour distance between this repeat's vertex set and repeat 1's, a lower bound on per-vertex movement"
+            }
+          ],
+          "the_distribution_of_the_per_pair_worst": {
+            "why_a_distribution_and_not_one_number": "The reported ratio is computed from `worst`, which makes `worst` the quantity it rests on -- and it is a tail statistic. A handful of repeats describes the middle of its distribution, not the case the margin has to survive. An independent lane hit one per-pair worst three orders of magnitude above its neighbours and could not reproduce it in three further attempts on the identical file, which is exactly the shape a four-repeat run cannot see. So the pairs are reported as a distribution and the headline ratio is taken against the worst value known anywhere rather than the worst seen here.",
+            "pairs_compared": 23,
+            "min_m": 2.0265579223632812e-06,
+            "median_m": 4.0531158447265625e-06,
+            "p90_m": 7.534027099609376e-06,
+            "max_m": 9.894371032714844e-06,
+            "spread_max_over_median": 2.4411764705882355
+          },
+          "worst_displacement_m": 9.894371032714844e-06,
+          "the_threshold_it_would_have_to_cross_m": 0.02,
+          "cut_over_the_worst_separation_here": 2021.351325301205,
+          "the_tail_observed_elsewhere": {
+            "displacement_m": 0.002187,
+            "cut_m": 0.05,
+            "cut_over_displacement": 22.86236854138089,
+            "cut_over_displacement_is": "cut_m / displacement_m",
+            "cells_that_flipped_there": 0,
+            "reproduced_in_three_further_attempts": false,
+            "measured_by": "an independent review lane, on a 53x denser input of the same scene, driving this module's _one_crop with the product modules stubbed",
+            "why_it_is_kept": "Dropping an unreproduced outlier because it is inconvenient is how a stated bound becomes a median. It is three orders of magnitude from everything else and still 20x smaller than the cut, and no cell changed its verdict where it was observed -- so it lowers the cut-to-separation ratio this record reports without contradicting any verdict that was actually checked."
+          },
+          "the_worst_displacement_known_anywhere_m": 0.002187,
+          "cut_over_the_worst_separation_known_anywhere": 9.144947416552354,
+          "how_that_ratio_is_computed": "the_threshold_it_would_have_to_cross_m divided by the_worst_displacement_known_anywhere_m",
+          "what_the_cut_to_separation_ratio_is_not": {
+            "it_is_not_a_decision_margin": "The crop keeps a vertex when its distance to the cloud is at most the cut, so what decides a verdict is the distance from that vertex to the cut -- |distance - cut| -- and not the cut itself. A vertex at 0.049999 m against a 0.05 m cut is one micron from flipping, and the 0.00219 m observation above flips it, even though the cut is 22.9x that movement. So this ratio does not say a decision clears its boundary by that factor, and no figure in this record says how close to the cut the vertices that matter actually sit.",
+            "what_it_is": "A comparison of two lengths: how large this case's cut is relative to the largest separation observed between two repeats' vertex sets. It is useful for the scale it gives and it is not a safety factor.",
+            "what_does_support_the_verdict": "The finite observation, which is in `the_per_cell_decision_a_user_reads`: across the pairs compared here, no cell changed its verdict. That is a count of what happened on these repeats, not a guarantee about another run.",
+            "what_would_be_needed_for_a_real_margin": "Per-vertex distance-to-boundary clearance under a stated vertex correspondence, with the cardinality assumption declared. Neither is measured here, and this record does not substitute the ratio for it."
+          },
+          "what_that_means": "A vertex only changes the answer by crossing the support threshold or landing in another cell. Across 23 pairs here the largest nearest-neighbour distance between two repeats' vertex sets was 9.89e-06 m against a 0.02 m cut, and no cell changed its verdict in any of those pairs. Taking the worst displacement known anywhere, including the unreproduced observation above, which is 0.00219 m, this case's cut is 9.1x that separation. That ratio is a comparison of two lengths and not a clearance: a vertex already sitting a micron inside the cut flips under a movement far smaller than the cut, so what is established here is the no-flip count above and the scale of the movement relative to the cut -- not that a rerun would decide the same way."
+        }
+      },
+      "the_aggregate_the_record_reports": {
+        "removed_vertex_count": {
+          "values": [
+            15534.0,
+            15534.0,
+            15534.0,
+            15534.0,
+            15534.0,
+            15534.0,
+            15534.0,
+            15534.0,
+            15534.0,
+            15534.0,
+            15534.0,
+            15534.0,
+            15534.0,
+            15534.0,
+            15534.0,
+            15534.0,
+            15534.0,
+            15534.0,
+            15534.0,
+            15534.0,
+            15534.0,
+            15534.0,
+            15534.0,
+            15534.0
+          ],
+          "distinct": 1,
+          "spread": 0.0,
+          "relative_spread": 0.0
+        },
+        "removed_fraction": {
+          "values": [
+            0.19697699779361416,
+            0.19697699779361416,
+            0.19697699779361416,
+            0.19697699779361416,
+            0.19697699779361416,
+            0.19697699779361416,
+            0.19697699779361416,
+            0.19697699779361416,
+            0.19697699779361416,
+            0.19697699779361416,
+            0.19697699779361416,
+            0.19697699779361416,
+            0.19697699779361416,
+            0.19697699779361416,
+            0.19697699779361416,
+            0.19697699779361416,
+            0.19697699779361416,
+            0.19697699779361416,
+            0.19697699779361416,
+            0.19697699779361416,
+            0.19697699779361416,
+            0.19697699779361416,
+            0.19697699779361416,
+            0.19697699779361416
+          ],
+          "distinct": 1,
+          "spread": 0.0,
+          "relative_spread": 0.0
+        },
+        "total_vertices": {
+          "values": [
+            78862.0,
+            78862.0,
+            78862.0,
+            78862.0,
+            78862.0,
+            78862.0,
+            78862.0,
+            78862.0,
+            78862.0,
+            78862.0,
+            78862.0,
+            78862.0,
+            78862.0,
+            78862.0,
+            78862.0,
+            78862.0,
+            78862.0,
+            78862.0,
+            78862.0,
+            78862.0,
+            78862.0,
+            78862.0,
+            78862.0,
+            78862.0
+          ],
+          "distinct": 1,
+          "spread": 0.0,
+          "relative_spread": 0.0
+        }
+      },
+      "the_per_cell_decision_a_user_reads": [
+        {
+          "repeat": 2,
+          "removed_cells_in_repeat_1": 10142,
+          "removed_cells_here": 10142,
+          "cells_both_called_unsupported": 10142,
+          "jaccard": 1.0,
+          "cells_whose_verdict_flipped": 0
+        },
+        {
+          "repeat": 3,
+          "removed_cells_in_repeat_1": 10142,
+          "removed_cells_here": 10142,
+          "cells_both_called_unsupported": 10142,
+          "jaccard": 1.0,
+          "cells_whose_verdict_flipped": 0
+        },
+        {
+          "repeat": 4,
+          "removed_cells_in_repeat_1": 10142,
+          "removed_cells_here": 10142,
+          "cells_both_called_unsupported": 10142,
+          "jaccard": 1.0,
+          "cells_whose_verdict_flipped": 0
+        },
+        {
+          "repeat": 5,
+          "removed_cells_in_repeat_1": 10142,
+          "removed_cells_here": 10142,
+          "cells_both_called_unsupported": 10142,
+          "jaccard": 1.0,
+          "cells_whose_verdict_flipped": 0
+        },
+        {
+          "repeat": 6,
+          "removed_cells_in_repeat_1": 10142,
+          "removed_cells_here": 10142,
+          "cells_both_called_unsupported": 10142,
+          "jaccard": 1.0,
+          "cells_whose_verdict_flipped": 0
+        },
+        {
+          "repeat": 7,
+          "removed_cells_in_repeat_1": 10142,
+          "removed_cells_here": 10142,
+          "cells_both_called_unsupported": 10142,
+          "jaccard": 1.0,
+          "cells_whose_verdict_flipped": 0
+        },
+        {
+          "repeat": 8,
+          "removed_cells_in_repeat_1": 10142,
+          "removed_cells_here": 10142,
+          "cells_both_called_unsupported": 10142,
+          "jaccard": 1.0,
+          "cells_whose_verdict_flipped": 0
+        },
+        {
+          "repeat": 9,
+          "removed_cells_in_repeat_1": 10142,
+          "removed_cells_here": 10142,
+          "cells_both_called_unsupported": 10142,
+          "jaccard": 1.0,
+          "cells_whose_verdict_flipped": 0
+        },
+        {
+          "repeat": 10,
+          "removed_cells_in_repeat_1": 10142,
+          "removed_cells_here": 10142,
+          "cells_both_called_unsupported": 10142,
+          "jaccard": 1.0,
+          "cells_whose_verdict_flipped": 0
+        },
+        {
+          "repeat": 11,
+          "removed_cells_in_repeat_1": 10142,
+          "removed_cells_here": 10142,
+          "cells_both_called_unsupported": 10142,
+          "jaccard": 1.0,
+          "cells_whose_verdict_flipped": 0
+        },
+        {
+          "repeat": 12,
+          "removed_cells_in_repeat_1": 10142,
+          "removed_cells_here": 10142,
+          "cells_both_called_unsupported": 10142,
+          "jaccard": 1.0,
+          "cells_whose_verdict_flipped": 0
+        },
+        {
+          "repeat": 13,
+          "removed_cells_in_repeat_1": 10142,
+          "removed_cells_here": 10142,
+          "cells_both_called_unsupported": 10142,
+          "jaccard": 1.0,
+          "cells_whose_verdict_flipped": 0
+        },
+        {
+          "repeat": 14,
+          "removed_cells_in_repeat_1": 10142,
+          "removed_cells_here": 10142,
+          "cells_both_called_unsupported": 10142,
+          "jaccard": 1.0,
+          "cells_whose_verdict_flipped": 0
+        },
+        {
+          "repeat": 15,
+          "removed_cells_in_repeat_1": 10142,
+          "removed_cells_here": 10142,
+          "cells_both_called_unsupported": 10142,
+          "jaccard": 1.0,
+          "cells_whose_verdict_flipped": 0
+        },
+        {
+          "repeat": 16,
+          "removed_cells_in_repeat_1": 10142,
+          "removed_cells_here": 10142,
+          "cells_both_called_unsupported": 10142,
+          "jaccard": 1.0,
+          "cells_whose_verdict_flipped": 0
+        },
+        {
+          "repeat": 17,
+          "removed_cells_in_repeat_1": 10142,
+          "removed_cells_here": 10142,
+          "cells_both_called_unsupported": 10142,
+          "jaccard": 1.0,
+          "cells_whose_verdict_flipped": 0
+        },
+        {
+          "repeat": 18,
+          "removed_cells_in_repeat_1": 10142,
+          "removed_cells_here": 10142,
+          "cells_both_called_unsupported": 10142,
+          "jaccard": 1.0,
+          "cells_whose_verdict_flipped": 0
+        },
+        {
+          "repeat": 19,
+          "removed_cells_in_repeat_1": 10142,
+          "removed_cells_here": 10142,
+          "cells_both_called_unsupported": 10142,
+          "jaccard": 1.0,
+          "cells_whose_verdict_flipped": 0
+        },
+        {
+          "repeat": 20,
+          "removed_cells_in_repeat_1": 10142,
+          "removed_cells_here": 10142,
+          "cells_both_called_unsupported": 10142,
+          "jaccard": 1.0,
+          "cells_whose_verdict_flipped": 0
+        },
+        {
+          "repeat": 21,
+          "removed_cells_in_repeat_1": 10142,
+          "removed_cells_here": 10142,
+          "cells_both_called_unsupported": 10142,
+          "jaccard": 1.0,
+          "cells_whose_verdict_flipped": 0
+        },
+        {
+          "repeat": 22,
+          "removed_cells_in_repeat_1": 10142,
+          "removed_cells_here": 10142,
+          "cells_both_called_unsupported": 10142,
+          "jaccard": 1.0,
+          "cells_whose_verdict_flipped": 0
+        },
+        {
+          "repeat": 23,
+          "removed_cells_in_repeat_1": 10142,
+          "removed_cells_here": 10142,
+          "cells_both_called_unsupported": 10142,
+          "jaccard": 1.0,
+          "cells_whose_verdict_flipped": 0
+        },
+        {
+          "repeat": 24,
+          "removed_cells_in_repeat_1": 10142,
+          "removed_cells_here": 10142,
+          "cells_both_called_unsupported": 10142,
+          "jaccard": 1.0,
+          "cells_whose_verdict_flipped": 0
+        }
+      ],
+      "where_the_movers_sit": [
+        {
+          "vertices_within_10pc_of_the_limit": 1621,
+          "as_fraction_of_all_vertices": 0.020554893358017804,
+          "removed_vertices": 15534
+        },
+        {
+          "vertices_within_10pc_of_the_limit": 1621,
+          "as_fraction_of_all_vertices": 0.020554893358017804,
+          "removed_vertices": 15534
+        },
+        {
+          "vertices_within_10pc_of_the_limit": 1621,
+          "as_fraction_of_all_vertices": 0.020554893358017804,
+          "removed_vertices": 15534
+        },
+        {
+          "vertices_within_10pc_of_the_limit": 1621,
+          "as_fraction_of_all_vertices": 0.020554893358017804,
+          "removed_vertices": 15534
+        },
+        {
+          "vertices_within_10pc_of_the_limit": 1621,
+          "as_fraction_of_all_vertices": 0.020554893358017804,
+          "removed_vertices": 15534
+        },
+        {
+          "vertices_within_10pc_of_the_limit": 1621,
+          "as_fraction_of_all_vertices": 0.020554893358017804,
+          "removed_vertices": 15534
+        },
+        {
+          "vertices_within_10pc_of_the_limit": 1621,
+          "as_fraction_of_all_vertices": 0.020554893358017804,
+          "removed_vertices": 15534
+        },
+        {
+          "vertices_within_10pc_of_the_limit": 1621,
+          "as_fraction_of_all_vertices": 0.020554893358017804,
+          "removed_vertices": 15534
+        },
+        {
+          "vertices_within_10pc_of_the_limit": 1621,
+          "as_fraction_of_all_vertices": 0.020554893358017804,
+          "removed_vertices": 15534
+        },
+        {
+          "vertices_within_10pc_of_the_limit": 1621,
+          "as_fraction_of_all_vertices": 0.020554893358017804,
+          "removed_vertices": 15534
+        },
+        {
+          "vertices_within_10pc_of_the_limit": 1621,
+          "as_fraction_of_all_vertices": 0.020554893358017804,
+          "removed_vertices": 15534
+        },
+        {
+          "vertices_within_10pc_of_the_limit": 1621,
+          "as_fraction_of_all_vertices": 0.020554893358017804,
+          "removed_vertices": 15534
+        },
+        {
+          "vertices_within_10pc_of_the_limit": 1621,
+          "as_fraction_of_all_vertices": 0.020554893358017804,
+          "removed_vertices": 15534
+        },
+        {
+          "vertices_within_10pc_of_the_limit": 1621,
+          "as_fraction_of_all_vertices": 0.020554893358017804,
+          "removed_vertices": 15534
+        },
+        {
+          "vertices_within_10pc_of_the_limit": 1621,
+          "as_fraction_of_all_vertices": 0.020554893358017804,
+          "removed_vertices": 15534
+        },
+        {
+          "vertices_within_10pc_of_the_limit": 1621,
+          "as_fraction_of_all_vertices": 0.020554893358017804,
+          "removed_vertices": 15534
+        },
+        {
+          "vertices_within_10pc_of_the_limit": 1621,
+          "as_fraction_of_all_vertices": 0.020554893358017804,
+          "removed_vertices": 15534
+        },
+        {
+          "vertices_within_10pc_of_the_limit": 1621,
+          "as_fraction_of_all_vertices": 0.020554893358017804,
+          "removed_vertices": 15534
+        },
+        {
+          "vertices_within_10pc_of_the_limit": 1621,
+          "as_fraction_of_all_vertices": 0.020554893358017804,
+          "removed_vertices": 15534
+        },
+        {
+          "vertices_within_10pc_of_the_limit": 1621,
+          "as_fraction_of_all_vertices": 0.020554893358017804,
+          "removed_vertices": 15534
+        },
+        {
+          "vertices_within_10pc_of_the_limit": 1621,
+          "as_fraction_of_all_vertices": 0.020554893358017804,
+          "removed_vertices": 15534
+        },
+        {
+          "vertices_within_10pc_of_the_limit": 1621,
+          "as_fraction_of_all_vertices": 0.020554893358017804,
+          "removed_vertices": 15534
+        },
+        {
+          "vertices_within_10pc_of_the_limit": 1621,
+          "as_fraction_of_all_vertices": 0.020554893358017804,
+          "removed_vertices": 15534
+        },
+        {
+          "vertices_within_10pc_of_the_limit": 1621,
+          "as_fraction_of_all_vertices": 0.020554893358017804,
+          "removed_vertices": 15534
+        }
+      ],
+      "the_published_downstream_figure": {
+        "per_repeat": [
+          {
+            "repeat": 1,
+            "baseline_uncropped": {
+              "occupied_cells": 2873,
+              "phantom_obstacle_cells": 962,
+              "precision_wrt_observation": 0.6651583710407241,
+              "recall_of_observed_cells": 0.9735099337748344
+            },
+            "candidate_cropped": {
+              "occupied_cells": 1972,
+              "phantom_obstacle_cells": 62,
+              "precision_wrt_observation": 0.9685598377281948,
+              "recall_of_observed_cells": 0.9730005094243505
+            }
+          },
+          {
+            "repeat": 2,
+            "baseline_uncropped": {
+              "occupied_cells": 2873,
+              "phantom_obstacle_cells": 962,
+              "precision_wrt_observation": 0.6651583710407241,
+              "recall_of_observed_cells": 0.9735099337748344
+            },
+            "candidate_cropped": {
+              "occupied_cells": 1972,
+              "phantom_obstacle_cells": 62,
+              "precision_wrt_observation": 0.9685598377281948,
+              "recall_of_observed_cells": 0.9730005094243505
+            }
+          },
+          {
+            "repeat": 3,
+            "baseline_uncropped": {
+              "occupied_cells": 2873,
+              "phantom_obstacle_cells": 962,
+              "precision_wrt_observation": 0.6651583710407241,
+              "recall_of_observed_cells": 0.9735099337748344
+            },
+            "candidate_cropped": {
+              "occupied_cells": 1972,
+              "phantom_obstacle_cells": 62,
+              "precision_wrt_observation": 0.9685598377281948,
+              "recall_of_observed_cells": 0.9730005094243505
+            }
+          },
+          {
+            "repeat": 4,
+            "baseline_uncropped": {
+              "occupied_cells": 2873,
+              "phantom_obstacle_cells": 962,
+              "precision_wrt_observation": 0.6651583710407241,
+              "recall_of_observed_cells": 0.9735099337748344
+            },
+            "candidate_cropped": {
+              "occupied_cells": 1972,
+              "phantom_obstacle_cells": 62,
+              "precision_wrt_observation": 0.9685598377281948,
+              "recall_of_observed_cells": 0.9730005094243505
+            }
+          },
+          {
+            "repeat": 5,
+            "baseline_uncropped": {
+              "occupied_cells": 2873,
+              "phantom_obstacle_cells": 962,
+              "precision_wrt_observation": 0.6651583710407241,
+              "recall_of_observed_cells": 0.9735099337748344
+            },
+            "candidate_cropped": {
+              "occupied_cells": 1972,
+              "phantom_obstacle_cells": 62,
+              "precision_wrt_observation": 0.9685598377281948,
+              "recall_of_observed_cells": 0.9730005094243505
+            }
+          },
+          {
+            "repeat": 6,
+            "baseline_uncropped": {
+              "occupied_cells": 2873,
+              "phantom_obstacle_cells": 962,
+              "precision_wrt_observation": 0.6651583710407241,
+              "recall_of_observed_cells": 0.9735099337748344
+            },
+            "candidate_cropped": {
+              "occupied_cells": 1972,
+              "phantom_obstacle_cells": 62,
+              "precision_wrt_observation": 0.9685598377281948,
+              "recall_of_observed_cells": 0.9730005094243505
+            }
+          },
+          {
+            "repeat": 7,
+            "baseline_uncropped": {
+              "occupied_cells": 2873,
+              "phantom_obstacle_cells": 962,
+              "precision_wrt_observation": 0.6651583710407241,
+              "recall_of_observed_cells": 0.9735099337748344
+            },
+            "candidate_cropped": {
+              "occupied_cells": 1972,
+              "phantom_obstacle_cells": 62,
+              "precision_wrt_observation": 0.9685598377281948,
+              "recall_of_observed_cells": 0.9730005094243505
+            }
+          },
+          {
+            "repeat": 8,
+            "baseline_uncropped": {
+              "occupied_cells": 2873,
+              "phantom_obstacle_cells": 962,
+              "precision_wrt_observation": 0.6651583710407241,
+              "recall_of_observed_cells": 0.9735099337748344
+            },
+            "candidate_cropped": {
+              "occupied_cells": 1972,
+              "phantom_obstacle_cells": 62,
+              "precision_wrt_observation": 0.9685598377281948,
+              "recall_of_observed_cells": 0.9730005094243505
+            }
+          },
+          {
+            "repeat": 9,
+            "baseline_uncropped": {
+              "occupied_cells": 2873,
+              "phantom_obstacle_cells": 962,
+              "precision_wrt_observation": 0.6651583710407241,
+              "recall_of_observed_cells": 0.9735099337748344
+            },
+            "candidate_cropped": {
+              "occupied_cells": 1972,
+              "phantom_obstacle_cells": 62,
+              "precision_wrt_observation": 0.9685598377281948,
+              "recall_of_observed_cells": 0.9730005094243505
+            }
+          },
+          {
+            "repeat": 10,
+            "baseline_uncropped": {
+              "occupied_cells": 2873,
+              "phantom_obstacle_cells": 962,
+              "precision_wrt_observation": 0.6651583710407241,
+              "recall_of_observed_cells": 0.9735099337748344
+            },
+            "candidate_cropped": {
+              "occupied_cells": 1972,
+              "phantom_obstacle_cells": 62,
+              "precision_wrt_observation": 0.9685598377281948,
+              "recall_of_observed_cells": 0.9730005094243505
+            }
+          },
+          {
+            "repeat": 11,
+            "baseline_uncropped": {
+              "occupied_cells": 2873,
+              "phantom_obstacle_cells": 962,
+              "precision_wrt_observation": 0.6651583710407241,
+              "recall_of_observed_cells": 0.9735099337748344
+            },
+            "candidate_cropped": {
+              "occupied_cells": 1972,
+              "phantom_obstacle_cells": 62,
+              "precision_wrt_observation": 0.9685598377281948,
+              "recall_of_observed_cells": 0.9730005094243505
+            }
+          },
+          {
+            "repeat": 12,
+            "baseline_uncropped": {
+              "occupied_cells": 2873,
+              "phantom_obstacle_cells": 962,
+              "precision_wrt_observation": 0.6651583710407241,
+              "recall_of_observed_cells": 0.9735099337748344
+            },
+            "candidate_cropped": {
+              "occupied_cells": 1972,
+              "phantom_obstacle_cells": 62,
+              "precision_wrt_observation": 0.9685598377281948,
+              "recall_of_observed_cells": 0.9730005094243505
+            }
+          },
+          {
+            "repeat": 13,
+            "baseline_uncropped": {
+              "occupied_cells": 2873,
+              "phantom_obstacle_cells": 962,
+              "precision_wrt_observation": 0.6651583710407241,
+              "recall_of_observed_cells": 0.9735099337748344
+            },
+            "candidate_cropped": {
+              "occupied_cells": 1972,
+              "phantom_obstacle_cells": 62,
+              "precision_wrt_observation": 0.9685598377281948,
+              "recall_of_observed_cells": 0.9730005094243505
+            }
+          },
+          {
+            "repeat": 14,
+            "baseline_uncropped": {
+              "occupied_cells": 2873,
+              "phantom_obstacle_cells": 962,
+              "precision_wrt_observation": 0.6651583710407241,
+              "recall_of_observed_cells": 0.9735099337748344
+            },
+            "candidate_cropped": {
+              "occupied_cells": 1972,
+              "phantom_obstacle_cells": 62,
+              "precision_wrt_observation": 0.9685598377281948,
+              "recall_of_observed_cells": 0.9730005094243505
+            }
+          },
+          {
+            "repeat": 15,
+            "baseline_uncropped": {
+              "occupied_cells": 2873,
+              "phantom_obstacle_cells": 962,
+              "precision_wrt_observation": 0.6651583710407241,
+              "recall_of_observed_cells": 0.9735099337748344
+            },
+            "candidate_cropped": {
+              "occupied_cells": 1972,
+              "phantom_obstacle_cells": 62,
+              "precision_wrt_observation": 0.9685598377281948,
+              "recall_of_observed_cells": 0.9730005094243505
+            }
+          },
+          {
+            "repeat": 16,
+            "baseline_uncropped": {
+              "occupied_cells": 2873,
+              "phantom_obstacle_cells": 962,
+              "precision_wrt_observation": 0.6651583710407241,
+              "recall_of_observed_cells": 0.9735099337748344
+            },
+            "candidate_cropped": {
+              "occupied_cells": 1972,
+              "phantom_obstacle_cells": 62,
+              "precision_wrt_observation": 0.9685598377281948,
+              "recall_of_observed_cells": 0.9730005094243505
+            }
+          },
+          {
+            "repeat": 17,
+            "baseline_uncropped": {
+              "occupied_cells": 2873,
+              "phantom_obstacle_cells": 962,
+              "precision_wrt_observation": 0.6651583710407241,
+              "recall_of_observed_cells": 0.9735099337748344
+            },
+            "candidate_cropped": {
+              "occupied_cells": 1972,
+              "phantom_obstacle_cells": 62,
+              "precision_wrt_observation": 0.9685598377281948,
+              "recall_of_observed_cells": 0.9730005094243505
+            }
+          },
+          {
+            "repeat": 18,
+            "baseline_uncropped": {
+              "occupied_cells": 2873,
+              "phantom_obstacle_cells": 962,
+              "precision_wrt_observation": 0.6651583710407241,
+              "recall_of_observed_cells": 0.9735099337748344
+            },
+            "candidate_cropped": {
+              "occupied_cells": 1972,
+              "phantom_obstacle_cells": 62,
+              "precision_wrt_observation": 0.9685598377281948,
+              "recall_of_observed_cells": 0.9730005094243505
+            }
+          },
+          {
+            "repeat": 19,
+            "baseline_uncropped": {
+              "occupied_cells": 2873,
+              "phantom_obstacle_cells": 962,
+              "precision_wrt_observation": 0.6651583710407241,
+              "recall_of_observed_cells": 0.9735099337748344
+            },
+            "candidate_cropped": {
+              "occupied_cells": 1972,
+              "phantom_obstacle_cells": 62,
+              "precision_wrt_observation": 0.9685598377281948,
+              "recall_of_observed_cells": 0.9730005094243505
+            }
+          },
+          {
+            "repeat": 20,
+            "baseline_uncropped": {
+              "occupied_cells": 2873,
+              "phantom_obstacle_cells": 962,
+              "precision_wrt_observation": 0.6651583710407241,
+              "recall_of_observed_cells": 0.9735099337748344
+            },
+            "candidate_cropped": {
+              "occupied_cells": 1972,
+              "phantom_obstacle_cells": 62,
+              "precision_wrt_observation": 0.9685598377281948,
+              "recall_of_observed_cells": 0.9730005094243505
+            }
+          },
+          {
+            "repeat": 21,
+            "baseline_uncropped": {
+              "occupied_cells": 2873,
+              "phantom_obstacle_cells": 962,
+              "precision_wrt_observation": 0.6651583710407241,
+              "recall_of_observed_cells": 0.9735099337748344
+            },
+            "candidate_cropped": {
+              "occupied_cells": 1972,
+              "phantom_obstacle_cells": 62,
+              "precision_wrt_observation": 0.9685598377281948,
+              "recall_of_observed_cells": 0.9730005094243505
+            }
+          },
+          {
+            "repeat": 22,
+            "baseline_uncropped": {
+              "occupied_cells": 2873,
+              "phantom_obstacle_cells": 962,
+              "precision_wrt_observation": 0.6651583710407241,
+              "recall_of_observed_cells": 0.9735099337748344
+            },
+            "candidate_cropped": {
+              "occupied_cells": 1972,
+              "phantom_obstacle_cells": 62,
+              "precision_wrt_observation": 0.9685598377281948,
+              "recall_of_observed_cells": 0.9730005094243505
+            }
+          },
+          {
+            "repeat": 23,
+            "baseline_uncropped": {
+              "occupied_cells": 2873,
+              "phantom_obstacle_cells": 962,
+              "precision_wrt_observation": 0.6651583710407241,
+              "recall_of_observed_cells": 0.9735099337748344
+            },
+            "candidate_cropped": {
+              "occupied_cells": 1972,
+              "phantom_obstacle_cells": 62,
+              "precision_wrt_observation": 0.9685598377281948,
+              "recall_of_observed_cells": 0.9730005094243505
+            }
+          },
+          {
+            "repeat": 24,
+            "baseline_uncropped": {
+              "occupied_cells": 2873,
+              "phantom_obstacle_cells": 962,
+              "precision_wrt_observation": 0.6651583710407241,
+              "recall_of_observed_cells": 0.9735099337748344
+            },
+            "candidate_cropped": {
+              "occupied_cells": 1972,
+              "phantom_obstacle_cells": 62,
+              "precision_wrt_observation": 0.9685598377281948,
+              "recall_of_observed_cells": 0.9730005094243505
+            }
+          }
+        ],
+        "phantom_cells_removed_by_the_crop": {
+          "values": [
+            900.0,
+            900.0,
+            900.0,
+            900.0,
+            900.0,
+            900.0,
+            900.0,
+            900.0,
+            900.0,
+            900.0,
+            900.0,
+            900.0,
+            900.0,
+            900.0,
+            900.0,
+            900.0,
+            900.0,
+            900.0,
+            900.0,
+            900.0,
+            900.0,
+            900.0,
+            900.0,
+            900.0
+          ],
+          "distinct": 1,
+          "spread": 0.0,
+          "relative_spread": 0.0
+        },
+        "precision_after_the_crop": {
+          "values": [
+            0.9685598377281948,
+            0.9685598377281948,
+            0.9685598377281948,
+            0.9685598377281948,
+            0.9685598377281948,
+            0.9685598377281948,
+            0.9685598377281948,
+            0.9685598377281948,
+            0.9685598377281948,
+            0.9685598377281948,
+            0.9685598377281948,
+            0.9685598377281948,
+            0.9685598377281948,
+            0.9685598377281948,
+            0.9685598377281948,
+            0.9685598377281948,
+            0.9685598377281948,
+            0.9685598377281948,
+            0.9685598377281948,
+            0.9685598377281948,
+            0.9685598377281948,
+            0.9685598377281948,
+            0.9685598377281948,
+            0.9685598377281948
+          ],
+          "distinct": 1,
+          "spread": 0.0,
+          "relative_spread": 0.0
+        },
+        "with_the_fused_cloud_rebuilt_instead": {
+          "why_this_arm_exists": "The fixed-cloud arm isolates Poisson, which is what makes its result attributable. It is not what a user runs. Here the fused cloud is rebuilt every time, so registration varies as well, and the question is whether the published per-cell figure survives that.",
+          "invocations": 5,
+          "distinct_fused_clouds": 5,
+          "vertices_per_invocation": [
+            79071,
+            79059,
+            79059,
+            78867,
+            79071
+          ],
+          "phantom_cells_removed": {
+            "values": [
+              919.0,
+              919.0,
+              919.0,
+              899.0,
+              919.0
+            ],
+            "distinct": 2,
+            "spread": 20.0,
+            "relative_spread": 0.02185792349726776
+          },
+          "what_it_shows": "2 distinct value(s) across 5 invocations, [899, 919], a spread of 20 cell(s) on a figure of about 919 -- 2.18% of it. This arm lets registration vary as well, so it does not attribute that spread to anything on its own; compare it with the fixed-cloud arm above."
+        },
+        "the_same_figure_on_retained_earlier_runs": [
+          920.0,
+          919.0,
+          900.0
+        ],
+        "what_the_two_arms_together_show": "This harness's own phantom-cells-removed figure is exactly reproducible across repeats under the crop and is not exactly reproducible end to end. It is not the published number re-measured: this harness fuses its own cloud, and `what_this_does_not_establish` in this same case says the figures are not comparable to the record's published values -- so whether it lands on the 733 in downstream-consumer.json is a coincidence to note rather than a reproduction of it. Across the 3 values this record retains from separate harness runs the figure is not one number -- 900, 919, 920, a span of 20 cell(s) -- so the constancy below is a within-run property, and two of these records compared against each other should be expected to differ by about that much. Holding the fused cloud fixed, all 24 repeats return 900 -- one value, despite every repeat reconstructing a different mesh. Rebuilding it, the figure moves across 2 values spanning 20 cell(s). So the residual belongs to the registration upstream, which is separately known not to be reproducible, and not to the crop or the reconstruction under it. A reader quoting the figure should quote it with that spread; a reader comparing two crop settings on one fused cloud can quote it exactly."
+      },
+      "what_a_user_may_rely_on": "The per-cell unsupported mask, not only the aggregate. Every repeat agreed on every cell -- Jaccard 1.0, no cell changed its verdict -- so the answer to 'which parts of my mesh are unsupported' is reproducible on this input even though the reconstruction it is computed from is not.",
+      "whether_that_is_benign": "Yes, on every comparison made here: across 23 pairs no cell changed its verdict. Around 1621 vertices per repeat sit within 10% of the cut, which is where a sharp threshold on a continuous quantity is vulnerable, and none of them crossed. That is the result -- a count of what happened on these repeats, not a measurement of how much room the decision had. Over the same pairs the largest nearest-neighbour distance between two repeats' vertex sets was 9.89e-06 m against a 0.02 m cut -- a lower bound on how far any vertex moved, since the two sets are not in correspondence -- and no cell changed its verdict in any of them. The ratio this record reports is taken against the worst displacement known anywhere rather than that, because the statistic has a tail an earlier four-repeat run could not see: the cut is 9.1x that displacement. Read that as scale and not as clearance. The decision boundary is at |distance - cut|, which nothing here measures, so a vertex already near the cut can flip under a movement far smaller than it. What transfers to another scan is the method: re-read one fused cloud, compare the per-cell verdicts pairwise, and report the separation next to the cut. The 23-pair no-flip count does not transfer. It was measured on this capture, at these repeats, with this cut, and a different scan has to produce its own.",
+      "what_this_does_not_establish": "Nothing about the cause inside Poisson, which #1024 covers, and nothing about whether the crop rule is the right rule. The figures are not comparable to the record's published values: this harness mirrors the reconstruct-and-crop stage rather than running the full six-stage workflow, and its fused cloud is its own.",
+      "reproducibility": {
+        "command": "npa/.venv/bin/python docs/evidence/open3d/harness/crop_decision_stability.py",
+        "note": "Every figure here is a between-run comparison, so the figures are expected to move. The verdicts are what reproduce."
+      },
+      "provenance": {
+        "harness": "harness/crop_decision_stability.py",
+        "harness_sha256": "9e730180df9f09483f1c075c1d8012c7f01cec62074319f6b7497b0d73ab5a15",
+        "path_is_relative_to": "this evidence directory"
+      }
+    }
+  },
+  "does_the_tail_reproduce_here": {
+    "pairs_compared_here": 46,
+    "worst_displacement_here_m": 9.894371032714844e-06,
+    "the_event_being_looked_for_m": 0.002187,
+    "how_many_times_larger_that_event_is": 221.03476742168675,
+    "did_it_recur": false,
+    "upper_bound_on_its_per_pair_rate": 0.06304930167405454,
+    "how_that_bound_was_computed": "Zero occurrences in 46 pairs. One-sided 95% upper bound on a per-pair rate is 1 - 0.05 ** (1 / n), which assumes the pairs are independent draws -- they share a fused cloud within a case, so treat it as indicative rather than exact.",
+    "what_this_does_and_does_not_settle": "The distribution here is tight: the worst of 46 pairs is 9.89e-06 m and the event looked for is 221x larger than that, so whatever produced it is rare rather than routine. It does not settle that it cannot happen, and a bound is not an absence -- it was observed once under this same rule. The published margin therefore stays the conservative one. Raising repeats further would describe that tail better; it would not turn the cut-to-separation ratio into a clearance."
+  },
+  "does_the_margin_survive_a_denser_capture": {
+    "why_this_is_asked": "The first case is a sparse fused cloud, and a margin measured there is worth nothing if the wobble grows with the geometry. The denser case exists to find out, because that is the first thing a reader with a real capture would ask.",
+    "what_differs_between_the_two_cases": "The same capture, not a second one. Both cases fuse the same three upstream Redwood fragments; the density difference comes from `voxel_down_sample` at 0.05 against 0.02, which is a downsample parameter. And changing that voxel moves four things at once: the fused-cloud density, the normal-estimation radius (voxel * 2.0), the crop threshold itself (voxel * 1.0, so 0.05 against 0.02 m) and the cell size the per-cell verdicts are compared on. So this bounds the margin at two operating points of the product's own configuration. It does not isolate capture density, and the displacement ratio below cannot be attributed to density alone. Isolating it would need the voxel held while the input changes, which is a different experiment.",
+    "both_ratios_are": "voxel_0.02 divided by voxel_0.05, the denser over the sparser",
+    "vertices_per_case": {
+      "voxel_0.05": 18413.0,
+      "voxel_0.02": 78862.0
+    },
+    "worst_displacement_per_case_m": {
+      "voxel_0.05": 6.079673767089844e-06,
+      "voxel_0.02": 9.894371032714844e-06
+    },
+    "vertices_denser_over_sparser": 4.282952261988812,
+    "displacement_denser_over_sparser": 1.6274509803921569,
+    "how_the_displacement_scales": "partial",
+    "scaling_band_tolerance": 0.1,
+    "is_this_ratio_itself_reproducible": {
+      "the_ratio_is_not": "The 7 displacement ratios this record retains, of however many runs there have been: 0.5484, 0.7174, 0.8889, 1.2206, 1.6275, 2.1212, 2.1429. The earlier ones are carried in a constant this harness does not append to, so this is the history someone wrote down, not a log. It is a ratio of two maxima, so it carries both tails and moves between runs by more than its own distance from the band edges. Do not quote it as a measurement of how displacement scales with density.",
+      "the_band_is": "Runs have landed in different bands with different readings: partial/shrinks. This comparison establishes nothing until that is resolved.",
+      "the_displacement_ratios_this_record_retains": [
+        0.548387,
+        0.717391,
+        0.888889,
+        1.220588,
+        1.6274509803921569,
+        2.121212,
+        2.142857
+      ],
+      "runs_this_is_drawn_from": 7,
+      "the_history_is_not_append_only": "this harness writes the current run's ratio and carries the earlier ones from a hand-maintained constant, so a run whose ratio is not added to that constant leaves no trace here"
+    },
+    "what_that_establishes": "A 4.3x denser mesh moved its vertices 1.63x further. The displacement grew, but by appreciably less than the capture did. Two densities cannot separate partial scaling from a fixed artefact plus noise, so neither reading is supported and this record does not claim one. A third density would not settle it either: see the retained ratios below, where repeat runs of these same two settings have landed in different bands, so the quantity varies between runs and not only between densities. That is this run's reading only: the retained runs do not agree on which band this is -- partial/shrinks -- so `is_this_ratio_itself_reproducible` withdraws the conclusion and this sentence cannot be read as establishing it. What survives every run is the margin, which is quoted against the worst displacement known anywhere rather than against either of these. Both meshes come from the same capture at two downsample voxels, and the cut and the normal radius move with the voxel, so this is two operating points rather than a density axis -- it does not establish that density is what changed the displacement. A reader can compute their own margin: voxel * support_distance_factor over about 1e-05 m."
+  },
+  "why_cells_and_not_vertices": "Poisson returns a different vertex set each run, so no vertex can be followed between repeats and 'this vertex changed its mind' is not a question that can be asked. A consumer does not ask it either: it asks whether a region of space is occupied. Cells at the scene voxel are that question, and are the form the published occupancy consumer works in.",
+  "reproducibility": {
+    "command": "npa/.venv/bin/python docs/evidence/open3d/harness/crop_decision_stability.py",
+    "note": "Every figure here is a between-run comparison, so the figures are expected to move. The verdicts are what reproduce."
+  },
+  "provenance": {
+    "harness": "harness/crop_decision_stability.py",
+    "harness_sha256": "9e730180df9f09483f1c075c1d8012c7f01cec62074319f6b7497b0d73ab5a15",
+    "path_is_relative_to": "this evidence directory"
+  }
+}

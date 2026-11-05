@@ -34,7 +34,7 @@ import shutil
 import subprocess
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, Generator
+from typing import Any, Generator, Mapping, Sequence
 
 import numpy as np
 
@@ -85,6 +85,8 @@ def check_hallucination(
     threshold: float = DEFAULT_THRESHOLD,
     max_frames: int | None = None,
     prefer_upstream: bool = True,
+    ffmpeg_input_args: Sequence[str] = (),
+    subprocess_env: Mapping[str, str] | None = None,
 ) -> HallucinationResult:
     """Score hallucinated motion in ``augmented_video`` against ``original_video``."""
 
@@ -123,6 +125,8 @@ def check_hallucination(
         dist_tol_px=dist_tol_px,
         threshold=threshold,
         max_frames=max_frames,
+        ffmpeg_input_args=ffmpeg_input_args,
+        subprocess_env=subprocess_env,
     )
 
 
@@ -202,10 +206,26 @@ def _run_port(
     dist_tol_px: float,
     threshold: float,
     max_frames: int | None,
+    ffmpeg_input_args: Sequence[str],
+    subprocess_env: Mapping[str, str] | None,
 ) -> HallucinationResult:
-    height, width = _probe_size(original)
-    orig_frames = _iter_gray_frames(original, height, width)
-    aug_frames = _iter_gray_frames(augmented, height, width)
+    height, width = _probe_size(
+        original, input_args=ffmpeg_input_args, env=subprocess_env
+    )
+    orig_frames = _iter_gray_frames(
+        original,
+        height,
+        width,
+        input_args=ffmpeg_input_args,
+        env=subprocess_env,
+    )
+    aug_frames = _iter_gray_frames(
+        augmented,
+        height,
+        width,
+        input_args=ffmpeg_input_args,
+        env=subprocess_env,
+    )
 
     total_hallucinated = 0
     total_augmented_dynamic = 0
@@ -269,7 +289,12 @@ def _ffmpeg() -> str:
     return exe
 
 
-def _probe_size(video: Path) -> tuple[int, int]:
+def _probe_size(
+    video: Path,
+    *,
+    input_args: Sequence[str] = (),
+    env: Mapping[str, str] | None = None,
+) -> tuple[int, int]:
     """Return ``(height, width)`` of ``video`` via ffprobe."""
 
     exe = shutil.which("ffprobe")
@@ -286,11 +311,13 @@ def _probe_size(video: Path) -> tuple[int, int]:
             "stream=width,height",
             "-of",
             "csv=p=0:s=x",
+            *input_args,
             str(video),
         ],
         capture_output=True,
         text=True,
         check=False,
+        env=env,
     )
     raw = (proc.stdout or "").strip().splitlines()
     if proc.returncode != 0 or not raw:
@@ -311,7 +338,12 @@ def _probe_size(video: Path) -> tuple[int, int]:
 
 
 def _iter_gray_frames(
-    video: Path, height: int, width: int
+    video: Path,
+    height: int,
+    width: int,
+    *,
+    input_args: Sequence[str] = (),
+    env: Mapping[str, str] | None = None,
 ) -> Generator[np.ndarray, None, None]:
     """Yield ``height x width`` uint8 grayscale frames, scaling to match.
 
@@ -324,6 +356,7 @@ def _iter_gray_frames(
         "-nostdin",
         "-v",
         "error",
+        *input_args,
         "-i",
         str(video),
         "-vf",
@@ -336,7 +369,11 @@ def _iter_gray_frames(
     ]
     frame_bytes = height * width
     proc = subprocess.Popen(
-        cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.DEVNULL
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        stdin=subprocess.DEVNULL,
+        env=env,
     )
     try:
         assert proc.stdout is not None

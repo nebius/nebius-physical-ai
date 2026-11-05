@@ -3,10 +3,11 @@ FROM python:3.11-slim-trixie@sha256:a3ab0b966bc4e91546a033e22093cb840908979487a9
 
 ARG SIM2REAL_CONTROL_VERSION=0.1.2
 ARG NPA_SOURCE_SHA
-# Reuse the signed October closure recorded in the security snapshot receipt.
-# The August snapshot retained three fixable CRITICAL perl-base findings.
-ARG DEBIAN_SNAPSHOT=20261002T000000Z
+# Reuse the frozen security closure recorded in the package-index receipt.
+# The earlier October snapshot retained the vulnerable libbrotli1 build.
+ARG DEBIAN_SNAPSHOT=20261024T000000Z
 ARG MIN_PERL_BASE_VERSION=5.40.1-6+deb13u1
+ARG MIN_LIBBROTLI_VERSION=1.1.0-2+deb13u1
 
 LABEL npa.tool="sim2real-control" \
       npa.version="${SIM2REAL_CONTROL_VERSION}" \
@@ -50,7 +51,9 @@ RUN rm -f /etc/apt/sources.list /etc/apt/sources.list.d/*.list \
     && apt-get install -y --no-install-recommends \
       curl netcat-openbsd openssh-client openssh-server procps rsync sudo \
       "perl-base=${MIN_PERL_BASE_VERSION}" \
-    && for pin in "perl-base ${MIN_PERL_BASE_VERSION}"; do \
+      "libbrotli1=${MIN_LIBBROTLI_VERSION}" \
+    && for pin in "perl-base ${MIN_PERL_BASE_VERSION}" \
+                  "libbrotli1 ${MIN_LIBBROTLI_VERSION}"; do \
          set -- ${pin}; \
          installed="$(dpkg-query --show --showformat='${Version}' "$1")" || exit 1; \
          dpkg --compare-versions "${installed}" ge "$2" || { \

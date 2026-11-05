@@ -31,25 +31,26 @@ node-local ephemeral storage, with durable reuse still unapproved.
 
 ## SkyPilot worker bootstrap contract
 
-The Sim2Real controller and Rerun viewer upgrade inherited Debian packages from
-the pinned `DEBIAN_SNAPSHOT=20261002T000000Z` closure. Their `MIN_*_VERSION`
-build arguments encode the observed fixed security floors: Perl for both roles,
-plus GLib and mbedcrypto for the viewer. An unreadable or below-floor installed
-version stops the build. The [package-index receipt](validation/sim2real-cpu-security-snapshot-20261002.json)
-binds the snapshot and exact package hashes; it is not replacement-image
-security, bootstrap or runtime acceptance. Do not lower these floors or
-substitute scanner exceptions for rebuilt, validated image bytes.
+The Sim2Real controller and Rerun viewer install inherited Debian packages from
+the pinned `DEBIAN_SNAPSHOT=20261024T000000Z` closure. Their `MIN_*_VERSION`
+build arguments encode the observed fixed security floors: Perl and Brotli for
+both roles, plus GLib and mbedcrypto for the viewer. An unreadable or
+below-floor installed version stops the build. The
+[package-index receipt](validation/sim2real-cpu-security-snapshot-20261024.json)
+binds the snapshot's InRelease and exact package-index hashes, including the
+security-archive Brotli package; it is not replacement-image security,
+bootstrap or runtime acceptance. Do not lower these floors or substitute
+scanner exceptions for rebuilt, validated image bytes.
 
 The GPU-role security closure separately pins PyJWT 2.14.0 for Transfer and
-Isaac. EnvGen uses the October Ubuntu snapshot and the explicit
-`LINUX_LIBC_DEV_VERSION=5.15.0-198.208` argument to the existing installer;
+Isaac. EnvGen uses the November Ubuntu snapshot and the explicit
+`LINUX_LIBC_DEV_VERSION=5.15.0-202.212` argument to the existing installer;
 other installer callers retain their own release-specific defaults. The exact
 installed header version is checked before proceeding. The frozen APT transaction
-already selects that version, above the security floor `5.15.0-194.204`.
-The [signed-index binding](validation/sim2real-envgen-headers-20261002.json)
-preserves both identities; requesting the lower floor after that transaction
-caused a real downgrade refusal, not an access or transport failure. No downgrade
-override is used. These dependency pins
+already selects that version at the security floor `5.15.0-202.212`.
+The [signed-index binding](validation/sim2real-envgen-headers-20261103.json)
+preserves both identities, and the build rejects any selected header version
+other than that recorded version. No downgrade override is used. These dependency pins
 do not qualify an image without its fresh complete artifact gates.
 
 The dedicated current-source EnvGen runtime does not inherit or sanitize a
@@ -169,11 +170,38 @@ Shared Isaac builds apply the upstream Setuptools Unicode manifest fix to exact
 81.0.0 source hashes when Torch's `<82` constraint prevents a version upgrade.
 Cosmos3 serving uses the same verifier for its constrained 80.10.2 runtime.
 Both reject unknown source bytes and update installed `RECORD` hashes.
-Isaac's Python 3.11 closure installs Pillow 12.3 and applies the upstream
-MoviePy Pillow compatibility bound to exact 2.2.1 metadata; the released
-MoviePy code and package versions stay intact. The compatibility patch rejects
-unknown metadata or an unpatched Pillow installation. A successful source or
+Isaac's Python 3.11 closure installs security-fixed Pillow 13.0.0. NPA's
+compatibility policy permits only unchanged MoviePy 2.2.1 release bytes with
+that exact Pillow release; the image build does not run or claim MoviePy's
+upstream suite. Their reviewed Python 3.11 linux/amd64 wheels are
+force-reinstalled through an exact `--require-hashes --only-binary` lock, so a
+same-version distribution inherited from a reused environment cannot bypass
+wheel authentication. A strict canonical-name selector rejects direct
+references, nested includes, constraints, markers, alternate comparison forms,
+and duplicate requirements before it separates that lock from the ordinary
+closure. The build then repairs the stale `<12` requirement in exact installed
+metadata and updates its `RECORD`; released code and package versions stay
+intact. The repair rejects unknown metadata, any other MoviePy version, or any
+Pillow version string other than literal `13.0.0`. A successful source or
 dependency check does not qualify an existing or replacement image digest.
+The shared Jammy bootstrap builds CPython 3.11.18 from the exact hash-checked
+python.org security-release archive. It does not depend on Deadsnakes PPA
+package retention: Launchpad eventually deletes superseded PPA publications.
+The shared installer selects its compiler and non-XML library inputs from the
+fixed Ubuntu snapshot. Derived bases may already contain build inputs; their
+own recipes and retained package metadata remain part of the provenance rather
+than being described as snapshot-pinned here. CPython uses its bundled Expat
+2.9.0, executes the four XML/Expat test
+modules before installation, and rejects a runtime `pyexpat` linked to the
+older snapshot system Expat. The image retains exact source-derived notices for
+CPython, Expat, mpdecimal 2.5.1, tiny_sha3, and the BLAKE2 reference
+implementation; mpdecimal, SHA-3, and BLAKE2 are compiled into `_decimal`,
+`_sha3`, and `_blake2`, respectively. The build verifies the archive before
+extraction, byte-compares each bundled-component notice with its installed
+copy, exercises the required standard-library extension modules, and removes
+the installed standard-library test fixtures before creating the runtime
+virtualenv. OpenArm records these source-built components in both its Markdown
+notices and machine-readable packaging inventory.
 
 The Sim2Real controller and Rerun viewer builds use the October 2, 2026 Debian
 snapshot and explicitly install `perl-base=5.40.1-6+deb13u1` to remove the three

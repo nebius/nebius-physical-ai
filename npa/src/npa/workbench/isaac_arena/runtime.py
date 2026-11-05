@@ -345,7 +345,7 @@ def _summarize(run_dir: Path) -> tuple[dict[str, Any], list[Path]]:
     lengths = [record.get("episode_length") for record in records]
     if any(type(length) is not int or length <= 0 for length in lengths):
         raise IsaacArenaError("upstream evaluation recorded an invalid episode length")
-    successes = sum(bool(record["success"]) for record in records)
+    successes = sum(record["success"] for record in records)
     progress = [record.get("progress") for record in records]
     progress = [item for item in progress if isinstance(item, dict)]
     scores = [

@@ -19,8 +19,10 @@ from typing import Any
 from npa.workbench.open3d.artifacts import (
     read_journal,
     validate_mesh,
+    validate_density_crop_contribution,
     validate_support,
     validate_pose_graph,
+    validate_up_axis_inference,
     verify_rerun_recording,
 )
 from npa.workbench.open3d.runner import (
@@ -113,13 +115,42 @@ def _assert_support_crop_kept_the_observations(report) -> None:
     correspondences in thread-scheduling order, so `registration_icp`,
     `get_information_matrix_from_point_clouds`, `compute_fpfh_feature` and
     `global_optimization` return results that depend on how many threads the
-    container was given. Integer counts and RANSAC correspondence choices repeat
-    bit-for-bit because the generator is seeded; floating-point sums do not. On
+    container was given. Integer counts repeat bit-for-bit; RANSAC correspondence
+    choices do not, despite the seeded generator -- sixteen seeded repeats from
+    fixed clouds and fixed features gave 2 distinct results on an ambiguous
+    construction and 4 on the upstream demo scan
+    (`docs/evidence/open3d/register-seed-determinism.json`), and the shipped
+    point-to-plane ICP gave sixteen. Floating-point sums do not either. On
     the upstream demo scans two builds of this image agreed to 4e-06 relative on
     surface area and about 1e-08 on pose, which is the contract a consumer can
-    actually rely on. Do not tighten these to byte equality without pinning the
-    thread count, and do not loosen them to hide a real regression.
+    actually rely on.
+
+    Do not tighten these to byte equality: pinning the thread count will not get
+    you there. Measured on the Armadillo 300k-sample construction rather than on
+    this scene, at a fixed count inside one process, surface area takes four
+    distinct values in four repeats, and `set_max_threads(1)` does not settle it
+    -- it came out worse in some runs and better in others. There the points and
+    the estimated normals entering reconstruction are byte-identical across the
+    repeats, both hashed, which leaves the Poisson reconstruction and the
+    density crop after it: neither of the two knobs named above reaches them.
+    See `docs/evidence/open3d/declared-reproducibility-causes.json`. And do not
+    loosen them to hide a real regression.
     """
+
+    # `validate_support` checks the coverage-cost pair only when the report carries it,
+    # so that older records still validate. That leaves the join between the writer and
+    # the validator unpinned: a change that stopped emitting the pair would be accepted
+    # by design. This eval runs the real pipeline, so it is the place that can require
+    # the pair to be there, and the lines below are what make the invariant mandatory
+    # for anything this image produces.
+    for block in ("coverage_before_crop", "coverage_cost_of_crop"):
+        assert block in report, (
+            f"the reconstruction stopped publishing {block}, so validate_support no "
+            "longer checks what the crop cost coverage"
+        )
+    cost = report["coverage_cost_of_crop"]
+    assert cost["samples"] == report["coverage"]["samples"]
+    assert cost["samples_abandoned_by_crop"] >= 0
 
     before = report["support_before_crop"]["unsupported_area_fraction"]
     after = report["support"]["unsupported_area_fraction"]
@@ -225,6 +256,104 @@ _CUBE_FACES = (
 )
 
 
+def _assert_the_up_axis_is_decided_by_the_scan(o3d) -> None:
+    """Two clouds where the answer is known, against the real `segment_plane`.
+
+    The unit tests cover the aggregation and the validator with no Open3D present.
+    What they cannot cover is whether repeating a real RANSAC fit actually separates
+    a scan that determines an up axis from one that does not, so both directions run
+    here on constructed geometry whose answer is not in question.
+    """
+
+    import numpy as np
+
+    from npa.workbench.open3d.artifacts import validate_up_axis_inference
+    from npa.workbench.open3d.runner import _up_axis
+
+    def room(floor_points: int, wall_points: int):
+        rng = np.random.default_rng(7)
+        floor = np.column_stack(
+            [
+                rng.uniform(0, 4.0, floor_points),
+                rng.uniform(0, 4.0, floor_points),
+                np.zeros(floor_points),
+            ]
+        )
+        wall = np.column_stack(
+            [
+                np.zeros(wall_points),
+                rng.uniform(0, 4.0, wall_points),
+                rng.uniform(0, 4.0, wall_points),
+            ]
+        )
+        cloud = o3d.geometry.PointCloud()
+        cloud.points = o3d.utility.Vector3dVector(np.vstack([floor, wall]))
+        return cloud
+
+    determined = _up_axis(o3d, room(8100, 810), VOXEL_SIZE)
+    validate_up_axis_inference({"up_axis_inference": determined})
+    assert determined["source"] == "largest-plane-normal-snapped-to-axis", determined
+    assert determined["up"] == [0.0, 0.0, 1.0], determined
+    assert determined["agreement"]["distinct_axes"] == 1, determined["agreement"]
+    runner = determined["agreement"]["runner_up_plane"]
+    assert runner["measured"] and runner["inliers_relative_to_the_winner"] < 0.5, runner
+
+    def two_walls(first_points: int, second_points: int):
+        """Planes at x=0 and y=0, so the candidate axes are x and y -- never z.
+
+        The floor-and-wall room above cannot test the fallback properly: its
+        majority branch *is* the declared default, so publishing the default and
+        publishing the winning branch look identical. Here the default is neither
+        candidate, which makes the difference observable.
+        """
+
+        rng = np.random.default_rng(7)
+        first = np.column_stack(
+            [
+                np.zeros(first_points),
+                rng.uniform(0, 4.0, first_points),
+                rng.uniform(0, 4.0, first_points),
+            ]
+        )
+        second = np.column_stack(
+            [
+                rng.uniform(0, 4.0, second_points),
+                np.zeros(second_points),
+                rng.uniform(0, 4.0, second_points),
+            ]
+        )
+        cloud = o3d.geometry.PointCloud()
+        cloud.points = o3d.utility.Vector3dVector(np.vstack([first, second]))
+        return cloud
+
+    # Equal point counts on two perpendicular planes. The check is allowed to miss --
+    # its measured rate is 25 to 27 of 30 runs on the floor-and-wall room -- so this asserts
+    # the two outcomes it may legitimately produce, and that neither is a named axis
+    # contradicted by its own repeats.
+    ambiguous = _up_axis(o3d, two_walls(8100, 8100), VOXEL_SIZE)
+    validate_up_axis_inference({"up_axis_inference": ambiguous})
+    assert ambiguous["source"] in {
+        "default-ambiguous-plane",
+        "largest-plane-normal-snapped-to-axis",
+    }, ambiguous
+    candidates = [one["up"] for one in ambiguous["agreement"]["candidates"]]
+    assert [0.0, 0.0, 1.0] not in candidates, (
+        "this construction is meant to make the declared default unreachable as a "
+        f"measured branch, and a fit returned it: {candidates}"
+    )
+    if ambiguous["source"] == "default-ambiguous-plane":
+        assert ambiguous["agreement"]["distinct_axes"] >= 2, ambiguous["agreement"]
+        # The assertion the whole fallback exists for: when the repeats disagree the
+        # published vector is the declared default, not whichever branch won.
+        assert ambiguous["up"] == [0.0, 0.0, 1.0], ambiguous
+    competition = ambiguous["agreement"]["runner_up_plane"]
+    assert competition["inliers_relative_to_the_winner"] > 0.9, competition
+    assert (
+        competition["inliers_relative_to_the_winner"]
+        > runner["inliers_relative_to_the_winner"]
+    ), "the ambiguous room's runner-up is not closer than the determined room's"
+
+
 def _assert_uneven_coverage_is_not_called_fabrication(o3d) -> None:
     """A correct surface, unevenly observed, must not be reported as invented.
 
@@ -293,6 +422,191 @@ def _assert_uneven_coverage_is_not_called_fabrication(o3d) -> None:
     assert "separate question this cannot answer" in uneven["note"]
 
 
+def _assert_the_optimization_reports_what_it_did(o3d, graph: dict) -> None:
+    """The optimizer does nothing here, so prove the measure can see when it does.
+
+    These fragments are mutually consistent, so `global_optimization` finds the
+    odometry chain already optimal and corrects exactly 0.0. Asserting that alone
+    would pass just as well if the correction were never computed, which is how the
+    step went unchecked in the first place. So the second half induces an error the
+    optimizer has to fix and reads the same figure back.
+    """
+
+    import numpy as np
+
+    optimization = graph["optimization"]
+    assert optimization["edges_submitted"] == len(graph["edges"]), optimization
+    assert optimization["edges_pruned"] == 0, (
+        f"nothing should be prunable on three consistent fragments: {optimization}"
+    )
+    # Not `== 0.0`. This file's own docstring warns that `global_optimization`
+    # reduces in thread-scheduling order and must not be held to byte equality
+    # without a pinned thread count, and the nearby recorded corrections are 1.8e-07
+    # to 4.7e-06 -- the same order as the convergence threshold, so the margin on
+    # either side of zero is unknown. A zero here is also a legitimate answer rather
+    # than a suspicious one: these fragments agree, so the chain already is the
+    # optimum and the correct correction is nothing. What this can assert is that
+    # whatever the optimizer did is negligible against the scene it did it in. The
+    # proof that a real correction would be *seen* is the induced control below, not
+    # a floor on this draw.
+    assert optimization["max_point_displacement_as_share_of_extent"] <= 1e-5, (
+        "these fragments agree, so the optimizer should have nothing worth "
+        f"distributing; this moved the cloud a readable fraction of the scene: "
+        f"{optimization}"
+    )
+
+    registration = o3d.pipelines.registration
+    induced = registration.PoseGraph()
+    induced.nodes.append(registration.PoseGraphNode(np.identity(4)))
+    wrong = np.identity(4)
+    wrong[0, 3] = 0.5
+    induced.nodes.append(registration.PoseGraphNode(wrong))
+    induced.edges.append(
+        registration.PoseGraphEdge(
+            0, 1, np.identity(4), np.identity(6), uncertain=False
+        )
+    )
+    before = [np.asarray(node.pose).copy() for node in induced.nodes]
+    registration.global_optimization(
+        induced,
+        registration.GlobalOptimizationLevenbergMarquardt(),
+        registration.GlobalOptimizationConvergenceCriteria(),
+        registration.GlobalOptimizationOption(
+            max_correspondence_distance=VOXEL_SIZE * 1.5,
+            edge_prune_threshold=0.25,
+            reference_node=0,
+        ),
+    )
+    corrections = [
+        float(np.abs(np.asarray(node.pose) - was).max())
+        for node, was in zip(induced.nodes, before, strict=True)
+    ]
+    assert max(corrections) == pytest_approx(0.5), (
+        "the optimizer did not correct a node placed 0.5 off against an edge "
+        f"asserting identity, so a zero correction above means nothing: {corrections}"
+    )
+    assert corrections[0] == 0.0, (
+        f"node 0 is the anchor and must not move: {corrections}"
+    )
+
+
+def _assert_the_product_reports_a_prune_it_performed(o3d, root: Path) -> None:
+    """Drive `run_multiway` on a loop where the optimizer has something to reject.
+
+    The assertions above are not enough on their own, and finding that out is the
+    whole point of this change. On three consistent fragments the correction is 0.0
+    and nothing is prunable, so reading the poses *after* optimization instead of
+    before, or publishing the surviving edge count as the submitted one, produces
+    identical output. Both mutations survive every check that uses only that input --
+    the same shape as the defect being fixed.
+
+    Four 140-degree views of a cylindrical room at 80-degree spacing give a graph
+    with six edges, of which the optimizer prunes one and corrects a pose by a small
+    but nonzero amount. That makes both figures observable.
+    """
+
+    import numpy as np
+
+    rng = np.random.default_rng(0)
+    paths: dict[str, str] = {}
+    for index, start in enumerate((0.0, 80.0, 160.0, 240.0)):
+        angles = np.radians(rng.uniform(start, start + 140.0, 9000))
+        points = np.column_stack(
+            [2.0 * np.cos(angles), 2.0 * np.sin(angles), rng.uniform(-1.0, 1.0, 9000)]
+        )
+        points = points + rng.normal(0.0, 0.004, points.shape)
+        cloud = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(points))
+        path = root / f"loop_{index}.ply"
+        if not o3d.io.write_point_cloud(str(path), cloud.voxel_down_sample(VOXEL_SIZE)):
+            raise AssertionError(f"could not write {path}")
+        paths[f"view_{index}"] = str(path)
+
+    manifest = RegistrationManifest(
+        fragments=[
+            {
+                "id": name,
+                "uri": paths[name],
+                "sha256": "0" * 64,
+                "bytes": Path(paths[name]).stat().st_size,
+            }
+            for name in sorted(paths)
+        ],
+        voxel_size=VOXEL_SIZE,
+    ).model_dump(mode="json")
+    output = root / "multiway_loop"
+    output.mkdir()
+    graph = run_multiway({"manifest": manifest, "fragments": paths}, output, RUN_ID)[
+        "pose_graph"
+    ]
+    validate_pose_graph(graph, fragment_count=4)
+    optimization = graph["optimization"]
+
+    assert optimization["edges_submitted"] == 6, optimization
+    assert optimization["edges_pruned"] >= 1, (
+        "the loop no longer produces a pruned edge, so nothing here can tell the "
+        "submitted edge count from the surviving one: " + repr(optimization)
+    )
+    assert optimization["edges_that_survived_pruning"] == len(graph["edges"]), (
+        optimization
+    )
+    # Deliberately not a floor on the correction. A loop whose pairwise estimates
+    # already agree can legitimately need no change, and demanding that every real
+    # optimizer draw move a pose would make a correct result a red gate -- on a
+    # quantity this file already documents as thread-schedule dependent. The pruned
+    # edge above is the contract behaviour this case exists to exercise; that the
+    # optimizer *can* move a pose is proved by the induced control, where the answer
+    # is known. What is asserted here is that the published figures describe each
+    # other.
+    displacement = optimization["max_point_displacement"]
+    extent = optimization["scene_extent"]
+    assert extent > 0.0, optimization
+    assert displacement == pytest_approx(
+        max(optimization["max_point_displacement_per_node"])
+    ), optimization
+    assert optimization["max_point_displacement_as_share_of_extent"] == pytest_approx(
+        displacement / extent
+    ), optimization
+
+
+def pytest_approx(expected: float, tolerance: float = 1e-6):
+    """Tiny stand-in: the smoke runs as a script, without pytest installed."""
+
+    class _Close:
+        def __eq__(self, other: object) -> bool:
+            return isinstance(other, float) and abs(other - expected) <= tolerance
+
+        def __repr__(self) -> str:
+            return f"approximately {expected}"
+
+    return _Close()
+
+
+def _assert_the_density_crop_reports_its_own_contribution(report: dict) -> None:
+    """The crop runs, removes vertices, and changes nothing the next crop wouldn't.
+
+    Asserting only that the block exists would pass on a block that always claims
+    the whole removal as its own. So this checks the measured relationship: with
+    support cropping on at the shipped factor, the density crop's exclusive share
+    is a strict minority of its removals -- on the demo scan it is zero of 518 --
+    and the counts agree with the figure published beside them.
+    """
+
+    contribution = report["density_crop_contribution"]
+    removed = report["low_density_vertices_removed"]
+    assert contribution["vertices_removed"] == removed, contribution
+    assert contribution["support_crop_was_disabled"] is False, (
+        "this smoke runs with support cropping on; the contribution claim below is "
+        f"about that case: {contribution}"
+    )
+    exclusive = contribution["removed_only_by_this_crop"]
+    assert 0 <= exclusive <= removed, contribution
+    assert exclusive * 2 < removed or removed == 0, (
+        "the density crop now accounts for most of its own removals, so the overlap "
+        "this measurement exists to expose has gone; recheck whether the published "
+        f"removal count still overstates the crop's effect: {contribution}"
+    )
+
+
 def main() -> None:
     import open3d as o3d
 
@@ -332,6 +646,8 @@ def main() -> None:
         graph_dir.mkdir()
         report = run_multiway(payload, graph_dir, RUN_ID)
         validate_pose_graph(report["pose_graph"], fragment_count=3)
+        _assert_the_optimization_reports_what_it_did(o3d, report["pose_graph"])
+        _assert_the_product_reports_a_prune_it_performed(o3d, root)
 
         surface = root / "reconstruct"
         surface.mkdir()
@@ -354,11 +670,13 @@ def main() -> None:
         validate_mesh(mesh_report["mesh"])
         validate_mesh(mesh_report["mesh_uncropped"])
         validate_support(mesh_report, voxel_size=VOXEL_SIZE)
+        validate_density_crop_contribution(mesh_report)
+        _assert_the_density_crop_reports_its_own_contribution(mesh_report)
         _assert_support_crop_kept_the_observations(mesh_report)
 
         recording = root / "visualize"
         recording.mkdir()
-        run_visualize(
+        view = run_visualize(
             {
                 "pose_graph": report["pose_graph"],
                 "fragments": paths,
@@ -371,12 +689,25 @@ def main() -> None:
             RUN_ID,
         )
         verify_rerun_recording(recording / "point_cloud.rrd")
+
+        # The up-axis block the real pipeline wrote for its own fused cloud, held to
+        # the same validator the runtime applies. The constructed rooms below test
+        # both directions; this tests the scene the rest of this smoke built.
+        validate_up_axis_inference(view)
+        inference = view["up_axis_inference"]
+        assert inference["source"], inference
+        if "agreement" in inference:
+            assert inference["agreement"]["repeats"] >= 2, inference["agreement"]
+
         _assert_uneven_coverage_is_not_called_fabrication(o3d)
+        _assert_the_up_axis_is_decided_by_the_scan(o3d)
 
         print(
             "Open3D registration recovered the ground-truth pose "
             f"(ICP fitness {min(row['icp']['fitness'] for row in rows):.4f}+), "
-            f"optimized a {len(report['pose_graph']['nodes'])}-node pose graph, "
+            f"optimized a {len(report['pose_graph']['nodes'])}-node pose graph "
+            f"(correcting {report['pose_graph']['optimization']['max_pose_correction']}, "
+            "because the pairwise estimates already agreed), "
             f"reconstructed {mesh_report['mesh']['triangle_count']} triangles, "
             "cropped surface the scan did not support "
             f"({mesh_report['support_before_crop']['unsupported_area_fraction']:.4f} "

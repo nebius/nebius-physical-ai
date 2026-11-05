@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from npa.deploy.images import container_image_for_tool
+from npa.literal_values import require_boolean
 
 from npa.workflows.sim2real.constants import (
     DEFAULT_ACTION_ENV_LIMIT,
@@ -41,6 +42,24 @@ from npa.workflows.sim2real.constants import (
 
 class Sim2RealLoopError(Exception):
     """Raised when the Sim2Real loop cannot produce a valid artifact."""
+
+
+def require_sim2real_boolean(value: Any, *, field: str) -> bool:
+    """Require an exact boolean at a Sim2Real artifact boundary.
+
+    Args:
+        value: Present value or an explicit absent-field default.
+        field: Artifact field name for diagnostics.
+    Returns:
+        The unchanged literal boolean.
+    Raises:
+        Sim2RealLoopError: If the value is not a literal boolean.
+    """
+
+    try:
+        return require_boolean(value, field=field)
+    except ValueError as exc:
+        raise Sim2RealLoopError(str(exc)) from exc
 
 
 @dataclass(frozen=True)
