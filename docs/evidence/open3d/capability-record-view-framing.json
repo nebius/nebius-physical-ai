@@ -110,7 +110,8 @@
     "focused_tests": "121 passed (npa/tests/workbench/test_open3d.py, npa/tests/cli/test_open3d_cli.py)",
     "lint": "ruff check and ruff format clean on both changed files",
     "real_capability_after_the_change": "Golden eval re-run inside the Open3D container against current source: ICP fitness 1.0000+, 3-node pose graph optimized, 7562 triangles, 0.4929 -> 0.0000 of area cropped with 0.4855 beyond three voxels, decode-verified RRD written.",
-    "renders_reproduced": "9 frames re-rendered in the container from the delivered PLY bytes; frame hashes recorded in the capture manifest."
+    "renders_reproduced": "9 frames re-rendered in the container from the delivered PLY bytes. Their digests are bound in delivered-frames-manifest.json, one row per frame beside the measurements taken from those bytes.",
+    "this_sentence_was_wrong_until_the_manifest_existed": "It previously said the frame hashes were recorded in the capture manifest. They were not recorded anywhere: a review lane hashed all nine delivered frames and found zero of the nine digests in any committed file, including every capture and manifest record this set ships. The frames were tied to their measurements by filename alone. The binding exists now, but it was added after the fact rather than written at capture time, and that is the honest order."
   },
   "explicitly_not_proven": {
     "rerun_ui": "These are offscreen CPU renders of the delivered PLY bytes, not captures of the Rerun web viewer. The product blueprint change is measured through the camera geometry it emits, not through a screenshot of the viewer. Root's directive is explicit that PLY renders alone do not prove the UI, so no viewer-improvement claim is made here on their basis.",

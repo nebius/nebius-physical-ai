@@ -202,7 +202,7 @@
     "harness_that_produced_this": [
       {
         "path": "harness/frame_edge_audit.py",
-        "sha256": "b2fbbf2e9e902342498d064dade0397c5f48c5b4ab3f014c8944cd7b87330b8e"
+        "sha256": "82da39227c093490eff87c78e9f5adf48272bda8d240747908f29564148585d5"
       },
       {
         "path": "harness/frame_property_gate.py",

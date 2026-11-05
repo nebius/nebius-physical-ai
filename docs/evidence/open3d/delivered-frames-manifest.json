@@ -1,0 +1,124 @@
+{
+  "content_fraction_is_recorded_not_gated": "Occupancy is recorded beside the digest of the frame it describes, and deliberately not floored. The cheapest way to pass a minimum-occupancy gate is to crop in, and what gets cropped is the sparse incomplete geometry these views exist to show. Every delivered frame sits at or below the occupancy that prompted the original complaint and five are under 13%; that is measured, published and ungated on purpose. This is not a cross-regeneration threshold.",
+  "frames": [
+    {
+      "bytes": 102382,
+      "content_fraction": 0.21030381944444446,
+      "content_pixels": 145362,
+      "content_span_fraction": {
+        "horizontal": 0.6802083333333333,
+        "vertical": 0.7777777777777778
+      },
+      "is_clipped": false,
+      "path": "frames-refit/baseline_scan_and_surface__opposite.png",
+      "sha256": "259c1808bb6316171a780b29c2880c31cd04194561998f538f469941edb80003"
+    },
+    {
+      "bytes": 97048,
+      "content_fraction": 0.21092447916666668,
+      "content_pixels": 145791,
+      "content_span_fraction": {
+        "horizontal": 0.725,
+        "vertical": 0.7125
+      },
+      "is_clipped": false,
+      "path": "frames-refit/baseline_scan_and_surface__overview.png",
+      "sha256": "f2822d214b6c7fbef98f97bb968769ace13073206e4e75547d689c98b1db6e7d"
+    },
+    {
+      "bytes": 106012,
+      "content_fraction": 0.2133174189814815,
+      "content_pixels": 147445,
+      "content_span_fraction": {
+        "horizontal": 0.625,
+        "vertical": 0.8472222222222222
+      },
+      "is_clipped": false,
+      "path": "frames-refit/baseline_scan_and_surface__topdown.png",
+      "sha256": "6e22a34f33d634825d16545a51dc83c124a200adf23c237fc48f3bf9d13588fc"
+    },
+    {
+      "bytes": 89146,
+      "content_fraction": 0.2097974537037037,
+      "content_pixels": 145012,
+      "content_span_fraction": {
+        "horizontal": 0.725,
+        "vertical": 0.7125
+      },
+      "is_clipped": false,
+      "path": "frames-refit/baseline_surface_only__overview.png",
+      "sha256": "abd27683858a3b878717d05337545555767c39bdbc09efb42ea17e88a58c8fbd"
+    },
+    {
+      "bytes": 90458,
+      "content_fraction": 0.11426070601851852,
+      "content_pixels": 78977,
+      "content_span_fraction": {
+        "horizontal": 0.6802083333333333,
+        "vertical": 0.6555555555555556
+      },
+      "is_clipped": false,
+      "path": "frames-refit/candidate_scan_and_surface__opposite.png",
+      "sha256": "01eed5309c10dad96cfe6ffc452508a999d93d22d7a7203a049f17a891e38e55"
+    },
+    {
+      "bytes": 85317,
+      "content_fraction": 0.11398582175925925,
+      "content_pixels": 78787,
+      "content_span_fraction": {
+        "horizontal": 0.55,
+        "vertical": 0.6472222222222223
+      },
+      "is_clipped": false,
+      "path": "frames-refit/candidate_scan_and_surface__overview.png",
+      "sha256": "95d998fa156f6fe3e4aa254e16531ad41c23090a250cd84bd5a2a706e09dabda"
+    },
+    {
+      "bytes": 93353,
+      "content_fraction": 0.12642650462962962,
+      "content_pixels": 87386,
+      "content_span_fraction": {
+        "horizontal": 0.5520833333333334,
+        "vertical": 0.8361111111111111
+      },
+      "is_clipped": false,
+      "path": "frames-refit/candidate_scan_and_surface__topdown.png",
+      "sha256": "27939fe0bd46c49927e399158b6e83462aee6e8e4c6247636324522a4d598871"
+    },
+    {
+      "bytes": 71636,
+      "content_fraction": 0.11120370370370371,
+      "content_pixels": 76864,
+      "content_span_fraction": {
+        "horizontal": 0.55,
+        "vertical": 0.6472222222222223
+      },
+      "is_clipped": false,
+      "path": "frames-refit/candidate_surface_only__overview.png",
+      "sha256": "47d4faa010ce34ecc63ee34b4a0e1642415cfb99dab1752771166bd168200d93"
+    },
+    {
+      "bytes": 54219,
+      "content_fraction": 0.09080584490740741,
+      "content_pixels": 62765,
+      "content_span_fraction": {
+        "horizontal": 0.55,
+        "vertical": 0.6472222222222223
+      },
+      "is_clipped": false,
+      "path": "frames-refit/observed_scan_only__overview.png",
+      "sha256": "80c2c8fc80ecb76513ae1e4cef29913836181b7b61d1e9b252fbca396f02ceec"
+    }
+  ],
+  "generator": "harness/bind_delivered_frames.py",
+  "measured_but_not_delivered": [],
+  "measurements_are_not_recomputed_here": "Copying rather than recomputing means this file and the record that measured these frames cannot drift apart while both look healthy. A mismatch fails --verify instead of sitting unread in two places.",
+  "measurements_copied_from": "frame-edge-audit-after.json",
+  "what": "Every delivered frame, its exact bytes, and the measurements taken from those bytes, in one row each, so that replacing a frame cannot leave a recorded measurement describing bytes that are gone.",
+  "what_this_does_not_establish": [
+    "Nothing about whether the frames are good. This binds measurements to bytes; it is not a judgement about framing, legibility or reconstruction quality.",
+    "Nothing about the geometry. A frame can be byte-stable and still show a bad mesh.",
+    "No claim that these are the only frames that matter, only that these are the nine delivered here."
+  ],
+  "why_this_exists": "A review lane hashed all nine committed frames and searched every evidence record: no record contained the digest of any delivered frame. Eighteen places named a frame without its digest. The measurements were tied to the frames by filename alone."
+}

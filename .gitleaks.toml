@@ -4,10 +4,105 @@ title = "NPA Workbench gitleaks config"
 useDefault = true
 
 [[rules]]
+id = "generic-api-key"
+
+[[rules.allowlists]]
+description = "Terraform no-op prose names authentication without a credential."
+condition = "AND"
+regexTarget = "line"
+regexes = [
+    '''^\s*"auth\x65ntication, Kubernetes/RBAC calls, and destroy were not invoked\."\s*$''',
+]
+
+[[rules.allowlists]]
+description = "The adversarial evaluator embeds one synthetic token assignment."
+condition = "AND"
+regexTarget = "line"
+regexes = [
+    '''^\s*leak_sample = "NEBIUS_TOKEN_FACTORY_KEY\x3dsk-\x61bcdef0123456789abcdef"\s*$''',
+]
+
+[[rules.allowlists]]
+description = "The adversarial scorecard embeds one synthetic token assignment."
+condition = "AND"
+regexTarget = "line"
+regexes = [
+    '''^\s*assert not validate_output\("NEBIUS_TOKEN_FACTORY_KEY\x3dsk-\x61bc123def456ghi789"\)\["ok"\]\s*$''',
+]
+
+[[rules.allowlists]]
+description = "The trace-redaction control embeds one synthetic token."
+condition = "AND"
+regexTarget = "line"
+regexes = [
+    '''^\s*\x74oken = "\x411b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6"\s+# 32-char high-entropy string\s*$''',
+]
+
+[[rules.allowlists]]
+description = "The Alpamayo scanner embeds one synthetic credential assignment."
+condition = "AND"
+regexTarget = "line"
+regexes = [
+    '''^\s*"credential_assignment": b"aws_secret_access_\x6bey = \x633ludGhldGljLW5vdC1yZWFs\\n",\s*$''',
+]
+
+[[rules.allowlists]]
+description = "The Antioch shim assigns API-schema attributes, not credentials."
+condition = "AND"
+regexTarget = "line"
+regexes = [
+    '''^\s*PhysxRigidBodyAPI=api, PhysxArticulationAPI=api, PhysxJointAPI=api\s*$''',
+]
+
+[[rules.allowlists]]
+description = "Cosmos tests import access configuration type names."
+condition = "AND"
+regexTarget = "line"
+regexes = [
+    '''^\s*from npa\.workbench\.cosmos\.cosmos3 import Cosmos3AccessConfi\x67, Cosmos3FetchResult\s*$''',
+]
+
+[[rules.allowlists]]
+description = "The model-access assertion pins one public tokenizer revision."
+condition = "AND"
+regexTarget = "line"
+regexes = [
+    '''^\s*assert \x74okenizer\.revision == "\x385f8ae7bfe8f5525c8d103429524dcf12f98bf7b"\s*$''',
+]
+
+[[rules.allowlists]]
+description = "The Wan fixture pins one public tokenizer revision."
+condition = "AND"
+regexTarget = "line"
+regexes = [
+    '''^\s*"\x74okenizer_ref": "\x366cb9e7e85526fe440a945569e42c72fb6cbc0ad",\s*$''',
+]
+
+[[rules.allowlists]]
+description = "The materializer control commits one synthetic scanner canary."
+condition = "AND"
+regexTarget = "line"
+regexes = [
+    '''^\s*committed = b'api_\x6bey = "\x51w7eR9tY2uI4oP6aS8dF0gH1jK3lZ5xC"\\n'\s*$''',
+]
+
+[[rules.allowlists]]
+description = "RoboTwin proofs name two public Ubuntu package metadata paths."
+condition = "AND"
+regexTarget = "line"
+regexes = [
+    '''^\s*"path": "var/lib/dpkg/info/(?:libgssapi-krb5-2|libkeyutils1):amd64\.triggers", "source_scan_note": "gitleaks:allow=public-package-path-metadata",\s*$''',
+]
+
+[[rules]]
 id = "nebius-generic-id"
 description = "Nebius account/resource identifier (e00/u00 format)"
 regex = '''\b[eu]00[a-z0-9]{12,}\b'''
 tags = ["nebius", "identifier"]
+
+[[rules.allowlists]]
+description = "Unit tests use synthetic e00/u00 identifiers."
+paths = ['''^npa/tests/''']
 
 [[rules]]
 id = "nebius-prefixed-id"
@@ -15,11 +110,19 @@ description = "Prefixed Nebius infrastructure identifier"
 regex = '''\b(project|tenant|capacityblockgroup|computeinstance|mk8scluster|mk8snodegroup|storagebucket|registry|network|cr)-[eu]00[a-z0-9]+\b'''
 tags = ["nebius", "identifier"]
 
+[[rules.allowlists]]
+description = "Unit tests use synthetic prefixed Nebius identifiers."
+paths = ['''^npa/tests/''']
+
 [[rules]]
 id = "nebius-private-object-location"
 description = "Task-specific private Nebius object-store location"
 regex = '''(?i)\bs3://[a-z0-9][a-z0-9.-]*-(?:[0-9a-f]{8,}|(?:19|20)[0-9]{6})(?:[/\s`'"]|$)'''
 tags = ["nebius", "location"]
+
+[[rules.allowlists]]
+description = "Unit tests use synthetic private object-store locations."
+paths = ['''^npa/tests/''']
 
 [[rules]]
 id = "nebius-private-registry-location"
@@ -27,11 +130,19 @@ description = "Legacy task-specific Nebius registry location"
 regex = '''(?i)\bcr\.[a-z0-9-]+\.nebius\.cloud/[a-z0-9][a-z0-9._-]*-(?:[0-9a-f]{8,}|(?:19|20)[0-9]{6})(?:[/:\s`'"]|$)'''
 tags = ["nebius", "location"]
 
+[[rules.allowlists]]
+description = "Unit tests use synthetic private registry locations."
+paths = ['''^npa/tests/''']
+
 [[rules]]
 id = "nebius-dated-operational-name"
 description = "Dated task-specific Nebius resource or campaign name"
 regex = '''(?i)\b(?:tenant|project|capacity[ _-]?block|cluster|node[ _-]?group|compute[ _-]?instance|bucket|registry|network|campaign|job)(?:[ _-]?(?:id|name))?\b[^\n]{0,48}[:=|/]\s*[`'"]?[a-z0-9][a-z0-9-]{4,}-(?:19|20)[0-9]{6}\b'''
 tags = ["nebius", "identifier"]
+
+[[rules.allowlists]]
+description = "Unit tests use synthetic dated resource names."
+paths = ['''^npa/tests/''']
 
 [[rules]]
 id = "lerobot-bucket-pattern"
@@ -39,7 +150,11 @@ description = "lerobot-* working buckets used during validation runs"
 regex = '''\blerobot-[a-f0-9]{8}\b'''
 tags = ["bucket", "operational"]
 
-[allowlist]
+[[rules.allowlists]]
+description = "Unit tests use synthetic lerobot-* bucket names."
+paths = ['''^npa/tests/''']
+
+[[allowlists]]
 description = "Allow placeholders and known-safe values"
 regexes = [
     '''<your-[a-z-]+>''',
@@ -76,6 +191,9 @@ regexes = [
     # The custom Nebius identifier rule matches only their coincidental e00 prefix.
     '''e00820e192c8dbebcafb383ebbf99030895f09905e7a0eb2e0340a0bcc2bc825''',
     '''e006d3a974c4ee19512e5f058abedb6eef36a5e553c14812bdeba1758d812e6d''',
+    # Public PyZMQ 27.1.0 wheel SHA-256. Decode-depth scanning exposes an
+    # internal e00 sequence that is not a Nebius identifier.
+    '''53b40f8ae006f2734ee7608d59ed661419f087521edbfc2149c3932e9c14808c''',
     # Public vhacdx 0.0.10 wheel SHA-256, verified against PyPI metadata and
     # downloaded bytes; the e00 prefix coincides with the identifier rule.
     '''e000a107aa02484572b533ca9e8a42ff96c78baa54b19dd65077a2867684377d''',
@@ -95,15 +213,19 @@ regexes = [
     # Public Comet50 checkpoint Git blob SHA-1, independently verified from its
     # 19,663-byte Hugging Face payload. Its e00 prefix matches the identifier rule.
     '''e00923ccf417486f96b4c7f41bb400e8f9651274''',
-]
-paths = [
-    '''SECURITY\.md''',
-    '''\.gitleaks\.toml''',
-    '''docs/architecture/contributor-context\.md''',
-    '''docs/workbench/guides/sim2real-workflow\.md''',
-    # Operator runbooks reference validated lerobot-* bucket names (not secrets).
-    '''npa/tests/''',
-    # Synthetic lerobot-* bucket fixtures in unit tests (not real secrets).
+    # Public Ubuntu libsemanage copyright SHA-256 used by two exact package-lock
+    # records; its prefix coincides with the Nebius identifier rule.
+    '''e00e6a86c598f9e24ced0180a70a5f2f2e45e133d93adf2b17ce8a06ce4b1b51''',
+    # Public SkyPilot source SHA-256 for utils/controller_utils.py.
+    '''e00b1e4ac249a32763b9ae3c5a4e970f40098a7b671100818e90ced6f1fa186c''',
+    # Exact signed-Ubuntu file digests in the Gymnasium Robotics payload policy.
+    # Generic API-key matching treats nearby authentication-oriented path names
+    # as assignments, but these values are public content identities.
+    '''b9ef1bde0bde1b6839a0f55d43a606645723436932f072e3bf71e4c1a0ed4c06''',
+    '''5175ddce2146fc8a03ab8e1ef25a1b0382dd3cb209484f7ae11ac782171c0d04''',
+    '''7a7bf85b1dbe297da7508fc389d1ff27c54678d502e83214a7f9040d86ac4022''',
+    '''d4b5d5f206cee8142b12e8a19a30db201e43dac83d60259120168d626e00e671''',
+    '''87e1cb955c7d8fcaca57985f480c9c3f60293928254f3efb474b73eea09b6c41''',
 ]
 # Historical false positive: generic-api-key matched env-var name NPA_S3_BUCKET
 # in a string compare. HEAD no longer contains that pattern (rewrote the check).
@@ -116,14 +238,13 @@ commits = [
     # later; a working-tree scan of HEAD reports no leaks. Allowlisted instead of
     # rewriting a pushed branch's history.
     '''6937efd3d693c4d7d5bb7afa6c6bf79c98281790''',
-    # Historical false positive: generic-api-key read the import line
-    #   `from npa.workbench.cosmos.cosmos3 import Cosmos3AccessConfig, fetch_cosmos3_artifacts`
-    # as an assignment of a long opaque value. HEAD splits it across two imports, so a
+    # Historical false positive: generic-api-key read a Cosmos import as an
+    # assignment of a long opaque value. HEAD splits it across two imports, so a
     # working-tree scan is clean; this allowlists the commit rather than rewriting a pushed
     # branch's history.
     '''58d3d4e19b94ddb889f64cdf5ef5a91340db4321''',
-    # Historical false positive: generic-api-key interpreted the plain operator
-    # prose `authentication, Kubernetes/RBAC calls...` as an assignment. The
+    # Historical false positive: generic-api-key interpreted a no-op operator
+    # sentence as an assignment. The
     # source contains no credential; the pushed PR commit cannot be rewritten.
     '''adee7e5a24dbb9215f12ed54227a8aee27b65deb''',
     # Historical LeIsaac validation evidence used a dated operational run name.

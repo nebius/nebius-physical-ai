@@ -7,6 +7,16 @@ a versioned heading when a release is cut.
 
 ## Unreleased
 
+### Sim2Real verdict and promotion proofs require JSON booleans
+
+- Legacy BYO evaluation and VLM payloads must encode `success` as a literal JSON
+  boolean; strings, numbers, null, and containers fail before normalized reports,
+  training, or promotion artifacts are created.
+- Real-checkpoint promotion now applies the same literal contract to
+  `loaded_for_inference`, `stock_or_scripted_policy`, and `exact_digest_match`.
+  BYO producers that emitted `0`/`1` or `"true"`/`"false"` must migrate to JSON
+  `true`/`false`.
+
 ### Paired VLM judge shared-failure boundary
 
 - Reject the exact MiniCPM-V-4_5 plus gemma-3-27b-it `compare-judges` pair
@@ -54,6 +64,12 @@ a versioned heading when a release is cut.
   improved the declared labels, and one rationale hallucinated absent objects.
   This result remains a failed model-improvement gate, separately from the
   sampler's deterministic source/provenance contract.
+
+### VLM sampling evidence validation
+
+- Validate declared sampling metadata even when a retained request manifest
+  carries the legacy v1 schema label. Historical v1 evidence without a sampling
+  member remains compatible.
 
 ### VLM sample frame-count disclosure
 
