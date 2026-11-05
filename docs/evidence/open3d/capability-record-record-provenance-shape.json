@@ -150,7 +150,7 @@
       },
       {
         "path": "commit-reachability-audit.json",
-        "sha256": "b0ec07f275df7ffe1a4bf7248da3ad4afb5ff349620849c3724c39d0539b465d"
+        "sha256": "b7ce3978b1cfd4e06020474a72477c100c1df27613618dcbaae1626cc49bfcc6"
       }
     ],
     "why_this_shape": "A review lane found provenance recorded six different ways across these records, so an auditor had to learn each file. This is the one shape. A record about provenance that carried none would have been the defect it complains about.",
