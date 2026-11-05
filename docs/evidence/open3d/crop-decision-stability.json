@@ -5,6 +5,7 @@
       "what_this_measures": "Whether the support crop returns the same decision twice, as opposed to the same average. The fused cloud is built once and re-read for every repeat, so registration cannot contribute.",
       "why_cells_and_not_vertices": "Poisson returns a different vertex set each run, so no vertex can be followed between repeats and 'this vertex changed its mind' is not a question that can be asked. A consumer does not ask it either: it asks whether a region of space is occupied. Cells at the scene voxel are that question, and are the form the published occupancy consumer already works in.",
       "input": {
+        "hashes_that_name_no_file_here": "fused_cloud_sha256 identifies the fused in-memory cloud reused by this retained measurement run; the cloud bytes are not committed here",
         "dataset": "open3d.data DemoICPPointClouds, the record's own input",
         "voxel_size": 0.05,
         "fused_cloud_sha256": "8dd0ab8185415ad205135d2474226a2d37b0bc781afd66ecdb94167880f52d0d",
@@ -1305,6 +1306,7 @@
       "what_this_measures": "Whether the support crop returns the same decision twice, as opposed to the same average. The fused cloud is built once and re-read for every repeat, so registration cannot contribute.",
       "why_cells_and_not_vertices": "Poisson returns a different vertex set each run, so no vertex can be followed between repeats and 'this vertex changed its mind' is not a question that can be asked. A consumer does not ask it either: it asks whether a region of space is occupied. Cells at the scene voxel are that question, and are the form the published occupancy consumer already works in.",
       "input": {
+        "hashes_that_name_no_file_here": "fused_cloud_sha256 identifies the fused in-memory cloud reused by this retained measurement run; the cloud bytes are not committed here",
         "dataset": "open3d.data DemoICPPointClouds, the record's own input",
         "voxel_size": 0.02,
         "fused_cloud_sha256": "ca078090255a628e64b6f127a96563a52d5c67bbc48fb33dd95a36062936f72f",

@@ -167,6 +167,35 @@ be able to open the thing being asserted.
   either. Measurements: `evidence/open3d/band-profile-across-scenes.json`,
   `evidence/open3d/irregular-density-counterexample.json`,
   `evidence/open3d/poisson-procedure-and-overcall-audit.json`.
+- **`crop_margin` measures how close the crop came to deciding something else. It does
+  not predict a rerun.** The support crop is a threshold on a per-vertex distance, so
+  `reconstruct` reports where this run's vertices sat relative to this run's cut:
+  `crop_margin.closest_vertex_to_the_threshold`, that distance as a fraction of the
+  threshold, and a near-threshold population in three nested bands. **All of those are in
+  the input cloud's own coordinate units** — the same units as `--voxel-size`, which the
+  tool never inspects — so there is no `_m` suffix on any of them and a scan in
+  millimetres is reported in millimetres.
+  `crop_margin.reference_comparison` then counts how many of those vertices sit closer to
+  the cut than two figures measured elsewhere: 1.0e-05 m (the largest in 46 pair
+  comparisons) and 2.187e-03 m (observed once, unreproduced), on one scene at voxel 0.02
+  or 0.05 and Poisson depth 9. **That comparison is explicitly descriptive.** It carries
+  `configuration_measured`, true only when this run's voxel is exactly one of those two
+  sizes and its depth is 9 — 0.02 and 0.05 are two tested points, not an interval, so
+  voxel 0.03 is not a measured setting — and `unit_precondition`, because pairing metre
+  references with the caller's coordinates assumes a unit nobody checked. When the
+  configuration does not match, the field says which part failed and the counts and
+  distances remain exactly what the crop decided on.
+  **Nothing here is a prediction or a bound.** The two references are sample maxima from
+  a finite number of comparisons, so neither bounds anything; and a rerun regenerates the
+  vertex set rather than perturbing it — it derives its density threshold from its own
+  density array, so no vertex can be followed between runs and a rerun can introduce or
+  drop vertices near the cut. No count here bounds how much any count would change. An
+  earlier version of this field classified runs as reproducible in practice and offered
+  the near-threshold counts as an error bar; both claims are gone. **None of it says the
+  reconstruction is correct** either: a vertex far from the cut can still be in the wrong
+  place. Nothing gates on it. Measurements: `evidence/open3d/crop-margin-live.json`, and
+  the study the two references come from, published with
+  `evidence/open3d/crop-decision-stability.json`.
 - **Superseded:** this skill previously said the error was one-sided and that an area called
   invented is invented, on twelve zero-error cells that all read near-threshold. Those cells
   are real and unchanged, but every one of them sampled convex geometry *evenly*; uneven

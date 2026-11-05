@@ -3,6 +3,7 @@
   "user_outcome": "A reviewer who re-renders, replaces, crops or re-captures any of the nine delivered frames finds out in CI if the new bytes are clipped, strand the subject, wash it out, or have lost the scale reference. Before this, no test in the repository read a pixel of them.",
   "why_this_was_open": "An independent review reduced its framing row to P4 and reframed it: the properties actually worth gating already pass, and the only residue is that nothing enforces them in CI. Measured against main, npa/tests/workbench/test_open3d.py pins the camera-fitting math and no test reads the delivered PNGs.",
   "what_is_gated": {
+    "hashes_that_name_no_file_here": "scale_label_sha256 identifies the measured pixel rectangle inside each retained frame; it is not the digest of a standalone file",
     "max_border_content_pixels": 0,
     "max_low_contrast_content_fraction": 0.3,
     "min_median_contrast": 60.0,

@@ -698,9 +698,12 @@ def test_the_real_records_named_commit_actually_resolves_where_that_is_decidable
     only its author can check is not much of a pin. It is now pinned to the main commit
     carrying the same bytes, verified by sha256 rather than assumed.
 
-    That repair is what lets this require ancestry rather than mere presence: the named
-    commit must be in the history of the artifact's own branch, not merely somewhere in
-    the object store.
+    A protected squash merge-group adds a synthetic candidate commit to main rather than
+    making the source branch's commits ancestors of that synthetic HEAD. The source
+    producer commit is still present in the full checkout and its exact file bytes remain
+    verifiable. Requiring HEAD ancestry would therefore reject the truthful pin only in
+    the queue. Presence plus the audit's file-at-commit digest check is the relevant
+    contract: neither a typo nor an unrelated commit with different bytes can pass it.
 
     Shallowness is still asked, but for what it actually tells us. A missing object and
     a shallow clone produce the same git error, so absence alone decides nothing -- that
@@ -758,7 +761,7 @@ def _assert_the_pin_is_reachable(
 ) -> None:
     try:
         probe = subprocess.run(
-            ["git", "merge-base", "--is-ancestor", committed_at, "HEAD"],
+            ["git", "cat-file", "-e", f"{committed_at}^{{commit}}"],
             cwd=EVIDENCE,
             capture_output=True,
             text=True,
@@ -766,11 +769,9 @@ def _assert_the_pin_is_reachable(
             check=False,
         )
     except (OSError, subprocess.SubprocessError) as exc:
-        pytest.skip(f"git cannot answer the ancestry question here: {exc}")
+        pytest.skip(f"git cannot answer the commit-presence question here: {exc}")
 
-    # 0 ancestor, 1 present but not an ancestor, anything else git declining to answer
-    # because it has no such object.
-    if probe.returncode not in (0, 1):
+    if probe.returncode != 0:
         shallow = subprocess.run(
             ["git", "rev-parse", "--is-shallow-repository"],
             cwd=EVIDENCE,
@@ -787,10 +788,9 @@ def _assert_the_pin_is_reachable(
 
     assert probe.returncode == 0, (
         f"{record_name} pins bytes at {committed_at[:12]} in {field}, which is not an "
-        "ancestor of this branch in a checkout that holds complete history, so nobody "
-        "reviewing this branch can resolve it. A typo looks exactly like this, and so "
-        f"does a commit that exists only on some other branch. git said: "
-        f"{probe.stderr.strip() or 'it is present but not an ancestor'}"
+        "available commit in a checkout that holds complete history, so nobody reviewing "
+        "this branch can resolve it. A typo looks exactly like this. git said: "
+        f"{probe.stderr.strip() or 'the commit object is absent'}"
     )
 
     result = run_audit()
@@ -800,3 +800,26 @@ def _assert_the_pin_is_reachable(
         "that has the history to do it, so the commit the record names does not "
         "resolve here:\n" + result.stdout
     )
+
+
+def test_a_missing_committed_at_object_fails_in_a_complete_checkout() -> None:
+    """An invented producer commit cannot downgrade an exact-byte claim to inconclusive."""
+    shallow = subprocess.run(
+        ["git", "rev-parse", "--is-shallow-repository"],
+        cwd=EVIDENCE,
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    ).stdout.strip()
+    if shallow != "false":
+        pytest.skip(
+            "a shallow checkout cannot distinguish a typo from truncated history"
+        )
+
+    with pytest.raises(AssertionError, match="not an available commit"):
+        _assert_the_pin_is_reachable(
+            "capability-record-under-test.json",
+            "generator.script_bytes_committed_at",
+            "f" * 40,
+        )

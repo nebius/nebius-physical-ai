@@ -703,6 +703,299 @@ def _sample_distances(o3d, cloud, vertices):
     )
 
 
+#: How far a Poisson vertex moves between two runs on byte-identical input, in metres.
+#: The crop is a threshold on a per-vertex distance and the reconstruction underneath it
+#: is not reproducible (`docs/evidence/open3d/crop-decision-stability.json`, and the two
+#: limitations in `capability-record-support-crop.json`), so a vertex nearer to the cut
+#: than vertices move can change its own verdict on a rerun.
+#:
+#: Two scales, because one number cannot say what the measurements say. 46 pair
+#: comparisons at two capture densities put the worst at 1.0e-05 m, with zero cell
+#: verdicts changing. Separately, one independent pair reached 2.187e-03 m -- 200 times
+#: that -- and did not reproduce in three further attempts on a coordinate-identical
+#: file.
+#:
+#: Collapsing them loses the distinction a user needs. Against the routine scale the
+#: question is what a rerun will do; against the outlier it is what a rerun could do at
+#: the worst displacement anyone has recorded. The record's own input has vertices
+#: inside the second and effectively none inside the first, which is precisely why it
+#: reproduced 46 times out of 46.
+#:
+#: Both are sample maxima: the largest value seen in a finite number of comparisons on
+#: one scene, which is not a bound on what Poisson reconstruction can do. Repeated runs
+#: of that study moved the routine figure (1.0014e-05 m, then 6.437e-06 m), so 1.0e-05 m
+#: is the largest observed across runs rather than any single run's statistic. No verdict
+#: derived from them may claim that a displacement cannot occur -- see
+#: `what_no_verdict_here_establishes`. Raising either weakens every verdict derived from
+#: it, so change them only against a larger measured displacement.
+POISSON_VERTEX_DISPLACEMENT_ROUTINE_M = 1.0e-05
+POISSON_VERTEX_DISPLACEMENT_BOUND_M = 2.187e-03
+
+#: Fractions of the support threshold at which the near-threshold population is counted.
+#: A distribution rather than one number, because "how many vertices are near the cut"
+#: has no single meaning and the shape is what tells a reader whether their scan is the
+#: comfortable case.
+CROP_MARGIN_BANDS = (0.01, 0.1, 0.5)
+
+#: Where the two displacement figures come from, and what kind of figure each one is.
+#:
+#: Stated by content rather than only by path. The study that produced them is published
+#: separately from this field, so a path alone would be a provenance string a reader
+#: cannot resolve from the tree in front of them.
+_DISPLACEMENT_PROVENANCE = MappingProxyType(
+    {
+        "what_was_measured": (
+            "repeated Poisson reconstructions of one fused cloud, comparing the "
+            "occupancy decision at every scene voxel between pairs of runs: 46 pair "
+            "comparisons at two capture densities for the routine figure, and one "
+            "independent observation that did not reproduce in three further attempts "
+            "for the worst recorded"
+        ),
+        "on_what_input": (
+            "one scene -- the Open3D ICP demo fragments -- at voxel 0.05 and 0.02. Both "
+            "figures are therefore properties of that scene's geometry and capture, not "
+            "of the reconstruction algorithm in general."
+        ),
+        "kind_of_figure": (
+            "sample maxima. Each is the largest value observed in a finite number of "
+            "comparisons, which is not the same as a bound on what can occur."
+        ),
+        "published_as": (
+            "crop-decision-stability.json in the Open3D evidence directory, alongside "
+            "the stability study that produced it rather than alongside this field"
+        ),
+    }
+)
+
+
+#: The capture settings the two reference figures were actually measured at.
+#:
+#: Two points, not an interval. An earlier version of this field wrote them as an
+#: inclusive range and treated anything between them as measured, which made voxel 0.03
+#: -- a setting nobody has run -- receive the same affirmative reading as the two that
+#: were. A range between two tested points is not a measured regime; it is two tested
+#: points.
+#:
+#: The support threshold is `voxel * support_distance_factor`, so it scales with the
+#: caller's capture, while the reference displacements are fixed numbers from one scene.
+#: At a coarser voxel the threshold grows while the reference does not, so the counts
+#: fall and the comparison reads reassuringly for a configuration nobody measured. That
+#: is why matching is exact and why a mismatch reports no comparison rather than a
+#: weaker one.
+MEASURED_VOXEL_SIZES = (0.02, 0.05)
+
+#: The Poisson depth the reference study ran at. Depth changes the vertex set the crop
+#: decides on, so a run at another depth is not the measured configuration either --
+#: which the range-based version ignored completely.
+REFERENCE_POISSON_DEPTH = 9
+
+
+def _reference_comparison(
+    at_routine: int,
+    at_bound: int,
+    vertices: int,
+    closest: float,
+    voxel: float | None,
+    depth: int | None,
+) -> dict[str, Any]:
+    """This run's distances described against two figures measured on another scene.
+
+    Deliberately not a verdict about reruns. The previous version of this field
+    classified a run as `reproducible_at_the_routine_displacement` and said "a rerun is
+    expected to return the same verdicts ... reproducible in practice", and reported
+    that future counts would move "by up to N ... which is the figure to size an error
+    bar from".
+
+    Three things were wrong with that. The reference figures are sample maxima from one
+    scene at two voxel settings, so they do not bound anything, and an interval drawn
+    between those two settings made unmeasured configurations -- voxel 0.03, or any
+    Poisson depth other than the one measured -- read as though they had been measured.
+    The counts cannot bound future counts either: a rerun regenerates the vertex set
+    rather than perturbing it, so it can introduce or drop vertices near the threshold,
+    which the same field said two paragraphs further down while offering the error bar.
+
+    What is left is a description: how many of this run's vertices sit closer to the
+    threshold than two named numbers, and whether this run's configuration is one the
+    numbers were measured at. The margin itself -- in the input cloud's own units -- is
+    the quantity to act on.
+    """
+
+    routine = POISSON_VERTEX_DISPLACEMENT_ROUTINE_M
+    bound = POISSON_VERTEX_DISPLACEMENT_BOUND_M
+    voxel_matches = voxel is not None and any(
+        voxel == one for one in MEASURED_VOXEL_SIZES
+    )
+    depth_matches = depth is None or depth == REFERENCE_POISSON_DEPTH
+    configuration_measured = voxel_matches and depth == REFERENCE_POISSON_DEPTH
+
+    mismatch = []
+    if voxel is None:
+        mismatch.append("this run did not report a voxel size")
+    elif not voxel_matches:
+        measured = " and ".join(f"{one:g}" for one in MEASURED_VOXEL_SIZES)
+        mismatch.append(
+            f"this run is at voxel {voxel:g}; the references were measured at "
+            f"{measured} only, and a value between them is not a measured setting"
+        )
+    if depth is None:
+        mismatch.append("this run did not report a Poisson depth")
+    elif not depth_matches:
+        mismatch.append(
+            f"this run is at Poisson depth {depth}; the references were measured at "
+            f"depth {REFERENCE_POISSON_DEPTH}, and depth changes the vertex set the "
+            "crop decides on"
+        )
+
+    if at_routine:
+        description = "vertices_closer_than_both_reference_displacements"
+    elif at_bound:
+        description = "vertices_closer_than_the_larger_reference_displacement_only"
+    else:
+        description = "no_vertices_closer_than_either_reference_displacement"
+
+    return {
+        "what_this_is": (
+            "A description of this run's distances relative to two displacement figures "
+            "measured on a different scene. Not a prediction about re-running this "
+            "pipeline, and not a bound on how much any count would move."
+        ),
+        "description": description,
+        "vertices_closer_than_the_routine_reference": at_routine,
+        "vertices_closer_than_the_larger_reference": at_bound,
+        "fraction_closer_than_the_larger_reference": (at_bound / vertices)
+        if vertices
+        else 0.0,
+        "closest_vertex_distance_to_the_threshold": closest,
+        "reference_displacements": {
+            "routine": routine,
+            "largest_recorded": bound,
+            "units": "metres, as measured on the reference scene",
+            "kind_of_figure": (
+                "sample maxima -- the largest value seen in a finite number of "
+                "comparisons. Neither is a bound, and nothing about Poisson "
+                "reconstruction prevents a run from exceeding either."
+            ),
+        },
+        "unit_precondition": (
+            "This run's distances are in the input point cloud's own coordinate units, "
+            "the same units as --voxel-size, which this tool does not inspect or "
+            "validate. The reference figures are metres. The counts above are therefore "
+            "only meaningful if this run's coordinates are metres as well; if the scan "
+            "is in millimetres or in an arbitrary unit, read the margin and the band "
+            "counts and ignore the comparison."
+        ),
+        "configuration_measured": configuration_measured,
+        "why_the_configuration_does_not_match": mismatch or None,
+        "measured_configuration": {
+            "voxel_sizes": list(MEASURED_VOXEL_SIZES),
+            "poisson_depth": REFERENCE_POISSON_DEPTH,
+            "scene": "the Open3D ICP demo fragments, one scene",
+        },
+        "measured_by": dict(_DISPLACEMENT_PROVENANCE),
+        "what_this_does_not_establish": (
+            "That a rerun would decide the same way, or differently. A rerun calls "
+            "Poisson again and derives its density threshold from that run's own "
+            "density array, so the vertex set is regenerated rather than perturbed: no "
+            "vertex can be followed between runs, and a rerun can introduce or drop "
+            "vertices near the threshold. The reference figures are nearest-point "
+            "distances between two independently generated vertex sets, not the motion "
+            "of tracked vertices, so no count here bounds how much any count would "
+            "change. Scene identity is also not checked -- the comparison assumes a "
+            "geometry, scale and noise level like the reference scene's, and nothing "
+            "verifies that."
+        ),
+    }
+
+
+def _crop_margin(
+    distances,
+    limit: float,
+    voxel: float | None = None,
+    depth: int | None = None,
+) -> dict[str, Any]:
+    """How close did the crop come to deciding something else?
+
+    The crop's own reproducibility is a ratio, not a property: it holds when the
+    geometry sits far from the cut relative to how far vertices move between runs. That
+    ratio is a fact about the user's scan, and before this it was computed inside the
+    crop and discarded -- the one quantity that decides whether the published
+    reproducibility applies to their capture.
+
+    Costs nothing: `distances` is the array the crop already thresholded.
+
+    What this does not establish: nothing here says the reconstruction is correct. A
+    vertex can sit a comfortable distance from the cut and still be in the wrong place,
+    and a comfortable margin on an invented surface is still a margin on an invented
+    surface. Nor does it answer whether re-running would change the answer -- an
+    earlier version of this field said it did, and the reference comparison below is
+    now explicitly descriptive for that reason.
+    """
+
+    import numpy as np
+
+    if limit <= 0.0:
+        return {
+            "applies": False,
+            "why_not": (
+                "support cropping is disabled, so there is no threshold for anything to "
+                "sit near"
+            ),
+        }
+
+    if distances is None or not len(distances):
+        # A separate reason, because the previous single branch reported a disabled crop
+        # whenever the array was empty -- true for the common case and false here.
+        return {
+            "applies": False,
+            "why_not": (
+                f"support cropping is enabled at a {limit:g} threshold, but the mesh "
+                "presented no vertices to measure against it, so there is no decision "
+                "to be close to"
+            ),
+        }
+
+    gap = np.abs(np.asarray(distances, dtype=float) - limit)
+    closest = float(gap.min())
+    routine = POISSON_VERTEX_DISPLACEMENT_ROUTINE_M
+    bound = POISSON_VERTEX_DISPLACEMENT_BOUND_M
+    at_routine = int((gap < routine).sum())
+    at_bound = int((gap < bound).sum())
+
+    return {
+        "applies": True,
+        # No `_m` suffix on any of these. The threshold is `voxel * factor` and the
+        # distances come from the caller's own cloud, so all three are in whatever units
+        # that cloud uses. The tool never learns what those are, and the previous names
+        # asserted metres for coordinates that may be millimetres or arbitrary.
+        "distance_units": (
+            "the input point cloud's own coordinate units, the same units as "
+            "--voxel-size; not inspected or validated by this tool"
+        ),
+        "threshold": float(limit),
+        "closest_vertex_to_the_threshold": closest,
+        "closest_as_a_fraction_of_the_threshold": float(closest / limit),
+        "vertices_within": {
+            f"within_{format(share * 100, 'g').replace('.', 'p')}_percent_of_the_threshold": {
+                "count": int((gap < share * limit).sum()),
+                "fraction": float((gap < share * limit).mean()),
+            }
+            for share in CROP_MARGIN_BANDS
+        },
+        # Unit-free, so it is the one comparison here that holds whatever the caller's
+        # coordinates mean: a fraction of the threshold against the threshold.
+        "reference_comparison": _reference_comparison(
+            at_routine, at_bound, int(len(gap)), closest, voxel, depth
+        ),
+        "what_this_does_not_establish": (
+            "That the reconstruction is correct. A vertex far from the cut can still be "
+            "in the wrong place, and a comfortable margin on an invented surface is "
+            "still a margin on an invented surface. Nor that re-running would decide "
+            "the same way: this reports where this run's vertices sat relative to this "
+            "run's threshold, and nothing here is a prediction."
+        ),
+    }
+
+
 #: Below this share of the pre-crop unsupported area lying past three voxels, what the crop
 #: removed sat near the support threshold rather than far from any observation.
 #:
@@ -1128,11 +1421,13 @@ def run_reconstruct(
     before = _support(o3d, mesh, cloud, voxel)
     coverage_before_distances = _sample_to_surface(o3d, mesh, cloud)
     unsupported_removed = 0
+    crop_margin = _crop_margin(None, 0.0)
     if request.support_distance_factor > 0.0:
         limit = voxel * request.support_distance_factor
         distances = _sample_distances(o3d, cloud, np.asarray(mesh.vertices))
         crop = distances > limit
         unsupported_removed = int(crop.sum())
+        crop_margin = _crop_margin(distances, limit, voxel, request.poisson_depth)
         mesh.remove_vertices_by_mask(crop)
         if not mesh.has_triangles():
             raise Open3dError(
@@ -1175,6 +1470,9 @@ def run_reconstruct(
             coverage_before_distances, coverage_after_distances, voxel
         ),
         "crop_justification": _crop_justification(before, unsupported_removed, mesh),
+        # How close the crop came to deciding otherwise. The reconstruction under it is
+        # not reproducible, so this is what says whether that reaches the user's result.
+        "crop_margin": crop_margin,
         "cloud_extent": [
             float(value) for value in cloud.get_axis_aligned_bounding_box().get_extent()
         ],

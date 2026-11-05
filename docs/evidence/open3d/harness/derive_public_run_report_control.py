@@ -117,6 +117,17 @@ def main(argv: list[str] | None = None) -> int:
                 "examples": drifted[:5],
             },
             "committed_report_is_current": {
+                # The file, named, so the audit binds `committed_sha256` to real bytes
+                # instead of only comparing it with its own regenerated twin. The pair
+                # was checked against each other and against `identical`, and against
+                # nothing else: regenerate the report, update the one capability record
+                # that carries its digest, and this record kept a pair of stale-but-equal
+                # digests with `identical: true` still consistent. The record whose whole
+                # function is "the committed report is exactly what the generator
+                # produces" could stop describing the committed report, silently -- which
+                # is the same "declaration nothing can find" shape this directory's audit
+                # exists to catch, in digest form rather than prose.
+                "committed": REPORT.name,
                 "committed_sha256": hashlib.sha256(committed).hexdigest(),
                 "regenerated_sha256": hashlib.sha256(regenerated).hexdigest(),
                 "identical": committed == regenerated,

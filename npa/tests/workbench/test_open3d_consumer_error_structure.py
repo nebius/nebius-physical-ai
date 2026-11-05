@@ -334,6 +334,8 @@ def test_the_baseline_controls_only_the_phantom_component_instrument(record):
 
 def test_inputs_are_bound_and_measurement_provenance_is_honest(record):
     support = json.loads(SUPPORT_CROP.read_text())
+    declaration = record["input_sha256"].get("hashes_that_name_no_file_here")
+    assert isinstance(declaration, str) and declaration.strip()
     expected = {
         path: support["artifact_hashes"][path]
         for path in (
@@ -342,7 +344,12 @@ def test_inputs_are_bound_and_measurement_provenance_is_honest(record):
             "mesh/mesh.ply",
         )
     }
-    assert record["input_sha256"] == expected
+    actual = {
+        path: digest
+        for path, digest in record["input_sha256"].items()
+        if path != "hashes_that_name_no_file_here"
+    }
+    assert actual == expected
     if record["recorded_utc"] is None:
         assert record["recorded_utc_status"] == (
             "not retained by the original measurement harness"

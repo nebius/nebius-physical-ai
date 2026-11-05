@@ -18,8 +18,9 @@
       "examples": []
     },
     "committed_report_is_current": {
-      "committed_sha256": "40e7a891e6ac77736b38cd4774e1feee83de1bfd1a04623e9e62f7186501264b",
-      "regenerated_sha256": "40e7a891e6ac77736b38cd4774e1feee83de1bfd1a04623e9e62f7186501264b",
+      "committed": "replay-b18d-public-report.json",
+      "committed_sha256": "0982a5e76dc66e50589d0ea0ce110c9d8e8665b6a49a8fabb21ce73517984da1",
+      "regenerated_sha256": "0982a5e76dc66e50589d0ea0ce110c9d8e8665b6a49a8fabb21ce73517984da1",
       "identical": true
     }
   },

@@ -16,6 +16,7 @@
   },
   "regression_tests": "npa/tests/workbench/test_open3d_holes_and_outliers.py",
   "provenance": {
+    "hashes_that_name_no_file_here": "harness_sha256 identifies the historical holes-and-outliers producer and withdrawal_report_sha256 identifies its retained withdrawal report. Their paths are stated in replacement_method; neither digest is a claim about the current file bytes in this integrated tree.",
     "source_commit": "750a6fe97506f420c6a1e83f64b1a65d6279cf3b",
     "commit_is_an_ancestor_of_main": false,
     "harness_sha256": "8cd7d2027c60106f4ca2ca5bb2be7462a215cdd3f6f40e790dfdc6f61ec9a12f",
