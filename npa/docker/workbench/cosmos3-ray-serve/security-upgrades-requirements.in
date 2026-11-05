@@ -20,6 +20,10 @@ regex==2026.9.3
 # derivative from the exact upstream wheel before resolution; it changes only
 # the package version and Pillow constraint, and carries a reproducible hash.
 gradio==6.16.0+npa.pillow13.1
+# Gradio declares this compatibility dependency conditionally for Python 3.13+.
+# The image uses --require-hashes, which validates the complete wheel metadata
+# closure, so retain the exact compatible release and its generated hashes.
+audioop-lts==0.2.2 ; python_version >= "3.13"
 # The pinned framework Transformers requires the final 0.x Hub API.
 huggingface-hub==0.36.2
 # Preserve the framework's numerical and model-validation ABI constraints.

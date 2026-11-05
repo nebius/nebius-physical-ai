@@ -101,6 +101,19 @@ BENCHMARK_EVIDENCE_SCOPES = frozenset({"unspecified", "illustrative_only"})
 UNPARSED_RESPONSE_PARSER_VERSION = "npa_vlm_eval_unparsed_v1"
 DEFAULT_PRIMARY_JUDGE_MODEL = DEFAULT_VISION_MODEL
 DEFAULT_SECONDARY_JUDGE_MODEL = "openbmb/MiniCPM-V-4_5"
+# Only this pair shares failures in the retained six-family model-profile matrix.
+# Sanitized index: vlm-paired-shared-failure-calibration-20261101.
+# Other compatible pairs remain allowed because no equivalent overlap is established.
+_PAIRED_JUDGE_SHARED_INJECTION_FAILURE_PAIRS = frozenset(
+    {
+        frozenset(
+            {
+                "openbmb/MiniCPM-V-4_5",
+                "google/gemma-3-27b-it",
+            }
+        )
+    }
+)
 DEFAULT_BENCHMARK_THRESHOLDS = (0.5, 0.8, 0.9)
 DEFAULT_SAMPLE_BENCHMARK_PATH = (
     Path(__file__).resolve().parent / "fixtures" / "sample_benchmark" / "benchmark.json"
@@ -432,7 +445,8 @@ class VlmJudgeComparisonRequest:
         input_path: One rollout image, video, array, directory, or S3 prefix.
         output_path: Destination for the comparison artifact.
         primary_model: First hosted vision model ID.
-        secondary_model: Distinct second hosted vision model ID.
+        secondary_model: Distinct second hosted vision model ID. The measured
+            MiniCPM plus Gemma shared-failure pair is rejected.
         task: Shared physical-task instruction.
         success_threshold: Score threshold applied to each result separately.
         frame_selection: Shared final, keyframes, or sequence strategy.
@@ -1298,6 +1312,13 @@ def _comparison_models(primary: str, secondary: str) -> tuple[str, str]:
         raise VlmEvalError(
             "paired judges require models compatible with the shared temperature "
             "request; use individual evaluation for incompatible model profiles"
+        )
+    if frozenset(models) in _PAIRED_JUDGE_SHARED_INJECTION_FAILURE_PAIRS:
+        raise VlmEvalError(
+            "paired judges reject MiniCPM-V-4_5 with gemma-3-27b-it: the retained "
+            "six-family calibration found shared in-image instruction failures in "
+            "three of six retained adversarial families; evidence_id="
+            "vlm-paired-shared-failure-calibration-20261101"
         )
     return models
 
@@ -3734,6 +3755,30 @@ def _selected_video_frames(
     timestamps: Sequence[float | None],
 ) -> list[SelectedFrame]:
     extracted = sorted(output_dir.glob("frame-*.png"), key=_video_output_frame_number)
+    if source_count is None:
+        if len(source_indices) != 0:
+            raise VlmEvalError(
+                "Video source indices require a known source frame count; "
+                "sampling provenance cannot be verified"
+            )
+    else:
+        if source_count <= 0:
+            raise VlmEvalError(
+                "Video source frame count must be positive when known; "
+                "sampling provenance cannot be verified"
+            )
+        if any(index < 0 or index >= source_count for index in source_indices):
+            raise VlmEvalError(
+                "Video source frame index falls outside the known source frame count; "
+                "sampling provenance cannot be verified"
+            )
+        if any(
+            right <= left for left, right in zip(source_indices, source_indices[1:])
+        ):
+            raise VlmEvalError(
+                "Video source frame indices must be strictly increasing and unique; "
+                "sampling provenance cannot be verified"
+            )
     if source_count is not None and len(extracted) != len(source_indices):
         raise VlmEvalError(
             "Video extraction did not produce every selected source frame; "
@@ -5164,6 +5209,16 @@ def _preference_limitations() -> tuple[str, ...]:
         "Audit record only; a preference is not an acceptance gate.",
         "One request per order cannot separate order effects from provider nondeterminism.",
         "One matched pair does not estimate an operational preference rate.",
+        (
+            "The lexical source-role screen case-folds the model ID, task, rubric, "
+            "and provider-request text and searches only for the substrings "
+            "'baseline' and 'candidate'; synonyms and other content-linked "
+            "disclosures are not rejected. Such a disclosure can select different "
+            "neutral A/B labels after order reversal while mapping to the same "
+            "private source arm, so counterbalancing alone cannot distinguish it "
+            "from a genuine source-arm preference and a consistent mapped "
+            "preference does not establish content blinding."
+        ),
         "In-image instructions remain an unresolved input-integrity risk.",
         "Visible preference does not establish geometry accuracy or physical validity.",
         "A vision judgment cannot establish robot safety.",

@@ -606,6 +606,131 @@ def test_select_rollout_frames_retains_numpy_sampling_coverage(tmp_path: Path) -
     assert all(frame.source_kind == "numpy-episode" for frame in selected)
 
 
+def _write_private_video_frame_outputs(output_dir: Path, count: int) -> None:
+    output_dir.mkdir()
+    for ordinal in range(count):
+        Image.new("RGB", (2, 2), (ordinal, 0, 0)).save(
+            output_dir / f"frame-{ordinal + 1:03d}.png"
+        )
+
+
+def test_selected_video_frames_rejects_indices_without_known_count(
+    tmp_path: Path,
+) -> None:
+    output_dir = tmp_path / "frames"
+    _write_private_video_frame_outputs(output_dir, 3)
+
+    with pytest.raises(
+        vlm_eval.VlmEvalError,
+        match="source indices require a known source frame count",
+    ):
+        vlm_eval._selected_video_frames(
+            tmp_path / "rollout.mp4",
+            output_dir,
+            source_count=None,
+            source_indices=[0, 2, 5, 9],
+            timestamps=[0.0, 0.5, 1.5],
+        )
+
+
+@pytest.mark.parametrize("source_count", [0, -1], ids=["zero", "negative"])
+def test_selected_video_frames_rejects_nonpositive_known_count(
+    tmp_path: Path, source_count: int
+) -> None:
+    output_dir = tmp_path / "frames"
+    _write_private_video_frame_outputs(output_dir, 1)
+
+    with pytest.raises(
+        vlm_eval.VlmEvalError,
+        match="source frame count must be positive when known",
+    ):
+        vlm_eval._selected_video_frames(
+            tmp_path / "rollout.mp4",
+            output_dir,
+            source_count=source_count,
+            source_indices=[],
+            timestamps=[None],
+        )
+
+
+@pytest.mark.parametrize(
+    "source_indices",
+    [[-1, 1, 2], [0, 1, 3]],
+    ids=["negative", "equal-to-count"],
+)
+def test_selected_video_frames_rejects_out_of_bounds_indices(
+    tmp_path: Path, source_indices: list[int]
+) -> None:
+    output_dir = tmp_path / "frames"
+    _write_private_video_frame_outputs(output_dir, 3)
+
+    with pytest.raises(
+        vlm_eval.VlmEvalError,
+        match="source frame index falls outside the known source frame count",
+    ):
+        vlm_eval._selected_video_frames(
+            tmp_path / "rollout.mp4",
+            output_dir,
+            source_count=3,
+            source_indices=source_indices,
+            timestamps=[0.0, 0.5, 1.0],
+        )
+
+
+@pytest.mark.parametrize(
+    "source_indices",
+    [[1, 0], [0, 0]],
+    ids=["descending", "duplicate"],
+)
+def test_selected_video_frames_rejects_nonincreasing_indices(
+    tmp_path: Path, source_indices: list[int]
+) -> None:
+    output_dir = tmp_path / "frames"
+    _write_private_video_frame_outputs(output_dir, 2)
+
+    with pytest.raises(
+        vlm_eval.VlmEvalError,
+        match="source frame indices must be strictly increasing and unique",
+    ):
+        vlm_eval._selected_video_frames(
+            tmp_path / "rollout.mp4",
+            output_dir,
+            source_count=3,
+            source_indices=source_indices,
+            timestamps=[0.0, 0.5],
+        )
+
+
+def test_selected_video_frames_preserves_valid_provenance_modes(
+    tmp_path: Path,
+) -> None:
+    unknown_dir = tmp_path / "unknown"
+    _write_private_video_frame_outputs(unknown_dir, 2)
+    unknown = vlm_eval._selected_video_frames(
+        tmp_path / "unknown.mp4",
+        unknown_dir,
+        source_count=None,
+        source_indices=[],
+        timestamps=[],
+    )
+    assert [frame.source_index for frame in unknown] == [None, None]
+    assert [frame.source_count for frame in unknown] == [None, None]
+    assert [frame.source_timestamp_s for frame in unknown] == [None, None]
+
+    known_dir = tmp_path / "known"
+    _write_private_video_frame_outputs(known_dir, 3)
+    known = vlm_eval._selected_video_frames(
+        tmp_path / "known.mp4",
+        known_dir,
+        source_count=10,
+        source_indices=[0, 5, 9],
+        timestamps=[0.0, 0.5, 0.9],
+    )
+    assert [frame.source_index for frame in known] == [0, 5, 9]
+    assert [frame.source_count for frame in known] == [10, 10, 10]
+    assert [frame.source_timestamp_s for frame in known] == [0.0, 0.5, 0.9]
+
+
 @pytest.mark.skipif(
     not shutil.which("ffmpeg") or not shutil.which("ffprobe"),
     reason="ffmpeg and ffprobe are required for video sampling provenance",
@@ -1203,11 +1328,11 @@ def test_sample_benchmark_fixture_reports_best_threshold() -> None:
     assert isinstance(report.limitations, tuple)
     assert report.dataset_evidence_scope == "illustrative_only"
     assert report.dataset_limitations == (
-        "These synthetic fixtures include four 2x2 color-swatch rollouts and a "
-        "tiny truncated-progress sequence; they do not validate the stated "
-        "physical tasks.",
-        "The first four caller labels are color-correlated; the additional "
-        "omitted-terminal label is also a wiring-only fixture.",
+        "These synthetic fixtures include four single-frame 2x2 color-swatch "
+        "rollouts and one separate three-frame 4x2 truncated-progress sequence; "
+        "they do not validate the stated physical tasks.",
+        "The four single-frame caller labels are color-correlated; the "
+        "omitted-terminal sequence label is also a wiring-only fixture.",
         "Its metrics exercise benchmark wiring and are not task-validation or "
         "operational error-rate evidence.",
     )
@@ -1352,6 +1477,9 @@ def test_benchmark_metrics_expose_ordered_false_positive_and_negative_cases() ->
     assert matrix.actual_positive.predicted_negative == metrics.false_negatives == 2
     assert matrix.actual_negative.predicted_positive == metrics.false_positives == 1
     assert matrix.actual_negative.predicted_negative == metrics.true_negatives == 3
+    assert metrics.precision == 0.6667
+    assert metrics.recall == 0.5
+    assert metrics.precision != metrics.recall
     assert metrics.false_positive_rate == 0.25
     assert metrics.false_negative_rate == 0.5
     assert (

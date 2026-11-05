@@ -1,0 +1,143 @@
+{
+  "what_this_measures": "Whether the removed surface the audit view exists to show is actually visible from the camera that ships, rather than merely inside the frame. One ray from the camera eye per area-weighted sample of the removed surface, against the meshes the view draws.",
+  "why_in_frame_was_not_enough": "camera_framing_probe.py reports the worst point of each view in units of the frame half-extent, and the audit view was clean by that measure. It draws the retained surface in the same pane, so a sample can sit at reach 0.3 and be entirely behind opaque geometry. That is the failure the source's own VIEW_GEOMETRY comment names -- an audit view that looks like the audit happened -- reached by a mechanism the comment's fix does not address.",
+  "what_changed": "/world/mesh is hidden by default in this view, through the same table that gives the view its contents and its camera geometry. It is still carried and one click away. The fused cloud stays visible: points occlude nothing a ray can hit, so the overlay is still shown against the observations it is judged against.",
+  "why_the_camera_is_not_the_fix": {
+    "azimuths_measured": 24,
+    "elevation_degrees": 28.0,
+    "self_occlusion_excluded": true,
+    "best_visible_area_fraction": 0.48589397645863336,
+    "best_azimuth_degrees": 135,
+    "worst_visible_area_fraction": 0.2255369298344856,
+    "worst_azimuth_degrees": 270,
+    "shipped_visible_area_fraction": 0.4569356022993779,
+    "scene": "eagle_partial_scan"
+  },
+  "the_residual_this_does_not_fix": "The removed surface occludes itself. It is an extrapolated shell, so from any single eye the far side of it sits behind the near side, which is the whole remaining loss after this change and is not something a visibility default or a camera can recover. An orbiting reviewer sees the rest; a single static frame does not.",
+  "reproducibility": {
+    "sampling_seed": 1729,
+    "why_seeded": "The armadillo scene resamples a complete mesh, and Open3D seeds a global generator rather than a call. Unseeded, the first two runs of this harness reported 38.5% and then 38.0% -- small enough to read as noise and really an unseeded draw.",
+    "and_still_not_bit_exact": "Seeding does not make this reproduce exactly, and claiming it would be wrong. The largest deviation observed in the visible fractions is 7.9e-05, across 6 runs, recorded with its run count in occlusion-repeat-spread.json. An earlier version of this record said 2e-5 and called it agreement: that came from two runs, and a reviewer's own two runs exceeded it before their numbers were compared against this record at all. Two observations give a sample minimum, not a bound. Total reconstructed triangle counts vary by a few triangles as well as the crop assignment, and kept and removed counts can move in the same direction. The nondeterminism is therefore in reconstruction, not only triangles sitting near the crop boundary. orient_normals_consistent_tangent_plane is multithreaded and its tie-breaking is not seeded, so a seed cannot remove this. The barycentric sample count moves with them and is not evidence of anything further: it is exactly 6 * removed_triangles in every run measured. The synthetic controls are exactly identical across runs, re-verified over all 6, which locates the variation in the reconstruction rather than in the measurement.",
+    "why_it_does_not_affect_the_verdict": "The gate is 50% and the measured values are 78% and 82%, so a 7.9e-05 wobble is 3 orders of magnitude below the margin. It is recorded because a figure republished to the last digit would otherwise look falsified on the next run -- which is what happened: a reviewer ran the harness and the figure they got differed, exactly as this note exists to predict."
+  },
+  "controls": {
+    "fully_behind_an_occluder": {
+      "samples": 12,
+      "occluder_triangles": 2,
+      "target_area": 4.0,
+      "visible_area_fraction": 0.0,
+      "occluded_area_fraction": 1.0,
+      "self_hit_tolerance": 0.0125,
+      "samples_behind_eye": 0
+    },
+    "fully_in_front_of_it": {
+      "samples": 12,
+      "occluder_triangles": 2,
+      "target_area": 4.0,
+      "visible_area_fraction": 1.0,
+      "occluded_area_fraction": 0.0,
+      "self_hit_tolerance": 0.0125,
+      "samples_behind_eye": 0
+    }
+  },
+  "scenes": [
+    {
+      "scene": "eagle_partial_scan",
+      "voxel_size": 0.019697681555263743,
+      "removed_triangles": 117868,
+      "retained_triangles": 973562,
+      "removed_area_fraction_of_surface": 0.12491141659330529,
+      "camera_eye": [
+        15.912635043805132,
+        17.311960533802996,
+        12.264551457346407
+      ],
+      "camera_elevation_degrees": 28.0,
+      "view_contents": [
+        "/world/mesh",
+        "/world/mesh_unsupported",
+        "/world/fused"
+      ],
+      "view_hidden_by_default": [
+        "/world/mesh"
+      ],
+      "entities_shown": [
+        "/world/mesh_unsupported",
+        "/world/fused"
+      ],
+      "visible_with_retained_surface_shown": 0.3521503113541809,
+      "visible_with_only_its_own_self_occlusion": 0.7848810005123376,
+      "area_the_retained_surface_hides": 0.43273068915815666,
+      "samples": 707208,
+      "occluder_triangles": 117868,
+      "target_area": 15.95890331143714,
+      "visible_area_fraction": 0.7848810005123376,
+      "occluded_area_fraction": 0.21511899948766228,
+      "self_hit_tolerance": 0.004924420388815936,
+      "samples_behind_eye": 0,
+      "camera_look_target": [
+        1.3867007493972778,
+        2.7860262393951416,
+        1.3417651490731672
+      ],
+      "camera_up": [
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "scene": "armadillo_complete",
+      "voxel_size": 0.33407864276462107,
+      "removed_triangles": 197608,
+      "retained_triangles": 841054,
+      "removed_area_fraction_of_surface": 0.2031756014472285,
+      "camera_eye": [
+        227.71297998587545,
+        249.16702320138162,
+        171.2431850728184
+      ],
+      "camera_elevation_degrees": 28.0,
+      "view_contents": [
+        "/world/mesh",
+        "/world/mesh_unsupported",
+        "/world/fused"
+      ],
+      "view_hidden_by_default": [
+        "/world/mesh"
+      ],
+      "entities_shown": [
+        "/world/mesh_unsupported",
+        "/world/fused"
+      ],
+      "visible_with_retained_surface_shown": 0.3821141245922638,
+      "visible_with_only_its_own_self_occlusion": 0.8180565351651206,
+      "area_the_retained_surface_hides": 0.43594241057285676,
+      "samples": 1185648,
+      "occluder_triangles": 197608,
+      "target_area": 7458.755812346742,
+      "visible_area_fraction": 0.8180565351651206,
+      "occluded_area_fraction": 0.18194346483487953,
+      "self_hit_tolerance": 0.08351966069115527,
+      "samples_behind_eye": 0,
+      "camera_look_target": [
+        -0.003979510061832059,
+        21.450063705444336,
+        0.01126036960737764
+      ],
+      "camera_up": [
+        0.0,
+        0.0,
+        1.0
+      ]
+    }
+  ],
+  "the_recorded_camera_is_bound_to_the_product_fit": {
+    "what_is_bound": "Each recorded elevation, eye direction, look target, and up vector is checked against the product camera fit by the offline tests.",
+    "what_is_still_not_bound": {
+      "camera_distance": "The tests do not bind the fitted distance along the checked direction; that requires the source point geometry.",
+      "up_axis": "This harness supplies declared +Z to _view_cameras. The product normally uses its inferred up axis. Separate evidence measured +Z for an Armadillo cloud, but the Eagle cloud used here has not been measured through that inference, so these visibility figures are conditional on +Z.",
+      "point_occlusion": "The fused cloud is rendered as discs but the ray instrument treats points as non-occluding. The reported visibility fractions are therefore upper bounds on pixels a reviewer may see, not rendered-view measurements."
+    }
+  }
+}

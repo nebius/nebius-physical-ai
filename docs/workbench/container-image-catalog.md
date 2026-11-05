@@ -146,12 +146,28 @@ closures, uses the verified upstream NLTK sandbox fix for Cosmos Transfer, and
 updates Wan's Accelerate and Transformers dependencies. Isaac's constrained
 Setuptools 81 receives the same hash-bound Unicode manifest backport used by
 Cosmos3 serving. MoviePy 2.2.1 retains its released code while its exact,
-hash-checked metadata adopts upstream Pillow 12 compatibility and requires the
-actual patched Pillow 12.3 installation. Wan's dependency union, real MoviePy
-resize/MP4 encode/decode, NLTK sandbox, and source-distribution regression checks
-pass. Isaac's vendor version constraints still need reconciliation and GPU
-qualification. These source repairs require fresh image builds and complete
-artifact scans; they do not repair existing release digests.
+hash-locked Python 3.11 wheel and metadata are rebound only to the hash-locked,
+security-fixed Pillow 13.0.0 wheel under the bounded NPA compatibility policy;
+the image build does not run or claim MoviePy's upstream suite. Wan's dependency union,
+real MoviePy resize/MP4 encode/decode, NLTK sandbox, and source-distribution
+regression checks pass. Isaac's vendor version constraints still need
+reconciliation and GPU qualification. These source repairs require fresh image
+builds and complete artifact scans; they do not repair existing release digests.
+
+The shared Jammy Isaac source candidate removes its superseded Deadsnakes PPA
+dependency and builds the expedited security release CPython 3.11.18 from the
+hash-checked python.org release archive. It uses the release's bundled Expat
+2.9.0, runs the four XML/Expat test modules before installation, and rejects a
+runtime extension linked to the older snapshot system Expat. Exact
+source-derived notices for bundled Expat, mpdecimal, tiny_sha3, and BLAKE2 are
+installed before the source tree is removed, and the build byte-compares each
+notice with its source. Other compiler and library inputs remain fixed by the
+Ubuntu snapshot only when they are installed by this shared recipe; inherited
+build inputs remain governed by each derived base's own package provenance.
+The installed standard-library test fixtures are removed after the four tests
+run. This changes source recipes for GR00T, SONIC, OpenArm, and
+LeIsaac; it does not change any accepted image digest or establish a replacement
+release.
 
 The subsequent [checkpoint-loader source repair](../../npa/docker/workbench/common/README.md)
 rejects malicious shard paths and named pipes in the exact Accelerate 1.12–1.15
