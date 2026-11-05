@@ -318,7 +318,7 @@
     ]
   },
   "what_this_audits_glob_does_not_reach": {
-    "evidence_json_outside_this_audits_glob": 51,
+    "evidence_json_outside_this_audits_glob": 52,
     "of_those_with_no_provenance_block_at_all": 44,
     "of_those_that_also_carry_digests": 13,
     "why_three_numbers_and_not_one": "A reviewer measured this as seven files. That is the subset carrying digests and naming no resolvable commit; the broadest count here is every non-record evidence JSON. Different populations rather than a disagreement, and the digest-carrying count is the one that matters, because a digest with no declared origin is the case this change exists to close.",
