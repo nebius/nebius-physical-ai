@@ -991,6 +991,26 @@ jobs:
                 xargs -0 -r -n1 -P4 sudo rm -rf --
               printf '%s\0' /opt/hostedtoolcache/CodeQL | \
                 xargs -0 -r -n1 sudo rm -rf --
+              # The remaining gates use the active Python, Docker and the
+              # runner's embedded action runtime. Reclaim only unrelated,
+              # preinstalled SDK and browser caches before Trivy materializes
+              # the large GR00T layer on this disposable runner.
+              case "${HOME:?runner home is required}" in
+                /home/runner) ;;
+                *) echo "unexpected hosted runner home" >&2; exit 1 ;;
+              esac
+              printf '%s\0' \
+                /usr/lib/jvm \
+                /usr/share/miniconda \
+                /opt/microsoft/powershell \
+                /opt/hostedtoolcache/Ruby \
+                /opt/hostedtoolcache/go \
+                /usr/local/share/chromium \
+                /opt/google/chrome \
+                /home/runner/.cargo \
+                /home/runner/.rustup \
+                /home/runner/.cache | \
+                xargs -0 -r -n1 -P4 sudo rm -rf --
             fi
           fi
           docker image inspect "$IMAGE" >/dev/null

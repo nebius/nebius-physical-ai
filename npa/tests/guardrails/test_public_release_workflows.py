@@ -430,6 +430,21 @@ def test_large_image_scan_reclaims_build_cache_and_reuses_large_volume() -> None
     assert "find /opt/hostedtoolcache/Python -mindepth 1 -maxdepth 1" in capacity
     assert '! -path "$active_python_dir" -print0' in capacity
     assert "/opt/hostedtoolcache/CodeQL" in capacity
+    assert 'case "${HOME:?runner home is required}" in' in capacity
+    assert "/home/runner) ;;" in capacity
+    for directory in (
+        "/usr/lib/jvm",
+        "/usr/share/miniconda",
+        "/opt/microsoft/powershell",
+        "/opt/hostedtoolcache/Ruby",
+        "/opt/hostedtoolcache/go",
+        "/usr/local/share/chromium",
+        "/opt/google/chrome",
+        "/home/runner/.cargo",
+        "/home/runner/.rustup",
+        "/home/runner/.cache",
+    ):
+        assert directory in capacity
     assert (
         capacity.index("docker image prune --all --force")
         < capacity.index('if [[ "$TOOL" == groot ]]; then')
