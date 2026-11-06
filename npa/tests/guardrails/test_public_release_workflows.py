@@ -404,9 +404,19 @@ def test_large_image_scan_reclaims_build_cache_and_reuses_large_volume() -> None
     capacity = text[prepare:scan]
     assert 'docker image inspect "$IMAGE" >/dev/null' in capacity
     assert "docker buildx prune --all --force" in capacity
-    assert "docker system prune --all --force --volumes" in capacity
     assert "RUNNER_ENVIRONMENT: ${{ runner.environment }}" in capacity
     assert '[[ "$RUNNER_ENVIRONMENT" == github-hosted ]]' in capacity
+    assert "docker container prune --force" in capacity
+    assert "docker network prune --force" in capacity
+    assert "docker volume prune --force" in capacity
+    assert 'docker create --name "$capacity_hold" "$IMAGE" >/dev/null' in capacity
+    assert "docker image prune --all --force" in capacity
+    assert "docker system prune" not in capacity
+    assert (
+        capacity.index("docker container prune --force")
+        < capacity.index('docker create --name "$capacity_hold" "$IMAGE" >/dev/null')
+        < capacity.index("docker image prune --all --force")
+    )
     assert capacity.count('docker image inspect "$IMAGE" >/dev/null') == 2
     assert "docker system df" in capacity
     # Three pinned Trivy invocations reach the push: the CRITICAL policy scan,
