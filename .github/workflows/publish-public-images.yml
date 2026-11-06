@@ -975,6 +975,22 @@ jobs:
             capacity_hold="npa-publication-capacity-hold-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${TOOL}"
             docker create --name "$capacity_hold" "$IMAGE" >/dev/null
             docker image prune --all --force
+            # GR00T's local image is an exact pre-publication scan subject.  Trivy
+            # materializes its largest layer while analysing that image, so retain
+            # the current interpreter but reclaim unrelated hosted-image toolcache
+            # entries only after the build and byte gates have completed.
+            if [[ "$TOOL" == groot ]]; then
+              active_python_dir="$(dirname "${pythonLocation:?setup-python path is required}")"
+              case "$active_python_dir" in
+                /opt/hostedtoolcache/Python/*) ;;
+                *) echo "unexpected hosted Python location" >&2; exit 1 ;;
+              esac
+              find /opt/hostedtoolcache/Python -mindepth 1 -maxdepth 1 \
+                ! -path "$active_python_dir" -print0 | \
+                xargs -0 -r -n1 -P4 sudo rm -rf --
+              printf '%s\0' /opt/hostedtoolcache/CodeQL | \
+                xargs -0 -r -n1 sudo rm -rf --
+            fi
           fi
           docker image inspect "$IMAGE" >/dev/null
           sudo install -d -m 0777 /mnt/npa-trivy
