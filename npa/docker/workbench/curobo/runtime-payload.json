@@ -3,8 +3,8 @@
     "retained": [
       {
         "path": "usr/share/python-wheels/pip-26.2.1+npa.1-py3-none-any.whl",
-        "size": 1863653,
-        "sha256": "a71a4e82929d20ecd881f3081749cbaad14875b99f162d6387c3f1889735ae27"
+        "size": 1866879,
+        "sha256": "9c4f6869f53a1fc68a8eb12200280237a5f9b585933c9856bebf6224b0b01856"
       },
       {
         "path": "usr/share/python-wheels/setuptools-84.2.1-py3-none-any.whl",
@@ -13,8 +13,8 @@
       },
       {
         "path": "usr/share/doc/npa-curobo/secure-pip-build.json",
-        "size": 8983,
-        "sha256": "8872a2a21a8b673faff33742ea9bd80acecb6b742fcfcc2b0daf9dedaa54191b"
+        "size": 9077,
+        "sha256": "520c3d3d214e6a44ac89cc105b9b2fa98f9461b330f5815972f47d57d8cd0485"
       }
     ],
     "forbidden_paths": [

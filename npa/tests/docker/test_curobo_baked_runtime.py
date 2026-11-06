@@ -220,6 +220,22 @@ def test_pip_bootstrap_distribution_is_content_pinned():
     assert 'assert msgpack.__version__ == "1.2.1"' in apt
     assert "COPY --from=secure-pip-builder --chmod=0444" in final
     assert "pip install --no-cache-dir --upgrade 'pip==" not in text
+    retained = {
+        row["path"]: row
+        for row in json.loads(RUNTIME_PAYLOAD.read_text())["bootstrap_seeds"][
+            "retained"
+        ]
+    }
+    assert retained["usr/share/python-wheels/pip-26.2.1+npa.1-py3-none-any.whl"] == {
+        "path": "usr/share/python-wheels/pip-26.2.1+npa.1-py3-none-any.whl",
+        "size": 1866879,
+        "sha256": "9c4f6869f53a1fc68a8eb12200280237a5f9b585933c9856bebf6224b0b01856",
+    }
+    assert retained["usr/share/doc/npa-curobo/secure-pip-build.json"] == {
+        "path": "usr/share/doc/npa-curobo/secure-pip-build.json",
+        "size": 9077,
+        "sha256": "520c3d3d214e6a44ac89cc105b9b2fa98f9461b330f5815972f47d57d8cd0485",
+    }
 
 
 def test_full_setuptools_seed_has_its_own_fixed_wheel_lock():
