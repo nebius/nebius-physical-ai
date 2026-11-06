@@ -1,7 +1,7 @@
 # README demo videos
 
 The root README embeds automatically looping GIF previews hosted as GitHub
-attachments. Clicking a preview opens its original silent H.264 MP4.
+attachments. Each caption also links to its original silent H.264 MP4.
 The workflow links are maintained recipes for the demonstrated capabilities;
 the clips are retained run outputs, not fresh validation of the current images.
 
