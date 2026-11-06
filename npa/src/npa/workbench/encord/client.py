@@ -194,12 +194,35 @@ def resolve_project(user_client: Any, value: str) -> tuple[Any, str, str]:
     return user_client.get_project(project_hash), project_hash, value
 
 
-def resolve_collection(user_client: Any, value: str) -> tuple[Any, str, str]:
+def resolve_collection(
+    user_client: Any, value: str, *, create_in_folder_uuid: str = ""
+) -> tuple[Any, str, str]:
     value = value.strip()
     if looks_like_id(value):
         collection = user_client.get_collection(value)
+        if (
+            create_in_folder_uuid
+            and str(collection.top_level_folder_uuid) != create_in_folder_uuid
+        ):
+            raise EncordToolError("collection belongs to a different folder")
         return collection, value, str(getattr(collection, "name", ""))
-    matches = [row for row in user_client.list_collections() if str(row.name) == value]
-    if len(matches) != 1:
+    scope = (
+        {"top_level_folder_uuid": create_in_folder_uuid}
+        if create_in_folder_uuid
+        else {}
+    )
+    matches = [
+        row for row in user_client.list_collections(**scope) if str(row.name) == value
+    ]
+    if len(matches) > 1:
         raise EncordToolError(f"collection {value!r} did not resolve uniquely")
-    return matches[0], str(matches[0].uuid), value
+    if matches:
+        return matches[0], str(matches[0].uuid), value
+    if not create_in_folder_uuid:
+        raise EncordToolError(f"collection {value!r} did not resolve uniquely")
+    collection = user_client.create_collection(
+        top_level_folder_uuid=create_in_folder_uuid,
+        name=value,
+        description="Created by npa workbench encord curate",
+    )
+    return collection, str(collection.uuid), value

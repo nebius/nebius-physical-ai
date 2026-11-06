@@ -7,6 +7,7 @@ from typing import Any, Callable
 
 from npa.workbench.encord.integrity import compare_checksums
 from npa.workbench.encord.schemas import (
+    CurateReceipt,
     EncordToolError,
     PullManifest,
     PushReceipt,
@@ -33,6 +34,7 @@ def verify_roundtrip(
     receipt_uri: str,
     manifest_uri: str,
     output_path: str,
+    curate_receipt_uri: str = "",
     artifact_store: ArtifactStore | None = None,
     storage_client: Any = None,
     workflow_run: str = "",
@@ -49,11 +51,17 @@ def verify_roundtrip(
     try:
         receipt = PushReceipt.model_validate(active_artifacts.read_json(receipt_uri))
         manifest = PullManifest.model_validate(active_artifacts.read_json(manifest_uri))
+        curation = (
+            CurateReceipt.model_validate(active_artifacts.read_json(curate_receipt_uri))
+            if curate_receipt_uri
+            else None
+        )
     except Exception as exc:  # noqa: BLE001 - invalid inputs still produce a report
         failed = RoundtripReport(
             generated_at=(clock or _utc_now)(),
             workflow_run=workflow_run,
             receipt_uri=receipt_uri,
+            curate_receipt_uri=curate_receipt_uri,
             manifest_uri=manifest_uri,
             report_uri=report_uri,
             status="failed",
@@ -81,9 +89,33 @@ def verify_roundtrip(
 
     receipt_rows = {item.item_uuid: item for item in receipt.items if item.item_uuid}
     manifest_rows = {item.item_uuid: item for item in manifest.items if item.item_uuid}
+    selected = set(curation.selected_item_uuids) if curation else set(receipt_rows)
+    defects: list[str] = []
+    if curation:
+        if curation.phase != "final" or curation.status != "completed":
+            defects.append("curation receipt is not final and completed")
+        if curation.source_receipt_uri and curation.source_receipt_uri != receipt_uri:
+            defects.append("curation receipt references a different push receipt")
+        if curation.folder_uuid != receipt.folder_uuid:
+            defects.append("curation folder differs from push folder")
+        if curation.encord_domain != receipt.encord_domain:
+            defects.append("curation Encord domain differs from push domain")
+        if manifest.encord_domain != curation.encord_domain:
+            defects.append("pull Encord domain differs from curation domain")
+        if (
+            manifest.source_kind != "collection"
+            or manifest.source_id != curation.collection_uuid
+        ):
+            defects.append("pull manifest does not reference the curated Collection")
+        if not selected:
+            defects.append("curation selected no items")
+        if selected - set(receipt_rows):
+            defects.append("curation selected item UUIDs absent from push receipt")
     report_items: list[RoundtripItem] = []
 
     for source in receipt.items:
+        if curation and source.item_uuid not in selected:
+            continue
         if source.outcome != "successful" or not source.item_uuid:
             report_items.append(
                 RoundtripItem(
@@ -113,7 +145,16 @@ def verify_roundtrip(
             continue
         report_items.append(_compare_row(source, observed, object_store=object_store))
 
-    for item_uuid in sorted(set(manifest_rows) - set(receipt_rows)):
+    for item_uuid in sorted(selected - set(receipt_rows)):
+        report_items.append(
+            RoundtripItem(
+                item_uuid=item_uuid,
+                relation="unresolved",
+                reasons=["curation UUID is absent from the push receipt"],
+            )
+        )
+
+    for item_uuid in sorted(set(manifest_rows) - selected):
         observed = manifest_rows[item_uuid]
         report_items.append(
             RoundtripItem(
@@ -125,13 +166,14 @@ def verify_roundtrip(
                 observed_checksum=observed.destination_checksum,
                 observed_checksum_kind=observed.destination_checksum_kind,
                 relation="unexpected",
-                reasons=["Encord UUID is absent from the push receipt"],
+                reasons=["Encord UUID is absent from the expected selection"],
             )
         )
 
     inputs_complete = (
         receipt.phase == manifest.phase == "final"
         and receipt.status == manifest.status == "completed"
+        and not defects
     )
     passed = inputs_complete and all(
         item.relation == "matched" for item in report_items
@@ -141,11 +183,12 @@ def verify_roundtrip(
         generated_at=generated_at,
         workflow_run=workflow_run or receipt.workflow_run or manifest.workflow_run,
         receipt_uri=receipt_uri,
+        curate_receipt_uri=curate_receipt_uri,
         manifest_uri=manifest_uri,
         report_uri=report_uri,
         status="completed" if passed else "failed",
         passed=passed,
-        expected=len(receipt.items),
+        expected=len(selected) if curation else len(receipt.items),
         matched=sum(item.relation == "matched" for item in report_items),
         missing=sum(item.relation == "missing" for item in report_items),
         unexpected=sum(item.relation == "unexpected" for item in report_items),
@@ -163,6 +206,7 @@ def verify_roundtrip(
         checksum_unavailable=sum(
             item.integrity_state == "not_comparable" for item in report_items
         ),
+        defects=defects,
         items=report_items,
     )
     active_artifacts.create_json(report_uri, report.model_dump(by_alias=True))

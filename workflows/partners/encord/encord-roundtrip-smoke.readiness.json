@@ -1,10 +1,10 @@
 {
   "schema_version": "workflow-readiness/v1",
-  "workflow_sha256": "d429fdabbef491839394d0bdfbd230ba6b78c3fcfa189c14d87cb5cdf368c07e",
+  "workflow_sha256": "4a02a4c7b32dfcf463edf5b29c603388bb7c60c351617abc7086add73fe29e10",
   "planning": {
     "validation": {
       "status": "verified",
-      "reason": "Schema validation and plan construction passed for the exact spec with v2 pull manifests; readers retain v1 support.",
+      "reason": "The exact four-stage spec passed validate-spec, plan-spec --check-render, and focused workflow contract tests with a v2 pull manifest.",
       "evidence": [
         "README.md",
         "../../../npa/tests/workflows/test_encord_workflow.py"
@@ -12,53 +12,40 @@
     },
     "task_fidelity": {
       "status": "verified",
-      "reason": "Resolved stages match push -> pull -> verify. Operator overrides and artifact handoffs are tested.",
+      "reason": "Resolved commands and artifact handoffs match push -> curate -> Collection pull -> curated-subset verify. A local live Encord/S3 run selected and verified one of two uploaded items.",
       "evidence": [
         "README.md",
-        "../../../npa/tests/workflows/test_encord_workflow.py"
+        "../../../npa/tests/workflows/test_encord_workflow.py",
+        "../../../npa/tests/e2e/test_encord_roundtrip_live.py",
+        "Private operator run artifacts (retained outside Git)"
       ]
     }
   },
   "prerequisites": {
     "output_storage": {
       "status": "verified",
-      "reason": "Live S3 writes and conditional evidence checkpoints passed under private operator overrides.",
-      "evidence": [
-        "README.md",
-        "../../../npa/tests/workflows/test_encord_workflow.py"
-      ]
+      "reason": "The live local run wrote and read final push, curation, pull, and verification artifacts in S3.",
+      "evidence": ["Private operator run artifacts (retained outside Git)"]
     },
     "worker_input": {
       "status": "verified",
-      "reason": "Live source MP4 bytes were staged in S3 and fully decoded; labeling inputs matched their source SHA-256 where applicable.",
-      "evidence": [
-        "README.md",
-        "../../../npa/tests/workflows/test_encord_workflow.py"
-      ]
+      "reason": "The live local run ingested a 1x1 PNG and a 32x32 MP4, then selected the MP4 as a strict subset.",
+      "evidence": ["Private operator run artifacts (retained outside Git)"]
     },
     "credentials": {
       "status": "verified",
-      "reason": "Online Encord and S3 preflight passed; real SDK and storage operations succeeded.",
-      "evidence": [
-        "README.md",
-        "../../../npa/tests/workflows/test_encord_workflow.py"
-      ]
+      "reason": "Read-only Encord and S3 probes passed, followed by the completed local live roundtrip.",
+      "evidence": ["Private operator run artifacts (retained outside Git)"]
     },
     "source_image": {
-      "status": "verified",
-      "reason": "Local CPU execution used the installed checkout with the encord extra. No container build or remote image execution is claimed.",
-      "evidence": [
-        "README.md",
-        "../../../npa/tests/workflows/test_encord_workflow.py"
-      ]
+      "status": "unverified",
+      "reason": "The CPU pod render is valid and selects the encord extra, but the changed curation command has not run in the worker image.",
+      "evidence": []
     },
     "target_runtime": {
-      "status": "verified",
-      "reason": "Local workflow execution against real Encord and S3 passed. The standalone push/pull specs share the exercised roundtrip stage commands. Cloud pod execution was not tested.",
-      "evidence": [
-        "README.md",
-        "../../../npa/tests/workflows/test_encord_workflow.py"
-      ]
+      "status": "unverified",
+      "reason": "The four-stage graph passed locally against real Encord and S3 services; Kubernetes pod execution has not been tested.",
+      "evidence": ["Private operator run artifacts (retained outside Git)"]
     }
   }
 }

@@ -9,6 +9,7 @@ from npa.workbench.encord.label_import import import_labels
 from npa.workbench.encord.label_render import render_labels
 
 from npa.workbench.encord.schemas import (
+    CurateReceipt,
     DEFAULT_MEDIA_FILTER,
     DEFAULT_POLL_TIMEOUT_SECONDS,
     DEFAULT_TRANSFER,
@@ -88,11 +89,41 @@ def pull(
     )
 
 
+def curate(
+    *,
+    folder: str,
+    filters: list[str],
+    collection: str,
+    output_path: str,
+    source_receipt_uri: str = "",
+    workflow_run: str = "",
+    user_client: Any = None,
+    storage_client: Any = None,
+    artifact_store: ArtifactStore | None = None,
+    environ: dict[str, str] | None = None,
+) -> CurateReceipt:
+    from npa.workbench.encord import run_curate
+
+    return run_curate(
+        folder=folder,
+        filters=filters,
+        collection=collection,
+        output_path=output_path,
+        source_receipt_uri=source_receipt_uri,
+        workflow_run=workflow_run,
+        user_client=user_client,
+        storage_client=storage_client,
+        artifact_store=artifact_store,
+        environ=environ,
+    )
+
+
 def verify_roundtrip(
     *,
     receipt_uri: str,
     manifest_uri: str,
     output_path: str,
+    curate_receipt_uri: str = "",
     workflow_run: str = "",
     storage_client: Any = None,
     artifact_store: ArtifactStore | None = None,
@@ -104,6 +135,7 @@ def verify_roundtrip(
         receipt_uri=receipt_uri,
         manifest_uri=manifest_uri,
         output_path=output_path,
+        curate_receipt_uri=curate_receipt_uri,
         workflow_run=workflow_run,
         storage_client=storage_client,
         artifact_store=artifact_store,
@@ -112,11 +144,13 @@ def verify_roundtrip(
 
 
 __all__ = [
+    "CurateReceipt",
     "PullManifest",
     "PushReceipt",
     "RoundtripReport",
     "pull",
     "push",
+    "curate",
     "verify_roundtrip",
     "import_labels",
     "render_labels",
