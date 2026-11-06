@@ -328,6 +328,8 @@ def test_hosted_builds_reclaim_only_unused_runner_sdks_before_local_export() -> 
         "/usr/share/dotnet",
         "/usr/share/swift",
         "/opt/ghc",
+        "/usr/local/.ghcup",
+        "/usr/local/share/boost",
     ):
         assert directory in script
     assert "xargs -0 -r -n1 -P4 sudo rm -rf --" in script

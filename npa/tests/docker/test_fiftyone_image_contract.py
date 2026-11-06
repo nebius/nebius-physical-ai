@@ -53,6 +53,18 @@ def test_fiftyone_pins_native_lerobot_temporal_release() -> None:
     assert "TemporalTag" in smoke
 
 
+def test_fiftyone_pins_pillow_at_the_critical_vulnerability_floor() -> None:
+    """The image must not rebuild with the CRITICAL-vulnerable Pillow 12.3.0."""
+    dockerfile = DOCKERFILE.read_text(encoding="utf-8")
+    validation = (DOCKERFILE.parent / "validation_checks.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert "ARG PILLOW_VERSION=13.0.0" in dockerfile
+    assert '"pillow==${PILLOW_VERSION}"' in dockerfile
+    assert '"pillow": "13.0.0"' in validation
+
+
 def test_fiftyone_pins_graphql_core_compatible_with_its_strawberry_release() -> None:
     """A resolver update must not recreate the first-import failure in the image."""
     dockerfile = DOCKERFILE.read_text(encoding="utf-8")

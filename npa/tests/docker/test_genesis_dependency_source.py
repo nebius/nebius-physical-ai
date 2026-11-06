@@ -87,7 +87,7 @@ def test_genesis_recipes_select_their_supported_python_and_bind_source(
     assert "PATH=/opt/genesis/venv/bin:/opt/npa/venv/bin:$PATH" in text
     assert "PYTHONPATH=/opt/npa/src" in text
     expected_venv = (
-        "RUN python3.12 -m venv /opt/genesis/venv"
+        "python3.12 -m venv /opt/genesis/venv"
         if dockerfile == "Dockerfile"
         else 'RUN python3.11 -m venv "${GENESIS_VENV}"'
     )
@@ -121,7 +121,10 @@ def test_canonical_genesis_recipe_pins_the_scanner_approved_bootstrap_tools():
     """The repaired Python 3.12 image must not reintroduce floating tooling."""
 
     text = (GENESIS / "Dockerfile").read_text()
-    assert "'pip==26.2.0'" in text
+    assert "'pip==26.2.0'" not in text
+    assert "python3.12 /opt/secure-pip-builder/build.py" in text
+    assert "pip-26.2.1+npa.1-py3-none-any.whl" in text
+    assert 'pip.__version__ == "26.2.1+npa.1"' in text
     assert "'setuptools==84.1.0'" in text
     assert "'wheel==0.48.0'" in text
     assert "pip install --upgrade pip setuptools wheel" not in text

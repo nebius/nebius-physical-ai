@@ -76,6 +76,18 @@ RUN id -u ubuntu >/dev/null 2>&1 || useradd -m -s /bin/bash -u 1000 ubuntu; \
     groupadd -g 992 render 2>/dev/null || true; \
     usermod -aG video,render ubuntu
 
+RUN --mount=type=bind,source=docker/workbench/common/secure_pip,target=/opt/secure-pip-builder,ro \
+    secure_pip_root=/tmp/npa-secure-pip \
+    && python3.12 /opt/secure-pip-builder/build.py \
+      --work-dir "${secure_pip_root}-work" --output-dir "${secure_pip_root}-wheels" \
+    && python3.12 -m venv /opt/genesis/venv \
+    && /opt/genesis/venv/bin/python -c 'import hashlib,json,pathlib; p=pathlib.Path("/tmp/npa-secure-pip-wheels"); r=json.loads((p/"build-receipt.json").read_text()); w=p/r["wheel"]; assert w.name == "pip-26.2.1+npa.1-py3-none-any.whl"; assert hashlib.sha256(w.read_bytes()).hexdigest() == r["sha256"]' \
+    && /opt/genesis/venv/bin/python -m pip install --no-cache-dir --disable-pip-version-check --no-index --no-deps --force-reinstall /tmp/npa-secure-pip-wheels/pip-26.2.1+npa.1-py3-none-any.whl \
+    && /opt/genesis/venv/bin/python -c 'import pip; from pip._vendor import certifi; assert pip.__version__ == "26.2.1+npa.1"; assert certifi.__version__ == "2026.10.19"' \
+    && install -D -o root -g root -m 0444 /tmp/npa-secure-pip-wheels/build-receipt.json /usr/share/doc/npa-genesis/secure-pip-build.json \
+    && chown -R ubuntu:ubuntu /opt/genesis/venv \
+    && rm -rf "${secure_pip_root}-work" "${secure_pip_root}-wheels"
+
 COPY --chmod=0644 docker/workbench/curobo/remove_scikit_image_recipe.py \
     /opt/genesis/remove-scikit-image-recipe.py
 COPY --chmod=0644 docker/workbench/genesis/prepare_public_runtime.py \
@@ -90,9 +102,7 @@ WORKDIR /opt/genesis
 
 # Keep the reviewed scikit-image 0.25.2 source correction in this installation
 # layer so the embedded recipe never reaches an ancestor image layer.
-RUN python3.12 -m venv /opt/genesis/venv \
-    && /opt/genesis/venv/bin/python -m pip install --no-cache-dir --upgrade \
-      'pip==26.2.0' \
+RUN /opt/genesis/venv/bin/python -m pip install --no-cache-dir --upgrade \
       'setuptools==84.1.0' \
       'wheel==0.48.0' \
     && /opt/genesis/venv/bin/pip install \
