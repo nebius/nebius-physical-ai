@@ -954,8 +954,10 @@ jobs:
 
       # CUDA/AI images can exceed 25 GB. Once the exact tagged image has passed
       # its runtime and payload gates, unreferenced Docker state is no longer
-      # evidence and can be discarded. Keep the tagged image and prove it still
-      # exists before Trivy exports every layer to the large temporary volume.
+      # evidence and can be discarded. `docker system prune --all` would also
+      # remove an otherwise unreferenced tagged image, so retain this exact
+      # image through the scan with a stopped container while pruning every
+      # other hosted-runner image.
       - name: Prepare capacity for full-image security scans
         if: matrix.tool != 'ncore'
         env:
@@ -967,7 +969,12 @@ jobs:
           # A hosted Actions VM is dedicated to this one matrix job. Never
           # prune Docker state on an operator-selected runner pool.
           if [[ "$RUNNER_ENVIRONMENT" == github-hosted ]]; then
-            docker system prune --all --force --volumes
+            docker container prune --force
+            docker network prune --force
+            docker volume prune --force
+            capacity_hold="npa-publication-capacity-hold-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${TOOL}"
+            docker create --name "$capacity_hold" "$IMAGE" >/dev/null
+            docker image prune --all --force
           fi
           docker image inspect "$IMAGE" >/dev/null
           sudo install -d -m 0777 /mnt/npa-trivy
