@@ -40,19 +40,19 @@ licenses:
     applies_to:
       - neural-reconstruction
 skills:
-  - name: nebius-stream-beta
+  - name: nebius-world-factory
     category: tools
-    when_to_use: "Use an operator-supplied Nebius Stream beta HTTPS endpoint to discover Cosmos3 Nano/Super capabilities, register storage, transfer full-length videos with custom or multiple controls, individual weights and negative prompts, augment inventories, recover artifacts, and export customer-scoped usage."
-    path: skills/tools/nebius-stream-beta/SKILL.md
+    when_to_use: "Use an operator-supplied Nebius World Factory HTTPS endpoint to discover Cosmos3 Nano/Super capabilities, register storage, transfer full-length videos with custom or multiple controls, individual weights and negative prompts, augment inventories, recover artifacts, and export customer-scoped usage."
+    path: skills/tools/nebius-world-factory/SKILL.md
     smoke:
       - type: file_exists
-        path: skills/tools/nebius-stream-beta/scripts/cosmos_client.py
+        path: skills/tools/nebius-world-factory/scripts/cosmos_client.py
       - type: file_exists
-        path: skills/tools/nebius-stream-beta/references/requests.md
+        path: skills/tools/nebius-world-factory/references/requests.md
       - type: file_exists
-        path: skills/tools/nebius-stream-beta/references/iteration.md
+        path: skills/tools/nebius-world-factory/references/iteration.md
       - type: file_exists
-        path: skills/tools/nebius-stream-beta/examples/structural-transfer.json
+        path: skills/tools/nebius-world-factory/examples/structural-transfer.json
   - name: embodiedgen
     category: tools
     when_to_use: "Run or review EmbodiedGen V2 image-to-rigid-object generation through the operator-private TRELLIS runtime, exported URDF/collision geometry, PyBullet validation, and factual view artifacts."
@@ -1456,7 +1456,7 @@ skills:
           - workflows/testing/openpi-pi05-full-droid-finetune.yaml
   - name: physical-ai-data-factory
     category: workflows
-    when_to_use: "Author, run, submit, or view the native NVIDIA Physical AI Data Factory VDA, DIG, IAA, and EVG translations or the NPA-specific Cosmos3 VDA alternative, including count-only fanout with shipped defaults and opt-in Nebius Stream Cosmos3 generation, on Nebius + SkyPilot."
+    when_to_use: "Author, run, submit, or view the native NVIDIA Physical AI Data Factory VDA, DIG, IAA, and EVG translations or the NPA-specific Cosmos3 VDA alternative, including count-only fanout with shipped defaults and opt-in Nebius World Factory Cosmos3 generation, on Nebius + SkyPilot."
     path: skills/workflows/physical-ai-data-factory/SKILL.md
     smoke:
       - type: file_exists
