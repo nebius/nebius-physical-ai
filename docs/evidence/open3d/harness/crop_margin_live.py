@@ -11,9 +11,12 @@ take one number on trust.
 
 from __future__ import annotations
 
+import ast
 import datetime
 import hashlib
 import json
+import platform
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -32,53 +35,70 @@ def _fragment(index: int, path: str) -> dict:
     }
 
 
-#: Where the stage lives inside the repository. The absolute path a run records is
-#: this author's checkout and does not exist anywhere else, so the identity that
-#: travels is this plus the source hash below.
+#: The portable identity of the product stage that produced a record.
 RUNNER_RELATIVE = "npa/src/npa/workbench/open3d/runner.py"
+
+
+def _crop_margin_function_digest(source: bytes) -> str:
+    """Return the digest for the measured crop-margin calculation."""
+
+    text = source.decode("utf-8")
+    tree = ast.parse(text)
+    node = next(
+        item
+        for item in tree.body
+        if isinstance(item, ast.FunctionDef) and item.name == "_crop_margin"
+    )
+    segment = ast.get_source_segment(text, node)
+    assert segment is not None
+    return hashlib.sha256(segment.encode("utf-8")).hexdigest()
+
+
+def _source_commit() -> str:
+    """Return the current repository commit for the recorded runner source."""
+
+    repository = Path(__file__).resolve().parents[3]
+    result = subprocess.run(
+        ["git", "-C", str(repository), "rev-parse", "HEAD"],
+        capture_output=True,
+        check=True,
+        text=True,
+    )
+    return result.stdout.strip()
 
 
 def _runner_origin() -> dict[str, str]:
     """Which copy of the product code produced the figures below.
 
-    These worktrees borrow an interpreter from a sibling checkout, so the binding that
-    matters is not the executable but where `npa` was imported from. A record that
-    names a relative `npa/.venv/bin/python` cannot be re-run: that path does not exist
-    here.
-
-    The absolute path is kept because it is what actually happened, and it is paired
-    with the repository-relative path and the imported file's hash. Only the latter two
-    can be checked on another machine -- a reader on a CI runner can confirm the record
-    was produced from this revision of the stage, which the absolute path cannot tell
-    them.
+    The record deliberately carries only repository-relative, content-addressable
+    identity. Machine-local paths and interpreter locations are operational evidence,
+    not portable provenance.
     """
 
     from npa.workbench.open3d import runner
 
     source = Path(runner.__file__).resolve()
+    bytes_ = source.read_bytes()
     return {
-        "absolute_path_on_the_machine_that_ran_it": str(source),
         "repository_relative": RUNNER_RELATIVE,
-        "sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
+        "sha256": hashlib.sha256(bytes_).hexdigest(),
+        "crop_margin_function_sha256": _crop_margin_function_digest(bytes_),
+        "source_commit": _source_commit(),
+        "hashes_that_name_no_file_here": (
+            "sha256 identifies the complete product runner and "
+            "crop_margin_function_sha256 identifies the measured function within it. "
+            "Both are checked against repository_relative at source_commit; neither "
+            "source file is copied into this evidence directory."
+        ),
     }
 
 
 def _open3d_origin() -> dict[str, str]:
-    """Both the path imported and the path it resolves to.
-
-    They differ here: the borrowed virtualenv's `open3d` is a symlink into a third
-    worktree's site-packages. Recording only the resolved path hides which environment
-    was actually invoked, and recording only the import path hides which bytes ran.
-    """
+    """Return the upstream library version used for the reconstruction."""
 
     import open3d
 
-    imported = Path(open3d.__file__)
-    return {
-        "imported_from": str(imported),
-        "resolves_to": str(imported.resolve()),
-        "version": open3d.__version__,
-    }
+    return {"version": open3d.__version__}
 
 
 def _what_the_result_shows(observed: dict) -> str:
@@ -233,13 +253,13 @@ def main() -> int:
             "harness": "harness/crop_margin_live.py",
             "harness_sha256": "recomputed below",
             "path_is_relative_to": "this evidence directory",
-            "interpreter": sys.executable,
-            "python": sys.version.split()[0],
+            "interpreter": "clone-owned npa/.venv/bin/python",
+            "python": platform.python_version(),
             "npa_runner_imported_from": _runner_origin(),
             "what_can_be_rechecked_elsewhere": (
-                "npa_runner_imported_from.repository_relative and .sha256. The "
-                "absolute path is this machine's and is recorded as history, not as "
-                "something another checkout can verify."
+                "npa_runner_imported_from.repository_relative, .source_commit, and "
+                ".sha256. Those portable fields bind the stage without storing a "
+                "machine-local path."
             ),
             "open3d_imported_from": _open3d_origin(),
             "utc": datetime.datetime.now(datetime.UTC).isoformat(),

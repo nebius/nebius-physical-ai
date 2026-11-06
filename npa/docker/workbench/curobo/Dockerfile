@@ -61,10 +61,10 @@ RUN --mount=type=bind,from=secure-pip-builder,source=/opt/secure-pip-wheels,targ
     && apt-get install -y --no-install-recommends \
        ca-certificates curl fuse gcc netcat-openbsd python3.12 python3.12-venv \
        libgomp1=14.2.0-4ubuntu2~24.04.1 \
-       openssh-server patch pciutils rsync sudo wget \
+       openssh-server patch pciutils rsync sudo wget xz-utils \
     && python3.12 /opt/install_security_apt.py /opt/security-apt.lock.json \
     && dpkg-query -W \
-       curl fuse gcc netcat-openbsd openssh-server patch pciutils rsync wget \
+       curl fuse gcc netcat-openbsd openssh-server patch pciutils rsync wget xz-utils \
     && rm -f /etc/ssh/ssh_host_*_key /etc/ssh/ssh_host_*_key.pub \
     && rm -rf /var/lib/apt/lists/* /var/cache/apt/* \
     && (id -u ubuntu >/dev/null 2>&1 || useradd -m -s /bin/bash -u 1000 ubuntu) \

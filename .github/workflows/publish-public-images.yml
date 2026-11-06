@@ -489,12 +489,12 @@ jobs:
 
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
         with:
-          # The containerized builder retains a complete construction cache while
-          # exporting --load, which exceeds the hosted root volume for GR00T.
-          # Docker's direct driver places the exact resulting image in the
-          # daemon store without a second BuildKit-to-Docker import; every
-          # runtime, complete-byte, and security gate below still reads it.
-          driver: ${{ matrix.tool == 'groot' && 'docker' || 'docker-container' }}
+          # These images exhausted the containerized BuildKit daemon while an
+          # immutable snapshot apt transaction was still running. Docker's
+          # direct driver keeps the exact tagged image in the daemon store
+          # without a second BuildKit-to-Docker import; every runtime,
+          # complete-byte, and security gate below still reads those bytes.
+          driver: ${{ contains(fromJSON('["groot", "sim2real-control", "rerun-viewer"]'), matrix.tool) && 'docker' || 'docker-container' }}
           version: ${{ matrix.tool == 'gymnasium-robotics' && 'v0.30.1' || '' }}
           driver-opts: ${{ matrix.tool == 'gymnasium-robotics' && 'image=moby/buildkit:v0.32.2@sha256:28a898719c18a33f4e8000685287fa36fd0dd9560c6440227d3a732d79bb41d8' || '' }}
 
@@ -572,7 +572,8 @@ jobs:
           # disposable GitHub-hosted root volume. These runner-image SDKs are
           # unrelated to public image builds; never alter Docker state here.
           printf '%s\0' \
-            /usr/local/lib/android /usr/share/dotnet /usr/share/swift /opt/ghc | \
+            /usr/local/lib/android /usr/share/dotnet /usr/share/swift /opt/ghc \
+            /usr/local/.ghcup /usr/local/share/boost | \
             xargs -0 -r -n1 -P4 sudo rm -rf --
           df -h /
 
@@ -952,15 +953,50 @@ jobs:
           rm -f "$RUNNER_TEMP/${TOOL}.tar" \
             "$RUNNER_TEMP/${TOOL}-cosmos3-ray-serve-payload.json"
 
-      # CUDA/AI images can exceed 25 GB. Once the exact loaded image passes its
-      # contract, BuildKit's duplicate cache is no longer evidence and can be
-      # discarded. Trivy's export goes on the hosted runner's large temp disk so
-      # the unchanged vulnerability/secret/license gates inspect every layer.
+      # CUDA/AI images can exceed 25 GB. Once the exact tagged image has passed
+      # its runtime and payload gates, unreferenced Docker state is no longer
+      # evidence and can be discarded. `docker system prune --all` would also
+      # remove an otherwise unreferenced tagged image, so retain this exact
+      # image through the scan with a stopped container while pruning every
+      # other hosted-runner image.
       - name: Prepare capacity for full-image security scans
         if: matrix.tool != 'ncore'
+        env:
+          RUNNER_ENVIRONMENT: ${{ runner.environment }}
         run: |
+          set -euo pipefail
+          docker image inspect "$IMAGE" >/dev/null
           docker buildx prune --all --force
+          # A hosted Actions VM is dedicated to this one matrix job. Never
+          # prune Docker state on an operator-selected runner pool.
+          if [[ "$RUNNER_ENVIRONMENT" == github-hosted ]]; then
+            docker container prune --force
+            docker network prune --force
+            docker volume prune --force
+            capacity_hold="npa-publication-capacity-hold-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${TOOL}"
+            docker create --name "$capacity_hold" "$IMAGE" >/dev/null
+            docker image prune --all --force
+            # GR00T's local image is an exact pre-publication scan subject.  Trivy
+            # materializes its largest layer while analysing that image, so retain
+            # the current interpreter but reclaim unrelated hosted-image toolcache
+            # entries only after the build and byte gates have completed.
+            if [[ "$TOOL" == groot ]]; then
+              active_python_dir="$(dirname "${pythonLocation:?setup-python path is required}")"
+              case "$active_python_dir" in
+                /opt/hostedtoolcache/Python/*) ;;
+                *) echo "unexpected hosted Python location" >&2; exit 1 ;;
+              esac
+              find /opt/hostedtoolcache/Python -mindepth 1 -maxdepth 1 \
+                ! -path "$active_python_dir" -print0 | \
+                xargs -0 -r -n1 -P4 sudo rm -rf --
+              printf '%s\0' /opt/hostedtoolcache/CodeQL | \
+                xargs -0 -r -n1 sudo rm -rf --
+            fi
+          fi
+          docker image inspect "$IMAGE" >/dev/null
           sudo install -d -m 0777 /mnt/npa-trivy
+          docker system df
+          df -h / /mnt
 
       - name: Pre-publication vulnerability, secret, and license scan
         if: matrix.tool != 'ncore'
@@ -975,6 +1011,12 @@ jobs:
           # gives this mandatory gate no practical analysis deadline.
           docker_socket_path="${DOCKER_SOCKET#unix://}"
           [[ "$docker_socket_path" == /* ]] || { echo "Docker socket must be an absolute path" >&2; exit 1; }
+          trivy_parallel=()
+          if [[ "$TOOL" == groot ]]; then
+            # Serializing layer analysis retains full scan coverage while avoiding
+            # simultaneous temporary layer exports for this unusually large image.
+            trivy_parallel=(--parallel 1)
+          fi
           docker run --rm \
             -e TMPDIR=/tmp/trivy \
             -v "$docker_socket_path:/var/run/docker.sock" \
@@ -989,6 +1031,7 @@ jobs:
               --ignore-unfixed \
               --ignorefile /.trivyignore \
               --format table \
+              "${trivy_parallel[@]}" \
               "$IMAGE"
 
       # Trivy applies --severity to every enabled scanner and has no per-scanner
@@ -1010,6 +1053,12 @@ jobs:
           set -euo pipefail
           docker_socket_path="${DOCKER_SOCKET#unix://}"
           [[ "$docker_socket_path" == /* ]] || { echo "Docker socket must be an absolute path" >&2; exit 1; }
+          trivy_parallel=()
+          if [[ "$TOOL" == groot ]]; then
+            # Serializing layer analysis retains full scan coverage while avoiding
+            # simultaneous temporary layer exports for this unusually large image.
+            trivy_parallel=(--parallel 1)
+          fi
           docker run --rm \
             -e TMPDIR=/tmp/trivy \
             -v "$docker_socket_path:/var/run/docker.sock" \
@@ -1021,6 +1070,7 @@ jobs:
               --severity UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL \
               --exit-code 1 \
               --format table \
+              "${trivy_parallel[@]}" \
               "$IMAGE"
 
       - name: Generate pre-publication SBOM
@@ -1033,6 +1083,12 @@ jobs:
           set -euo pipefail
           docker_socket_path="${DOCKER_SOCKET#unix://}"
           [[ "$docker_socket_path" == /* ]] || { echo "Docker socket must be an absolute path" >&2; exit 1; }
+          trivy_parallel=()
+          if [[ "$TOOL" == groot ]]; then
+            # Serializing layer analysis retains full scan coverage while avoiding
+            # simultaneous temporary layer exports for this unusually large image.
+            trivy_parallel=(--parallel 1)
+          fi
           docker run --rm \
             -e TMPDIR=/tmp/trivy \
             -v "$docker_socket_path:/var/run/docker.sock" \
@@ -1044,6 +1100,7 @@ jobs:
               --scanners vuln \
               --format spdx-json \
               --output "/output/${TOOL}-sbom.spdx.json" \
+              "${trivy_parallel[@]}" \
               "$IMAGE"
 
       - name: Validate exact FiftyOne runtime before publication

@@ -550,7 +550,7 @@ def test_actual_dependency_requirement_rejects_incompatible_security_floor(
         "voxel51-eta": "0.17.0",
         "paramiko": "5.0.0",
         "datasets": "5.0.1",
-        "pillow": "12.3.0",
+        "pillow": "13.0.0",
         "starlette": "1.3.1",
     }
     with pytest.raises(RuntimeError, match="declared requirements"):
@@ -570,7 +570,7 @@ def test_compatible_dependencies_and_normal_identifier_values_remain(
         "voxel51-eta": "0.17.0",
         "paramiko": "5.0.0",
         "datasets": "5.0.1",
-        "pillow": "12.3.0",
+        "pillow": "13.0.0",
         "starlette": "1.3.1",
     }
     assert modules.checks._compatibility(versions)["voxel51-eta"] == ["paramiko<6,>=3"]

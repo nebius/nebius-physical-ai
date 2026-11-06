@@ -112,13 +112,18 @@ RUN useradd -m -s /bin/bash -u 1000 ubuntu \
       /opt/npa/src/npa \
       /opt/npa/docker/workbench/groot
 
+COPY --chown=ubuntu:ubuntu docker/workbench/curobo/remove_scikit_image_recipe.py \
+    /opt/groot/remove-scikit-image-recipe.py
+
 USER ubuntu
 WORKDIR /opt/groot
 
 ENV PATH=/home/ubuntu/.local/bin:/opt/groot/Isaac-GR00T/.venv/bin:$PATH \
+    PIP_NO_CACHE_DIR=1 \
     PYTHONPATH=/opt/npa/src \
     NPA_SKIP_EAGER_IMPORTS=1 \
-    NPA_LIGHT_WORKBENCH_TOOL=groot
+    NPA_LIGHT_WORKBENCH_TOOL=groot \
+    UV_NO_CACHE=1
 
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh \
     && git lfs install \
@@ -252,6 +257,7 @@ RUN cd "${GROOT_REPO}" \
       "aiohttp>=3.13.3" \
       "aiomysql>=0.3.0" \
       "azure-core>=1.38.0" \
+      "certifi==2026.10.19" \
       "cffi>=2.0.0" \
       "cryptography>=48.0.1" \
       "diffusers>=0.38.0" \
@@ -267,7 +273,11 @@ RUN cd "${GROOT_REPO}" \
       "wheel>=0.46.2" \
     && (uv pip uninstall --python "${GROOT_VENV}/bin/python" -y wandb lxml || true) \
     && "${GROOT_VENV}/bin/python" -c \
-      'from cryptography.hazmat.bindings._rust import exceptions'
+      'from cryptography.hazmat.bindings._rust import exceptions' \
+    && "${GROOT_VENV}/bin/python" /opt/groot/remove-scikit-image-recipe.py \
+      --site-packages "${GROOT_VENV}/lib/python3.12/site-packages" \
+      --capability groot \
+      > /opt/groot/dependency-source-correction.json
 
 # The Isaac side of the image: python3.11 + PyTorch + the OSS dependency closure Isaac
 # needs, the runtime-fetch bootstrap, and the /isaac-sim/python.sh shim. What used to be

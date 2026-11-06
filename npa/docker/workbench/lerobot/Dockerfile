@@ -42,6 +42,18 @@ RUN useradd -m -s /bin/bash -u 1000 ubuntu \
     && chown ubuntu:ubuntu /opt/lerobot/.env \
     && chmod 600 /opt/lerobot/.env
 
+RUN --mount=type=bind,source=docker/workbench/common/secure_pip,target=/opt/secure-pip-builder,ro \
+    secure_pip_root=/tmp/npa-secure-pip \
+    && python3.12 /opt/secure-pip-builder/build.py \
+      --work-dir "${secure_pip_root}-work" --output-dir "${secure_pip_root}-wheels" \
+    && python3.12 -m venv /opt/lerobot/venv \
+    && /opt/lerobot/venv/bin/python -c 'import hashlib,json,pathlib; p=pathlib.Path("/tmp/npa-secure-pip-wheels"); r=json.loads((p/"build-receipt.json").read_text()); w=p/r["wheel"]; assert w.name == "pip-26.2.1+npa.1-py3-none-any.whl"; assert hashlib.sha256(w.read_bytes()).hexdigest() == r["sha256"]' \
+    && /opt/lerobot/venv/bin/python -m pip install --no-cache-dir --disable-pip-version-check --no-index --no-deps --force-reinstall /tmp/npa-secure-pip-wheels/pip-26.2.1+npa.1-py3-none-any.whl \
+    && /opt/lerobot/venv/bin/python -c 'import pip; from pip._vendor import certifi; assert pip.__version__ == "26.2.1+npa.1"; assert certifi.__version__ == "2026.10.19"' \
+    && install -D -o root -g root -m 0444 /tmp/npa-secure-pip-wheels/build-receipt.json /usr/share/doc/npa-lerobot/secure-pip-build.json \
+    && chown -R ubuntu:ubuntu /opt/lerobot/venv \
+    && rm -rf "${secure_pip_root}-work" "${secure_pip_root}-wheels"
+
 USER ubuntu
 WORKDIR /opt/lerobot
 
@@ -76,8 +88,7 @@ ENV PIP_NO_CACHE_DIR=1
 # The locked CMake wheel ships one Windows-only signing template. Remove that
 # exact inert path and prove the virtualenv tree has no PKCS#12 path before
 # the dependency-install layer commits.
-RUN python3.12 -m venv /opt/lerobot/venv \
-    && /opt/lerobot/venv/bin/python -m pip install \
+RUN /opt/lerobot/venv/bin/python -m pip install \
          --no-cache-dir --disable-pip-version-check --only-binary=:all: \
          --require-hashes --no-deps -r /opt/lerobot/bootstrap-requirements.lock \
     && if [ "${LEROBOT_VERSION}" = "0.6.0" ]; then \

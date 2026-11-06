@@ -328,6 +328,8 @@ def test_hosted_builds_reclaim_only_unused_runner_sdks_before_local_export() -> 
         "/usr/share/dotnet",
         "/usr/share/swift",
         "/opt/ghc",
+        "/usr/local/.ghcup",
+        "/usr/local/share/boost",
     ):
         assert directory in script
     assert "xargs -0 -r -n1 -P4 sudo rm -rf --" in script
@@ -336,7 +338,9 @@ def test_hosted_builds_reclaim_only_unused_runner_sdks_before_local_export() -> 
     assert names.index("Reclaim unused hosted-runner SDK space") < build
 
 
-def test_groot_build_streams_full_byte_gates_without_duplicate_archives() -> None:
+def test_large_snapshot_builds_stream_full_byte_gates_without_duplicate_archives() -> (
+    None
+):
     spec = _spec(PUBLISH)
     steps = spec["jobs"]["build-development"]["steps"]
     buildx = next(
@@ -347,7 +351,8 @@ def test_groot_build_streams_full_byte_gates_without_duplicate_archives() -> Non
     names = [str(step.get("name") or "") for step in steps]
 
     assert buildx["with"]["driver"] == (
-        "${{ matrix.tool == 'groot' && 'docker' || 'docker-container' }}"
+        '${{ contains(fromJSON(\'["groot", "sim2real-control", "rerun-viewer"]\'), '
+        "matrix.tool) && 'docker' || 'docker-container' }}"
     )
     assert (
         "--load"
@@ -398,7 +403,38 @@ def test_large_image_scan_reclaims_build_cache_and_reuses_large_volume() -> None
     sbom = text.index("Generate pre-publication SBOM")
     push = text.index("Push only after every pre-publication gate passes")
     assert prepare < scan < sbom < push
-    assert "docker buildx prune --all --force" in text[prepare:scan]
+    capacity = text[prepare:scan]
+    assert 'docker image inspect "$IMAGE" >/dev/null' in capacity
+    assert "docker buildx prune --all --force" in capacity
+    assert "RUNNER_ENVIRONMENT: ${{ runner.environment }}" in capacity
+    assert '[[ "$RUNNER_ENVIRONMENT" == github-hosted ]]' in capacity
+    assert "docker container prune --force" in capacity
+    assert "docker network prune --force" in capacity
+    assert "docker volume prune --force" in capacity
+    assert 'docker create --name "$capacity_hold" "$IMAGE" >/dev/null' in capacity
+    assert "docker image prune --all --force" in capacity
+    assert "docker system prune" not in capacity
+    assert (
+        capacity.index("docker container prune --force")
+        < capacity.index('docker create --name "$capacity_hold" "$IMAGE" >/dev/null')
+        < capacity.index("docker image prune --all --force")
+    )
+    assert capacity.count('docker image inspect "$IMAGE" >/dev/null') == 2
+    assert "docker system df" in capacity
+    assert 'if [[ "$TOOL" == groot ]]; then' in capacity
+    assert (
+        'active_python_dir="$(dirname "${pythonLocation:?setup-python path is required}")"'
+        in capacity
+    )
+    assert "/opt/hostedtoolcache/Python/*" in capacity
+    assert "find /opt/hostedtoolcache/Python -mindepth 1 -maxdepth 1" in capacity
+    assert '! -path "$active_python_dir" -print0' in capacity
+    assert "/opt/hostedtoolcache/CodeQL" in capacity
+    assert (
+        capacity.index("docker image prune --all --force")
+        < capacity.index('if [[ "$TOOL" == groot ]]; then')
+        < capacity.rindex('docker image inspect "$IMAGE" >/dev/null')
+    )
     # Three pinned Trivy invocations reach the push: the CRITICAL policy scan,
     # the all-severity secret scan, and the SBOM. Every one of them must reuse
     # the large volume, the shared cache and the unbounded timeout.
@@ -409,6 +445,20 @@ def test_large_image_scan_reclaims_build_cache_and_reuses_large_volume() -> None
     trivy = "aquasec/trivy:0.70.0@sha256:be1190afcb28352bfddc4ddeb71470835d16462af68d310f9f4bca710961a41e image"
     assert text[scan:push].count(trivy) == 3
     assert "docker image prune" not in text[scan:push]
+
+
+def test_groot_trivy_scans_are_serial_without_excluding_content() -> None:
+    """GR00T serializes layer exports without reducing mandatory scan coverage."""
+
+    steps = _spec(PUBLISH)["jobs"]["build-development"]["steps"]
+    scans = [step["run"] for step in steps if "aquasec/trivy:" in step.get("run", "")]
+    assert len(scans) == 3
+    for script in scans:
+        assert 'if [[ "$TOOL" == groot ]]; then' in script
+        assert "trivy_parallel=(--parallel 1)" in script
+        assert '"${trivy_parallel[@]}"' in script
+        assert "--skip-dirs" not in script
+        assert "--skip-files" not in script
 
 
 def test_prepublication_secret_scan_is_not_filtered_to_critical() -> None:

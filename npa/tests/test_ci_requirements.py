@@ -35,7 +35,7 @@ def test_committed_ci_pins_match_dependency_inputs() -> None:
 
 
 def test_oauthlib_security_floor_is_locked() -> None:
-    """Keep the CI environment above the known oauthlib vulnerabilities."""
+    """Keep the CI environment above the OAuthLib security fixes."""
 
     constraints = [
         Requirement(line)
@@ -46,6 +46,7 @@ def test_oauthlib_security_floor_is_locked() -> None:
     ]
     oauthlib_constraint = next(item for item in constraints if item.name == "oauthlib")
     assert Version("3.3.1") not in oauthlib_constraint.specifier
+    assert Version("4.0.0") not in oauthlib_constraint.specifier
     assert Version("4.0.1") in oauthlib_constraint.specifier
 
     pins = [

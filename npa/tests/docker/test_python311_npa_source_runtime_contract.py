@@ -17,7 +17,7 @@ def test_genesis_and_cosmos2_use_supported_python_families() -> None:
 
     assert "/opt/genesis/venv/lib/python3.12/site-packages" in genesis
     assert "NPA_BAKED_PYTHON=/opt/genesis/venv/bin/python" in genesis
-    assert "RUN python3.12 -m venv /opt/genesis/venv" in genesis
+    assert "python3.12 -m venv /opt/genesis/venv" in genesis
     assert '"pillow>=13.0.0,<14.0"' in genesis
     assert "NPA_CONTROL_PYTHON=/opt/npa/control-venv/bin/python" in cosmos2
     assert "NPA_BAKED_PYTHON=/opt/npa/control-venv/bin/python" in cosmos2
@@ -64,6 +64,44 @@ def test_groot_uses_vendor_python312_separate_from_python311_npa_control() -> No
     assert 'env -u PYTHONPATH "${NPA_BAKED_PYTHON}" -c' in text
     assert "assert sys.version_info >= (3, 11)" in text
     assert 'os.environ["GROOT_VENV"] + "/bin/python"' in text
+
+
+def test_groot_does_not_commit_package_manager_caches_to_scanned_layers() -> None:
+    """Keep install-time package caches out of every GR00T image layer."""
+
+    text = (DOCKER / "groot" / "Dockerfile").read_text(encoding="utf-8")
+
+    assert "PIP_NO_CACHE_DIR=1" in text
+    assert "UV_NO_CACHE=1" in text
+
+
+def test_groot_vendor_runtime_pins_the_certifi_security_fix() -> None:
+    """Keep GR00T's upstream dependency closure at the reviewed CA-bundle fix."""
+
+    text = (DOCKER / "groot" / "Dockerfile").read_text(encoding="utf-8")
+    overlay = text.split(
+        '&& uv pip install --python "${GROOT_VENV}/bin/python" --no-deps --upgrade',
+        maxsplit=1,
+    )[1].split("&& (uv pip uninstall", maxsplit=1)[0]
+
+    assert '"certifi==2026.10.19"' in overlay
+
+
+def test_groot_corrects_the_upstream_scikit_image_recipe_before_commit() -> None:
+    """Keep the inert signed documentation recipe out of scanned image layers."""
+
+    text = (DOCKER / "groot" / "Dockerfile").read_text(encoding="utf-8")
+
+    assert (
+        "COPY --chown=ubuntu:ubuntu docker/workbench/curobo/remove_scikit_image_recipe.py"
+        in text
+    )
+    correction = text.split(
+        '&& "${GROOT_VENV}/bin/python" /opt/groot/remove-scikit-image-recipe.py', 1
+    )[1]
+    assert '--site-packages "${GROOT_VENV}/lib/python3.12/site-packages"' in correction
+    assert "--capability groot" in correction
+    assert "> /opt/groot/dependency-source-correction.json" in correction
 
 
 def test_cosmos_uses_npa_only_as_build_time_ast_source() -> None:

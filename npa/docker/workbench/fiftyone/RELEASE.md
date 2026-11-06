@@ -30,7 +30,7 @@ their previous listeners. CORS is not an authentication boundary.
 The release also includes datasets 5.0.1 with the upstream folder-based
 builder metadata-reference fix for
 [CVE-2026-66007](https://www.vulncheck.com/advisories/datasets-path-traversal-via-unsanitized-file-name-metadata),
-Pillow 12.3.0, and Paramiko 5.0.0. The datasets fix applies to
+Pillow 13.0.0, and Paramiko 5.0.0. The datasets fix applies to
 `FolderBasedBuilder._generate_examples`; it does not establish general metadata
 containment for `Dataset.load_from_disk` or `DatasetDict.load_from_disk`.
 PAIDF Brain curation constructs FiftyOne samples from staged media without

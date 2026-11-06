@@ -53,6 +53,19 @@ def test_notice_is_additional_and_bound_to_reviewed_release_bytes():
     assert "alongside the wheel's bundled CUDA license" in record
 
 
+def test_notice_extraction_installs_the_xz_decoder_in_the_runtime_closure():
+    """The hash-verified xz archive must have its decoder in the final stage."""
+    instructions = re.sub(
+        r"[ \t]*\\\n\s*", " ", (IMAGE / "Dockerfile").read_text()
+    ).splitlines()
+    runtime_setup = next(
+        line for line in instructions if line.startswith("RUN --mount=")
+    )
+
+    assert "xz-utils" in runtime_setup
+    assert "tar -xJOf" in _notice_instruction()
+
+
 @pytest.mark.parametrize("download_fails", [False, True])
 def test_actual_notice_shell_rejects_changed_bytes_or_failed_fetch(
     tmp_path, download_fails

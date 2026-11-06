@@ -122,7 +122,7 @@ def test_exact_correction_preserves_loader_and_notices_and_updates_record(instal
 
 
 @pytest.mark.parametrize(
-    "capability", ["curobo", "envgen", "fiftyone", "genesis", "lerobot"]
+    "capability", ["curobo", "envgen", "fiftyone", "genesis", "groot", "lerobot"]
 )
 def test_correction_receipt_uses_a_shared_schema_and_declared_capability(
     installed, capability
@@ -309,6 +309,7 @@ def test_correction_consumers_declare_their_capabilities() -> None:
         "fiftyone/Dockerfile": "--capability fiftyone",
         "genesis/Dockerfile": "--capability genesis",
         "genesis/Dockerfile.sm120": "--capability genesis",
+        "groot/Dockerfile": "--capability groot",
         "lerobot/Dockerfile": "--capability lerobot",
     }
     workbench = IMAGE.parent

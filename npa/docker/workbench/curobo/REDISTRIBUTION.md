@@ -43,14 +43,14 @@ indexes, and all three corresponding-source archives; all five artifacts were
 downloaded and hash-checked. Other distro packages keep the original snapshot.
 `install_security_apt.py` verifies downloaded bytes, package control identities
 and the installed versions without resolving an unrelated package upgrade.
-The reference's four actual package databases and all 164 resolved notice files
+The reference's four actual package databases and all 165 resolved notice files
 are bound below. Its inherited OpenSSL `3.0.13-0ubuntu3.6` bytes remain recorded;
 replacing active packages does not remove those ancestor bytes or establish their
 security acceptance. Recheck the exact rebuilt-image closure before accepting a
 successor; these pins do not substitute for the image and vulnerability gates.
 
 `distro-source-closure.json`, also delivered under `/usr/share/doc/npa-curobo/`,
-binds all 250 distinct binary package/version pairs from four actual layer
+binds all 251 distinct binary package/version pairs from four actual layer
 package databases, including 29 source versions superseded in later layers.
 It records 143 Ubuntu source/version closures and every `.dsc`, original archive
 and packaging archive with exact public snapshot URL, size and SHA256. All were
@@ -61,7 +61,8 @@ notices available with the conveyed binaries under each package's terms. A
 broken source link, incomplete ancestor closure or missing notice blocks release.
 Neither a generic source-repository link nor the GCC14 libgomp source suffices
 for the other executables. These controls also cover ordinary distro dependencies
-such as libc, GnuTLS and binutils, not only explicitly installed package names.
+such as libc, GnuTLS, binutils and the `xz-utils` notice extractor, not only
+explicitly installed package names.
 
 The actual image installs GCC13 (`13.3.0-6ubuntu2~24.04.1`), not a guessed GCC14
 compiler closure. GCC's compiler/driver, binutils, patch, wget and rsync retain
