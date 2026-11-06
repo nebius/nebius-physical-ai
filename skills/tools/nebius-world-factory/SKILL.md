@@ -1,15 +1,16 @@
 ---
-name: nebius-stream-beta
-description: Use Nebius Stream beta through a supplied Cosmos3 HTTPS API independently to register customer S3 storage, discover Nano or Super capabilities, transfer full-length videos with custom or multiple controls, individual weights and negative prompts, run paired iterations, manage source inventories and batches, recover verified artifacts, and export owner-scoped usage. Explain native LeRobot import limits without requiring a private SDK, repository, Nebius CLI or SSH.
+name: nebius-world-factory
+description: Use Nebius World Factory through a supplied Cosmos3 HTTPS API independently to register customer S3 storage, discover Nano or Super capabilities, transfer full-length videos with custom or multiple controls, individual weights and negative prompts, run paired iterations, manage source inventories and batches, recover verified artifacts, and export owner-scoped usage. Explain native LeRobot import limits without requiring a private SDK, repository, Nebius CLI or SSH.
 ---
 
-# Nebius Stream beta
+# Nebius World Factory
 
 Use this portable customer client with an operator-supplied HTTPS API origin.
 Get the endpoint and a customer-scoped inference key from the beta operator
-through their approved private channel; this public skill does not grant access. The
-customer's “stream key” is an inference API key, not an RTMP key or a promise
-of streaming inference. The package contains no service locator and requires
+through their approved private channel; this public skill does not grant access.
+The current API exposes asynchronous generation and batch jobs. Use an inference
+API key; do not claim real-time or streaming inference without an exposed,
+qualified runtime contract. The package contains no service locator and requires
 no private repository, Nebius CLI, SSH, GPU access or model download. Python
 3.10+ on macOS/Linux is enough once the supplied API is independently reachable
 and source media is staged. Do not claim public readiness from package presence

@@ -1922,14 +1922,14 @@ itself is retained by default. See [teardown](../../docs/teardown.md) for what
 ## Optional hosted Cosmos3 generation
 
 Cluster inference remains the default (`use_hosted_endpoint: false`). Set it to
-`true` to run the generation stage through Nebius Stream from a CPU worker.
+`true` to run the generation stage through Nebius World Factory from a CPU worker.
 The input preparation, appearance sampler, Token Factory captions, Cosmos
 Evaluator, refinement decisions, curation, and publication stages still execute
 in PAIDF. This is a generation backend option, not a claim that the whole
 pipeline is a hosted service.
 
 Register input and output connections with the same customer key using the
-[Stream client skill](../../skills/tools/nebius-stream-beta/SKILL.md). The input
+[World Factory client skill](../../skills/tools/nebius-world-factory/SKILL.md). The input
 connection must read the **prepared** `input/source.mp4`, not just the original
 fixture. The output connection must cover the run's `cosmos_augmented/` prefix.
 The server must verify it as Nebius Object Storage; NPA also checks that its own

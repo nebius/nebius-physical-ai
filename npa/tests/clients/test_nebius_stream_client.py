@@ -1,4 +1,4 @@
-"""Verify the portable Stream client without a private server or credentials."""
+"""Verify the portable World Factory client without a private server or credentials."""
 
 import copy
 import hashlib
@@ -15,7 +15,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[3]
 spec = importlib.util.spec_from_file_location(
     "public_cosmos_client",
-    ROOT / "skills/tools/nebius-stream-beta/scripts/cosmos_client.py",
+    ROOT / "skills/tools/nebius-world-factory/scripts/cosmos_client.py",
 )
 helper = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(helper)
@@ -227,7 +227,7 @@ def transfer_contract(model):
 
 
 def transfer_request(model, frames):
-    path = ROOT / "skills/tools/nebius-stream-beta/examples/structural-transfer.json"
+    path = ROOT / "skills/tools/nebius-world-factory/examples/structural-transfer.json"
     value = json.loads(path.read_text())
     value["model"] = model
     value["input"]["uri"] = f"s3://example-bucket/inputs/source-{frames}.mp4"

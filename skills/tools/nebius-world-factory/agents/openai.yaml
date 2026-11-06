@@ -1,0 +1,4 @@
+interface:
+  display_name: "Nebius World Factory"
+  short_description: "Generate world-model data through the hosted API"
+  default_prompt: "Use $nebius-world-factory to discover available world models, submit a generation or batch job, and retrieve verified artifacts."
