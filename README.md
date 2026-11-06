@@ -28,27 +28,29 @@
 
 ## Demos
 
+Click any animation to open the MP4.
+
 **Video augmentation · 8 seconds**
 
 One ALOHA recording, twelve Cosmos3 appearance variants. This batch did not pass
 its quality gate. [Workflow](workflows/main/paidf-cosmos3.yaml) ·
 [Runbook](workflows/guides/paidf-cosmos3.md)
 
-https://github.com/user-attachments/assets/95917c76-7920-420f-af08-c13590a36a3f
+[![One ALOHA recording alongside twelve Cosmos3 appearance variants, looping automatically.](https://github.com/user-attachments/assets/5df4f2c0-c213-4662-a892-5856e90c8269)](https://github.com/user-attachments/assets/95917c76-7920-420f-af08-c13590a36a3f)
 
 **Robot locomotion · 8 seconds**
 
 A Unitree G1 policy rollout in MJLab simulation.
 [Workflow](workflows/testing/mjlab-render.yaml)
 
-https://github.com/user-attachments/assets/7e605a6d-b32b-4746-808c-51258a11b21a
+[![A Unitree G1 walking in MJLab simulation, looping automatically.](https://github.com/user-attachments/assets/34e720b9-df15-43a6-b14d-680e01ce4ee4)](https://github.com/user-attachments/assets/7e605a6d-b32b-4746-808c-51258a11b21a)
 
 **Video segmentation · 6 seconds**
 
 SAM 2.1 follows an object through generated video.
 [Workflow](workflows/testing/byof-sam2.1.yaml)
 
-https://github.com/user-attachments/assets/f629401a-346d-4862-b221-34b5ecc28128
+[![SAM 2.1 tracking a generated mobile robot with a colored mask, looping automatically.](https://github.com/user-attachments/assets/e4edfa25-ce1a-4ab9-a745-8d3680d86967)](https://github.com/user-attachments/assets/f629401a-346d-4862-b221-34b5ecc28128)
 
 [Clip sources and scope](docs/demos/readme-videos.md)
 

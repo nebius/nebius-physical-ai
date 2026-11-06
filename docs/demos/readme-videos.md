@@ -1,6 +1,7 @@
 # README demo videos
 
-The root README embeds short, silent H.264 clips hosted as GitHub attachments.
+The root README embeds automatically looping GIF previews hosted as GitHub
+attachments. Clicking a preview opens its original silent H.264 MP4.
 The workflow links are maintained recipes for the demonstrated capabilities;
 the clips are retained run outputs, not fresh validation of the current images.
 
@@ -9,6 +10,20 @@ the clips are retained run outputs, not fresh validation of the current images.
 | [Cosmos3 appearance fanout](https://github.com/user-attachments/assets/95917c76-7920-420f-af08-c13590a36a3f) | 8 seconds | [PAIDF + Cosmos3](../../workflows/main/paidf-cosmos3.yaml) | Original source plus twelve labeled appearance variants on the same timeline. |
 | [MJLab G1 locomotion](https://github.com/user-attachments/assets/7e605a6d-b32b-4746-808c-51258a11b21a) | 8 seconds | [MJLab render](../../workflows/testing/mjlab-render.yaml) | Seconds 2–10 of a retained native policy rollout; empty space above the scene cropped, resized to 1280 × 540. |
 | [SAM 2.1 segmentation](https://github.com/user-attachments/assets/f629401a-346d-4862-b221-34b5ecc28128) | 6 seconds | [SAM 2.1 video masks](../../workflows/testing/byof-sam2.1.yaml) | First six seconds of native GPU mask predictions over generated input, re-encoded for playback. |
+
+## Looping previews
+
+The GIFs are resized, frame-sampled copies of the MP4s above. They retain the
+same duration and source footage, use reduced color palettes, and repeat
+indefinitely. They require no play button. A reader's
+[GitHub animation preferences](https://docs.github.com/en/account-and-profile/how-tos/account-settings/managing-accessibility-settings#managing-motion)
+can pause animated images.
+
+| Preview | Resolution and frame rate | SHA-256 |
+| --- | --- | --- |
+| [Cosmos3 fanout](https://github.com/user-attachments/assets/5df4f2c0-c213-4662-a892-5856e90c8269) | 832 × 536, 10 fps | `c23c9b17127407a8edc0d6cf5ff543014480abacb53f3a9ae2de14bfdd8d7f52` |
+| [MJLab G1](https://github.com/user-attachments/assets/34e720b9-df15-43a6-b14d-680e01ce4ee4) | 640 × 270, 10 fps | `789253a75015f711e3276cb5e3a68461dc9bd4eec7c7de761788fd8f817b85b8` |
+| [SAM 2.1](https://github.com/user-attachments/assets/e4edfa25-ce1a-4ab9-a745-8d3680d86967) | 640 × 360, 8 fps | `af92a010091c54e2ab9e1c33682f4173dce1080fe9acf85b0194b9cf9c9df506` |
 
 ## Sources and interpretation
 
@@ -30,7 +45,7 @@ no real-robot or performance benchmark claim.
 The SAM clip shows prompted video mask propagation. Its colored overlay is a
 model prediction over generated footage, not a ground-truth annotation.
 
-## Published clip hashes
+## Published MP4 hashes
 
 SHA-256 identifies the exact uploaded playback files, including their edits and
 compression. Full decoding was checked before publication.
