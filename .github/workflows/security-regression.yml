@@ -4,6 +4,11 @@ on:
   pull_request:
   merge_group:
   workflow_dispatch:
+    inputs:
+      base_sha:
+        description: Trusted base SHA for a PR-equivalent recovery dispatch
+        required: true
+        type: string
   push:
     branches: [main]
 
@@ -78,7 +83,7 @@ jobs:
         id: scope
         if: github.event_name != 'push' && steps.plan.outputs.mode != 'reuse'
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || inputs.base_sha }}
         run: |
           set -euo pipefail
           policy=npa/scripts/ci_test_scope.py
@@ -112,7 +117,7 @@ jobs:
       - name: Reject committed secrets
         if: github.event_name != 'push'
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || inputs.base_sha }}
         run: |
           set -euo pipefail
           git rev-parse --verify "${BASE_SHA}^{commit}"
@@ -121,7 +126,7 @@ jobs:
 
   pr-precheck:
     name: pr-precheck
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
     runs-on: ${{ contains(fromJSON('["pull_request", "merge_group"]'), github.event_name) && (vars.NPA_CI_PRIORITY_RUNNER || 'ubuntu-latest') || 'ubuntu-latest' }}
     # Five minutes is a feedback target. Slow checkout/setup must not cancel
     # required validation before the precheck has finished.
@@ -153,8 +158,8 @@ jobs:
           echo "$GITHUB_WORKSPACE/npa/.venv/bin" >> "$GITHUB_PATH"
       - name: Check the candidate merge tree
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || inputs.base_sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           npa/.venv/bin/python npa/scripts/ci_merge_precheck.py \
             --base "$BASE_SHA" --head "$HEAD_SHA"
@@ -219,7 +224,7 @@ jobs:
 
       - name: Reject confidential data
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || inputs.base_sha }}
         run: |
           set -euo pipefail
           git rev-parse --verify "${BASE_SHA}^{commit}"
@@ -267,7 +272,7 @@ jobs:
           cache-dependency-path: scripts/security-requirements.txt
       - name: Select target revision and trusted scanner policy
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || inputs.base_sha || github.event.before }}
         run: |
           set -euo pipefail
           umask 077
@@ -393,7 +398,7 @@ jobs:
           set -euo pipefail
           test "$PLAN_RESULT" = success
           test "$SCANNER_RESULT" = success
-          if [ "$EVENT_NAME" = pull_request ]; then
+          if [ "$EVENT_NAME" = pull_request ] || [ "$EVENT_NAME" = workflow_dispatch ]; then
             test "$PRECHECK_RESULT" = success
           fi
           if [ "$VALIDATION_MODE" = reuse ]; then

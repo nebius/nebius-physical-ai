@@ -83,6 +83,15 @@ def test_one_pr_workflow_owns_every_merge_gate() -> None:
         "push",
         "workflow_dispatch",
     }
+    assert workflow["on"]["workflow_dispatch"] == {
+        "inputs": {
+            "base_sha": {
+                "description": "Trusted base SHA for a PR-equivalent recovery dispatch",
+                "required": "true",
+                "type": "string",
+            }
+        }
+    }
     jobs = workflow["jobs"]
     assert jobs["test-gate"]["uses"] == "./.github/workflows/test.yml"
     assert jobs["lint-gate"]["uses"] == "./.github/workflows/lint.yml"
@@ -91,6 +100,16 @@ def test_one_pr_workflow_owns_every_merge_gate() -> None:
     assert "bash npa/scripts/ci_precheck.sh" in precheck
     assert "npa/scripts/ci_merge_precheck.py" in precheck
     assert '--base "$BASE_SHA" --head "$HEAD_SHA"' in precheck
+    assert "github.event.pull_request.base.sha || inputs.base_sha" in str(
+        jobs["pr-precheck"]
+    )
+    assert "github.event.pull_request.head.sha || github.sha" in str(
+        jobs["pr-precheck"]
+    )
+    assert (
+        "github.event.pull_request.base.sha || github.event.merge_group.base_sha || inputs.base_sha"
+        in str(jobs["gitleaks"])
+    )
     checkout = jobs["pr-precheck"]["steps"][0]
     assert checkout["with"]["fetch-depth"] == "0"
     assert jobs["gitleaks"]["name"].endswith("|| 'gitleaks' }}")
