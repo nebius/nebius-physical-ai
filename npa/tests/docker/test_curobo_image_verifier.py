@@ -1064,7 +1064,10 @@ def test_trusted_workflow_checks_local_bytes_before_push_and_exact_pushed_bytes(
         in commands[push:]
     )
     assert '--docker-save "$RUNNER_TEMP/${TOOL}-pushed.tar"' in commands[second:]
-    assert commands.count("npa/scripts/scan_image_omniverse_payload.py") == 2
+    # Curobo retains its archive-bound local and pushed-byte scans. GR00T has
+    # two additional full streaming scans because its image cannot coexist
+    # with a second image-sized archive on hosted runners.
+    assert commands.count("npa/scripts/scan_image_omniverse_payload.py") == 4
     assert commands.count("--verification-report") >= 4
     assert (
         '--verification-report "$RUNNER_TEMP/${TOOL}-curobo-payload.json"'
