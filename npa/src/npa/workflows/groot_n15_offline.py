@@ -86,7 +86,9 @@ class S3Uri:
         part = str(relative).strip("/")
         if not part or ".." in Path(part).parts or "\\" in part:
             raise ValueError("S3 child path is unsafe")
-        return S3Uri(self.bucket, "/".join(item for item in (self.key.rstrip("/"), part) if item))
+        return S3Uri(
+            self.bucket, "/".join(item for item in (self.key.rstrip("/"), part) if item)
+        )
 
     def as_uri(self) -> str:
         return f"s3://{self.bucket}/{self.key}" if self.key else f"s3://{self.bucket}/"
@@ -125,7 +127,9 @@ class S3Store:
 
     def get_json(self, uri: str) -> dict[str, Any]:
         target = S3Uri.parse(uri)
-        body = self.client.get_object(Bucket=target.bucket, Key=target.key)["Body"].read()
+        body = self.client.get_object(Bucket=target.bucket, Key=target.key)[
+            "Body"
+        ].read()
         value = json.loads(body)
         if not isinstance(value, dict):
             raise WorkflowArtifactError(f"expected an object JSON artifact: {uri}")
@@ -174,7 +178,9 @@ class S3Store:
                 if not relative or relative.endswith("/"):
                     continue
                 if ".." in Path(relative).parts or "\\" in relative:
-                    raise WorkflowArtifactError("remote prefix contains an unsafe object key")
+                    raise WorkflowArtifactError(
+                        "remote prefix contains an unsafe object key"
+                    )
                 local = destination / relative
                 local.parent.mkdir(parents=True, exist_ok=True)
                 self.client.download_file(target.bucket, key, str(local))
@@ -183,7 +189,9 @@ class S3Store:
                 break
             token = str(response.get("NextContinuationToken") or "")
             if not token:
-                raise WorkflowArtifactError("truncated S3 listing has no continuation token")
+                raise WorkflowArtifactError(
+                    "truncated S3 listing has no continuation token"
+                )
         if not output:
             raise WorkflowArtifactError(f"remote prefix has no files: {uri}")
         return output
@@ -246,7 +254,9 @@ def directory_inventory(root: Path) -> list[dict[str, Any]]:
 def _run(command: list[str], *, env: Mapping[str, str] | None = None) -> str:
     """Run a command while leaving its factual progress in the task log."""
 
-    completed = subprocess.run(command, check=True, text=True, env=dict(env or os.environ))
+    completed = subprocess.run(
+        command, check=True, text=True, env=dict(env or os.environ)
+    )
     return completed.stdout or ""
 
 
@@ -269,7 +279,9 @@ def _source_path() -> Path:
     path = Path(npa.__file__).resolve()
     source = path.parents[1]
     if not (source / "npa" / "__init__.py").is_file():
-        raise WorkflowArtifactError("cannot resolve staged NPA source for native runtime")
+        raise WorkflowArtifactError(
+            "cannot resolve staged NPA source for native runtime"
+        )
     return source
 
 
@@ -277,7 +289,11 @@ def _native_python() -> str:
     """Return the image-owned interpreter accepted by the pinned N1.5 stack."""
 
     version = _captured(
-        [NATIVE_PYTHON, "-c", "import sys; print(f'{sys.version_info[0]}.{sys.version_info[1]}')"]
+        [
+            NATIVE_PYTHON,
+            "-c",
+            "import sys; print(f'{sys.version_info[0]}.{sys.version_info[1]}')",
+        ]
     )
     try:
         major, minor = (int(item) for item in version.split(".", maxsplit=1))
@@ -301,7 +317,9 @@ def _bootstrap_native_runtime(args: argparse.Namespace) -> Path:
         marker = root / "native-python"
         if marker.is_file() and Path(marker.read_text().strip()).is_file():
             return Path(marker.read_text().strip())
-        raise WorkflowArtifactError("runtime root exists without a complete native marker")
+        raise WorkflowArtifactError(
+            "runtime root exists without a complete native marker"
+        )
     root.mkdir(parents=True)
     _run(["apt-get", "update"])
     _run(
@@ -329,7 +347,19 @@ def _bootstrap_native_runtime(args: argparse.Namespace) -> Path:
     venv = root / "venv"
     _run([native_python, "-m", "venv", str(venv)])
     python = venv / "bin" / "python"
-    _run([str(python), "-m", "pip", "install", "--upgrade", "pip", "setuptools", "wheel", "packaging"])
+    _run(
+        [
+            str(python),
+            "-m",
+            "pip",
+            "install",
+            "--upgrade",
+            "pip",
+            "setuptools",
+            "wheel",
+            "packaging",
+        ]
+    )
     _run(
         [
             str(python),
@@ -364,13 +394,20 @@ def _install_native_source(args: argparse.Namespace, root: Path) -> None:
     _run(["git", "-C", str(native), "config", "filter.lfs.required", "false"])
     _run(["git", "-C", str(native), "config", "filter.lfs.smudge", "cat"])
     _run(["git", "-C", str(native), "config", "filter.lfs.clean", "cat"])
-    if _captured(["git", "-C", str(native), "rev-parse", "HEAD"]) != args.groot_revision:
-        raise WorkflowArtifactError("N1.5 source revision differs from the declared pin")
+    if (
+        _captured(["git", "-C", str(native), "rev-parse", "HEAD"])
+        != args.groot_revision
+    ):
+        raise WorkflowArtifactError(
+            "N1.5 source revision differs from the declared pin"
+        )
     if _captured(["git", "-C", str(native), "status", "--porcelain", "--", "gr00t"]):
         raise WorkflowArtifactError("pinned N1.5 source tree is not clean")
 
 
-def _install_native_gpu_runtime(args: argparse.Namespace, python: Path, root: Path) -> None:
+def _install_native_gpu_runtime(
+    args: argparse.Namespace, python: Path, root: Path
+) -> None:
     """Install pinned native N1.5 dependencies and build SM120 FlashAttention."""
 
     _run(
@@ -414,15 +451,23 @@ def _install_native_gpu_runtime(args: argparse.Namespace, python: Path, root: Pa
     flash = root / "flash-attention"
     _run(["git", "clone", FLASH_ATTENTION_REPOSITORY, str(flash)])
     _run(["git", "-C", str(flash), "checkout", FLASH_ATTENTION_REVISION])
-    if _captured(["git", "-C", str(flash), "rev-parse", "HEAD"]) != FLASH_ATTENTION_REVISION:
-        raise WorkflowArtifactError("FlashAttention source revision differs from the declared pin")
+    if (
+        _captured(["git", "-C", str(flash), "rev-parse", "HEAD"])
+        != FLASH_ATTENTION_REVISION
+    ):
+        raise WorkflowArtifactError(
+            "FlashAttention source revision differs from the declared pin"
+        )
     environment = dict(os.environ)
     environment.update(
         TORCH_CUDA_ARCH_LIST="sm_120",
         FLASH_ATTENTION_FORCE_BUILD="TRUE",
         FLASH_ATTN_CUDA_ARCHS="120",
     )
-    _run([str(python), "-m", "pip", "install", "--no-build-isolation", str(flash)], env=environment)
+    _run(
+        [str(python), "-m", "pip", "install", "--no-build-isolation", str(flash)],
+        env=environment,
+    )
     native = root / "Isaac-GR00T"
     _run([str(python), "-m", "pip", "install", "--no-deps", "-e", str(native)])
 
@@ -431,7 +476,9 @@ def _run_native(argv: list[str], args: argparse.Namespace) -> None:
     python = _bootstrap_native_runtime(args)
     environment = dict(os.environ)
     source = str(_source_path())
-    environment["PYTHONPATH"] = source + (":" + environment["PYTHONPATH"] if environment.get("PYTHONPATH") else "")
+    environment["PYTHONPATH"] = source + (
+        ":" + environment["PYTHONPATH"] if environment.get("PYTHONPATH") else ""
+    )
     environment.update(
         TORCH_CUDA_ARCH_LIST="sm_120",
         FLASH_ATTENTION_FORCE_BUILD="TRUE",
@@ -451,8 +498,13 @@ def _episode_records(dataset_root: Path) -> list[dict[str, Any]]:
     ]
     identifiers = [record.get("episode_index") for record in records]
     if identifiers != list(range(len(records))):
-        raise WorkflowArtifactError("public dataset episodes must be contiguous from zero")
-    if any(type(record.get("length")) is not int or record["length"] <= 0 for record in records):
+        raise WorkflowArtifactError(
+            "public dataset episodes must be contiguous from zero"
+        )
+    if any(
+        type(record.get("length")) is not int or record["length"] <= 0
+        for record in records
+    ):
         raise WorkflowArtifactError("public dataset has an invalid episode length")
     return records
 
@@ -477,7 +529,9 @@ def _split_feedback(
     if train_episode_count < 1 or eval_episode_count < 1:
         raise ValueError("train_episode_count and eval_episode_count must be positive")
     if train_episode_count + eval_episode_count != len(episodes):
-        raise ValueError("selected train and eval episode counts must cover the public dataset")
+        raise ValueError(
+            "selected train and eval episode counts must cover the public dataset"
+        )
     return [
         {
             "episode_index": int(episode["episode_index"]),
@@ -488,7 +542,9 @@ def _split_feedback(
     ]
 
 
-def _statistics_from_train_parquet(dataset_root: Path, train_indices: set[int]) -> dict[str, dict[str, list[float]]]:
+def _statistics_from_train_parquet(
+    dataset_root: Path, train_indices: set[int]
+) -> dict[str, dict[str, list[float]]]:
     """Compute frozen normalization only from the training episode set."""
 
     import numpy as np
@@ -498,7 +554,9 @@ def _statistics_from_train_parquet(dataset_root: Path, train_indices: set[int]) 
     for index in sorted(train_indices):
         matches = list((dataset_root / "data").rglob(f"episode_{index:06d}.parquet"))
         if len(matches) != 1:
-            raise WorkflowArtifactError(f"expected one parquet file for episode {index}")
+            raise WorkflowArtifactError(
+                f"expected one parquet file for episode {index}"
+            )
         tables.append(pd.read_parquet(matches[0]))
     table = pd.concat(tables, axis=0, ignore_index=True)
     result: dict[str, dict[str, list[float]]] = {}
@@ -506,7 +564,9 @@ def _statistics_from_train_parquet(dataset_root: Path, train_indices: set[int]) 
         value = table[column].iloc[0]
         if isinstance(value, str):
             continue
-        values = np.vstack([np.asarray(item, dtype=np.float32) for item in table[column]])
+        values = np.vstack(
+            [np.asarray(item, dtype=np.float32) for item in table[column]]
+        )
         result[column] = {
             "mean": np.mean(values, axis=0).tolist(),
             "std": np.std(values, axis=0).tolist(),
@@ -516,7 +576,9 @@ def _statistics_from_train_parquet(dataset_root: Path, train_indices: set[int]) 
             "q99": np.quantile(values, 0.99, axis=0).tolist(),
         }
     if not {"action", "observation.state"}.issubset(result):
-        raise WorkflowArtifactError("train-only statistics lack action or observation.state")
+        raise WorkflowArtifactError(
+            "train-only statistics lack action or observation.state"
+        )
     return result
 
 
@@ -621,14 +683,21 @@ def _transcode_h264(
 
 def _download_feedback(store: S3Store, uri: str, destination: Path) -> None:
     if not uri:
-        raise ValueError("feedback_uri is required for outcome or supplied-progress mode")
+        raise ValueError(
+            "feedback_uri is required for outcome or supplied-progress mode"
+        )
     store.get_file(uri, destination)
 
 
-def _prepare_commit_outputs(commit: Mapping[str, Any]) -> Mapping[str, Mapping[str, Any]]:
+def _prepare_commit_outputs(
+    commit: Mapping[str, Any],
+) -> Mapping[str, Mapping[str, Any]]:
     """Return the complete durable-output records from a prepare commit."""
 
-    if commit.get("kind") != "prepare-commit" or commit.get("schema_version") != SCHEMA_VERSION:
+    if (
+        commit.get("kind") != "prepare-commit"
+        or commit.get("schema_version") != SCHEMA_VERSION
+    ):
         raise WorkflowArtifactError("existing prepare commit is malformed")
     outputs = commit.get("outputs")
     if not isinstance(outputs, dict):
@@ -650,31 +719,76 @@ def _validate_reused_prepare_inputs(
     video = provenance.get("video_derivative")
     if not all(isinstance(value, dict) for value in (source, dataset, feedback, video)):
         raise WorkflowArtifactError("existing prepare provenance is malformed")
-    if source.get("repository") != args.dataset_repository or source.get("revision") != args.dataset_revision:
-        raise WorkflowArtifactError("existing prepared input has a different public dataset revision")
+    if (
+        source.get("repository") != args.dataset_repository
+        or source.get("revision") != args.dataset_revision
+    ):
+        raise WorkflowArtifactError(
+            "existing prepared input has a different public dataset revision"
+        )
     if source.get("license") != PUBLIC_DATA_LICENSE:
-        raise WorkflowArtifactError("existing prepared input has an unexpected public-data license")
-    if dataset.get("grouping") != args.grouping or dataset.get("split") != args.split_strategy:
-        raise WorkflowArtifactError("existing prepared input has a different split configuration")
-    if dataset.get("train_episodes") != args.train_episode_count or dataset.get("eval_episodes") != args.eval_episode_count:
-        raise WorkflowArtifactError("existing prepared input has different episode counts")
-    if feedback.get("mode") != args.feedback_mode or manifest.get("mode") != args.feedback_mode:
-        raise WorkflowArtifactError("existing prepared input has a different feedback mode")
+        raise WorkflowArtifactError(
+            "existing prepared input has an unexpected public-data license"
+        )
+    if (
+        dataset.get("grouping") != args.grouping
+        or dataset.get("split") != args.split_strategy
+    ):
+        raise WorkflowArtifactError(
+            "existing prepared input has a different split configuration"
+        )
+    if (
+        dataset.get("train_episodes") != args.train_episode_count
+        or dataset.get("eval_episodes") != args.eval_episode_count
+    ):
+        raise WorkflowArtifactError(
+            "existing prepared input has different episode counts"
+        )
+    if (
+        feedback.get("mode") != args.feedback_mode
+        or manifest.get("mode") != args.feedback_mode
+    ):
+        raise WorkflowArtifactError(
+            "existing prepared input has a different feedback mode"
+        )
     if manifest.get("action_horizon") != args.action_horizon:
-        raise WorkflowArtifactError("existing prepared input has a different action horizon")
-    if not math.isclose(float(manifest.get("temperature", 0.0)), args.feedback_temperature):
-        raise WorkflowArtifactError("existing prepared input has a different feedback temperature")
+        raise WorkflowArtifactError(
+            "existing prepared input has a different action horizon"
+        )
+    if not math.isclose(
+        float(manifest.get("temperature", 0.0)), args.feedback_temperature
+    ):
+        raise WorkflowArtifactError(
+            "existing prepared input has a different feedback temperature"
+        )
     if manifest.get("dataset_sha256") != dataset.get("derivative_sha256"):
-        raise WorkflowArtifactError("existing prepared input has an unbound dataset manifest")
+        raise WorkflowArtifactError(
+            "existing prepared input has an unbound dataset manifest"
+        )
     if manifest.get("feedback_sha256") != feedback.get("feedback_sha256"):
-        raise WorkflowArtifactError("existing prepared input has an unbound feedback manifest")
-    if video.get("sample_derivative_probe", {}).get("codec_name") != args.derivative_codec:
-        raise WorkflowArtifactError("existing prepared input has a different video codec")
-    if video.get("source_video_count") != video.get("derivative_video_count") or not video.get("source_video_count"):
-        raise WorkflowArtifactError("existing prepared input has incomplete derivative video evidence")
+        raise WorkflowArtifactError(
+            "existing prepared input has an unbound feedback manifest"
+        )
+    if (
+        video.get("sample_derivative_probe", {}).get("codec_name")
+        != args.derivative_codec
+    ):
+        raise WorkflowArtifactError(
+            "existing prepared input has a different video codec"
+        )
+    if video.get("source_video_count") != video.get(
+        "derivative_video_count"
+    ) or not video.get("source_video_count"):
+        raise WorkflowArtifactError(
+            "existing prepared input has incomplete derivative video evidence"
+        )
     modality = Path(args.groot_modality_path)
-    if not modality.is_file() or dataset.get("modality_sha256") != sha256_file(modality):
-        raise WorkflowArtifactError("existing prepared input has a different native modality")
+    if not modality.is_file() or dataset.get("modality_sha256") != sha256_file(
+        modality
+    ):
+        raise WorkflowArtifactError(
+            "existing prepared input has a different native modality"
+        )
 
 
 def _reuse_prepared_inputs(
@@ -692,13 +806,33 @@ def _reuse_prepared_inputs(
         str(outputs["prepared_dataset"].get("tree_sha256", "")),
         stage / "reused-prepared-dataset",
     )
-    feedback = _verify_object(store, args.feedback_output_uri, str(outputs["feedback"].get("sha256", "")), stage / "reused-feedback.json")
-    manifest = _verify_object(store, args.manifest_uri, str(outputs["manifest"].get("sha256", "")), stage / "reused-feedback-manifest.json")
-    provenance = _verify_object(store, args.prepare_receipt_uri, str(outputs["provenance"].get("sha256", "")), stage / "reused-provenance.json")
+    feedback = _verify_object(
+        store,
+        args.feedback_output_uri,
+        str(outputs["feedback"].get("sha256", "")),
+        stage / "reused-feedback.json",
+    )
+    manifest = _verify_object(
+        store,
+        args.manifest_uri,
+        str(outputs["manifest"].get("sha256", "")),
+        stage / "reused-feedback-manifest.json",
+    )
+    provenance = _verify_object(
+        store,
+        args.prepare_receipt_uri,
+        str(outputs["provenance"].get("sha256", "")),
+        stage / "reused-provenance.json",
+    )
     provenance_payload = json.loads((stage / "reused-provenance.json").read_text())
     manifest_payload = json.loads((stage / "reused-feedback-manifest.json").read_text())
-    if commit.get("dataset_tree_sha256") != prepared["tree_sha256"] or commit.get("manifest_sha256") != manifest["sha256"]:
-        raise WorkflowArtifactError("existing prepare commit does not bind its readback outputs")
+    if (
+        commit.get("dataset_tree_sha256") != prepared["tree_sha256"]
+        or commit.get("manifest_sha256") != manifest["sha256"]
+    ):
+        raise WorkflowArtifactError(
+            "existing prepare commit does not bind its readback outputs"
+        )
     _validate_reused_prepare_inputs(args, provenance_payload, manifest_payload)
     return {
         "status": "prepared",
@@ -708,7 +842,10 @@ def _reuse_prepared_inputs(
         "train_frames": int(provenance_payload["dataset"]["train_frames"]),
         "eval_frames": int(provenance_payload["dataset"]["eval_frames"]),
         "readback_files": prepared["files"],
-        "readback_bytes": prepared["bytes"] + feedback["bytes"] + manifest["bytes"] + provenance["bytes"],
+        "readback_bytes": prepared["bytes"]
+        + feedback["bytes"]
+        + manifest["bytes"]
+        + provenance["bytes"],
     }
 
 
@@ -718,9 +855,14 @@ def _has_external_prepared_prefix(args: argparse.Namespace) -> bool:
     prepared = S3Uri.parse(args.prepared_dataset_uri)
     candidate = S3Uri.parse(args.candidate_uri)
     if not candidate.key.endswith("/candidate"):
-        raise WorkflowArtifactError("candidate URI cannot establish the run output root")
+        raise WorkflowArtifactError(
+            "candidate URI cannot establish the run output root"
+        )
     output_root = candidate.key.removesuffix("/candidate")
-    return prepared.bucket != candidate.bucket or prepared.key != f"{output_root}/prepared/dataset"
+    return (
+        prepared.bucket != candidate.bucket
+        or prepared.key != f"{output_root}/prepared/dataset"
+    )
 
 
 def _prepare(args: argparse.Namespace) -> dict[str, Any]:
@@ -738,7 +880,9 @@ def _prepare(args: argparse.Namespace) -> dict[str, Any]:
     reused = _reuse_prepared_inputs(args, store, stage)
     if reused is not None:
         return reused
-    if args.prepared_input_mode == "require-existing" or _has_external_prepared_prefix(args):
+    if args.prepared_input_mode == "require-existing" or _has_external_prepared_prefix(
+        args
+    ):
         raise WorkflowArtifactError(
             "required prepared inputs are missing or unreadable; refusing to overwrite them"
         )
@@ -752,14 +896,18 @@ def _prepare(args: argparse.Namespace) -> dict[str, Any]:
     )
     source_readme = raw / "README.md"
     if not source_readme.is_file():
-        raise WorkflowArtifactError("public dataset snapshot did not include its README")
+        raise WorkflowArtifactError(
+            "public dataset snapshot did not include its README"
+        )
     episodes = _episode_records(raw)
     conversion = _transcode_h264(
         raw, derivative, args.codec_workers, args.derivative_codec
     )
     modality = Path(args.groot_modality_path)
     if not modality.is_file():
-        raise WorkflowArtifactError("configured native dual-camera modality file is absent")
+        raise WorkflowArtifactError(
+            "configured native dual-camera modality file is absent"
+        )
     shutil.copyfile(modality, derivative / "meta" / "modality.json")
 
     if args.feedback_mode == "uniform" and not args.feedback_uri:
@@ -785,16 +933,24 @@ def _prepare(args: argparse.Namespace) -> dict[str, Any]:
         if isinstance(record, dict) and record.get("split") == "train"
     }
     if len(train_indices) != args.train_episode_count:
-        raise WorkflowArtifactError("feedback train split differs from configured train_episode_count")
+        raise WorkflowArtifactError(
+            "feedback train split differs from configured train_episode_count"
+        )
     eval_indices = {
         int(record["episode_index"])
         for record in feedback
         if isinstance(record, dict) and record.get("split") == "eval"
     }
     if len(eval_indices) != args.eval_episode_count:
-        raise WorkflowArtifactError("feedback eval split differs from configured eval_episode_count")
-    if train_indices & eval_indices or train_indices | eval_indices != set(range(len(episodes))):
-        raise WorkflowArtifactError("feedback must be a complete, disjoint episode partition")
+        raise WorkflowArtifactError(
+            "feedback eval split differs from configured eval_episode_count"
+        )
+    if train_indices & eval_indices or train_indices | eval_indices != set(
+        range(len(episodes))
+    ):
+        raise WorkflowArtifactError(
+            "feedback must be a complete, disjoint episode partition"
+        )
     stats = _statistics_from_train_parquet(derivative, train_indices)
     stats_path = derivative / "meta" / "stats.json"
     stats_path.write_text(canonical_json(stats))
@@ -808,8 +964,16 @@ def _prepare(args: argparse.Namespace) -> dict[str, Any]:
         temperature=args.feedback_temperature,
     ).model_dump(mode="json")
     info = json.loads((derivative / "meta" / "info.json").read_text())
-    train_frames = sum(record["length"] for record in episodes if record["episode_index"] in train_indices)
-    eval_frames = sum(record["length"] for record in episodes if record["episode_index"] not in train_indices)
+    train_frames = sum(
+        record["length"]
+        for record in episodes
+        if record["episode_index"] in train_indices
+    )
+    eval_frames = sum(
+        record["length"]
+        for record in episodes
+        if record["episode_index"] not in train_indices
+    )
     provenance = {
         "schema_version": SCHEMA_VERSION,
         "kind": "public-lerobot-prepare",
@@ -871,7 +1035,9 @@ def _prepare(args: argparse.Namespace) -> dict[str, Any]:
     }
 
 
-def _download_prepared_inputs(args: argparse.Namespace, stage: Path) -> tuple[Path, Path, dict[str, Any]]:
+def _download_prepared_inputs(
+    args: argparse.Namespace, stage: Path
+) -> tuple[Path, Path, dict[str, Any]]:
     store = S3Store()
     dataset = stage / "dataset"
     store.get_directory(args.prepared_dataset_uri, dataset)
@@ -897,10 +1063,14 @@ def _gpu_runtime_evidence() -> dict[str, Any]:
     import torch
 
     if not torch.cuda.is_available() or torch.cuda.device_count() != 1:
-        raise WorkflowArtifactError("native N1.5 stage requires exactly one visible CUDA device")
+        raise WorkflowArtifactError(
+            "native N1.5 stage requires exactly one visible CUDA device"
+        )
     capability = list(torch.cuda.get_device_capability(0))
     if capability != [12, 0]:
-        raise WorkflowArtifactError("this declared RTX PRO 6000 workflow requires CUDA capability sm_120")
+        raise WorkflowArtifactError(
+            "this declared RTX PRO 6000 workflow requires CUDA capability sm_120"
+        )
     return {
         "torch": torch.__version__,
         "torch_cuda": torch.version.cuda,
@@ -949,7 +1119,9 @@ def _checkpoint_sync(
     root = S3Uri.parse(checkpoint_root_uri)
 
     def sync(checkpoint: Path, step: int) -> None:
-        inventory = store.put_directory(checkpoint, root.child(f"checkpoint-{step}").as_uri())
+        inventory = store.put_directory(
+            checkpoint, root.child(f"checkpoint-{step}").as_uri()
+        )
         latest = {
             "schema_version": SCHEMA_VERSION,
             "kind": "resumable-native-checkpoint",
@@ -977,9 +1149,13 @@ def _restore_checkpoint(
         return None
     latest = store.get_json(latest_uri)
     if latest.get("manifest_sha256") != manifest_sha:
-        raise WorkflowArtifactError("resume checkpoint manifest differs from current prepared input")
+        raise WorkflowArtifactError(
+            "resume checkpoint manifest differs from current prepared input"
+        )
     if latest.get("resume_identity_sha256") != resume_identity_sha256:
-        raise WorkflowArtifactError("resume checkpoint policy configuration differs from current run")
+        raise WorkflowArtifactError(
+            "resume checkpoint policy configuration differs from current run"
+        )
     prefix = str(latest.get("checkpoint_prefix") or "")
     if not prefix.startswith("checkpoint-"):
         raise WorkflowArtifactError("resume checkpoint pointer is malformed")
@@ -1019,9 +1195,16 @@ def _train(args: argparse.Namespace) -> dict[str, Any]:
     stage = _new_directory(Path(args.workspace).resolve() / "train")
     dataset, manifest_path, provenance = _download_prepared_inputs(args, stage)
     manifest = OfflineManifest.model_validate_json(manifest_path.read_text())
-    if provenance.get("dataset", {}).get("derivative_sha256") != manifest.dataset_sha256:
-        raise WorkflowArtifactError("prepared receipt and feedback manifest identify different dataset bytes")
-    train_frames = sum(episode.length for episode in manifest.episodes if episode.split == "train")
+    if (
+        provenance.get("dataset", {}).get("derivative_sha256")
+        != manifest.dataset_sha256
+    ):
+        raise WorkflowArtifactError(
+            "prepared receipt and feedback manifest identify different dataset bytes"
+        )
+    train_frames = sum(
+        episode.length for episode in manifest.episodes if episode.split == "train"
+    )
     steps_per_pass = math.ceil(train_frames / args.batch_size)
     required_steps = steps_per_pass * args.complete_train_passes
     if args.complete_train_passes < 1:
@@ -1070,8 +1253,12 @@ def _train(args: argparse.Namespace) -> dict[str, Any]:
         ),
     )
     after = _action_decoder_hashes(output)
-    if set(before) != set(after) or not any(before[key] != after[key] for key in before):
-        raise WorkflowArtifactError("native training did not change an action decoder tensor")
+    if set(before) != set(after) or not any(
+        before[key] != after[key] for key in before
+    ):
+        raise WorkflowArtifactError(
+            "native training did not change an action decoder tensor"
+        )
     receipt["complete_schedule"] = {
         "train_frames": train_frames,
         "per_device_batch_size": args.batch_size,
@@ -1121,11 +1308,15 @@ def _raw_targets(raw: Mapping[str, Any], *, horizon: int) -> Any:
 
     keys = ("action.single_arm", "action.gripper")
     if not all(key in raw for key in keys):
-        raise WorkflowArtifactError("native raw evaluation sample lacks SO-100 action targets")
+        raise WorkflowArtifactError(
+            "native raw evaluation sample lacks SO-100 action targets"
+        )
     values = [np.asarray(raw[key], dtype=np.float32) for key in keys]
     result = np.concatenate(values, axis=-1)
     if result.shape != (horizon, 6):
-        raise WorkflowArtifactError("native action target shape differs from configured horizon")
+        raise WorkflowArtifactError(
+            "native action target shape differs from configured horizon"
+        )
     return result
 
 
@@ -1136,7 +1327,9 @@ def _inference_input(raw: Mapping[str, Any]) -> dict[str, Any]:
     if not any(key.startswith("video.") for key in value) or not any(
         key.startswith("state.") for key in value
     ):
-        raise WorkflowArtifactError("held-out inference input lacks recorded video or state")
+        raise WorkflowArtifactError(
+            "held-out inference input lacks recorded video or state"
+        )
     return value
 
 
@@ -1192,7 +1385,10 @@ def _predict_action(
     # Match the native Trainer path: the transform leaves VLM images as PIL
     # objects and its collator owns conversion to model tensors.
     normalized = DefaultDataCollator()([transform(_inference_input(raw))])
-    with torch.inference_mode(), torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+    with (
+        torch.inference_mode(),
+        torch.autocast(device_type="cuda", dtype=torch.bfloat16),
+    ):
         result = model.get_action(normalized)
     prediction = result["action_pred"].float().cpu()
     unnormalized = transform.unapply({"action": prediction})
@@ -1246,7 +1442,9 @@ def _render_prediction_video(
     import numpy as np
 
     if not frames or fps < 1:
-        raise WorkflowArtifactError("evidence video needs recorded frames and a positive FPS")
+        raise WorkflowArtifactError(
+            "evidence video needs recorded frames and a positive FPS"
+        )
     width, height = 960, 720
     temporary = destination.with_suffix(".raw.mp4")
     writer = cv2.VideoWriter(
@@ -1263,8 +1461,24 @@ def _render_prediction_video(
             wrist = cv2.resize(record["wrist"][:, :, ::-1], (480, 360))
             canvas[:360, :480] = front
             canvas[:360, 480:] = wrist
-            cv2.putText(canvas, "RECORDED FRONT OBSERVATION", (14, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.62, (0, 255, 255), 2)
-            cv2.putText(canvas, "RECORDED WRIST OBSERVATION", (494, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.62, (0, 255, 255), 2)
+            cv2.putText(
+                canvas,
+                "RECORDED FRONT OBSERVATION",
+                (14, 28),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.62,
+                (0, 255, 255),
+                2,
+            )
+            cv2.putText(
+                canvas,
+                "RECORDED WRIST OBSERVATION",
+                (494, 28),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.62,
+                (0, 255, 255),
+                2,
+            )
             cv2.putText(
                 canvas,
                 f"held-out episode {record['episode_index']} frame {record['frame_index']} | offline prediction, not a rollout",
@@ -1297,8 +1511,20 @@ def _render_prediction_video(
                 if math.isclose(low, high):
                     low, high = low - 1.0, high + 1.0
                 cv2.rectangle(canvas, (x0, y0), (x1, y1), (90, 90, 90), 1)
-                cv2.putText(canvas, f"action[{dimension}] raw dataset coordinate", (x0, y0 - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (220, 220, 220), 1)
-                for series, color in (("target", (255, 255, 255)), ("baseline", (0, 165, 255)), ("candidate", (0, 220, 0))):
+                cv2.putText(
+                    canvas,
+                    f"action[{dimension}] raw dataset coordinate",
+                    (x0, y0 - 5),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.35,
+                    (220, 220, 220),
+                    1,
+                )
+                for series, color in (
+                    ("target", (255, 255, 255)),
+                    ("baseline", (0, 165, 255)),
+                    ("candidate", (0, 220, 0)),
+                ):
                     points = []
                     for index, item in enumerate(recent):
                         value = float(item[series][0, dimension])
@@ -1306,7 +1532,13 @@ def _render_prediction_video(
                         y = y1 - round((value - low) * (y1 - y0) / (high - low))
                         points.append((x, y))
                     if len(points) > 1:
-                        cv2.polylines(canvas, [np.asarray(points, dtype=np.int32)], False, color, 1)
+                        cv2.polylines(
+                            canvas,
+                            [np.asarray(points, dtype=np.int32)],
+                            False,
+                            color,
+                            1,
+                        )
             writer.write(canvas)
     finally:
         writer.release()
@@ -1336,8 +1568,13 @@ def _validate_video(path: Path, expected_frames: int) -> dict[str, Any]:
     import cv2
 
     probe = _probe_video(path)
-    if probe.get("codec_name") != "h264" or int(probe.get("nb_read_frames") or -1) != expected_frames:
-        raise WorkflowArtifactError("evidence MP4 codec or decoded frame count differs from declaration")
+    if (
+        probe.get("codec_name") != "h264"
+        or int(probe.get("nb_read_frames") or -1) != expected_frames
+    ):
+        raise WorkflowArtifactError(
+            "evidence MP4 codec or decoded frame count differs from declaration"
+        )
     capture = cv2.VideoCapture(str(path))
     if not capture.isOpened():
         raise WorkflowArtifactError("OpenCV cannot decode evidence MP4")
@@ -1347,7 +1584,9 @@ def _validate_video(path: Path, expected_frames: int) -> dict[str, Any]:
             capture.set(cv2.CAP_PROP_POS_FRAMES, index)
             ok, frame = capture.read()
             if not ok or frame is None or frame.size == 0:
-                raise WorkflowArtifactError("evidence MP4 representative frame does not decode")
+                raise WorkflowArtifactError(
+                    "evidence MP4 representative frame does not decode"
+                )
             decoded.append(
                 {
                     "frame_index": index,
@@ -1357,7 +1596,11 @@ def _validate_video(path: Path, expected_frames: int) -> dict[str, Any]:
             )
     finally:
         capture.release()
-    return {"ffprobe": probe, "decoded_frames": decoded, "mp4_sha256": sha256_file(path)}
+    return {
+        "ffprobe": probe,
+        "decoded_frames": decoded,
+        "mp4_sha256": sha256_file(path),
+    }
 
 
 def _standalone_html(evaluation: Mapping[str, Any], video: Path) -> str:
@@ -1371,9 +1614,9 @@ def _standalone_html(evaluation: Mapping[str, Any], video: Path) -> str:
 <style>body{{font:16px system-ui,sans-serif;max-width:1050px;margin:2rem auto;padding:0 1rem;background:#111;color:#eee}}code,pre{{background:#20252b;padding:.2rem .4rem;overflow:auto}}video{{max-width:100%;border:1px solid #666}}.warn{{border-left:4px solid #f6a623;padding:.6rem 1rem;background:#2b2418}}table{{border-collapse:collapse}}td,th{{padding:.4rem .7rem;border:1px solid #555;text-align:left}}</style>
 <h1>GR00T N1.5 offline recorded-observation proof</h1>
 <p class=\"warn\"><strong>Scope:</strong> this is offline prediction on held-out public recorded observations. The video is not a policy rollout, does not contain predicted robot motion or next states, and provides no robot-success, improvement, deployment, or simulator claim.</p>
-<table><tr><th>Public input</th><td>{html.escape(str(evaluation['source']['dataset_repository']))}@{html.escape(str(evaluation['source']['dataset_revision']))}, Apache-2.0</td></tr>
-<tr><th>Model</th><td>{html.escape(str(evaluation['source']['model_repository']))}@{html.escape(str(evaluation['source']['model_revision']))}; weights are runtime-only and not embedded</td></tr>
-<tr><th>Held-out frames</th><td>{evaluation['held_out']['frames']}</td></tr><tr><th>Baseline MAE / candidate MAE</th><td>{summary['baseline']['mae']:.6g} / {summary['candidate']['mae']:.6g} raw dataset action coordinates</td></tr>
+<table><tr><th>Public input</th><td>{html.escape(str(evaluation["source"]["dataset_repository"]))}@{html.escape(str(evaluation["source"]["dataset_revision"]))}, Apache-2.0</td></tr>
+<tr><th>Model</th><td>{html.escape(str(evaluation["source"]["model_repository"]))}@{html.escape(str(evaluation["source"]["model_revision"]))}; weights are runtime-only and not embedded</td></tr>
+<tr><th>Held-out frames</th><td>{evaluation["held_out"]["frames"]}</td></tr><tr><th>Baseline MAE / candidate MAE</th><td>{summary["baseline"]["mae"]:.6g} / {summary["candidate"]["mae"]:.6g} raw dataset action coordinates</td></tr>
 <tr><th>Action units</th><td>Source Parquet action coordinates; source metadata does not declare physical units. Inputs were min/max-normalized with training-split-only statistics and predictions were inverse-transformed before comparison.</td></tr></table>
 <h2>Recorded observations with aligned offline predictions</h2><video controls preload=\"metadata\" src=\"data:video/mp4;base64,{encoded_video}\"></video>
 <p>Each frame labels its held-out source episode/frame. Curves compare horizon-0 recorded action targets with native baseline and candidate <code>get_action</code> predictions under the same per-frame diffusion seed.</p>
@@ -1420,7 +1663,9 @@ def _evaluate(args: argparse.Namespace) -> dict[str, Any]:
         _load_model(runtime, candidate, config, manifest.action_horizon).cuda().eval()
     )
     if training.get("candidate_checkpoint_sha256") != checkpoint_digest(candidate):
-        raise WorkflowArtifactError("candidate checkpoint bytes differ from training receipt")
+        raise WorkflowArtifactError(
+            "candidate checkpoint bytes differ from training receipt"
+        )
     episodes = {episode.episode_index: episode for episode in manifest.episodes}
     eval_steps = [
         (episode, frame)
@@ -1464,11 +1709,16 @@ def _evaluate(args: argparse.Namespace) -> dict[str, Any]:
         targets.append(target)
         masks.append(mask)
         identities.append((episode, frame))
-        if episode == args.evidence_episode_index and args.evidence_start_frame <= frame < evidence_end:
+        if (
+            episode == args.evidence_episode_index
+            and args.evidence_start_frame <= frame < evidence_end
+        ):
             front = np.asarray(raw.get("video.front"))
             wrist = np.asarray(raw.get("video.wrist"))
             if front.shape[0] != 1 or wrist.shape[0] != 1:
-                raise WorkflowArtifactError("recorded evidence video sample has unexpected time shape")
+                raise WorkflowArtifactError(
+                    "recorded evidence video sample has unexpected time shape"
+                )
             clip.append(
                 {
                     "episode_index": episode,
@@ -1481,9 +1731,14 @@ def _evaluate(args: argparse.Namespace) -> dict[str, Any]:
                 }
             )
         if ordinal and ordinal % 100 == 0:
-            print(f"native held-out action inference {ordinal}/{len(eval_steps)}", flush=True)
+            print(
+                f"native held-out action inference {ordinal}/{len(eval_steps)}",
+                flush=True,
+            )
     if len(clip) != args.evidence_frame_count:
-        raise WorkflowArtifactError("configured evidence episode/frame window is not wholly held out")
+        raise WorkflowArtifactError(
+            "configured evidence episode/frame window is not wholly held out"
+        )
     baseline_array = np.stack(baseline_actions)
     candidate_array = np.stack(candidate_actions)
     target_array = np.stack(targets)
@@ -1587,7 +1842,9 @@ def _evaluate(args: argparse.Namespace) -> dict[str, Any]:
     }
 
 
-def _verify_object(store: S3Store, uri: str, expected_sha: str, destination: Path) -> dict[str, Any]:
+def _verify_object(
+    store: S3Store, uri: str, expected_sha: str, destination: Path
+) -> dict[str, Any]:
     store.get_file(uri, destination)
     actual = sha256_file(destination)
     if actual != expected_sha:
@@ -1604,7 +1861,9 @@ def _verify_directory(
     inventory = directory_inventory(destination)
     actual_tree_sha = tree_digest(inventory)
     if actual_tree_sha != expected_tree_sha:
-        raise WorkflowArtifactError("independent durable directory readback digest mismatch")
+        raise WorkflowArtifactError(
+            "independent durable directory readback digest mismatch"
+        )
     return {
         "tree_sha256": actual_tree_sha,
         "files": len(inventory),
@@ -1620,7 +1879,10 @@ def _verify(args: argparse.Namespace) -> dict[str, Any]:
     prepare = store.get_json(args.prepare_commit_uri)
     training = store.get_json(args.training_commit_uri)
     evidence = store.get_json(args.evidence_commit_uri)
-    if prepare.get("kind") != "prepare-commit" or training.get("kind") != "training-commit":
+    if (
+        prepare.get("kind") != "prepare-commit"
+        or training.get("kind") != "training-commit"
+    ):
         raise WorkflowArtifactError("workflow stage commits are malformed")
     if evidence.get("kind") != "evidence-commit":
         raise WorkflowArtifactError("evidence commit is malformed")
@@ -1712,12 +1974,26 @@ def _verify(args: argparse.Namespace) -> dict[str, Any]:
         raise WorkflowArtifactError("read-back held-out actions are incomplete")
     if action_arrays["baseline"].shape != action_arrays["candidate"].shape:
         raise WorkflowArtifactError("read-back baseline and candidate shapes differ")
-    media = _validate_video(stage / "offline-prediction.mp4", int(evaluation["evidence_clip"]["frame_count"]))
+    media = _validate_video(
+        stage / "offline-prediction.mp4",
+        int(evaluation["evidence_clip"]["frame_count"]),
+    )
     source = (stage / "offline-proof.html").read_text(encoding="utf-8")
-    if "data:video/mp4;base64," not in source or "http://" in source or "https://" in source:
-        raise WorkflowArtifactError("standalone HTML contains no embedded video or has a remote dependency")
-    if evaluation["checkpoints"]["candidate_sha256"] != training["candidate_checkpoint_sha256"]:
-        raise WorkflowArtifactError("evaluation candidate identity differs from training commit")
+    if (
+        "data:video/mp4;base64," not in source
+        or "http://" in source
+        or "https://" in source
+    ):
+        raise WorkflowArtifactError(
+            "standalone HTML contains no embedded video or has a remote dependency"
+        )
+    if (
+        evaluation["checkpoints"]["candidate_sha256"]
+        != training["candidate_checkpoint_sha256"]
+    ):
+        raise WorkflowArtifactError(
+            "evaluation candidate identity differs from training commit"
+        )
     receipt = {
         "schema_version": SCHEMA_VERSION,
         "kind": "workflow-independent-readback",
@@ -1756,7 +2032,11 @@ def _verify(args: argparse.Namespace) -> dict[str, Any]:
         str(receipt_record["sha256"]),
         stage / "workflow-readback.json",
     )
-    return {"status": "verified", "video_sha256": video["sha256"], "html_sha256": html_record["sha256"]}
+    return {
+        "status": "verified",
+        "video_sha256": video["sha256"],
+        "html_sha256": html_record["sha256"],
+    }
 
 
 def _add_common_arguments(parser: argparse.ArgumentParser) -> None:
@@ -1770,7 +2050,11 @@ def _add_common_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--data-config", default="so100_dualcam")
     parser.add_argument("--embodiment-tag", default="new_embodiment")
     parser.add_argument("--action-horizon", type=int, default=16)
-    parser.add_argument("--video-backend", choices=("decord", "torchcodec", "torchvision_av"), default="decord")
+    parser.add_argument(
+        "--video-backend",
+        choices=("decord", "torchcodec", "torchvision_av"),
+        default="decord",
+    )
     parser.add_argument("--derivative-codec", choices=("h264",), default="h264")
     parser.add_argument("--prepared-dataset-uri", required=True)
     parser.add_argument(
@@ -1788,12 +2072,16 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("command", choices=("prepare", "train", "evaluate", "verify"))
     parser.add_argument("--native", action="store_true", help=argparse.SUPPRESS)
     _add_common_arguments(parser)
-    parser.add_argument("--feedback-mode", choices=("uniform", "outcome", "progress"), default="uniform")
+    parser.add_argument(
+        "--feedback-mode", choices=("uniform", "outcome", "progress"), default="uniform"
+    )
     parser.add_argument("--feedback-uri", default="")
     parser.add_argument("--feedback-output-uri", required=True)
     parser.add_argument("--feedback-temperature", type=float, default=1.0)
     parser.add_argument("--grouping", choices=("episode",), default="episode")
-    parser.add_argument("--split-strategy", choices=("contiguous-tail",), default="contiguous-tail")
+    parser.add_argument(
+        "--split-strategy", choices=("contiguous-tail",), default="contiguous-tail"
+    )
     parser.add_argument("--train-episode-count", type=int, default=64)
     parser.add_argument("--eval-episode-count", type=int, default=16)
     parser.add_argument("--codec-workers", type=int, default=4)
@@ -1826,8 +2114,14 @@ def _validate_arguments(args: argparse.Namespace) -> None:
     if not args.workspace.is_absolute():
         raise ValueError("workspace must be an absolute worker path")
     if args.action_horizon < 1 or args.batch_size < 1 or args.complete_train_passes < 1:
-        raise ValueError("action_horizon, batch_size, and complete_train_passes must be positive")
-    if args.checkpoint_interval_steps < 1 or args.evidence_frame_count < 1 or args.evidence_video_fps < 1:
+        raise ValueError(
+            "action_horizon, batch_size, and complete_train_passes must be positive"
+        )
+    if (
+        args.checkpoint_interval_steps < 1
+        or args.evidence_frame_count < 1
+        or args.evidence_video_fps < 1
+    ):
         raise ValueError("checkpoint and evidence numeric settings must be positive")
     if args.evidence_start_frame < 0 or args.evidence_episode_index < 0:
         raise ValueError("evidence episode/frame selection cannot be negative")
@@ -1840,7 +2134,11 @@ def _validate_arguments(args: argparse.Namespace) -> None:
             S3Uri.parse(value)
     if args.feedback_mode in {"outcome", "progress"} and not args.feedback_uri:
         raise ValueError("outcome/progress mode requires worker-readable feedback_uri")
-    if args.feedback_mode == "uniform" and args.feedback_uri and not args.feedback_uri.startswith("s3://"):
+    if (
+        args.feedback_mode == "uniform"
+        and args.feedback_uri
+        and not args.feedback_uri.startswith("s3://")
+    ):
         raise ValueError("external uniform feedback must be a worker-readable s3 URI")
 
 
@@ -1862,7 +2160,12 @@ def main(argv: list[str] | None = None) -> None:
             "verify": _verify,
         }[args.command]
         print(json.dumps(operation(args), sort_keys=True))
-    except (OSError, ValueError, WorkflowArtifactError, subprocess.CalledProcessError) as exc:
+    except (
+        OSError,
+        ValueError,
+        WorkflowArtifactError,
+        subprocess.CalledProcessError,
+    ) as exc:
         parser.error(str(exc))
 
 

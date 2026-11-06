@@ -13,6 +13,8 @@ Options
 --all  Required acknowledgement to plan the full project lifecycle.
 --yes  -y  Execute the rendered plan.
 --delete-project  Also delete an exact, empty project with durable NPA creation proof.
+--retain-project  Close one failed project-deletion journal after explicit project-retention authorization.
+--operation-id  <str>  Exact failed project-deletion operation to retain; requires --retain-project.
 --json  Emit JSON.
 --help  Show this message and exit.
 ```
@@ -26,6 +28,8 @@ Options
 | `--all` | Required acknowledgement to plan the full project lifecycle. |
 | `--yes` | -y  Execute the rendered plan. |
 | `--delete-project` | Also delete an exact, empty project with durable NPA creation proof. |
+| `--retain-project` | Close one failed project-deletion journal after explicit project-retention authorization. |
+| `--operation-id` | <str>  Exact failed project-deletion operation to retain; requires --retain-project. |
 | `--json` | Emit JSON. |
 | `--help` | Show this message and exit. |
 

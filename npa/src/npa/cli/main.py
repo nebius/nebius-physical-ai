@@ -219,7 +219,11 @@ def destroy_project_cmd(
         result = retain_recovery_required_project_teardown(
             project=project.strip(), operation_id=operation_id.strip()
         )
-        typer.echo(json.dumps(result, indent=2, sort_keys=True) if output_json else result["status"])
+        typer.echo(
+            json.dumps(result, indent=2, sort_keys=True)
+            if output_json
+            else result["status"]
+        )
         return
     if operation_id.strip():
         raise typer.BadParameter("--operation-id is valid only with --retain-project.")

@@ -57,7 +57,9 @@ def retain_recovery_required_project_teardown(
 
     alias = str(project or "").strip()
     if not alias:
-        raise RuntimeError("project retention requires an exact configured project alias")
+        raise RuntimeError(
+            "project retention requires an exact configured project alias"
+        )
     operation = ProvisioningOperation(str(operation_id or "").strip())
     payload = operation.read()
     if (
@@ -82,16 +84,22 @@ def retain_recovery_required_project_teardown(
     tenant_id = str(getattr(environment, "tenant_id", "") or "")
     region = str(getattr(environment, "region", "") or "")
     if not project_id or not tenant_id or not region:
-        raise RuntimeError("project retention requires project, tenant, and region identity")
+        raise RuntimeError(
+            "project retention requires project, tenant, and region identity"
+        )
     if (
         project_id != str(payload.get("project_id") or "")
         or tenant_id != str(payload.get("tenant_id") or "")
         or region != str(payload.get("region") or "")
     ):
-        raise RuntimeError("project retention identity differs from the teardown journal")
+        raise RuntimeError(
+            "project retention identity differs from the teardown journal"
+        )
     identity = get_project_identity(project_id, tenant_id=tenant_id)
     if identity is None:
-        raise RuntimeError("project retention requires the exact project to remain present")
+        raise RuntimeError(
+            "project retention requires the exact project to remain present"
+        )
     if str(getattr(identity, "region", "") or "") != region:
         raise RuntimeError("provider project region differs from the teardown journal")
 

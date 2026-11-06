@@ -239,7 +239,9 @@ def train_offline(
         checkpoint_sync,
     )
     result = trainer.train(
-        resume_from_checkpoint=(str(resume_from_checkpoint) if resume_from_checkpoint else None)
+        resume_from_checkpoint=(
+            str(resume_from_checkpoint) if resume_from_checkpoint else None
+        )
     )
     training_trace = _training_trace(trainer)
     evaluation = trainer.evaluate()
@@ -558,7 +560,9 @@ def _create_trainer(
                 step = int(state.global_step)
                 checkpoint = output / f"checkpoint-{step}"
                 if not checkpoint.is_dir():
-                    raise ValueError("Trainer save callback did not produce a checkpoint")
+                    raise ValueError(
+                        "Trainer save callback did not produce a checkpoint"
+                    )
                 checkpoint_sync(checkpoint, step)
 
         trainer.add_callback(DurableCheckpointCallback())

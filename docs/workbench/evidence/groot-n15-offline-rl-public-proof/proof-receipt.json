@@ -4,6 +4,7 @@
   "public_files": {
     "html": "index.html",
     "mp4": "offline-prediction.mp4",
+    "offline_bundle": "Open index.html beside offline-prediction.mp4; the relative media reference needs no network access.",
     "historical_short_proof": "historic-32-step-proof.html",
     "historical_short_proof_receipt": "historic-32-step-proof-receipt.json"
   },
@@ -122,7 +123,8 @@
     "heldout_actions_sha256": "c1d85a923e71fad43f86130515e21e1c799bc8dd4c2a5cb002b22b129f965840",
     "training_receipt_sha256": "a51d67662b9ab6a3863e900c38350286be853ccd48ccf28875d42d2778abaa2a",
     "published_html": "index.html",
-    "published_html_is": "The pipeline-generated self-contained HTML plus this factual training-evidence section; the exact pipeline HTML hash above remains the durable artifact identity."
+    "published_html_sha256": "9e379e95945bd25d9b8ec8231c4016e30e606bd0254736dd9ff496472fe530cb",
+    "published_html_is": "Sanitized offline-bundle HTML with the factual training-evidence section. It references the exact co-located MP4 by relative path and has no CDN, remote script, or network dependency; the pipeline-generated embedded-media HTML hash above remains the durable artifact identity."
   },
   "review_history": {
     "claude_review_invocations": 1,

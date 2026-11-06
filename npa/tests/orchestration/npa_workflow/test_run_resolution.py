@@ -1020,7 +1020,9 @@ def test_active_runtime_retry_supersedes_historical_terminal_ledger(
     assert resolved.job_id == "11"
     assert resolved.job_name == "prepare-attempt-two"
     terminal = next(
-        check for check in resolved.checks if check.source == "project_run_terminal_ledger"
+        check
+        for check in resolved.checks
+        if check.source == "project_run_terminal_ledger"
     )
     assert terminal.outcome == "skipped"
 

@@ -25,8 +25,9 @@ native inference/video evidence, and independent durable readback.
 ### Completed public RTX proof
 
 The reproducible workflow has completed one full native pass on a single RTX
-PRO 6000 Blackwell GPU. The public evidence is a self-contained
-[offline HTML proof](../evidence/groot-n15-offline-rl-public-proof/index.html),
+PRO 6000 Blackwell GPU. The public evidence is an offline evidence bundle:
+open the [offline HTML proof](../evidence/groot-n15-offline-rl-public-proof/index.html)
+beside the co-located
 the exact [offline-prediction MP4](../evidence/groot-n15-offline-rl-public-proof/offline-prediction.mp4),
 and its [sanitized receipt](../evidence/groot-n15-offline-rl-public-proof/proof-receipt.json).
 It records 10,582 finite optimizer updates for 42,325 training frames and

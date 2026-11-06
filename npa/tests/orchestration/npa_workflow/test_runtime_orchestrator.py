@@ -3999,8 +3999,7 @@ def test_explicit_absent_resume_preserves_interrupted_partial_output_fragments(
     assert submitter.calls[0]["job_name"].endswith("-a2")
     prior = store.read_runtime_state().waves[0]
     assert prior["recovery_decision"] == (
-        "operator_authorized_interrupted_absent_relaunch_"
-        "with_incomplete_outputs"
+        "operator_authorized_interrupted_absent_relaunch_with_incomplete_outputs"
     )
     assert prior["reconciliation"][-1]["declared_outputs_complete"] is False
     assert prior["reconciliation"][-1]["incomplete_output_fragments_preserved"] is True

@@ -28,7 +28,13 @@ def test_uniform_feedback_is_complete_episode_grouped_and_unlabeled() -> None:
         eval_episode_count=2,
     )
 
-    assert [item["split"] for item in feedback] == ["train", "train", "train", "eval", "eval"]
+    assert [item["split"] for item in feedback] == [
+        "train",
+        "train",
+        "train",
+        "eval",
+        "eval",
+    ]
     assert [item["group"] for item in feedback] == [
         "episode-000000",
         "episode-000001",
@@ -51,7 +57,9 @@ def test_uniform_feedback_refuses_incomplete_partition() -> None:
         )
 
 
-@pytest.mark.parametrize("uri", ["", "https://example.invalid/a", "s3:///missing", "s3://bucket/a/../b"])
+@pytest.mark.parametrize(
+    "uri", ["", "https://example.invalid/a", "s3:///missing", "s3://bucket/a/../b"]
+)
 def test_s3_uri_refuses_noncanonical_or_unsafe_values(uri: str) -> None:
     with pytest.raises(ValueError):
         workflow.S3Uri.parse(uri)
@@ -101,7 +109,9 @@ def test_metrics_reject_nonfinite_native_action_predictions() -> None:
         )
 
 
-def test_inverse_transformed_actions_use_recorded_target_width_not_model_padding() -> None:
+def test_inverse_transformed_actions_use_recorded_target_width_not_model_padding() -> (
+    None
+):
     """GR00T's padded action head must decode back to the SO-100's six axes."""
 
     decoded = workflow._decoded_action_array(
@@ -146,7 +156,9 @@ def test_standalone_html_embeds_video_and_no_remote_dependency(tmp_path: Path) -
     assert "not a policy rollout" in document
 
 
-def test_workflow_argument_validation_requires_progress_input_and_safe_uris(tmp_path: Path) -> None:
+def test_workflow_argument_validation_requires_progress_input_and_safe_uris(
+    tmp_path: Path,
+) -> None:
     parser = workflow._parser()
     args = parser.parse_args(
         [
@@ -259,7 +271,9 @@ def test_native_child_uses_stable_module_name_when_parent_is_main(
         return SimpleNamespace(returncode=0)
 
     monkeypatch.setattr(workflow, "__name__", "__main__")
-    monkeypatch.setattr(workflow, "_bootstrap_native_runtime", lambda _args: tmp_path / "python")
+    monkeypatch.setattr(
+        workflow, "_bootstrap_native_runtime", lambda _args: tmp_path / "python"
+    )
     monkeypatch.setattr(workflow.subprocess, "run", fake_run)
 
     workflow._run_native(["prepare", "--workspace", str(tmp_path)], SimpleNamespace())
@@ -360,7 +374,9 @@ def test_complete_prepare_commit_is_read_back_before_reuse(
         "s3://bucket/provenance.json": json.dumps(provenance_payload),
     }
 
-    def verify_object(_store: object, uri: str, digest: str, destination: Path) -> dict[str, object]:
+    def verify_object(
+        _store: object, uri: str, digest: str, destination: Path
+    ) -> dict[str, object]:
         destination.write_text(payloads[uri])
         return {"sha256": digest, "bytes": destination.stat().st_size}
 
@@ -431,7 +447,10 @@ def test_reused_prepare_commit_rejects_a_different_dataset_revision(
         workflow._validate_reused_prepare_inputs(
             args,
             {
-                "source": {"repository": workflow.DATASET_REPOSITORY_DEFAULT, "revision": "other"},
+                "source": {
+                    "repository": workflow.DATASET_REPOSITORY_DEFAULT,
+                    "revision": "other",
+                },
                 "dataset": {},
                 "feedback": {},
                 "video_derivative": {},
@@ -456,7 +475,9 @@ def test_missing_external_prepared_inputs_fail_before_public_download(
         prepared_input_mode="build-or-reuse",
     )
 
-    with pytest.raises(workflow.WorkflowArtifactError, match="required prepared inputs"):
+    with pytest.raises(
+        workflow.WorkflowArtifactError, match="required prepared inputs"
+    ):
         workflow._prepare(args)
 
 
@@ -476,8 +497,18 @@ def test_fresh_train_keeps_candidate_directory_new_for_native_trainer(
                 "action_horizon": 16,
                 "temperature": 1.0,
                 "episodes": [
-                    {"episode_index": 0, "split": "train", "length": 4, "weights": [1.0] * 4},
-                    {"episode_index": 1, "split": "eval", "length": 2, "weights": [1.0] * 2},
+                    {
+                        "episode_index": 0,
+                        "split": "train",
+                        "length": 4,
+                        "weights": [1.0] * 4,
+                    },
+                    {
+                        "episode_index": 1,
+                        "split": "eval",
+                        "length": 2,
+                        "weights": [1.0] * 2,
+                    },
                 ],
             }
         )
@@ -526,21 +557,35 @@ def test_fresh_train_keeps_candidate_directory_new_for_native_trainer(
     monkeypatch.setattr(
         workflow,
         "_download_prepared_inputs",
-        lambda _args, _stage: (dataset, manifest_path, {"dataset": {"derivative_sha256": "d" * 64}}),
+        lambda _args, _stage: (
+            dataset,
+            manifest_path,
+            {"dataset": {"derivative_sha256": "d" * 64}},
+        ),
     )
     monkeypatch.setattr(workflow, "_download_base_model", fake_download_base)
     monkeypatch.setattr(workflow, "_restore_checkpoint", fake_restore)
-    monkeypatch.setattr(workflow, "_resume_identity", lambda *_args, **_kwargs: "r" * 64)
+    monkeypatch.setattr(
+        workflow, "_resume_identity", lambda *_args, **_kwargs: "r" * 64
+    )
     monkeypatch.setattr(workflow, "_gpu_runtime_evidence", lambda: {"gpu": "test"})
-    monkeypatch.setattr(workflow, "_checkpoint_sync", lambda *_args: lambda *_args: None)
+    monkeypatch.setattr(
+        workflow, "_checkpoint_sync", lambda *_args: lambda *_args: None
+    )
     monkeypatch.setattr(
         workflow,
         "_action_decoder_hashes",
         lambda path: {"tensor": "base" if path.name == "base-model" else "candidate"},
     )
-    monkeypatch.setattr("npa.workbench.groot.offline_feedback.file_digest", lambda _path: "m" * 64)
-    monkeypatch.setattr("npa.workbench.groot.offline_training.checkpoint_digest", lambda _path: "b" * 64)
-    monkeypatch.setattr("npa.workbench.groot.offline_training.train_offline", fake_train_offline)
+    monkeypatch.setattr(
+        "npa.workbench.groot.offline_feedback.file_digest", lambda _path: "m" * 64
+    )
+    monkeypatch.setattr(
+        "npa.workbench.groot.offline_training.checkpoint_digest", lambda _path: "b" * 64
+    )
+    monkeypatch.setattr(
+        "npa.workbench.groot.offline_training.train_offline", fake_train_offline
+    )
 
     args = SimpleNamespace(
         workspace=tmp_path / "workspace",
