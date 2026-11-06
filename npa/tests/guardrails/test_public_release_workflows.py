@@ -336,7 +336,7 @@ def test_hosted_builds_reclaim_only_unused_runner_sdks_before_local_export() -> 
     assert names.index("Reclaim unused hosted-runner SDK space") < build
 
 
-def test_groot_build_uses_direct_driver_without_removing_local_byte_gates() -> None:
+def test_groot_build_streams_full_byte_gates_without_duplicate_archives() -> None:
     spec = _spec(PUBLISH)
     steps = spec["jobs"]["build-development"]["steps"]
     buildx = next(
@@ -353,6 +353,15 @@ def test_groot_build_uses_direct_driver_without_removing_local_byte_gates() -> N
         "--load"
         in steps[names.index("Build immutable development image locally")]["run"]
     )
+    runtime_gate = steps[
+        names.index(
+            "Enforce runtime, revision, bootstrap, config, and history contracts"
+        )
+    ]["run"]
+    assert 'if [[ "$TOOL" == groot ]]; then' in runtime_gate
+    assert '--docker-image "$IMAGE"' in runtime_gate
+    assert 'if [ "$TOOL" = groot ]; then' in runtime_gate
+    assert '"$RUNNER_TEMP/${TOOL}.tar"' in runtime_gate
     assert (
         names.index("Build immutable development image locally")
         < names.index(
@@ -362,7 +371,7 @@ def test_groot_build_uses_direct_driver_without_removing_local_byte_gates() -> N
     )
 
 
-def test_large_image_scan_reclaims_only_disposable_build_cache_and_tar() -> None:
+def test_large_image_scan_reclaims_cache_and_streams_groot_without_a_tar() -> None:
     spec = _spec(PUBLISH)
     step = next(
         item
@@ -372,7 +381,12 @@ def test_large_image_scan_reclaims_only_disposable_build_cache_and_tar() -> None
     )
     script = step["run"]
     assert script.index("docker buildx prune --all --force") < script.index(
-        'docker save "${save_platform[@]}" --output "$RUNNER_TEMP/${TOOL}.tar"'
+        'if [[ "$TOOL" == groot ]]; then'
+    )
+    assert '--docker-image "$IMAGE"' in script
+    assert (
+        'docker save "${save_platform[@]}" --output "$RUNNER_TEMP/${TOOL}.tar" "$IMAGE"'
+        in script
     )
     assert 'rm -f "$RUNNER_TEMP/${TOOL}.tar"' in script
 
@@ -494,7 +508,9 @@ def test_post_push_and_promotion_gates_are_digest_bound() -> None:
     assert "if ! grep -Eq" in verify
 
 
-def test_post_push_payload_scan_binds_remote_digest_to_local_full_tar() -> None:
+def test_post_push_payload_scan_binds_all_tools_and_streams_groot_exact_digest() -> (
+    None
+):
     text = PUBLISH.read_text(encoding="utf-8")
     post_push = text[text.index("Verify pushed bytes") :]
 
@@ -521,7 +537,9 @@ def test_post_push_payload_scan_binds_remote_digest_to_local_full_tar() -> None:
     )
     assert '--tarball "$RUNNER_TEMP/${TOOL}-pushed.tar"' in post_push
     assert 'rm -f "$RUNNER_TEMP/${TOOL}-pushed.tar"' in post_push
-    assert 'scan_image_omniverse_payload.py \\\n+            "$exact"' not in post_push
+    assert 'if [[ "$TOOL" == groot ]]; then' in post_push
+    assert 'if [ "$TOOL" = groot ]; then' in post_push
+    assert ('scan_image_omniverse_payload.py \\\n              "$exact"') in post_push
 
 
 def test_build_and_cleanup_dispatches_cannot_fall_through_to_promotion() -> None:
