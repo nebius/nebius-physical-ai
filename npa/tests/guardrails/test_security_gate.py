@@ -1196,7 +1196,7 @@ def _retained_patch_context_pins(root: Path) -> list[str]:
         ("gitpython", "3.2.1"),
         ("hydra-core", "1.3.7"),
         ("multidict", "6.9.1"),
-        ("oauthlib", "4.0.0"),
+        ("oauthlib", "4.0.1"),
         ("urllib3", "2.8.0"),
         ("virtualenv", "21.14.13"),
         ("werkzeug", "3.1.9"),
