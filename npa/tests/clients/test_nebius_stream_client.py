@@ -5,12 +5,11 @@ import hashlib
 import importlib.util
 import io
 import json
-from pathlib import Path
 import ssl
+from pathlib import Path
 from urllib.request import Request
 
 import pytest
-
 
 ROOT = Path(__file__).resolve().parents[3]
 spec = importlib.util.spec_from_file_location(
@@ -201,6 +200,205 @@ def test_unsupported_or_unqualified_profile_fails_before_submit():
     }
     with pytest.raises(helper.ClientError, match="qualified"):
         helper.qualify(source, value, "/v1/videos")
+
+
+def reasoning_contract(model, modalities=("text", "image", "video")):
+    return {
+        "auth": {"owner_id": "alpha"},
+        "openapi": {"paths": {"/v1/reasoning": {"post": {}}}},
+        "models": {
+            "data": [
+                {
+                    "id": model,
+                    "capability_matrix": [
+                        {
+                            "task": "reasoning_understanding",
+                            "profiles": ["cosmos3-reasoner-chat-v1"],
+                            "profile_evidence": {
+                                "cosmos3-reasoner-chat-v1": "qualified"
+                            },
+                            "input_modalities": list(modalities),
+                            "output_modalities": ["text"],
+                            "guardrails_required": True,
+                            "runtime_implemented": True,
+                            "endpoint_exposed": True,
+                            "evidence_status": "qualified",
+                        }
+                    ],
+                }
+            ]
+        },
+    }
+
+
+def reasoning_request(name):
+    path = ROOT / "skills/tools/nebius-stream-beta/examples" / name
+    return json.loads(path.read_text())
+
+
+class ReasoningClient(FakeClient):
+    def __init__(self, model, modalities=("text", "image", "video")):
+        super().__init__()
+        self.discovery = reasoning_contract(model, modalities)
+
+    def contract(self):
+        return self.discovery
+
+
+@pytest.mark.parametrize(
+    ("example", "modality"),
+    [
+        ("reasoning-text.json", "text"),
+        ("reasoning-image.json", "image"),
+        ("reasoning-video.json", "video"),
+    ],
+)
+@pytest.mark.parametrize("model", ["nvidia/Cosmos3-Nano", "nvidia/Cosmos3-Super"])
+def test_reasoning_examples_admit_once_and_recover_with_same_identity(
+    tmp_path, example, modality, model
+):
+    tmp_path.chmod(0o700)
+    client = ReasoningClient(model)
+    value = reasoning_request(example)
+    value["model"] = model
+    state_path = tmp_path / f"{modality}.json"
+    client.fail = True
+    with pytest.raises(helper.ClientError, match="HTTPS request failed"):
+        helper.submit(client, value, state_path, "/v1/reasoning", modality)
+    retained = helper.read_json(state_path)
+    assert retained["route"] == "/v1/reasoning" and "job_id" not in retained
+    client.fail = False
+    state = helper.submit(client, value, state_path, "/v1/reasoning", modality)
+    assert state["job_id"] == "job-001"
+    assert client.attempts == [retained["idempotency_key"]] * 2
+    assert (
+        helper.resume(client, state_path, tmp_path / "results")["verified_artifacts"]
+        == 1
+    )
+    assert value["generation"]["seed"] == 0
+    assert value["generation"]["temperature"] == 0.0
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        "route",
+        "model",
+        "task",
+        "profile",
+        "input_modality",
+        "output_modality",
+        "guardrails",
+        "runtime",
+        "exposure",
+        "evidence",
+    ],
+)
+def test_reasoning_rejects_unqualified_contract_before_admission(tmp_path, failure):
+    tmp_path.chmod(0o700)
+    client = ReasoningClient("nvidia/Cosmos3-Nano")
+    value = reasoning_request("reasoning-video.json")
+    row = client.discovery["models"]["data"][0]["capability_matrix"][0]
+    if failure == "route":
+        client.discovery["openapi"]["paths"] = {}
+    elif failure == "model":
+        value["model"] = "nvidia/Cosmos-Reason"
+    elif failure == "task":
+        row["task"] = "text_to_video"
+    elif failure == "profile":
+        row["profiles"] = []
+    elif failure == "input_modality":
+        row["input_modalities"] = ["text"]
+    elif failure == "output_modality":
+        row["output_modalities"] = ["video"]
+    elif failure == "guardrails":
+        row["guardrails_required"] = False
+    elif failure == "runtime":
+        row["runtime_implemented"] = False
+    elif failure == "exposure":
+        row["endpoint_exposed"] = False
+    else:
+        row["profile_evidence"] = {"cosmos3-reasoner-chat-v1": "failed"}
+    with pytest.raises(helper.ClientError):
+        helper.submit(
+            client, value, tmp_path / "reasoning.json", "/v1/reasoning", "video"
+        )
+    assert not client.attempts and not (tmp_path / "reasoning.json").exists()
+
+
+@pytest.mark.parametrize(
+    ("modality", "change", "message"),
+    [
+        (None, None, "requires --input-modality"),
+        ("text", "keep_input", "must not include"),
+        ("image", "drop_input", "requires an input"),
+        ("image", "video_sampler", "video sampling"),
+        ("video", "two_samplers", "only one video sampler"),
+        ("text", "zero_tokens", "max_tokens"),
+        ("text", "zero_top_p", "top_p"),
+    ],
+)
+def test_reasoning_request_validation_happens_before_admission(
+    tmp_path, modality, change, message
+):
+    tmp_path.chmod(0o700)
+    client = ReasoningClient("nvidia/Cosmos3-Nano")
+    value = reasoning_request("reasoning-text.json")
+    if change == "keep_input":
+        value["input"] = {"connection_id": "input", "uri": "s3://BUCKET/image.png"}
+    elif change == "drop_input":
+        value = reasoning_request("reasoning-image.json")
+        value["model"] = "nvidia/Cosmos3-Nano"
+        value.pop("input")
+    elif change == "video_sampler":
+        value = reasoning_request("reasoning-image.json")
+        value["model"] = "nvidia/Cosmos3-Nano"
+        value["generation"]["video_num_frames"] = 24
+    elif change == "two_samplers":
+        value = reasoning_request("reasoning-video.json")
+        value["generation"]["video_fps"] = 2
+    elif change == "zero_tokens":
+        value["generation"]["max_tokens"] = 0
+    elif change == "zero_top_p":
+        value["generation"]["top_p"] = 0
+    with pytest.raises(helper.ClientError, match=message):
+        helper.submit(
+            client, value, tmp_path / "reasoning.json", "/v1/reasoning", modality
+        )
+    assert not client.attempts and not (tmp_path / "reasoning.json").exists()
+
+
+def test_reasoning_cli_keeps_zero_values_and_retains_private_state(
+    tmp_path, monkeypatch, capsys
+):
+    tmp_path.chmod(0o700)
+    key = private_file(tmp_path, "key", "synthetic-key")
+    request_path = private_file(
+        tmp_path, "request.json", json.dumps(reasoning_request("reasoning-text.json"))
+    )
+    client = ReasoningClient("nvidia/Cosmos3-Nano")
+    monkeypatch.setenv("WMH_BASE_URL", client.origin)
+    monkeypatch.setenv("WMH_API_KEY_FILE", str(key))
+    monkeypatch.setattr(helper, "Client", lambda *args: client)
+    monkeypatch.setattr(
+        helper.sys,
+        "argv",
+        [
+            "cosmos_client.py",
+            "submit",
+            "--route",
+            "/v1/reasoning",
+            "--input-modality",
+            "text",
+            "--request",
+            str(request_path),
+            "--state",
+            str(tmp_path / "state.json"),
+        ],
+    )
+    helper.main()
+    assert json.loads(capsys.readouterr().out)["job_id"] == "job-001"
+    assert helper.read_json(tmp_path / "state.json")["route"] == "/v1/reasoning"
 
 
 def transfer_contract(model):

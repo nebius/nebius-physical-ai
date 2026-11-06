@@ -1,0 +1,19 @@
+{
+  "model": "nvidia/Cosmos3-Nano",
+  "prompt": "Summarize the observable sequence and identify the next physical interaction.",
+  "input": {
+    "connection_id": "REPLACE_WITH_INPUT_CONNECTION_ID",
+    "uri": "s3://REPLACE_WITH_BUCKET/REPLACE_WITH_VIDEO_KEY.mp4"
+  },
+  "output": {
+    "connection_id": "REPLACE_WITH_OUTPUT_CONNECTION_ID",
+    "prefix": "s3://REPLACE_WITH_BUCKET/REPLACE_WITH_OUTPUT_PREFIX"
+  },
+  "generation": {
+    "profile": "cosmos3-reasoner-chat-v1",
+    "max_tokens": 256,
+    "seed": 0,
+    "temperature": 0.0,
+    "video_num_frames": 24
+  }
+}

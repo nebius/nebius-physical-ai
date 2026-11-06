@@ -8,6 +8,26 @@ model weights nor direct GPU access is needed. An independently reachable
 operator-supplied API origin and appropriate API grants are prerequisites;
 a packaged client or an internal test does not establish public availability.
 
+## Reasoner observations are not evaluation reports
+
+When authenticated discovery has qualified the exact `reasoning_understanding`
+task for an explicit Nano or Super model, the portable client can retain a
+durable text, image, or video Reasoner job with the same private state and
+artifact-recovery process as generation. Use the corresponding complete
+placeholder-only request from `../examples/`, select `--input-modality text`,
+`image`, or `video`, and retain the request/state pair. Text may be useful as
+a caption or a physical-scene observation for a human workflow. It is not a
+measurement of grounding, contact, identity, motion quality, policy success,
+or training value.
+
+Keep this separate from a generation `technical_report`: that report contains
+only the server's media decode/timeline criteria for a generation artifact and
+does not score Reasoner answers. Conversely, a successful `reasoning.json` or
+`metrics.json` artifact only records technical delivery of a text response; it
+does not validate the response's truth, safety, or suitability for automated
+evaluation/curation. Do not infer an evaluator, training pipeline, or public
+endpoint from route/schema presence.
+
 ## Prepare independent customer access
 
 Each customer uses their own API key, private working directory, connection
