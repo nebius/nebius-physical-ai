@@ -24,11 +24,11 @@ fail_find "Git/LFS metadata is baked" -type d \( -name .git -o -path '*/.git/lfs
   echo "forbidden-payload guard: upstream assets directory is baked" >&2
   exit 1
 }
-[[ ! -e "${ROOT}/.venv/lib/python3.10/site-packages/skimage/data" ]] || {
+[[ ! -e "${ROOT}/.venv/lib/python3.11/site-packages/skimage/data" ]] || {
   echo "forbidden-payload guard: unused scikit-image data/fetch module is baked" >&2
   exit 1
 }
-[[ ! -e "${ROOT}/.venv/lib/python3.10/site-packages/wandb/bin" ]] || {
+[[ ! -e "${ROOT}/.venv/lib/python3.11/site-packages/wandb/bin" ]] || {
   echo "forbidden-payload guard: unused W&B native service binary is baked" >&2
   exit 1
 }

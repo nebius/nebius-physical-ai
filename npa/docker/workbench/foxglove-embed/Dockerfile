@@ -29,7 +29,7 @@ RUN chmod +x /usr/local/bin/install-foxglove-sdk.sh \
         --integrity "${FOXGLOVE_EMBED_INTEGRITY}" \
         --registry "${FOXGLOVE_EMBED_REGISTRY}"
 
-FROM caddy:2.11-alpine@sha256:5f5c8640aae01df9654968d946d8f1a56c497f1dd5c5cda4cf95ab7c14d58648
+FROM caddy:2.11-alpine@sha256:70b3180738b46cd88e49b300d790ae448a0aca3f58edef0f000bb57d619a9ab3
 ARG FOXGLOVE_EMBED_VERSION
 
 LABEL npa.tool="foxglove-embed" \

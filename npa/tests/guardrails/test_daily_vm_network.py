@@ -13,6 +13,7 @@ import yaml
 WORKFLOW = (
     Path(__file__).resolve().parents[3] / ".github/workflows/dev-vm-daily-tests.yml"
 )
+RUNNER = Path(__file__).resolve().parents[3] / "scripts/dev-vm-daily-tests.sh"
 FAKE_COMMAND = r"""
 import json
 import os
@@ -56,6 +57,10 @@ def _step(name):
     return next(step for step in steps if step["name"] == name)
 
 
+def _function_body(name: str) -> str:
+    return RUNNER.read_text().split(f"{name}() {{", 1)[1].split("\n}\n", 1)[0]
+
+
 def _environment(directory):
     binaries = directory / "bin"
     binaries.mkdir()
@@ -97,13 +102,23 @@ def test_daily_workflow_has_no_pr_trigger_and_always_cleans_credentials():
     assert _step("Clean up SSH key")["if"] == "always()"
     assert _step("Check out repository")["with"]["persist-credentials"] is False
     assert "ssh-keyscan" not in WORKFLOW.read_text()
-    missing = _step("Verify required secrets are present")["run"]
+    missing = _step("Verify required secure transport settings are present")["run"]
     assert '"$DEV_VM_SSH_KNOWN_HOSTS"' in missing
     steps = [step["name"] for step in workflow["jobs"]["dev-vm-tests"]["steps"]]
     cleanup = "Clean up the remote runner script"
     assert "always()" in _step(cleanup)["if"]
     assert "steps.stage.outputs.directory != ''" in _step(cleanup)["if"]
     assert steps.index(cleanup) < steps.index("Clean up SSH key")
+
+
+def test_live_e2e_tiers_load_only_the_vm_scoped_environment() -> None:
+    loader = _function_body("load_live_e2e_environment")
+    assert 'live_env="${HOME}/.npa/live-e2e.env"' in loader
+    assert '. "$live_env"' in loader
+    assert "set -a" in loader and "set +a" in loader
+    assert "NPA_SKYPILOT_BIN" in loader
+    for tier in ("run_e2e", "run_e2e_daily"):
+        assert "load_live_e2e_environment" in _function_body(tier)
 
 
 @pytest.mark.parametrize(
@@ -125,10 +140,10 @@ def test_missing_ssh_settings_fail_without_exposing_other_values(tmp_path, missi
     }
     environment.update(configured)
     del environment[missing]
-    result = _run("Verify required secrets are present", environment)
+    result = _run("Verify required secure transport settings are present", environment)
     assert result.returncode == 1
     output = result.stdout + result.stderr
-    assert f"Missing required secret(s): {missing}" in output
+    assert f"Missing required secure transport setting(s): {missing}" in output
     assert all(value not in output for value in configured.values())
     assert not Path(environment["COMMAND_LOG"]).exists()
 

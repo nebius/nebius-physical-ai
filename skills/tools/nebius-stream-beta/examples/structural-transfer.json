@@ -1,0 +1,51 @@
+{
+  "model": "nvidia/Cosmos3-Super",
+  "input": {
+    "connection_id": "customer-output",
+    "uri": "s3://CUSTOMER_BUCKET/inputs/source.mp4"
+  },
+  "output": {
+    "connection_id": "customer-output",
+    "prefix": "s3://CUSTOMER_BUCKET/generated/transfer-001"
+  },
+  "prompt": "A robot arm works beside a block on a worktable under warm evening light.",
+  "negative_prompt": "Flickering lighting, camera shake, sudden scene cuts, text overlays.",
+  "controls": {
+    "edge": {
+      "input": {
+        "connection_id": "customer-output",
+        "uri": "s3://CUSTOMER_BUCKET/inputs/edge-control.mp4"
+      },
+      "weight": 1.0
+    },
+    "depth": {
+      "input": {
+        "connection_id": "customer-output",
+        "uri": "s3://CUSTOMER_BUCKET/inputs/depth-control.mp4"
+      },
+      "weight": 3.0
+    },
+    "seg": {
+      "input": {
+        "connection_id": "customer-output",
+        "uri": "s3://CUSTOMER_BUCKET/inputs/seg-control.mp4"
+      },
+      "weight": 2.0
+    },
+    "blur": {
+      "input": {
+        "connection_id": "customer-output",
+        "uri": "s3://CUSTOMER_BUCKET/inputs/blur-control.mp4"
+      },
+      "weight": 0.5
+    }
+  },
+  "generation": {
+    "profile": "structural-transfer-832x480-121-v1",
+    "seed": 101,
+    "num_inference_steps": 35,
+    "guidance_scale": 3.0,
+    "control_guidance": 1.5,
+    "flow_shift": 10.0
+  }
+}

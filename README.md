@@ -44,7 +44,10 @@ The portable Python client uses an operator-supplied HTTPS origin
 (`WMH_API_KEY_FILE`, `WMH_S3_CREDENTIAL_FILE`). The
 [customer guide](skills/tools/nebius-stream-beta/references/iteration.md)
 explains setup, `WMH_WORK_DIR`, Nano/Super capability discovery, video
-augmentation, bucket batches, recovery, and usage exports. Input may use
+augmentation, bucket batches, recovery, and usage exports. The
+[full-length controls guide](skills/tools/nebius-stream-beta/references/requests.md#full-length-structural-transfers)
+covers `/v1/transfers`, uploaded or multiple controls, relative weights and
+negative prompts without client-side clipping or chunking. Input may use
 approved S3-compatible storage; output must be verified Nebius Object Storage.
 Beta access is issued separately by the operator.
 

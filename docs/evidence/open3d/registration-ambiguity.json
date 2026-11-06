@@ -1,0 +1,237 @@
+{
+  "what_this_measures": "Whether the registration numbers `npa workbench open3d register` publishes let a consumer distinguish a correct alignment from a confidently wrong one, and whether re-registering under further seeds does.",
+  "why": "`fitness` and `inlier_rmse` are ICP's own, computed against the correspondences ICP chose. A consumer reading `inlier_rmse 0.0124` at `voxel_size 0.05` concludes the alignment is good to a quarter of a voxel. On a symmetric pair that reading is available while the alignment is tens of voxels wrong, and nothing in the report contradicts it.",
+  "environment": {
+    "open3d": "0.20.0",
+    "numpy": "2.5.4",
+    "python": "3.14.7",
+    "interpreter": "host CPython, not the npa-open3d image (which pins 3.11-slim-trixie)",
+    "why_that_is_recorded": "This directory's convention is to generate inside the container so the Open3D version matches the tool's. This record did not: it was produced from a checkout on the host. Open3D is 0.20.0 either way and the registration is the shipped function unmodified, so the figures are of the same code -- but the claim that every record here came from the image was not true of this one, and the record says so rather than being relabelled as an image run it never had.",
+    "registration": "the shipped _register_pair, unmodified"
+  },
+  "cases": {
+    "hashes_that_name_no_file_here": "Each source_digest identifies the generated point set supplied to that ambiguity case. The generated source arrays are not committed as files; the case parameters and measured outcomes are retained here.",
+    "continuous_symmetry": {
+      "why_this_case": "A cylinder band is invariant under any rotation about z, so a whole family of alignments fits and RANSAC has no reason to prefer the true one. This is the case the measurement is for.",
+      "source_points": 4000,
+      "source_digest": "7d5b1de36fc7eefa8b57ce7cdc3781e25e35539d6a2a97380d4104ec45988361",
+      "voxel_size": 0.05,
+      "seeds": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "published_numbers_a_consumer_reads": {
+        "fitness_by_seed": [
+          0.727,
+          0.691,
+          0.718,
+          0.73125,
+          0.7305,
+          0.7415
+        ],
+        "inlier_rmse_by_seed": [
+          0.012501118704231172,
+          0.012333157289279997,
+          0.012394822389415158,
+          0.0124740762096771,
+          0.012491896928710442,
+          0.012398887034124655
+        ],
+        "fitness_spread": 0.0505000000000001,
+        "inlier_rmse_spread": 0.0001679614149511753,
+        "worst_inlier_rmse_in_voxels": 0.2500223740846234
+      },
+      "agreement_between_seeds": {
+        "worst_pairwise_displacement": 0.9133055081988846,
+        "worst_pairwise_displacement_voxels": 18.26611016397769,
+        "worst_disagreeing_seeds": [
+          1,
+          5
+        ]
+      },
+      "wall_seconds_per_seed": [
+        0.15423884600022575,
+        0.2293980329995975,
+        0.23103326300042681,
+        0.20334968200040748,
+        0.16091680400131736,
+        0.2516759939971962
+      ],
+      "distance_from_the_known_truth": {
+        "rms_displacement_by_seed": [
+          0.6257029297709684,
+          0.39243885364869824,
+          0.6249786876737663,
+          0.5878574337431801,
+          0.6026181900565745,
+          1.2423113003030581
+        ],
+        "voxels_by_seed": [
+          12.514058595419367,
+          7.848777072973965,
+          12.499573753475325,
+          11.757148674863602,
+          12.052363801131488,
+          24.846226006061162
+        ],
+        "worst_voxels": 24.846226006061162,
+        "best_voxels": 7.848777072973965,
+        "every_seed_is_wrong": true
+      },
+      "the_reading": {
+        "published_numbers_would_have_reassured_a_consumer": true,
+        "the_alignment_is_wrong": true,
+        "the_disagreement_would_have_warned_them": true,
+        "so_this_case_is": "detected"
+      }
+    },
+    "discrete_symmetry": {
+      "why_this_case": "A square prism is invariant under 90 degrees about z. The target is the source rotated by exactly that angle plus a small z offset, so the identity is almost as good a fit as the truth and there are four branches to choose between. This is the case the measurement misses.",
+      "source_points": 6000,
+      "source_digest": "5569cc6c26e0d9b441954f77152ae65a931b3a81f0a68f80a903b6816b7e1bf7",
+      "voxel_size": 0.05,
+      "seeds": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "published_numbers_a_consumer_reads": {
+        "fitness_by_seed": [
+          0.6758333333333333,
+          0.6773333333333333,
+          0.6698333333333333,
+          0.6773333333333333,
+          0.6698333333333333,
+          0.6763333333333333
+        ],
+        "inlier_rmse_by_seed": [
+          0.012864489509284026,
+          0.012886419677301936,
+          0.01284338965098247,
+          0.012886419677301938,
+          0.012843908892930073,
+          0.012871344265206747
+        ],
+        "fitness_spread": 0.007500000000000062,
+        "inlier_rmse_spread": 4.303002631946863e-05,
+        "worst_inlier_rmse_in_voxels": 0.25772839354603877
+      },
+      "agreement_between_seeds": {
+        "worst_pairwise_displacement": 0.006458537068299284,
+        "worst_pairwise_displacement_voxels": 0.12917074136598566,
+        "worst_disagreeing_seeds": [
+          3,
+          4
+        ]
+      },
+      "wall_seconds_per_seed": [
+        0.26274285500039696,
+        0.19313049999982468,
+        0.12690061799730756,
+        0.16646933399897534,
+        0.15866336999897612,
+        0.1943889649992343
+      ],
+      "distance_from_the_known_truth": {
+        "rms_displacement_by_seed": [
+          1.6331960575004651,
+          1.633183712325392,
+          1.633230188837382,
+          1.633183712325392,
+          1.6332295493698943,
+          1.633195746055879
+        ],
+        "voxels_by_seed": [
+          32.6639211500093,
+          32.66367424650784,
+          32.66460377674763,
+          32.66367424650784,
+          32.66459098739789,
+          32.66391492111758
+        ],
+        "worst_voxels": 32.66460377674763,
+        "best_voxels": 32.66367424650784,
+        "every_seed_is_wrong": true
+      },
+      "the_reading": {
+        "published_numbers_would_have_reassured_a_consumer": true,
+        "the_alignment_is_wrong": true,
+        "the_disagreement_would_have_warned_them": false,
+        "so_this_case_is": "missed"
+      }
+    },
+    "the_real_demo_scans": {
+      "why_this_case": "The upstream pair every accepted record in this directory was built from. No truth is available, which is the consumer's position. Here as the control: a measure that fires on working data is not usable.",
+      "source_points": 198835,
+      "source_digest": "394c8734ec1be95102ac16928a3a88f8cd8162e4571498b1fa869ff8ead28f8f",
+      "voxel_size": 0.05,
+      "seeds": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "published_numbers_a_consumer_reads": {
+        "fitness_by_seed": [
+          0.6210677194658888,
+          0.6210677194658888,
+          0.6210677194658888,
+          0.6210677194658888,
+          0.6210677194658888,
+          0.6210677194658888
+        ],
+        "inlier_rmse_by_seed": [
+          0.006564724550202853,
+          0.006564722530654603,
+          0.006564741391508297,
+          0.006564724356759538,
+          0.0065647251914306105,
+          0.006564722989077148
+        ],
+        "fitness_spread": 0.0,
+        "inlier_rmse_spread": 1.886085369395135e-08,
+        "worst_inlier_rmse_in_voxels": 0.13129482783016594
+      },
+      "agreement_between_seeds": {
+        "worst_pairwise_displacement": 4.870069249634121e-06,
+        "worst_pairwise_displacement_voxels": 9.740138499268241e-05,
+        "worst_disagreeing_seeds": [
+          1,
+          2
+        ]
+      },
+      "wall_seconds_per_seed": [
+        1.0372754460004217,
+        0.9384585970001353,
+        1.121730145001493,
+        1.3357155560006504,
+        1.0243598599990946,
+        1.0176846069989551
+      ],
+      "no_truth_is_available": "This is the real pair, so there is no transform to compare against. That is the consumer's position, and the point of including it: the measure has to be quiet here or it is useless."
+    }
+  },
+  "what_the_three_cases_establish": {
+    "the_published_numbers_are_not_accuracy": "On the continuous-symmetry pair the worst inlier_rmse across six seeds is 0.25 voxels, which reads as a good alignment, while every seed is wrong by at least 7.8 voxels. The spread in inlier_rmse across those seeds is 1.68e-04, so the published number is stable while the answer is not.",
+    "disagreement_catches_it": "The same six runs disagree with each other by 18.3 voxels, which is visible without knowing the truth.",
+    "agreement_does_not_mean_correct": "On the discrete-symmetry pair the six seeds agree to 0.13 voxels and every one of them is 32.7 voxels from the truth: they all took the same wrong branch. This is a measured limitation of the measurement, not a caveat.",
+    "it_does_not_cry_wolf": "On the real demo scans the six seeds agree to 0.00010 voxels (4.87e-06 in dataset units), so the measure is quiet on the data every accepted record here was built from."
+  },
+  "what_this_does_not_claim": [
+    "That agreement means the alignment is correct. The discrete-symmetry case is a counterexample at 0.13 voxels of agreement and 32.7 voxels of error, and it is in this record rather than mentioned in passing.",
+    "A threshold. Three cases, one of each kind, cannot calibrate one. The separation observed is five orders of magnitude between the real pair and the detected case, and the missed case sits between them -- which is exactly why a number drawn from n=1 of each would be unsafe.",
+    "That the two constructed pairs resemble any real scan. They are deliberately symmetric, which is the condition being isolated. Real scenes with repeated structure -- corridors, shelving, facades -- have the same property approximately, and that is an argument for measuring rather than a measurement of them.",
+    "Anything about the multiway path. `run_multiway` has its own pose-graph optimisation and is not touched here."
+  ],
+  "cost": "Each extra seed is one more full registration of the pair. The whole pair is re-registered rather than the RANSAC step alone, because a consumer who reruns the command reruns all of it and Open3D's reductions are thread-order dependent. Off by default: `agreement_seeds` is 0 and a report then has exactly the shape and cost it had before.",
+  "reproduce": "python docs/evidence/open3d/harness/registration_ambiguity.py"
+}

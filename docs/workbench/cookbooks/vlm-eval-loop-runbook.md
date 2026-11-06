@@ -109,6 +109,14 @@ otherwise. These fields do not upgrade or reinterpret existing v1 artifacts.
 The full result still belongs in private run storage because the provider
 response and existing task fields can describe operator data.
 
+Every real verdict also requires `provider_observable_support`: a nonempty
+ordered array of nonblank provider-authored strings describing visible support
+for, or limits on, the verdict. NPA preserves decoded string text and order and
+rechecks both against the retained raw response during promotion. It does not
+verify that those statements are true, relevant, complete, tied to the claimed
+frame, or grounded in the submitted pixels. Stub and `--score` results carry an
+empty array and must not fabricate support.
+
 `stub` results and `--score` overrides do not contain provider evidence. They are
 wiring checks, never visual proof. Real `benchmark` reports retain the evidence
 for every case so calibration failures and model disagreement remain inspectable.
@@ -119,24 +127,40 @@ duplicate keys, non-finite numbers, invalid types, incomplete output and model
 substitution. The `self-hosted` backend retains compatible JSON framing:
 it can extract embedded JSON and accept duplicate keys, but requires a literal
 boolean `success`, a finite numeric `score` in [0, 1], and a nonempty string
-`rationale`. It never coerces these fields or clamps a model score; every real
-backend requires exact `stop` completion before parsing. Compatible framing is
-not hosted strict-JSON conformance. The live provenance lane below checks its
-framing separately.
+`rationale`, plus a nonempty `provider_observable_support` array containing only
+nonblank strings. Its OpenAI-compatible request uses strict JSON-schema output,
+so the server must support `response_format.type=json_schema`; the parser still
+validates every returned field and does not synthesize omitted support. The
+schema bounds rationale length and support count/length so a small model cannot
+turn a machine-readable verdict into an unbounded generation. A support
+member is machine-blank exactly when every code point
+is whitespace according to `str.isspace()` or has Unicode general category `Cf`;
+format controls embedded in otherwise nonblank text are accepted and retained
+unchanged. This is not an exhaustive rendering or semantic-substance check. The
+parser never coerces these fields, clamps a model score, or repairs support;
+every real backend requires exact `stop` completion before parsing.
+Compatible framing is not hosted strict-JSON conformance. The live provenance
+lane below checks its framing separately.
 The promotion gate rejects compatibility-only results, requiring a completed,
 non-refused, strictly typed retained verdict for either backend.
 None of these fields turns a visual judgment into objective task, geometry,
 collision, or safety evidence.
 
-The strict self-hosted parser is `npa_vlm_eval_compatible_json_v2`. Retained
-parser-v1 evidence (with or without its framing suffix) no longer validates for
-promotion, even when its content contains otherwise valid literal fields. The
-grade decision is `loop_back` with `provider_metadata_mismatch`; a superseded
-parser contract can cause that reason, not only tampering. Preserve the old
-report and obtain a new evaluated report if promotion is required. Never change
-an old parser tag to claim new execution. A malformed numeric/type/success
-verdict also aborts the whole loop/sweep, without manufacturing score zero;
-correct the serving output contract before a new evaluation.
+The current parsers are `npa_vlm_eval_hosted_json_v2` and
+`npa_vlm_eval_compatible_json_v3`. Retained hosted-v1 or self-hosted-v2 evidence
+(with or without its framing suffix) predates required provider support and no
+longer validates for promotion. The grade decision is `loop_back` with
+`provider_parser_obsolete`. Preserve the old report and obtain a new evaluated
+report if promotion is required; never edit an old response or parser tag to
+claim new execution. Malformed numeric, type, success, rationale, or support
+fields also abort the whole loop or sweep without manufacturing a score.
+
+Requiring `provider_observable_support` also changes the judge prompt and its
+hash, not only the parser. Treat rubric thresholds, benchmark model choices,
+and terminal-evidence acceptance calibrated with the earlier three-field
+prompt as stale. Re-run the relevant positive and negative calibration set with
+the new prompt before reusing those decisions; parser migration alone is not a
+recalibration.
 
 For a consequential or disputed review, `compare-judges` preserves two hosted
 outcomes without averaging:
@@ -161,10 +185,18 @@ requires escalation on disagreement or judge error. Both requested model IDs
 must return their exact requested identity. A substituted or missing returned
 model is a typed judge error, with its original response retained for review.
 Models requiring incompatible generation settings are rejected before input
-preparation or provider calls. Compatibility uses the shared hosted profile's
-temperature support, not a separate model-name list. Kimi-K3 cannot participate in this
-shared-temperature experiment. This command does not change single-judge model support.
-The report is always
+preparation or provider calls. Compatibility first uses the shared hosted
+profile's temperature support, so Kimi-K3 cannot participate in this
+shared-temperature experiment. An additional evidence-bound rule rejects the
+exact MiniCPM-V-4_5 plus gemma-3-27b-it pair: a retained six-family calibration
+found shared false-pass modes in three of six retained adversarial families.
+The sanitized retained-evidence index is
+[`vlm-paired-shared-failure-calibration-20261101`](../evidence/vlm-paired-shared-failure-calibration-20261101/README.md).
+Other compatible pairs remain
+available. The retained calls used a legacy probe schema rather than the
+current strict paired-response contract, so this precaution does not claim an
+end-to-end reproduction, model qualification, or unseen-attack robustness.
+This command does not change single-judge model support. The report is always
 `audit_only`; agreement does not qualify either model, estimate an operational
 disagreement rate, establish physical correctness, or certify robot safety.
 The paired prompt explicitly requires one bare JSON object with no Markdown
@@ -371,11 +403,28 @@ before a VLM result can promote a checkpoint. Stub results, score overrides, and
 historical reports without provider evidence produce `loop_back` with an explicit
 reason. The gate checks submitted-frame metadata, request and response hashes,
 and agreement between the retained response and serialized result. These checks
-establish internal consistency, not provider authentication or visual correctness.
-Frame digests are checked for valid SHA-256 format and binding to the request
-manifest; this gate does not fetch image bytes to recompute their hashes. Consumers
-that need payload verification must retain and independently hash the submitted
-normalized images. Schema-v2 sampling counts, indices, timestamps, and coverage
+have an internal-consistency ceiling, not an authenticity guarantee. Every decision
+written by `grade_gate` records `report_producer` as `vlm`, `cosmos`, or `null`.
+Its `evidence_scope` is respectively
+`vlm_report_internal_consistency_checks_only`,
+`cosmos_report_status_pass_score_checks_only`, or `no_report_selected`. It also
+records literal `false` for
+`provider_authentication_established`,
+`captured_request_authenticity_established`,
+`visual_correctness_established`, and
+`submitted_frame_byte_equivalence_established`. Missing or invalid reports establish
+no consistency, and the Cosmos report path checks only terminal status, literal
+pass, and score. These six fields are producer-specific extensions of the direct
+`grade_gate` payload, not required fields of every
+`npa.sim2real.threshold_decision.v1` artifact. Terminal routers, standard Stage 11
+decisions, and generic workflow decision writers share that schema, and a later
+stage can replace the same decision URI with another producer's payload. The schema
+id or omission of these fields proves neither the producer, artifact age, nor any
+evidence scope. Frame digests are checked for valid SHA-256 format and binding to
+the request manifest; this gate does not fetch image bytes to recompute their
+hashes. Consumers that need payload verification must retain and independently
+hash the submitted normalized images. Schema-v2 sampling counts, indices,
+timestamps, and coverage
 flags must agree with the frame metadata. A known, uniform source kind, a source
 count, and in-range selected indices are required for `coverage_complete: true`;
 unknown or mixed source kinds normalize to null with incomplete coverage.
@@ -542,11 +591,12 @@ inputs rather than VLM evidence.
 Manifests may also declare `evidence_scope` as exactly `unspecified` or
 `illustrative_only`, plus an ordered `limitations` array. Reports preserve them
 as `dataset_evidence_scope` and `dataset_limitations`. The packaged default is
-`illustrative_only`: four inputs are synthetic 2x2 color swatches with
-color-correlated caller labels; a fifth tiny synthetic sequence omits the
-terminal outcome. These inputs and recorded scores prove benchmark wiring only.
-Custom manifests that omit the metadata remain `unspecified`; omission does not
-certify task validity. Invalid scope or limitation metadata rejects the dataset
+`illustrative_only`: four rollouts are single-frame synthetic 2x2 color swatches
+with color-correlated caller labels; one separate three-frame 4x2 synthetic
+sequence omits the terminal outcome. These inputs and recorded scores prove
+benchmark wiring only. Custom manifests that omit the metadata remain
+`unspecified`; omission does not certify task validity. Invalid scope or
+limitation metadata rejects the dataset
 before frame selection or provider calls. Limitations must be nonempty strings
 without surrounding whitespace or control characters; valid order and duplicates
 are retained in JSON.
@@ -758,10 +808,14 @@ retains both full provider outcomes privately, and escalates errors, unresolved
 or low-confidence output, and
 `order_disagreement_or_nondeterminism`. Even an order-consistent candidate
 preference is an audit observation, not proof of geometry accuracy, physical
-validity, or robot safety. The prompt's instruction to ignore image text is not
-a defense against in-image instructions. For S3 output, private access remains
-an operator/storage-policy requirement; the client uses an atomic create-only
-write but does not infer bucket policy or ACL state.
+validity, robot safety, or content blinding. The lexical source-role screen
+case-folds and searches only for the substrings `baseline` and `candidate`
+across the model ID, task, rubric, and provider-request text; synonyms and
+content-linked disclosures are not rejected. The prompt's instruction to
+ignore image text is not a defense against in-image instructions. For S3
+output, private access remains an operator/storage-policy requirement; the
+client uses an atomic create-only write but does not infer bucket policy or ACL
+state.
 
 Endpoint and credentials are a matched choice: the default Nebius route supports
 the usual Nebius environment/file credential, but never falls back to

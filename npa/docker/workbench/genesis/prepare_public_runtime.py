@@ -21,6 +21,15 @@ SOURCES = {
         "metadata_sha256": "ad580fb6d2ecf379a98ad700e9dde5541184fbf7779d4c3e5cdd9519d06f9e4f",
         "excluded_dependencies": {"diffusers", "wandb", "torchcodec"},
     },
+    "datasets-4.8.5.dist-info": {
+        "metadata_sha256": "c021983536ab740d2d63d60c535371d23ad4f2a2e0864bd9a809c13d88ac9a72",
+        "excluded_dependencies": set(),
+        "replacement_dependencies": {
+            b"Requires-Dist: fsspec[http]<=2026.2.0,>=2023.1.0\n": (
+                b"Requires-Dist: fsspec[http]>=2026.6.0,<2027.0.0\n"
+            ),
+        },
+    },
 }
 
 
@@ -29,6 +38,8 @@ def _metadata_replacement(directory: Path, source: dict) -> tuple[bytes, bytes]:
     if hashlib.sha256(original).hexdigest() != source["metadata_sha256"]:
         raise RuntimeError(f"unreviewed dependency metadata: {directory.name}")
     removed = set()
+    replaced = set()
+    replacements = source.get("replacement_dependencies", {})
     kept = []
     for line in original.splitlines(keepends=True):
         match = re.match(rb"Requires-Dist: ([a-zA-Z0-9_-]+)", line)
@@ -37,10 +48,17 @@ def _metadata_replacement(directory: Path, source: dict) -> tuple[bytes, bytes]:
             if dependency in removed:
                 raise RuntimeError(f"duplicate dependency: {dependency}")
             removed.add(dependency)
+        elif line in replacements:
+            if line in replaced:
+                raise RuntimeError(f"duplicate dependency: {dependency}")
+            replaced.add(line)
+            kept.append(replacements[line])
         else:
             kept.append(line)
     if removed != source["excluded_dependencies"]:
         raise RuntimeError(f"missing reviewed dependencies: {directory.name}")
+    if replaced != set(replacements):
+        raise RuntimeError(f"missing reviewed dependency replacement: {directory.name}")
     return original, b"".join(kept)
 
 
@@ -79,6 +97,12 @@ def _prepare(site_packages: Path, *, check_only: bool) -> list[dict]:
             "reduced_metadata_sha256": hashlib.sha256(replacement).hexdigest(),
             "excluded_dependencies": sorted(
                 SOURCES[directory.name]["excluded_dependencies"]
+            ),
+            "replacement_dependencies": sorted(
+                replacement.decode().removeprefix("Requires-Dist: ").strip()
+                for replacement in SOURCES[directory.name]
+                .get("replacement_dependencies", {})
+                .values()
             ),
             "metadata_record_updated": not check_only,
         }

@@ -21,7 +21,7 @@ FROM ${CUDA_BASE_IMAGE} AS build
 ARG COSMOS_TRANSFER_REVISION=67d56b7d550a3911024a32dc23ae0bae5258e633
 ARG COSMOS_TRANSFER_ARCHIVE_SHA256=978bfb03a49213669551701659641ae7b8414649480eb45c4c9c1f8d5e5a92a8
 ARG SAM2_REVISION=2b90b9f5ceec907a1c18123530e92e794ad901a4
-ARG COSMOS_PYTHON_VERSION=3.10.18
+ARG COSMOS_PYTHON_VERSION=3.11.16
 ARG UBUNTU_SNAPSHOT
 
 ENV DEBIAN_FRONTEND=noninteractive \
@@ -123,29 +123,29 @@ RUN set -eux; \
     .venv/bin/python -c 'import defusedxml, importlib.metadata, msgpack, nltk, numpy; assert importlib.metadata.version("defusedxml") == "0.7.1"; assert importlib.metadata.version("nltk") == "3.10.3.post1+npa.cbc98458"; assert importlib.metadata.version("pip") == "26.2"; assert importlib.metadata.version("msgpack") == "1.2.1"; assert importlib.metadata.version("setuptools") == "84.0.0"; assert tuple(map(int, numpy.__version__.split(".")[:1])) >= (2,)'; \
     .venv/bin/python -c 'import importlib.metadata, sam2; from sam2.build_sam import HF_MODEL_ID_TO_FILENAMES; assert importlib.metadata.version("SAM-2") == "1.0"; assert "facebook/sam2.1-hiera-tiny" in HF_MODEL_ID_TO_FILENAMES; assert not any((d.metadata.get("Name") or "").lower() == "sam2" for d in importlib.metadata.distributions())'; \
     .venv/bin/python -m pip --version; \
-    rm -rf .venv/lib/python3.10/site-packages/matplotlib/mpl-data/sample_data; \
-    rm -rf .venv/lib/python3.10/site-packages/skimage/data \
-      .venv/lib/python3.10/site-packages/wandb/bin; \
-    cp .venv/lib/python3.10/site-packages/numpy/_core/tests/_natype.py \
+    rm -rf .venv/lib/python3.11/site-packages/matplotlib/mpl-data/sample_data; \
+    rm -rf .venv/lib/python3.11/site-packages/skimage/data \
+      .venv/lib/python3.11/site-packages/wandb/bin; \
+    cp .venv/lib/python3.11/site-packages/numpy/_core/tests/_natype.py \
       /tmp/numpy-_natype.py; \
-    find .venv/lib/python3.10/site-packages/numpy \
-      .venv/lib/python3.10/site-packages/scipy \
+    find .venv/lib/python3.11/site-packages/numpy \
+      .venv/lib/python3.11/site-packages/scipy \
       -type d -name tests -prune -exec rm -rf -- {} +; \
     install -D -m 0644 /tmp/numpy-_natype.py \
-      .venv/lib/python3.10/site-packages/numpy/_core/tests/_natype.py; \
+      .venv/lib/python3.11/site-packages/numpy/_core/tests/_natype.py; \
     rm -f /tmp/numpy-_natype.py; \
-    test ! -e .venv/lib/python3.10/site-packages/matplotlib/mpl-data/sample_data; \
-    test ! -e .venv/lib/python3.10/site-packages/skimage/data; \
-    test ! -e .venv/lib/python3.10/site-packages/wandb/bin; \
+    test ! -e .venv/lib/python3.11/site-packages/matplotlib/mpl-data/sample_data; \
+    test ! -e .venv/lib/python3.11/site-packages/skimage/data; \
+    test ! -e .venv/lib/python3.11/site-packages/wandb/bin; \
     find .venv -type f -path '*/imageio_ffmpeg/binaries/ffmpeg*' -delete; \
     test -z "$(find .venv -type f \
       -path '*/imageio_ffmpeg/binaries/ffmpeg*' -print -quit)"; \
     test "$(readlink -f .venv/bin/python)" = \
-      "$(find "${UV_PYTHON_INSTALL_DIR}" -path '*/bin/python3.10' -type f -print -quit)"; \
+      "$(find "${UV_PYTHON_INSTALL_DIR}" -path '*/bin/python3.11' -type f -print -quit)"; \
     ! grep -q '/root' .venv/pyvenv.cfg; \
     .venv/bin/python -c 'import importlib.metadata, flash_attn, scipy.linalg, torch, wandb; from transformers import SiglipModel; assert importlib.metadata.version("nltk") == "3.10.3.post1+npa.cbc98458"; assert importlib.metadata.version("defusedxml") == "0.7.1"; assert wandb.run is None; print(torch.__version__)'; \
-    base_site="$(find "${UV_PYTHON_INSTALL_DIR}" -path '*/lib/python3.10/site-packages' -type d -print -quit)"; \
-    base_python="$(find "${UV_PYTHON_INSTALL_DIR}" -path '*/bin/python3.10' -type f -print -quit)"; \
+    base_site="$(find "${UV_PYTHON_INSTALL_DIR}" -path '*/lib/python3.11/site-packages' -type d -print -quit)"; \
+    base_python="$(find "${UV_PYTHON_INSTALL_DIR}" -path '*/bin/python3.11' -type f -print -quit)"; \
     test -n "${base_site}"; \
     test -n "${base_python}"; \
     rm -rf "${base_site}"/pip "${base_site}"/pip-*.dist-info \
@@ -241,12 +241,10 @@ COPY --chmod=755 src/npa/workbench/cosmos/fixture.py \
 COPY docker/workbench/cosmos2-transfer/REDISTRIBUTION.md \
     /usr/share/doc/npa-cosmos2-transfer/REDISTRIBUTION.md
 
-# This purpose-built component image keeps the vendor's CPython 3.10 inference
+# This purpose-built component image keeps the vendor's CPython 3.11 inference
 # environment intact, but runs the NPA control/source overlay under Ubuntu 24.04
-# Python 3.12.  Pillow 13 and the NPA package require Python >=3.11; installing
-# current NPA source into the CPython 3.10 vendor venv would make the image's
-# declared dependency contract false.  The two interpreters communicate only
-# through the explicit subprocess seam in npa.workbench.cosmos.transfer.
+# Python 3.12.  The two interpreters communicate only through the explicit
+# subprocess seam in npa.workbench.cosmos.transfer.
 #
 # The source is already immutable via NPA_SOURCE_SHA. Avoid a PEP 517 editable
 # install so no Hatchling build-isolation download can alter the image: the

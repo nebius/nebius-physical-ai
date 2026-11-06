@@ -50,16 +50,22 @@
     "colour_fix_visible_side_by_side": "In the capture taken before the colour change, the scene pane's surface is flat white while the point cloud beside it carries the scan's colour. After, the surface shows the reconstruction's own 5432 distinct colours. This is the clearest confirmation that root's second finding was real rather than theoretical.",
     "layout_is_as_designed": "Scene pane on the left at two thirds width, with the scan-only, surface-only and audit views as tabs beside it."
   },
+  "still_not_claimed": {
+    "accuracy": "Nothing here touches accuracy, collision fitness or safe planning. The crop still leaves holes and thin disconnected fragments, visible in these captures.",
+    "web_viewer": "This is the native viewer. The web viewer is not bundled in this build, so no claim is made about it.",
+    "window_independence": "A user can resize any pane to any shape. The fit is made against the layout's own column shares at a nominal window, so an extremely narrow window can still clip. Bounding that properly would need the viewer to report pane size back, which this path does not offer."
+  },
   "provenance": {
+    "source_commit": "256c26bc915080934814789be6a41bbc253f0d1c",
+    "commit_is_an_ancestor_of_main": false,
+    "no_advertised_origin_ref_at_audit": "PR 602 was squashed when it merged, so this commit never became an ancestor of main and was on no advertised origin ref at audit time -- the audit found no advertised origin ref containing it at the recorded time; that does not establish whether the object is fetchable directly by SHA. 15b0b11f0 is where its work reached main: a symbol or source line this commit introduced is present at main and `git log -S` traces it to that merge. That is a check on this commit's contribution reaching main, not a claim that the two trees are identical. The per-commit probes are in capability-record-record-provenance-shape.json.",
+    "commit_on_main_carrying_this_source": "15b0b11f0bc137631954ac87076f44753c513976",
+    "what_source_commit_means_here": "The commit whose run produced the recording these captures were taken from, which the capture filenames already name. The controlled pair was rebuilt from that run's PLY bytes rather than produced by a new run, and honesty_note below already says so.",
+    "why_this_shape": "A review lane found provenance recorded six different ways across these records, so an auditor had to learn each file. This is the one shape: the commit the record attests to, whether the commit is an ancestor of main, and -- where the answer is no -- why that is deliberate and what a reader can resolve instead. harness/audit_record_provenance.py checks the ancestry claim against the repository rather than trusting it.",
     "captures": {
       "01-live-run-256c26bc9.png": "the recording the six-state workflow actually produced, at 256c26bc9; single-aspect cameras and an uncoloured surface",
       "pair-oneaspect.png and pair-perpane.png": "a controlled pair built from the completed run's PLY bytes, identical content, differing only in the aspect each camera was fitted for"
     },
     "honesty_note": "The controlled pair is regenerated from the run's outputs, not produced by a new end-to-end workflow run. It is real geometry from a real run, rendered by the real viewer, but the recording itself was rebuilt for the comparison and is labelled as such rather than presented as the run's own artifact."
-  },
-  "still_not_claimed": {
-    "accuracy": "Nothing here touches accuracy, collision fitness or safe planning. The crop still leaves holes and thin disconnected fragments, visible in these captures.",
-    "web_viewer": "This is the native viewer. The web viewer is not bundled in this build, so no claim is made about it.",
-    "window_independence": "A user can resize any pane to any shape. The fit is made against the layout's own column shares at a nominal window, so an extremely narrow window can still clip. Bounding that properly would need the viewer to report pane size back, which this path does not offer."
   }
 }

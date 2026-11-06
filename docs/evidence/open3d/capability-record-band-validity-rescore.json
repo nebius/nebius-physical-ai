@@ -1,0 +1,71 @@
+{
+  "capability": "Decision-relevant criterion-5 subset: no false-positive verdict moves under the stricter fabrication proxy. Rows 0-1 were measured; rows 2-7 were not rescored, so their numeric deltas remain unknown.",
+  "why_this_shape": "I offered to rescore the committed evidence and review declined, correctly, with a cheaper scope: measure only the rows where a verdict could move and publish the delta beside the existing value. Nothing is overwritten.",
+  "which_rows_could_move": {
+    "argument": "The stricter mask is a superset of the unsigned one, `far | misoriented` contains `far`, so the stricter reading is never below the unsigned reading. Six of the eight rows already sit at or above the 0.05 false-positive threshold, so they can only move further above it and no verdict can change. That is a proof from the mask construction, not an assumption, and every measured delta here is non-negative as it predicts.",
+    "where_i_corrected_review": "Review excluded rows[0] because it reads exactly 0.000000, treating exact zero as immune. It is not: exact zero is where the unsigned measure is most lenient, and #1006's two-box bridge read 0.000000 unsigned against 0.004602 under normal correspondence -- the largest relative divergence in that experiment. So rows[0] was measured, and it does lift, from 0.000000 to 6.71e-06.",
+    "the_correction_did_not_change_the_outcome": "6.71e-06 is four orders of magnitude below the threshold. The reasoning for measuring it was right and the row was safe anyway, which is worth saying plainly rather than presenting the check as having caught something."
+  },
+  "the_measurement": {
+    "row_0": {
+      "samples": 300000,
+      "committed_unsigned": 0.0,
+      "stricter": 9.74e-06,
+      "crosses_0_05": false,
+      "absolute_gap_to_the_threshold": 0.04999
+    },
+    "row_1": {
+      "samples": 150000,
+      "committed_unsigned": 0.0027378386368625777,
+      "largest_stricter_seen": 0.00332136,
+      "crosses_0_05": false,
+      "lift_that_would_be_needed": "16.6x"
+    },
+    "verdict": "No false-positive verdict moves. Rows 0-1 were measured; rows 2-7 stay above threshold by monotonicity, but their numeric deltas were not measured."
+  },
+  "two_sources_of_variation_separated": {
+    "why_it_mattered": "I first ran three repeats per row and labelled their spread a bound on Poisson's nondeterminism. It is not: `sample_points_uniformly` advances the global RNG, so each repeat draws a different cloud even under a fixed seed. The spread bounded sampling and reconstruction together.",
+    "the_separation": {
+      "row_1_three_fresh_draws_unsigned_spread": 0.00026381,
+      "row_1_one_cloud_reconstructed_three_times_unsigned_spread": 2.48e-06,
+      "ratio": "sampling moves this reading about 100x more than reconstruction does",
+      "row_0_one_cloud_three_times": "identical to eight decimals across all three reconstructions, 6.71e-06 each. Triangle counts moved by a handful, but those unpublished counts are not quoted as retained evidence."
+    },
+    "relation_to_the_1004_bound": "#1004 bounded two seeded runs of one harness at 2.17e-3 worst relative difference across 106 leaves. That is a third experiment again. None of the three contradicts the others; this note exists so they are not conflated later."
+  },
+  "an_honest_caveat_on_how_much_data_bounds_this": {
+    "what_happened": "The first run of this harness drew a sample set that gave row 1 an unsigned reading of 1.183e-05, against 2.75e-03 to 3.01e-03 in the second run's three draws and 2.74e-03 committed.",
+    "so": "Across the six draws observed, row 1's unsigned reading spans roughly 1.2e-05 to 3.0e-03 -- a spread larger than the committed value itself. Three repeats understate that. The conclusion is unaffected, because the largest stricter reading seen under any combination is 3.32e-03 and the threshold is 0.05, but a reader should not take the three-run spread as the bound."
+  },
+  "one_run_dumped_core": "The first attempt at the separated version exited on a core-dumping signal with no Python traceback, and the identical rerun completed with exit 0. Open3D's Poisson implementation is the likely source. Recorded because an intermittent segfault in a measurement harness is worth knowing about even when the rerun is clean, and because a reader reproducing this may hit it.",
+  "what_changes": {
+    "committed_numbers": "none; band-validity-sweep.json is untouched",
+    "product": "none; no threshold, default or gate moves",
+    "the_sweeps_conclusion": "It survives the stricter measure. The accepted no-false-positive reading does not rest on the leniency #1006 found."
+  },
+  "what_this_does_not_settle": "Whether band_validity_sweep's false-positive conclusion survives the *weakened reading* -- the separate question from #1004, where the premise rested on a claim the product withdrew. That is still review's and root's, and this measurement does not touch it.",
+  "visual_evaluation": {
+    "status": "not_applicable",
+    "reason": "Scalar area shares computed from geometry, with no render and nothing for a vision model to see. The nonvisual allowance in EXPANDED-REVIEW-CONTRACT.md covers this, and review confirmed the same call on #1006."
+  },
+  "independent_review": "requested on #1006",
+  "provenance": {
+    "source_commit": "024bd3d442c791c16de0adf6445b722eb5032857",
+    "commit_is_an_ancestor_of_main": false,
+    "how_this_commit_was_recovered": "This is the first commit in this file's retained --follow history, where the criterion-5 rescore record was introduced; later commits add review repairs without changing that producing identity.",
+    "harness_that_produced_this": [
+      {
+        "path": "harness/band_validity_rescore.py",
+        "sha256": "2cb6d46aa9ccde801a9b3cf2e70744c2ee818c34ab44452caba7ecebb7b2adac"
+      },
+      {
+        "path": "band-validity-rescore.json",
+        "sha256": "1d232ac575ccc0aa719bf34074460aeadcc17625d057fa85e1d8fca2a600a2f5"
+      }
+    ],
+    "inputs": "Open3D's bundled Armadillo mesh, fetched by o3d.data and cached locally. No staged bundle and no retained volume, so this reproduces from a checkout.",
+    "reproduce": "OPEN3D_EVIDENCE_DIR=docs/evidence/open3d OPEN3D_OUT_DIR=/existing/scratch npa/.venv/bin/python docs/evidence/open3d/harness/band_validity_rescore.py  (about six minutes, CPU)",
+    "open3d_version": "0.20.0",
+    "sampling_seed": 20261101
+  }
+}

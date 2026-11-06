@@ -5,9 +5,14 @@ The numbers quoted in `skills/tools/open3d/SKILL.md` and in the docstrings of
 repository, which meant a reader had to take them on trust; a reviewer asked for them to be
 committed so the claims can be checked against the data that produced them.
 
-Every JSON here was written by a script in `harness/`, run inside the `npa-open3d` container so the
-Open3D version and sampling behaviour match what the tool actually uses. Each harness documents its
-own question and method in its module docstring.
+Every JSON here was written by a script in `harness/`. Most were run inside the `npa-open3d`
+container so the Open3D version and sampling behaviour match what the tool actually uses; each
+record's own `environment` block says which interpreter produced it, and that block is the
+authority, not this sentence. `registration-ambiguity.json` is a host run on CPython 3.14.7
+rather than the image's 3.11, against the same Open3D 0.20.0 the image installs and the same
+unmodified `_register_pair`. Its figures are reported as what they are rather than reattributed
+to an image they did not come from. Each harness documents its own question and method in its
+module docstring.
 
 ## What the load-bearing claims rest on
 
@@ -17,9 +22,31 @@ own question and method in its module docstring.
 | The reading never over-calls: no zero-error reconstruction reads as an invented shell | `poisson-procedure-and-overcall-audit.json`, `band-validity-sweep.json` |
 | It does under-call below a sensitivity floor, so a low reading is a lower bound | `floor-across-geometry-and-sampling.json` |
 | The floor is set by the voxel-to-sample-spacing ratio, not by geometry, sampling or mesh resolution | `floor-vs-voxel-multiple.json`, `floor-vs-resolution.json` |
+| The registration `fitness`/`inlier_rmse` a consumer reads cannot tell a correct alignment from a confidently wrong one; re-registering under further seeds can, except when every seed takes the same wrong branch | `registration-ambiguity.json` |
 | Even sampling zeroes the headline fraction, so its failure is a capture-time artefact | `poisson-procedure-and-overcall-audit.json` |
+| The crop now reports how close it came to deciding otherwise, so a caller can tell whether the published reproducibility applies to their scan | `crop-margin-live.json` |
+| The crop's bit-identical coverage result is a measurement, not a property of the rule; surface within one voxel of a sample can be removed at any factor | `support-crop-coverage-guarantee.json` |
 | Neither declared remedy for run-to-run movement works: seeding the sampling reduces it without removing it, and thread count is not the cause | `declared-reproducibility-causes.json` |
 | The crop's per-cell answer reproduces even though the reconstruction under it does not | `crop-decision-stability.json` |
+
+## The crop tells you whether its own answer will hold on your scan
+
+The support crop is a threshold on a per-vertex distance, and the reconstruction under it
+is not reproducible. So whether its verdicts survive a rerun is a fact about the caller's
+geometry rather than a property of the rule — `crop-decision-stability.json` says exactly
+that, and names the ratio as the thing to re-check elsewhere.
+
+`runner.py` computed that ratio inside the crop and threw it away. It now reports it:
+the closest any vertex sits to the cut, the near-threshold population in three nested
+bands, and a verdict against two measured displacement scales — the worst of 46 pair
+comparisons, and one independent observation two hundred times larger that did not
+reproduce. Two scales because one cannot say what the measurements say: on this record's
+own input a handful of vertices sit inside the first and a couple of hundred inside the
+second, which is why 46 pair comparisons all agreed while nothing is guaranteed by
+construction.
+
+It costs nothing — the distance array is the one the crop already thresholded. It
+establishes nothing about whether the reconstruction is correct, and the field says so.
 
 ### The multiway optimization was a step nobody could check had run
 
@@ -148,17 +175,30 @@ nothing larger.
 ## Reproducing
 
 ```bash
-docker build -f docker/workbench/open3d/Dockerfile \
+docker build -f npa/docker/workbench/open3d/Dockerfile \
     --build-arg NPA_SOURCE_SHA="$(git rev-parse HEAD)" -t npa-open3d:local npa/
 docker run --rm -v "$PWD/docs/evidence/open3d:/data" --entrypoint python npa-open3d:local \
     /data/harness/poisson_procedure_and_overcall_audit.py
 ```
 
-Sampling is unseeded in several harnesses, deliberately: where a single cell's value carries
-run-to-run noise comparable to the spread being measured, that is itself the finding and the harness
-says so rather than publishing a precise-looking number. `floor-vs-resolution.json` is the clearest
-case. Re-running will move those values; the directions and orders of magnitude are what the claims
-rest on.
+Harness reports default to `/data/<report>.json` inside the documented container.
+`OPEN3D_OUT_DIR` redirects shared `harness_io.output_path` users to an existing
+directory while retaining the default filename. `OPEN3D_OUT` selects an exact output
+file and takes precedence when both variables are set. The record-pinned
+`pose_graph_optimization.py` and `density_crop_contribution.py` harnesses predate the
+shared helper and use only the exact-file form. Neither override creates directories.
+
+Harnesses using `harness_io.seed_sampling` are seeded by default and record the seed in
+their reports. Set `OPEN3D_SEED` to another integer to measure seed sensitivity; repeated
+runs at the same seed hold the point sample fixed while a different seed exposes the
+sampling spread. Historical committed reports may predate this default and retain their
+original unseeded wording and bytes.
+
+Harnesses that do not use the shared seeding helper remain unseeded. Where a single
+cell's value carries run-to-run noise comparable to the spread being measured, that is
+itself the finding; `floor-vs-resolution.json` is the clearest case. Re-running those
+harnesses will move their values, so only the directions and orders of magnitude support
+their claims.
 
 ## View framing
 
@@ -336,6 +376,64 @@ what changed is the conclusion drawn from them, the classification's name, and t
 cube now runs as a ground-truth control in the functional smoke, on the over-call side that a sweep of
 even sampling cannot reach.
 
+## The registration numbers are not an accuracy
+
+`registration-ambiguity.json`. `register` publishes `icp.fitness` and `icp.inlier_rmse`
+for every pair, both from Open3D's own `RegistrationResult`, computed against the
+correspondences ICP chose. They say how well the alignment ICP settled on explains the
+points it used. A consumer reading `inlier_rmse 0.0124` at `voxel_size 0.05` concludes
+the alignment is good to a quarter of a voxel.
+
+On a cylinder band — rotationally symmetric, so a whole family of alignments fits — six
+seeds hold `inlier_rmse` between 0.0123 and 0.0125 and land between 8 and 25 voxels from
+the truth, in different places. The published number is stable while the answer is not,
+and nothing in the report says so. Re-registering under further seeds does: those six
+runs disagree with each other by 18 voxels, which is visible without knowing the truth.
+
+Agreement is not the converse, and the record carries the case that shows it rather than
+noting it. On a square prism — invariant under 90 degrees about z — six seeds agree to
+0.13 voxels and every one of them is 32.7 voxels from the truth. They all took the same
+wrong branch. So disagreement proves the published fitness is not accuracy; agreement
+proves nothing.
+
+The control is the pair every accepted record here was built from. In the recorded run six
+seeds agree to 4.87e-06 of a unit, which at this 0.05 voxel size is 9.74e-05 voxels, so the
+measure is quiet on working data. Rerunning the harness lands near that but not on it —
+1.00e-04 voxels on one repeat, and a different pair of seeds as the worst — because Open3D's
+reductions are thread-ordered, so read the order of magnitude rather than the digits. No
+threshold is derived from three cases.
+
+Off by default: `agreement_seeds` is 0 and a report then has exactly the shape and cost
+it had before. Each extra seed is one more full registration of the pair — the whole
+pair, not the RANSAC step alone, because a consumer who reruns the command reruns all of
+it and Open3D's reductions are thread-ordered.
+
+## A claim that was true and read as more than it says
+
+`support-crop-coverage-guarantee.json` examines a supported claim in
+`capability-record-support-crop.json`: that surface no sample is within one voxel of can be removed
+without moving the observed samples off the surface, with coverage bit-identical at 0.9927456237186564.
+The measurement stands and was not re-run — those inputs are not reachable from this host. The wording
+reads as a property of the crop rule, and it is not one.
+
+The crop tests *vertices* against `voxel * support_distance_factor` and removes them with
+`remove_vertices_by_mask`, which deletes every triangle touching a masked vertex. Coverage measures
+each sample's distance to the nearest point of the remaining *surface*. Those are different questions,
+and the gap has two openings. A factor below 1.0 removes vertices between `factor * voxel` and `voxel`
+from their nearest sample, which are vertices that sample is still within one voxel of; the schema
+default of 1.0 closes that one, and the recorded run used 1.0. The second does not close at any
+factor: a triangle dies for any one unsupported vertex, so two vertices a third of a voxel from a
+sample lose their triangle to a third vertex far away. Measured at 1.0, 1.5 and 2.0, each time leaving
+a sample eight voxels from any surface. The factor high enough to keep it removed nothing at all,
+which is not a crop.
+
+On the retained real-data record, coverage was unchanged at the 1.0 default. That observation is not
+a general guarantee or a frequency estimate for other scans. So the
+reconstruction now publishes `coverage_before_crop` and `coverage_cost_of_crop`, and `validate_support`
+checks them against each other, including the one direction the crop can move coverage: removing
+surface cannot bring a sample closer, so coverage can only fall and the abandonment count has to
+account for the whole drop. The crop itself is unchanged — erring toward removing is what an
+honest-holes reconstruction wants. What changed is that the cost is measured instead of assumed.
 ## Two limitations that sent a reader to the wrong knob
 
 `declared-reproducibility-causes.json` examines `limitations[3]` of two capability records. Both told a
@@ -345,7 +443,7 @@ reader which knob stops a number moving: seed the 300k-point sampling
 the reconstruction's own non-determinism was measured afterwards. What this harness isolates is
 that the points and the normals entering reconstruction are byte-identical, which leaves the Poisson
 solver and the density crop after it; `poisson-figure-reproducibility.json`, which names the
-mechanism, is in a separate pull request and may not be in this tree yet.
+mechanism, is in `poisson-figure-reproducibility.json`.
 
 Measured on the construction the first record names, reporting both figures from the same meshes.
 Seeding does make the input bit-identical, hashed to prove it, and it is the dominant cause: unseeded,

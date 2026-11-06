@@ -64,7 +64,7 @@ region before admitting output.
 ## Submission, polling and completion
 
 Generation uses durable asynchronous jobs. Send a validated JSON request to
-`POST /v1/videos`, `/v1/images` or `/v1/augmentations` with the bearer and
+`POST /v1/videos`, `/v1/images`, `/v1/augmentations` or `/v1/transfers` with the bearer and
 `Idempotency-Key` headers shown below. Successful admission returns HTTP
 **202 Accepted** with a job record. This is a simplified first-admission
 response, not a completed result:
@@ -85,7 +85,7 @@ Reusing the key with a different request returns HTTP 409.
 
 | Operation | Response and next step |
 | --- | --- |
-| `POST /v1/videos`, `/v1/images` or `/v1/augmentations` | HTTP 202 acknowledges admission; retain `job_id` and `status_url`. |
+| `POST /v1/videos`, `/v1/images`, `/v1/augmentations` or `/v1/transfers` | HTTP 202 acknowledges admission; retain `job_id` and `status_url`. |
 | `GET /v1/jobs/{job_id}` | Read the current job record; repeat while its status is active. |
 | `GET /v1/jobs/{job_id}/artifacts` | After `succeeded`, retrieve the published artifact manifest. |
 | `GET /v1/jobs/{job_id}/artifacts/{artifact_name}` | Retrieve a manifest-listed file and verify its SHA-256. |
@@ -257,6 +257,73 @@ Conditioning covers the source timeline but does not guarantee robot identity,
 geometry, contact or motion preservation. The optional `evaluation` object
 requests report-only decode and timeline checks, not semantic acceptance.
 
+## Full-length structural transfers
+
+Use `POST /v1/transfers` when you need uploaded controls, multiple control
+types, individual weights or a negative prompt on either Nano or Super. Its
+positive `prompt`, `negative_prompt` and `controls` are top-level fields; do
+not put the legacy `augmentation` object in this request.
+
+First inspect the authenticated `structural_transfer` capability row. It must
+expose an implemented, qualified profile with enabled guardrails, each
+requested control and its exact sorted combination, such as `depth+edge` or
+`blur+depth+edge+seg`. Unequal weights need `control_weights_supported: true`;
+a nonempty negative prompt needs `negative_prompt_supported: true`. The helper
+checks those capabilities and verified output storage before submitting.
+
+The [complete JSON example](../examples/structural-transfer.json) uses the
+earlier registered `customer-output` connection with purpose `input_output`,
+four uploaded controls and weights 1:3:2:0.5. Copy it privately, replace
+`CUSTOMER_BUCKET` and the object keys with actual staged media, and retain an
+explicit model. Change to `nvidia/Cosmos3-Nano` for Nano; do not silently
+substitute models after a failure. With a separate input provider, replace
+every source/control `input.connection_id` and URI with that owner's registered
+input scope. Leave `output` on a verified Nebius connection.
+
+```bash
+cp examples/structural-transfer.json "$WMH_WORK_DIR/transfer-request.json"
+chmod 600 "$WMH_WORK_DIR/transfer-request.json"
+# Replace placeholders in the private request before submitting.
+python3 scripts/cosmos_client.py submit --route /v1/transfers --request "$WMH_WORK_DIR/transfer-request.json" --state "$WMH_WORK_DIR/transfer-state.json"
+python3 scripts/cosmos_client.py resume --state "$WMH_WORK_DIR/transfer-state.json" --output-dir "$WMH_WORK_DIR/transfer-results"
+```
+
+Submit the entire source and entire aligned control videos. The full-source
+contract accepts any video frame count of at least two, including 227 and
+302, with no application maximum. The retained
+`structural-transfer-832x480-121-v1` identifier names the internal 121-frame
+window; it does not require a 121-frame source or a `4n+1` total. Native
+inference handles overlap and final-window padding, then returns the complete
+source frame count. Do not add a `num_frames` field, crop a long source or
+submit client-side chunks. Read the live constraints rather than inferring
+source support from the profile identifier alone.
+
+| Current transfer requirement | Contract |
+| --- | --- |
+| Media | Fully decodable 832x480, 24-FPS video; every control has the same decoded frame count as the source. |
+| Controls | One to four entries keyed by `edge`, `depth`, `seg`, `blur`; only advertised combinations. |
+| Preparation | Edge can be uploaded or derived by omitting its `input`; depth, segmentation and blur require prepared owner-bound videos. |
+| Weights | Finite and nonnegative with a finite positive total. They are relative, without a 1.0 ceiling; use `generation.control_guidance` for overall strength. |
+| Sampling | Integer steps 1–200, CFG 0–20, nonnegative finite control guidance and finite flow shift; seed is an integer. |
+| Text | Positive prompt required; positive and negative prompts each allow up to 16,384 characters. |
+| Precision | This transfer profile is BF16; it does not accept `precision_profile`. A legacy augmentation FP8 option does not enable FP8 transfers. |
+| Delivery | Guardrails stay enabled; complete decode/timeline checks and blank/frozen-output heuristics can reject delivery. |
+
+Prepared foreground-only controls are accepted as media. Black pixels remain
+control data; there is no separate spatial mask or per-pixel weight field.
+The structural controls condition the full timeline; source RGB frames do not
+condition generation on this route.
+Full-source technical delivery does not establish semantic fidelity, device
+identity, contact preservation or training-label validity. Evaluation remains
+optional and report-only; it does not disable the service's delivery checks.
+
+Mutable request JSON is limited to 1 MiB; media belongs in registered S3
+objects. The separate media-ingest upload helper has a 5-GiB per-file limit;
+that is not a frame-count or size cap on already-staged transfer input objects.
+This portable helper does not upload local media. Keep the exact request and
+state for retries; a changed source, control, weight, prompt or output is a
+different request and needs a distinct identity.
+
 ## Text-to-video and fixed profiles
 
 For T2V, a request file uses the explicit selected model/profile:
@@ -297,7 +364,8 @@ frame rate or duration. The listed fixed profiles generally admit only seed;
 do not transplant Nano T2V overrides into fixed I2V/Super profiles. Keep
 guardrails enabled. No listed audio profile performs STT or TTS.
 
-The helper also accepts `--route /v1/images` or `--route /v1/augmentations` for
+The helper also accepts `--route /v1/images`, `--route /v1/augmentations` or
+`--route /v1/transfers` for
 request files you have validated against the running schema. Image generation
 and full-source structural augmentation have separate typed contracts; they
 are not implicit task flags on the video request. Persist every exact logical

@@ -12,7 +12,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException
 
 from npa.workbench.storage_scope import StorageScope, use_storage_scope
 
-from . import artifacts, runtime
+from . import artifacts, quality, runtime
 from .schemas import (
     MODEL_REPOSITORY,
     MODEL_REVISION,
@@ -78,7 +78,13 @@ def create_app(
     @app.get("/list", dependencies=[Depends(authenticate)])
     def list_capabilities() -> dict[str, object]:
         return {
-            "capabilities": ["probe", "restore", "verify", "review"],
+            "capabilities": [
+                "probe",
+                "restore",
+                "verify",
+                "review",
+                "quality-boundary",
+            ],
             "input_output": "request-scoped S3 artifacts",
         }
 
@@ -102,6 +108,11 @@ def create_app(
     def review(request: VideoArtifactRequest) -> dict:
         with operation():
             return artifacts.review(request)
+
+    @app.post("/quality-boundary", dependencies=[Depends(authenticate)])
+    def quality_boundary(request: VideoArtifactRequest) -> dict:
+        with operation():
+            return quality.assess(request)
 
     return app
 

@@ -13,12 +13,14 @@ recording the camera, the source hashes, and the pixel hash of every frame.
 
 from __future__ import annotations
 
+import argparse
 import hashlib
 import json
 import sys
 from pathlib import Path
 
 import numpy as np
+from harness_io import read_cloud, read_mesh
 from PIL import Image
 
 W, H = 960, 720
@@ -49,11 +51,9 @@ def _read_ply(path: Path):
 
 
 def _load(path: Path):
-    import open3d as o3d
-
     text = path.read_bytes()[:2048].decode("latin-1")
     if "element face" in text and "\nelement face 0\n" not in text:
-        mesh = o3d.io.read_triangle_mesh(str(path))
+        mesh = read_mesh(path)
         if len(mesh.triangles) > 0:
             mesh.compute_vertex_normals()
             return (
@@ -62,7 +62,7 @@ def _load(path: Path):
                 np.asarray(mesh.vertex_normals),
                 None,
             )
-    cloud = o3d.io.read_point_cloud(str(path))
+    cloud = read_cloud(path)
     colors = np.asarray(cloud.colors) if cloud.has_colors() else None
     return np.asarray(cloud.points), None, None, colors
 
@@ -321,7 +321,9 @@ def _portable(path: str) -> str:
 
 
 def main() -> int:
-    plan = json.loads(Path(sys.argv[1]).read_text())
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("plan", type=Path, help="JSON render plan naming the views")
+    plan = json.loads(parser.parse_args().plan.read_text())
     manifest = {
         "renderer": "npa evidence harness z-buffer rasterizer",
         "resolution": [W, H],
@@ -422,7 +424,9 @@ def main() -> int:
                 manifest["frames"][-1]["name"],
                 manifest["frames"][-1]["frame_sha256"][:16],
             )
-    Path(plan["manifest_out"]).write_text(json.dumps(manifest, indent=2, sort_keys=True))
+    Path(plan["manifest_out"]).write_text(
+        json.dumps(manifest, indent=2, sort_keys=True)
+    )
     return 0
 
 

@@ -8,6 +8,7 @@
     "non_periodic_bowl": {
       "construction": "a bowl with no repeating structure, where the alignment is well determined",
       "each_stage_alone": {
+        "hashes_that_name_no_file_here": "the_input_digest values identify generated in-memory point-cloud inputs used by this retained determinism run; those input bytes are not committed here",
         "normal_estimation_downsampled_cloud": {
           "repeats": 16,
           "distinct_results": 1,
@@ -124,6 +125,7 @@
     "periodic_ripple": {
       "construction": "a ripple whose period the fragment offset can alias, so a whole family of alignments fits: the worst conditioning this directory constructs",
       "each_stage_alone": {
+        "hashes_that_name_no_file_here": "the_input_digest values identify generated in-memory point-cloud inputs used by this retained determinism run; those input bytes are not committed here",
         "normal_estimation_downsampled_cloud": {
           "repeats": 16,
           "distinct_results": 1,
@@ -240,6 +242,7 @@
     "upstream_demo_scan": {
       "construction": "o3d.data.DemoICPPointClouds fragments 0 and 1 -- Redwood's augmented ICL-NUIM living-room1, the capture every accepted record in this directory is built from. Not constructed by me, and not ambiguous: this case exists because a reviewer found the effect here after I had claimed it needed a near-degenerate surface",
       "each_stage_alone": {
+        "hashes_that_name_no_file_here": "the_input_digest values identify generated in-memory point-cloud inputs used by this retained determinism run; those input bytes are not committed here",
         "normal_estimation_downsampled_cloud": {
           "repeats": 16,
           "distinct_results": 1,

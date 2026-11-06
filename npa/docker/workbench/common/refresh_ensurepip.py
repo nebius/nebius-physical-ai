@@ -1,4 +1,4 @@
-"""Replace Python 3.10's bundled installer with verified repaired wheel bytes."""
+"""Replace Python 3.11's bundled installer with verified repaired wheel bytes."""
 
 from __future__ import annotations
 
@@ -13,8 +13,9 @@ import zipfile
 
 
 PIP_VERSION = "26.2.1+npa.1"
-SETUPTOOLS_VERSION = "84.0.0"
-SETUPTOOLS_SHA256 = "51a52592b3b99e102b609654876bd65f19f999935166d1352678931132b0c670"
+SETUPTOOLS_VERSION = "84.2.1"
+SETUPTOOLS_SHA256 = "ca140b45d5325a9478f880e351484f62fef15f336462e449ca0c03c873d589c2"
+RUNTIME_PYTHON = (3, 11)
 
 
 def _wheel(path: Path, name: str, version: str, expected_sha256: str) -> bytes:
@@ -49,7 +50,7 @@ def _versions(source: str) -> dict[str, str]:
         r'^_(PIP|SETUPTOOLS)_VERSION = "([^"\n]+)"$', source, re.MULTILINE
     )
     if len(found) != 2 or {name for name, _ in found} != {"PIP", "SETUPTOOLS"}:
-        raise ValueError("Unsupported Python 3.10 ensurepip version declarations")
+        raise ValueError("Unsupported ensurepip version declarations")
     return {name.lower(): version for name, version in found}
 
 
@@ -84,7 +85,7 @@ def refresh_bootstrap(
     """Install source-identified wheel bytes into the standard-library bootstrap.
 
     Args:
-        root: Python 3.10's ensurepip package directory.
+        root: Python 3.11's ensurepip package directory.
         pip_wheel: Repaired wheel produced by the reviewed secure-pip builder.
         pip_receipt: Its matching build receipt.
         setuptools_wheel: Exact upstream Setuptools wheel.
@@ -120,11 +121,11 @@ def main() -> None:
     Returns:
         None.
     Raises:
-        RuntimeError: The interpreter is outside the tested Python 3.10 contract.
+        RuntimeError: The interpreter is outside the tested Python 3.11 contract.
         ValueError: Supplied artifacts or the bootstrap layout are invalid.
     """
-    if sys.version_info[:2] != (3, 10):
-        raise RuntimeError("This bootstrap repair requires Python 3.10")
+    if sys.version_info[:2] != RUNTIME_PYTHON:
+        raise RuntimeError("This bootstrap repair requires Python 3.11")
     import ensurepip
 
     parser = argparse.ArgumentParser(description=__doc__)

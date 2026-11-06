@@ -65,6 +65,7 @@
     "points": 6341
   },
   "hashes": {
+    "hashes_that_name_no_file_here": "Every hash here is of a file the verified run wrote, recomputed in the verification lane. Those files are the run's own outputs and are not committed to this repository, so these names resolve to nothing here.",
     "mesh-baseline/mesh.ply": "6112bc2311caefa4c104ea5f145138dc31486acad1d1e96839accf7f848f6a0f",
     "mesh-baseline/mesh_uncropped.ply": "6112bc2311caefa4c104ea5f145138dc31486acad1d1e96839accf7f848f6a0f",
     "mesh-baseline/result.json": "bb036a74c6cc4fe4253d048e5c0188ed5153e962618e99c907c84643beb88e13",

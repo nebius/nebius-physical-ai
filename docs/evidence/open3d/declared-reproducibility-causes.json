@@ -351,7 +351,6 @@
     ],
     "what_was_left_alone": "Every figure in both records, every other field, and the bytes of every artifact they describe. One string changed in each file. Nothing here re-measures either record's own pipeline: the construction used is the one the distance-bands record names, and the support-crop record's inputs are not reachable from this host."
   },
-  "the_record_it_cites_is_not_on_main_yet": "`poisson-figure-reproducibility.json` is in pull request 1021 and is not in `docs/evidence/open3d/` on main, so a reviewer reading this on main cannot open it. Stated rather than left to be discovered: a citation a reviewer cannot resolve is a citation that has to be followed by asking the author, and this lane has already had one provenance pin re-based for exactly that reason. The measurements above stand on their own -- each condition's values are in this file -- and the dependency is for the mechanism's name, not for the result.",
   "what_this_does_not_claim": [
     "That 4 repeats bound anything. These are observed spreads over a sample, and a fifth run may exceed any of them.",
     "That the sampling does not matter. It matters most, by a large factor, and it is seedable. The correction is to what seeding achieves.",

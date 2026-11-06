@@ -70,6 +70,14 @@ def require_number(
     return value
 
 
+def require_positive_finite_number(value: Any, *, field: str) -> int | float:
+    """Require a literal finite number strictly greater than zero."""
+    number = require_number(value, field=field)
+    if number <= 0:
+        raise ValueError(f"{field} must be positive, got {number!r}")
+    return number
+
+
 def _require_range(value, *, field, minimum, maximum):
     if minimum is not None and value < minimum:
         raise ValueError(f"{field} must be at least {minimum}")

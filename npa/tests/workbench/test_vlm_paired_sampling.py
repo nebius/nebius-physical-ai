@@ -13,7 +13,14 @@ from npa.workbench import vlm_eval
 
 
 def _completion(model):
-    content = json.dumps({"success": True, "score": 1.0, "rationale": "visible frames"})
+    content = json.dumps(
+        {
+            "success": True,
+            "score": 1.0,
+            "rationale": "visible frames",
+            "provider_observable_support": ["Frame 1 is visibly present."],
+        }
+    )
     return {
         "model": model,
         "choices": [{"finish_reason": "stop", "message": {"content": content}}],

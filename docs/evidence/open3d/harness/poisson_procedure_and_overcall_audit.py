@@ -20,13 +20,13 @@ Run inside the Open3D image:
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
 import numpy as np
 import open3d as o3d
+from harness_io import FAR_READING, output_path, seed_sampling
 from npa.workbench.open3d.runner import _crop_justification, _support
 
-OUT = Path("/data/poisson-procedure-and-overcall-audit.json")
+OUT = output_path("/data/poisson-procedure-and-overcall-audit.json")
 
 SAMPLES = 60000
 INIT_FACTOR = 3
@@ -62,6 +62,7 @@ def evenness(cloud) -> dict[str, float]:
 
 
 def main() -> int:
+    seed = seed_sampling()
     report: dict = {
         "poisson_disk_procedure": {
             "asked_by": "review lane, 2026-09-20T04:40Z",
@@ -89,7 +90,7 @@ def main() -> int:
         "overcall_audit": {
             "property_under_test": (
                 "A reconstruction with zero invented surface must never read as an "
-                "extrapolated shell. The review lane withdrew their undecided-band ruling on "
+                "far from any observation. The review lane withdrew their undecided-band ruling on "
                 "this property, so it carries the weight that ruling would have."
             ),
             "cells": [],
@@ -128,7 +129,7 @@ def main() -> int:
                         ],
                         "reads_as": reading["removed_surface_reads_as"],
                         "over_called": reading["removed_surface_reads_as"]
-                        == "extrapolated shell",
+                        == FAR_READING,
                     }
                 )
 
@@ -162,6 +163,7 @@ def main() -> int:
         }
     report["sampling_comparison"] = even_pairs
 
+    report["sampling_seed"] = seed
     OUT.write_text(json.dumps(report, indent=2, sort_keys=True))
 
     print("=== evenness (review lane's max/median nearest-neighbour measure) ===")

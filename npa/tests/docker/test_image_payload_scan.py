@@ -220,6 +220,32 @@ def test_openpi_uses_system_ffmpeg_without_bundled_payload() -> None:
 
     assert "IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg" in dockerfile
     assert "      ca-certificates ffmpeg git" in dockerfile
+    assert (
+        "ARG OPENPI_PIP_WHEEL_URL=https://files.pythonhosted.org/packages/"
+        "07/25/ee8c38ae72d66b844ce8eb9711ba905dba21ca1a8a0c960057c41cd23337/"
+        "pip-26.3-py3-none-any.whl" in dockerfile
+    )
+    assert (
+        "ARG OPENPI_PIP_WHEEL_SHA256="
+        "f3b60b20ffaadd4415ed7957212a38ac63fa4c5fa375bd0f4a797777940fad13" in dockerfile
+    )
+    assert "--no-deps --upgrade" in dockerfile
+    assert "${OPENPI_PIP_WHEEL_URL}#sha256=${OPENPI_PIP_WHEEL_SHA256}" in dockerfile
+    assert 'pip.__version__ == "26.3"' in dockerfile
+    assert 'certifi.__version__ == "2026.10.23"' in dockerfile
+    managed_python_fix = (
+        "for interpreter in /home/ubuntu/.local/share/uv/python/*/bin/python3; do"
+    )
+    assert managed_python_fix in dockerfile
+    assert (
+        '/opt/uv/bin/pip --python "$interpreter" install --no-cache-dir '
+        "--no-deps --upgrade --break-system-packages" in dockerfile
+    )
+    assert (
+        dockerfile.index("/opt/uv/bin/uv python install 3.11")
+        < dockerfile.index(managed_python_fix)
+        < dockerfile.index("/opt/uv/bin/uv venv --python 3.11 /opt/venv")
+    )
     assert "*/imageio_ffmpeg/binaries/ffmpeg*" in dockerfile
     assert "-delete" in dockerfile
     assert "imageio_ffmpeg.get_ffmpeg_exe()" in dockerfile
@@ -267,6 +293,7 @@ def test_openpi_uses_system_ffmpeg_without_bundled_payload() -> None:
         assert pin in dockerfile
     assert "pi05-full-droid-rlds-cu128-jax062-nccl2275-rerun0381" in dockerfile
     assert "'rerun-sdk==0.38.1'" in dockerfile
+    assert "'certifi==2026.10.19'" in dockerfile
     assert "'numpy==1.26.4'" in dockerfile
     assert "from transformers import GemmaForCausalLM" in dockerfile
     assert "NPA_OPENPI_RERUN_PYTHON=/opt/rerun-venv/bin/python" in dockerfile
@@ -291,6 +318,7 @@ def test_openpi_uses_system_ffmpeg_without_bundled_payload() -> None:
     assert "rerun-sdk" not in trainer_addons
     assert "'pyyaml==6.0.3'" in rerun_addons
     assert "'rerun-sdk==0.38.1'" in rerun_addons
+    assert 'm.version("certifi") == "2026.10.19"' in rerun_addons
     assert "pip check --python /opt/rerun-venv/bin/python" in rerun_addons
     assert "google-cloud-storage==3.13.1" in gcs_lock
     assert "--hash=sha256:" in gcs_lock

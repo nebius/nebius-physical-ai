@@ -192,6 +192,8 @@ def test_visualize_stage_uses_prebuilt_rerun_image_without_runtime_install() -> 
         ("workbench.vlm_eval.run", "vlm_model"),
         ("workbench.vlm_eval.loop", "vlm_model"),
         ("workbench.vlm_eval.judge_against_plan", "vlm_model"),
+        ("workbench.gemini_robotics.plan", "model_id"),
+        ("workbench.gemini_robotics.eval", "model_id"),
     ],
 )
 @pytest.mark.parametrize(
@@ -210,6 +212,29 @@ def test_hosted_model_override_survives_rendering(tool_ref, config_key, model) -
         assert argv[argv.index("--model") + 1] == model
     else:
         assert "--model" not in argv
+
+
+@pytest.mark.parametrize(
+    "tool_ref",
+    ["workbench.gemini_robotics.plan", "workbench.gemini_robotics.eval"],
+)
+@pytest.mark.parametrize("base_url", ["", "https://provider.example.invalid"])
+def test_gemini_endpoint_override_survives_rendering(tool_ref, base_url) -> None:
+    from npa.orchestration.npa_workflow.catalog import drop_empty_optional_flags
+
+    entry = TOOL_CATALOG[tool_ref]
+    assert entry.config_defaults["api_base_url"] == ""
+    argv = drop_empty_optional_flags(
+        tool_ref,
+        [
+            base_url if item == "{{config.api_base_url}}" else item
+            for item in entry.argv_template
+        ],
+    )
+    if base_url:
+        assert argv[argv.index("--api-base-url") + 1] == base_url
+    else:
+        assert "--api-base-url" not in argv
 
 
 @pytest.mark.parametrize("profile", ["", "standard", "film"])

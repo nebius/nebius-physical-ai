@@ -29,7 +29,7 @@ RUN /usr/local/bin/install-workflow-runtime-prereqs \
       "${UBUNTU_SNAPSHOT}" "${LINUX_LIBC_DEV_VERSION}"
 
 # The FastAPI + lancedb + pyarrow + boto3 stack comes from the shared base.
-# Reassert the direct Pillow 12 runtime contract alongside the CLIP dependency.
+# Reassert the direct Pillow runtime contract alongside the CLIP dependency.
 # Local deploy maps the process to the host uid/gid, so every runtime source
 # remains readable when that uid differs from the image's named ubuntu user.
 COPY --chmod=0644 docker/workbench/lancedb/requirements.txt /app/requirements.txt
@@ -37,8 +37,11 @@ COPY --chmod=0644 docker/workbench/lancedb/requirements.txt /app/requirements.tx
 # below the version required by the pinned Hugging Face closure.
 RUN pip install --no-cache-dir -r /app/requirements.txt \
     && python -m pip uninstall -y spin \
+    && python -m pip install --no-cache-dir --no-deps --upgrade \
+      "certifi @ https://files.pythonhosted.org/packages/32/d1/a3652fe2c19134d0d15922177821d863cbd7e842d53a21bbe7e8e3a1b5ac/certifi-2026.10.23-py3-none-any.whl#sha256=e9b54de76e530bb6cf0ccd036787103acb58fd42ba930ea8bf948ddbaa2f61d1" \
+      "uv @ https://files.pythonhosted.org/packages/4b/a1/de02c0913726728eca56ee258875cbba9c7b0572c63f494fd9f55c7852e3/uv-0.13.4-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl#sha256=05e4332791b4d55b6dde8695b7fa6079b26991519f44760887c5dfbd5ca4fe53" \
     && python -m pip check \
-    && python -c "import transformers; print(transformers.__version__)"
+    && python -c "from importlib.metadata import version; import transformers; assert version('certifi') == '2026.10.23'; assert version('uv') == '0.13.4'; print(transformers.__version__)"
 
 COPY --chmod=0644 src/npa/workbench/lancedb/bdd100k_import.py /app/npa_lancedb_bdd100k_import.py
 COPY --chmod=0644 src/npa/workbench/lancedb/bdd100k_udfs.py /app/npa_lancedb_bdd100k_udfs.py

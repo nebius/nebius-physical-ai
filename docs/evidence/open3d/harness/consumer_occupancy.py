@@ -35,39 +35,130 @@ import json
 from pathlib import Path
 
 import numpy as np
-import open3d as o3d
+from harness_io import output_path, read_cloud, read_mesh
 
 BUNDLE = Path("/data/final-bundle")
-OUT = Path("/data/downstream-consumer-reproduced.json")
+DEFAULT_OUT = "/data/downstream-consumer-reproduced.json"
 
 CELL = 0.1
 #: Support radius as a multiple of the cell. 0.87 is the rounded value of the
 #: cell's circumradius factor sqrt(3)/2 = 0.8660254, a cell-centre-to-corner
 #: reach, so a cell counts as touched when anything falls anywhere inside it.
-#: It is the rounded constant that ran, not the exact factor; the review lane
-#: swept 0.5 to 2.0 and every setting kept the same direction and ordering.
+#: It is the rounded constant that ran, not the exact factor. An earlier version of
+#: this comment credited a 0.5-to-2.0 sweep to the review lane; they searched their
+#: own dispatches and phases for it, found nothing, and said plainly that they never
+#: ran it and never claimed to. The sweep is now this lane's own, over cell sizes
+#: 0.05/0.1/0.2 against factors 0.5/0.87/1.5/2.0, in
+#: `occupancy-instrument-controls.json` under `parameter_sweep`.
 SUPPORT_RADIUS_FACTOR = 0.87
 
 VARIANTS = {"baseline": "mesh-baseline/mesh.ply", "candidate": "mesh/mesh.ply"}
 
 
-def main() -> int:
-    cloud = o3d.io.read_point_cloud(str(BUNDLE / "multiway/fused.ply"))
+def probe_grid(cloud, cell: float):
+    """The cell centres this instrument scores, and the grid they came from.
+
+    Extracted from `main()` so a control can score synthetic geometry with the same
+    instrument instead of a second copy of it. No line here changed in the move; the
+    reproduction check at the end of `main()` is what proves that, because it compares
+    the complete recomputed report against the published record and exits non-zero on
+    any difference.
+    """
     box = cloud.get_axis_aligned_bounding_box()
     origin = np.asarray(box.get_min_bound())
-    dims = np.round(np.asarray(box.get_extent()) / CELL).astype(int)
+    dims = np.round(np.asarray(box.get_extent()) / cell).astype(int)
     index = (
         np.array(np.meshgrid(*[np.arange(d) for d in dims], indexing="ij"))
         .reshape(3, -1)
         .T
     )
-    centres = origin + (index + 0.5) * CELL
-    radius = SUPPORT_RADIUS_FACTOR * CELL
+    return origin + (index + 0.5) * cell, dims
+
+
+def support_mask(cloud, centres, radius: float):
+    """Which cells hold an observation: centre within `radius` of a sample."""
+    import open3d as o3d
 
     tree = o3d.geometry.KDTreeFlann(cloud)
-    supported = np.array(
+    return np.array(
         [bool(tree.search_radius_vector_3d(centre, radius)[0]) for centre in centres]
     )
+
+
+def score_variant(mesh, centres, supported, radius: float, cell: float) -> dict:
+    """Occupancy of one surface against one support mask, at one radius.
+
+    `occupied` and `supported` are the same distance-to-nearest query at the same
+    radius, which is the symmetry the module docstring argues for: neither the surface
+    nor the observations get the more generous test.
+    """
+    import open3d as o3d
+
+    scene = o3d.t.geometry.RaycastingScene()
+    scene.add_triangles(o3d.t.geometry.TriangleMesh.from_legacy(mesh))
+    distance = scene.compute_distance(
+        o3d.core.Tensor(centres.astype(np.float32))
+    ).numpy()
+    return score_from_distance(distance, supported, radius, cell)
+
+
+def score_from_distance(distance, supported, radius: float, cell: float) -> dict:
+    """The definitions themselves, with the Open3D query already done.
+
+    Split out so they can be exercised where Open3D is not installed, which is every
+    CI shard: `open3d` appears in `npa/pyproject.toml` only as a container image tag,
+    is in no optional-dependency extra, and is not in `npa/ci/requirements.txt`. A
+    reviewer pointed out that the guard protecting this instrument from being quietly
+    replaced by a copy was the one test that could never run there.
+
+    Pure NumPy and pure arithmetic over two boolean masks, so a reader can check that a
+    published set of counts and rates is internally what these definitions produce.
+    """
+    occupied = distance <= radius
+    phantom = occupied & ~supported
+    return {
+        "occupied_cells": int(occupied.sum()),
+        "phantom_obstacle_cells": int(phantom.sum()),
+        "phantom_obstacle_rate": float(phantom.sum() / occupied.sum()),
+        "phantom_volume_m3": float(phantom.sum() * cell**3),
+        "precision_wrt_observation": float(1 - phantom.sum() / occupied.sum()),
+        "recall_of_observed_cells": float(
+            (occupied & supported).sum() / supported.sum()
+        ),
+        "missed_structure_cells": int((supported & ~occupied).sum()),
+    }
+
+
+def differences(expected, actual, path: str = "") -> list[tuple[str, object, object]]:
+    """Return every structural or value difference between two report objects."""
+    if isinstance(expected, dict) and isinstance(actual, dict):
+        mismatches = []
+        for key in sorted(set(expected) | set(actual)):
+            child = f"{path}.{key}" if path else key
+            if key not in expected or key not in actual:
+                mismatches.append((child, expected.get(key), actual.get(key)))
+            else:
+                mismatches.extend(differences(expected[key], actual[key], child))
+        return mismatches
+    if isinstance(expected, float) or isinstance(actual, float):
+        if not isinstance(expected, (int, float)) or not isinstance(
+            actual, (int, float)
+        ):
+            return [(path, expected, actual)]
+        return (
+            []
+            if abs(float(expected) - float(actual)) <= 1e-9
+            else [(path, expected, actual)]
+        )
+    return [] if expected == actual else [(path, expected, actual)]
+
+
+def main() -> int:
+    out = output_path(DEFAULT_OUT)
+    cloud = read_cloud(BUNDLE / "multiway/fused.ply")
+    centres, dims = probe_grid(cloud, CELL)
+    radius = SUPPORT_RADIUS_FACTOR * CELL
+    supported = support_mask(cloud, centres, radius)
 
     report = {
         "cell_size": CELL,
@@ -76,25 +167,10 @@ def main() -> int:
         "variants": {},
     }
     for name, relative in VARIANTS.items():
-        mesh = o3d.io.read_triangle_mesh(str(BUNDLE / relative))
-        scene = o3d.t.geometry.RaycastingScene()
-        scene.add_triangles(o3d.t.geometry.TriangleMesh.from_legacy(mesh))
-        distance = scene.compute_distance(
-            o3d.core.Tensor(centres.astype(np.float32))
-        ).numpy()
-        occupied = distance <= radius
-        phantom = occupied & ~supported
+        mesh = read_mesh(BUNDLE / relative)
         report["variants"][name] = {
             "artifact": relative,
-            "occupied_cells": int(occupied.sum()),
-            "phantom_obstacle_cells": int(phantom.sum()),
-            "phantom_obstacle_rate": float(phantom.sum() / occupied.sum()),
-            "phantom_volume_m3": float(phantom.sum() * CELL**3),
-            "precision_wrt_observation": float(1 - phantom.sum() / occupied.sum()),
-            "recall_of_observed_cells": float(
-                (occupied & supported).sum() / supported.sum()
-            ),
-            "missed_structure_cells": int((supported & ~occupied).sum()),
+            **score_variant(mesh, centres, supported, radius, CELL),
         }
 
     base, cand = report["variants"]["baseline"], report["variants"]["candidate"]
@@ -109,21 +185,10 @@ def main() -> int:
         - base["recall_of_observed_cells"],
     }
 
-    OUT.write_text(json.dumps(report, indent=2, sort_keys=True))
+    out.write_text(json.dumps(report, indent=2, sort_keys=True))
 
     original = json.loads(Path("/data/downstream-consumer.json").read_text())
-    mismatches = []
-    for variant in VARIANTS:
-        for key, value in report["variants"][variant].items():
-            was = original["variants"][variant].get(key)
-            if isinstance(value, float):
-                # compute_distance builds a BVH whose traversal order is not
-                # bit-stable, so a cell centre sitting within 1e-4 of the radius
-                # can land either side of it between runs.
-                if was is None or abs(value - was) > 1e-9:
-                    mismatches.append((variant, key, was, value))
-            elif was != value:
-                mismatches.append((variant, key, was, value))
+    mismatches = differences(original, report)
     print(f"grid {tuple(int(d) for d in dims)} = {report['cells']} cells")
     print(f"cells_with_samples {report['cells_with_samples']}")
     for variant in VARIANTS:
@@ -136,11 +201,11 @@ def main() -> int:
         )
     if mismatches:
         print(f"\n{len(mismatches)} field(s) differ from the published record:")
-        for variant, key, was, now in mismatches:
-            print(f"  {variant}.{key}: published {was} -> recomputed {now}")
+        for path, was, now in mismatches:
+            print(f"  {path}: published {was} -> recomputed {now}")
     else:
         print("\nevery published field reproduced exactly")
-    return 0
+    return int(bool(mismatches))
 
 
 if __name__ == "__main__":

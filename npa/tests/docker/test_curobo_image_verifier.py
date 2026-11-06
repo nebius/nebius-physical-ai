@@ -999,9 +999,9 @@ def test_production_contract_matches_locked_artifacts_and_notice():
     notice = contract["nvshmem_notice"]
     assert (
         notice["sha256"]
-        == "43a87c0ff94ce3196011ff75e17fbee96933c9e1d511557659ece8a326f95e8f"
+        == "1f5b7ada702926bc73327e6eb02dc2d41facc844cc4512ac900451bda06a459e"
     )
-    assert notice["size"] == 26566
+    assert notice["size"] == 28205
     docker = (IMAGE / "Dockerfile").read_text()
     assert (
         notice["sha256"] in docker
@@ -1064,7 +1064,10 @@ def test_trusted_workflow_checks_local_bytes_before_push_and_exact_pushed_bytes(
         in commands[push:]
     )
     assert '--docker-save "$RUNNER_TEMP/${TOOL}-pushed.tar"' in commands[second:]
-    assert commands.count("npa/scripts/scan_image_omniverse_payload.py") == 2
+    # Curobo retains its archive-bound local and pushed-byte scans. GR00T has
+    # two additional full streaming scans because its image cannot coexist
+    # with a second image-sized archive on hosted runners.
+    assert commands.count("npa/scripts/scan_image_omniverse_payload.py") == 4
     assert commands.count("--verification-report") >= 4
     assert (
         '--verification-report "$RUNNER_TEMP/${TOOL}-curobo-payload.json"'
