@@ -419,6 +419,20 @@ def test_large_image_scan_reclaims_build_cache_and_reuses_large_volume() -> None
     )
     assert capacity.count('docker image inspect "$IMAGE" >/dev/null') == 2
     assert "docker system df" in capacity
+    assert 'if [[ "$TOOL" == groot ]]; then' in capacity
+    assert (
+        'active_python_dir="$(dirname "${pythonLocation:?setup-python path is required}")"'
+        in capacity
+    )
+    assert "/opt/hostedtoolcache/Python/*" in capacity
+    assert "find /opt/hostedtoolcache/Python -mindepth 1 -maxdepth 1" in capacity
+    assert '! -path "$active_python_dir" -print0' in capacity
+    assert "/opt/hostedtoolcache/CodeQL" in capacity
+    assert (
+        capacity.index("docker image prune --all --force")
+        < capacity.index('if [[ "$TOOL" == groot ]]; then')
+        < capacity.rindex('docker image inspect "$IMAGE" >/dev/null')
+    )
     # Three pinned Trivy invocations reach the push: the CRITICAL policy scan,
     # the all-severity secret scan, and the SBOM. Every one of them must reuse
     # the large volume, the shared cache and the unbounded timeout.
