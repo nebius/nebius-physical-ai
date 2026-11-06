@@ -179,8 +179,7 @@ def test_it_says_what_it_does_not_establish() -> None:
     assert "invented surface" in said
 
 
-#: Where the stage lives in the repository, which is the part of its identity that
-#: exists on every checkout. The harness records this alongside the absolute path.
+#: Where the stage lives in the repository, which is its portable identity.
 RUNNER_RELATIVE = "npa/src/npa/workbench/open3d/runner.py"
 
 
@@ -191,17 +190,14 @@ def _repository_root() -> Path:
 def _assert_the_record_binds_this_checkout(record: dict, root: Path) -> None:
     """Does this record describe the stage *this* checkout has?
 
-    Identity is the repository-relative path plus the hash of the bytes that were
-    imported. The absolute path the run recorded is kept as history and deliberately
-    not required to exist: it is a path on one machine, and asserting it exists failed
-    the shared pytest shard, where no such directory is present.
+    Identity is the repository-relative path, a Git commit, and hashes of the complete
+    stage and the measured function. Machine-local paths would not make the source more
+    verifiable and would publish private operational information, so they are refused.
     """
 
     origin = record["provenance"]["npa_runner_imported_from"]
     assert origin["repository_relative"] == RUNNER_RELATIVE
-    assert origin["absolute_path_on_the_machine_that_ran_it"].endswith(
-        RUNNER_RELATIVE
-    ), "the recorded absolute path is not a path to this stage at all"
+    assert "absolute_path_on_the_machine_that_ran_it" not in origin
 
     measured = subprocess.run(
         [
@@ -755,8 +751,8 @@ def test_the_binding_checks_the_bytes_and_not_the_path() -> None:
 
     * identical bytes under a different root must pass, or the check is still tied to
       where the author's files happen to sit;
-    * a record whose recorded absolute path does not exist anywhere must still pass,
-      which is the CI runner's situation and the one that failed;
+    * a record that adds a machine-local path must fail, so portable provenance cannot
+      become a vehicle for private operational evidence;
     * a change inside the measured calculation must fail, or the check has no teeth
       and deleting it would look like a fix.
     """
@@ -769,13 +765,14 @@ def test_the_binding_checks_the_bytes_and_not_the_path() -> None:
             record, _checkout_holding(source, Path(into) / "same-bytes")
         )
 
-        absent = copy.deepcopy(record)
-        absent["provenance"]["npa_runner_imported_from"][
+        leaked = copy.deepcopy(record)
+        leaked["provenance"]["npa_runner_imported_from"][
             "absolute_path_on_the_machine_that_ran_it"
-        ] = f"/nonexistent-checkout/{RUNNER_RELATIVE}"
-        _assert_the_record_binds_this_checkout(
-            absent, _checkout_holding(source, Path(into) / "absent-origin")
-        )
+        ] = f"/private-checkout/{RUNNER_RELATIVE}"
+        with pytest.raises(AssertionError):
+            _assert_the_record_binds_this_checkout(
+                leaked, _checkout_holding(source, Path(into) / "leaked-origin")
+            )
 
         changed = source.replace(
             b"gap = np.abs(np.asarray(distances, dtype=float) - limit)",
