@@ -19,6 +19,10 @@ indefinitely. They require no play button. A reader's
 [GitHub animation preferences](https://docs.github.com/en/account-and-profile/how-tos/account-settings/managing-accessibility-settings#managing-motion)
 can pause animated images.
 
+README embeds are capped at 640 pixels wide, keep their original proportions,
+and shrink to fit narrower screens. The MP4 links retain the larger playback
+versions.
+
 | Preview | Resolution and frame rate | SHA-256 |
 | --- | --- | --- |
 | [Cosmos3 fanout](https://github.com/user-attachments/assets/5df4f2c0-c213-4662-a892-5856e90c8269) | 832 × 536, 10 fps | `c23c9b17127407a8edc0d6cf5ff543014480abacb53f3a9ae2de14bfdd8d7f52` |
