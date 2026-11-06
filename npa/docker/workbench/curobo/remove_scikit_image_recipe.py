@@ -24,7 +24,7 @@ MODULE = "skimage/data/_fetchers.py"
 RECEIPT_SCHEMA_VERSION = "npa.dependency-source-correction.v2"
 DEFAULT_CAPABILITY = "curobo"
 SUPPORTED_CAPABILITIES = frozenset(
-    {"curobo", "envgen", "fiftyone", "genesis", "lerobot"}
+    {"curobo", "envgen", "fiftyone", "genesis", "groot", "lerobot"}
 )
 
 
