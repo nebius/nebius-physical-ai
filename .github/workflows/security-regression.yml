@@ -3,6 +3,7 @@ name: Security regression
 on:
   pull_request:
   merge_group:
+  workflow_dispatch:
   push:
     branches: [main]
 

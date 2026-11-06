@@ -77,7 +77,12 @@ def test_one_pr_workflow_owns_every_merge_gate() -> None:
     """Keep PR updates atomic instead of spawning six independent workflows."""
 
     workflow = _load_workflow("security-regression.yml")
-    assert set(workflow["on"]) == {"pull_request", "merge_group", "push"}
+    assert set(workflow["on"]) == {
+        "pull_request",
+        "merge_group",
+        "push",
+        "workflow_dispatch",
+    }
     jobs = workflow["jobs"]
     assert jobs["test-gate"]["uses"] == "./.github/workflows/test.yml"
     assert jobs["lint-gate"]["uses"] == "./.github/workflows/lint.yml"
