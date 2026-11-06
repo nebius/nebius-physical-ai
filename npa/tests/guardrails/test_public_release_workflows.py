@@ -445,6 +445,20 @@ def test_large_image_scan_reclaims_build_cache_and_reuses_large_volume() -> None
     assert "docker image prune" not in text[scan:push]
 
 
+def test_groot_trivy_scans_are_serial_without_excluding_content() -> None:
+    """GR00T serializes layer exports without reducing mandatory scan coverage."""
+
+    steps = _spec(PUBLISH)["jobs"]["build-development"]["steps"]
+    scans = [step["run"] for step in steps if "aquasec/trivy:" in step.get("run", "")]
+    assert len(scans) == 3
+    for script in scans:
+        assert 'if [[ "$TOOL" == groot ]]; then' in script
+        assert "trivy_parallel=(--parallel 1)" in script
+        assert '"${trivy_parallel[@]}"' in script
+        assert "--skip-dirs" not in script
+        assert "--skip-files" not in script
+
+
 def test_prepublication_secret_scan_is_not_filtered_to_critical() -> None:
     """Trivy's --severity applies to every scanner, so secrets need their own scan.
 

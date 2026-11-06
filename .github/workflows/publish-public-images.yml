@@ -1010,6 +1010,12 @@ jobs:
           # gives this mandatory gate no practical analysis deadline.
           docker_socket_path="${DOCKER_SOCKET#unix://}"
           [[ "$docker_socket_path" == /* ]] || { echo "Docker socket must be an absolute path" >&2; exit 1; }
+          trivy_parallel=()
+          if [[ "$TOOL" == groot ]]; then
+            # Serializing layer analysis retains full scan coverage while avoiding
+            # simultaneous temporary layer exports for this unusually large image.
+            trivy_parallel=(--parallel 1)
+          fi
           docker run --rm \
             -e TMPDIR=/tmp/trivy \
             -v "$docker_socket_path:/var/run/docker.sock" \
@@ -1024,6 +1030,7 @@ jobs:
               --ignore-unfixed \
               --ignorefile /.trivyignore \
               --format table \
+              "${trivy_parallel[@]}" \
               "$IMAGE"
 
       # Trivy applies --severity to every enabled scanner and has no per-scanner
@@ -1045,6 +1052,12 @@ jobs:
           set -euo pipefail
           docker_socket_path="${DOCKER_SOCKET#unix://}"
           [[ "$docker_socket_path" == /* ]] || { echo "Docker socket must be an absolute path" >&2; exit 1; }
+          trivy_parallel=()
+          if [[ "$TOOL" == groot ]]; then
+            # Serializing layer analysis retains full scan coverage while avoiding
+            # simultaneous temporary layer exports for this unusually large image.
+            trivy_parallel=(--parallel 1)
+          fi
           docker run --rm \
             -e TMPDIR=/tmp/trivy \
             -v "$docker_socket_path:/var/run/docker.sock" \
@@ -1056,6 +1069,7 @@ jobs:
               --severity UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL \
               --exit-code 1 \
               --format table \
+              "${trivy_parallel[@]}" \
               "$IMAGE"
 
       - name: Generate pre-publication SBOM
@@ -1068,6 +1082,12 @@ jobs:
           set -euo pipefail
           docker_socket_path="${DOCKER_SOCKET#unix://}"
           [[ "$docker_socket_path" == /* ]] || { echo "Docker socket must be an absolute path" >&2; exit 1; }
+          trivy_parallel=()
+          if [[ "$TOOL" == groot ]]; then
+            # Serializing layer analysis retains full scan coverage while avoiding
+            # simultaneous temporary layer exports for this unusually large image.
+            trivy_parallel=(--parallel 1)
+          fi
           docker run --rm \
             -e TMPDIR=/tmp/trivy \
             -v "$docker_socket_path:/var/run/docker.sock" \
@@ -1079,6 +1099,7 @@ jobs:
               --scanners vuln \
               --format spdx-json \
               --output "/output/${TOOL}-sbom.spdx.json" \
+              "${trivy_parallel[@]}" \
               "$IMAGE"
 
       - name: Validate exact FiftyOne runtime before publication
