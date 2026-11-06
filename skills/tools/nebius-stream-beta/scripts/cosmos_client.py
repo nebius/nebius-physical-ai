@@ -211,6 +211,80 @@ def qualify(contract, payload, route):
         _qualify_transfer(row, payload)
 
 
+REASONER_TASK = "reasoning_understanding"
+REASONER_PROFILE = "cosmos3-reasoner-chat-v1"
+REASONER_MODELS = frozenset({"nvidia/Cosmos3-Nano", "nvidia/Cosmos3-Super"})
+REASONER_MODALITIES = frozenset({"text", "image", "video"})
+
+
+def reasoning_modality(payload, declared):
+    """Validate the local modality assertion without changing the API body."""
+    if declared not in REASONER_MODALITIES:
+        raise ClientError("reasoning submit requires --input-modality text, image, or video")
+    if not isinstance(payload.get("prompt"), str) or not payload["prompt"]:
+        raise ClientError("reasoning prompt must be a nonempty string")
+    if not isinstance(payload.get("output"), dict) or not isinstance(payload["output"].get("connection_id"), str):
+        raise ClientError("reasoning output requires a connection_id")
+    has_input = "input" in payload and payload["input"] is not None
+    if has_input and not isinstance(payload["input"], dict):
+        raise ClientError("reasoning input must be an object")
+    if declared == "text" and has_input:
+        raise ClientError("text reasoning must not include an input object")
+    if declared != "text" and not has_input:
+        raise ClientError(f"{declared} reasoning requires an input object")
+    generation = payload.get("generation")
+    if not isinstance(generation, dict):
+        raise ClientError("reasoning generation must be an object")
+    if generation.get("profile") != REASONER_PROFILE:
+        raise ClientError(f"reasoning generation profile must be {REASONER_PROFILE}")
+    unknown = set(generation) - {"profile", "max_tokens", "seed", "temperature", "top_p", "top_k", "video_fps", "video_num_frames"}
+    if unknown:
+        raise ClientError("reasoning generation contains unsupported fields")
+    max_tokens = generation.get("max_tokens")
+    if isinstance(max_tokens, bool) or not isinstance(max_tokens, int) or not 1 <= max_tokens <= 65536:
+        raise ClientError("reasoning max_tokens must be an integer from 1 through 65536")
+    for field, minimum, maximum, exclusive in (("temperature", 0, 2, False), ("top_p", 0, 1, True), ("video_fps", 0, 30, True)):
+        if field in generation:
+            value = generation[field]
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value > maximum or value < minimum or (exclusive and value == minimum):
+                raise ClientError(f"reasoning {field} is outside the supported range")
+    if "seed" in generation and (isinstance(generation["seed"], bool) or not isinstance(generation["seed"], int)):
+        raise ClientError("reasoning seed must be an integer")
+    if "top_k" in generation:
+        value = generation["top_k"]
+        if isinstance(value, bool) or not isinstance(value, int) or value == 0 or value < -1:
+            raise ClientError("reasoning top_k must be -1 or an integer at least 1")
+    if "video_num_frames" in generation:
+        value = generation["video_num_frames"]
+        if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= 512:
+            raise ClientError("reasoning video_num_frames must be an integer from 1 through 512")
+    if "video_fps" in generation and "video_num_frames" in generation:
+        raise ClientError("reasoning accepts only one video sampler")
+    if declared != "video" and ("video_fps" in generation or "video_num_frames" in generation):
+        raise ClientError("reasoning video sampling requires --input-modality video")
+    return declared
+
+
+def qualify_reasoning(contract, payload, modality):
+    """Require the exact task/profile/modality before durable admission."""
+    reasoning_modality(payload, modality)
+    paths = contract.get("openapi", {}).get("paths", {})
+    if "post" not in paths.get("/v1/reasoning", {}):
+        raise ClientError("requested reasoning route is unsupported")
+    model_id = payload.get("model")
+    if model_id not in REASONER_MODELS:
+        raise ClientError("reasoning requires explicit Cosmos3-Nano or Cosmos3-Super selection")
+    model = next((item for item in contract.get("models", {}).get("data", []) if item.get("id") == model_id), None)
+    if model is None or model.get("availability") in {"unavailable", "disabled"}:
+        raise ClientError("explicit requested reasoning model is not available to this key")
+    row = next((item for item in model.get("capability_matrix", []) if item.get("task") == REASONER_TASK), None)
+    if not isinstance(row, dict):
+        raise ClientError("selected model does not advertise reasoning_understanding")
+    evidence = row.get("profile_evidence", {}).get(REASONER_PROFILE, row.get("evidence_status"))
+    if REASONER_PROFILE not in row.get("profiles", []) or modality not in row.get("input_modalities", []) or "text" not in row.get("output_modalities", []) or row.get("guardrails_required") is not True or row.get("runtime_implemented") is not True or row.get("endpoint_exposed") is not True or evidence != "qualified":
+        raise ClientError("requested reasoning task/profile/modality has no exposed qualified runtime capability")
+
+
 def _transfer_weights(controls):
     """Check relative weights without coercing strings or accepting booleans."""
     if any(not isinstance(control, dict) for control in controls.values()):
@@ -247,7 +321,7 @@ def _qualify_transfer(row, payload):
 
 SUBMISSIONS = {
     "/v1/videos": "job_id", "/v1/images": "job_id", "/v1/augmentations": "job_id",
-    "/v1/transfers": "job_id",
+    "/v1/transfers": "job_id", "/v1/reasoning": "job_id",
     "/v1/batches": "batch_id", "/v1/augmentation-batches": "batch_id",
     "/v1/source-inventories": "inventory_id",
 }
@@ -260,10 +334,15 @@ def authenticated_owner(client):
     return owner
 
 
-def qualify_submission(client, contract, payload, route):
+def qualify_submission(client, contract, payload, route, reasoning_input_modality=None):
     if route not in SUBMISSIONS or "post" not in contract.get("openapi", {}).get("paths", {}).get(route, {}):
         raise ClientError("requested submission route is unsupported")
     if route == "/v1/source-inventories":
+        return
+    if route == "/v1/reasoning":
+        qualify_reasoning(contract, payload, reasoning_input_modality)
+        connection = client.request("GET", "/v1/storage/connections/" + identifier(payload["output"]["connection_id"]))["connection"]
+        verified_output(connection)
         return
     requests = [item["request"] for item in payload["items"]] if route == "/v1/batches" else [payload]
     for value in requests:
@@ -275,12 +354,12 @@ def qualify_submission(client, contract, payload, route):
         client.request("POST", route + "/preflight", payload)
 
 
-def submit(client, payload, state_path, route):
+def submit(client, payload, state_path, route, reasoning_input_modality=None):
     contract = client.contract()
     owner = contract["auth"].get("owner_id")
     if not isinstance(owner, str) or not owner:
         raise ClientError("API did not return an authenticated owner")
-    qualify_submission(client, contract, payload, route)
+    qualify_submission(client, contract, payload, route, reasoning_input_modality)
     resource_field = SUBMISSIONS[route]
     canonical = json.dumps({"origin": client.origin, "owner": owner, "route": route, "request": payload}, sort_keys=True, separators=(",", ":"))
     digest = hashlib.sha256(canonical.encode()).hexdigest()
@@ -500,6 +579,7 @@ def main():
     generation.add_argument("--request", required=True)
     generation.add_argument("--state", required=True)
     generation.add_argument("--route", choices=list(SUBMISSIONS), default="/v1/videos")
+    generation.add_argument("--input-modality", choices=sorted(REASONER_MODALITIES))
     poll = commands.add_parser("resume")
     poll.add_argument("--state", required=True)
     poll.add_argument("--output-dir", required=True)
@@ -580,7 +660,9 @@ def main():
         client.request("DELETE", "/v1/storage/credentials/" + identifier(args.connection))
         print("Storage credentials revoked.")
     elif args.command == "submit":
-        state = submit(client, read_json(args.request), args.state, args.route)
+        if args.input_modality is not None and args.route != "/v1/reasoning":
+            raise ClientError("--input-modality is only valid with --route /v1/reasoning")
+        state = submit(client, read_json(args.request), args.state, args.route, args.input_modality)
         field = SUBMISSIONS[args.route]
         print(json.dumps({field: state[field], "status": "accepted"}))
     elif args.command == "resume":

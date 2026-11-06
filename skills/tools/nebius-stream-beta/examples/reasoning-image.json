@@ -1,0 +1,18 @@
+{
+  "model": "nvidia/Cosmos3-Super",
+  "prompt": "Describe the visible objects and their spatial relationships in this physical scene.",
+  "input": {
+    "connection_id": "REPLACE_WITH_INPUT_CONNECTION_ID",
+    "uri": "s3://REPLACE_WITH_BUCKET/REPLACE_WITH_IMAGE_KEY.png"
+  },
+  "output": {
+    "connection_id": "REPLACE_WITH_OUTPUT_CONNECTION_ID",
+    "prefix": "s3://REPLACE_WITH_BUCKET/REPLACE_WITH_OUTPUT_PREFIX"
+  },
+  "generation": {
+    "profile": "cosmos3-reasoner-chat-v1",
+    "max_tokens": 256,
+    "seed": 0,
+    "temperature": 0.0
+  }
+}

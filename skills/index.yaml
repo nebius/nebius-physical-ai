@@ -42,7 +42,7 @@ licenses:
 skills:
   - name: nebius-stream-beta
     category: tools
-    when_to_use: "Use an operator-supplied Nebius Stream beta HTTPS endpoint to discover Cosmos3 Nano/Super capabilities, register storage, transfer full-length videos with custom or multiple controls, individual weights and negative prompts, augment inventories, recover artifacts, and export customer-scoped usage."
+    when_to_use: "Use an operator-supplied Nebius Stream beta HTTPS endpoint to discover and submit qualified Cosmos3 Nano/Super Reasoner text, image, or video understanding jobs; register storage; transfer full-length videos with controls; augment inventories; recover verified artifacts; and export customer-scoped usage."
     path: skills/tools/nebius-stream-beta/SKILL.md
     smoke:
       - type: file_exists
@@ -53,6 +53,12 @@ skills:
         path: skills/tools/nebius-stream-beta/references/iteration.md
       - type: file_exists
         path: skills/tools/nebius-stream-beta/examples/structural-transfer.json
+      - type: file_exists
+        path: skills/tools/nebius-stream-beta/examples/reasoning-text.json
+      - type: file_exists
+        path: skills/tools/nebius-stream-beta/examples/reasoning-image.json
+      - type: file_exists
+        path: skills/tools/nebius-stream-beta/examples/reasoning-video.json
   - name: embodiedgen
     category: tools
     when_to_use: "Run or review EmbodiedGen V2 image-to-rigid-object generation through the operator-private TRELLIS runtime, exported URDF/collision geometry, PyBullet validation, and factual view artifacts."

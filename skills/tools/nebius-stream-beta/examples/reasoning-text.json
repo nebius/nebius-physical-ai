@@ -1,0 +1,16 @@
+{
+  "model": "nvidia/Cosmos3-Nano",
+  "prompt": "Describe the next observable step in this physical-scene task.",
+  "output": {
+    "connection_id": "REPLACE_WITH_OUTPUT_CONNECTION_ID",
+    "prefix": "s3://REPLACE_WITH_BUCKET/REPLACE_WITH_OUTPUT_PREFIX"
+  },
+  "generation": {
+    "profile": "cosmos3-reasoner-chat-v1",
+    "max_tokens": 256,
+    "seed": 0,
+    "temperature": 0.0,
+    "top_p": 1.0,
+    "top_k": -1
+  }
+}

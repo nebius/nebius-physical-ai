@@ -64,7 +64,8 @@ region before admitting output.
 ## Submission, polling and completion
 
 Generation uses durable asynchronous jobs. Send a validated JSON request to
-`POST /v1/videos`, `/v1/images`, `/v1/augmentations` or `/v1/transfers` with the bearer and
+`POST /v1/videos`, `/v1/images`, `/v1/augmentations`, `/v1/transfers`, or
+`/v1/reasoning` with the bearer and
 `Idempotency-Key` headers shown below. Successful admission returns HTTP
 **202 Accepted** with a job record. This is a simplified first-admission
 response, not a completed result:
@@ -85,7 +86,7 @@ Reusing the key with a different request returns HTTP 409.
 
 | Operation | Response and next step |
 | --- | --- |
-| `POST /v1/videos`, `/v1/images`, `/v1/augmentations` or `/v1/transfers` | HTTP 202 acknowledges admission; retain `job_id` and `status_url`. |
+| `POST /v1/videos`, `/v1/images`, `/v1/augmentations`, `/v1/transfers`, or `/v1/reasoning` | HTTP 202 acknowledges admission; retain `job_id` and `status_url`. |
 | `GET /v1/jobs/{job_id}` | Read the current job record; repeat while its status is active. |
 | `GET /v1/jobs/{job_id}/artifacts` | After `succeeded`, retrieve the published artifact manifest. |
 | `GET /v1/jobs/{job_id}/artifacts/{artifact_name}` | Retrieve a manifest-listed file and verify its SHA-256. |
@@ -162,6 +163,49 @@ requests. The current HTTP contract does not expose a synchronous
 `wait=true` request field, a held-open submission response or a long-poll
 endpoint. Do not add undocumented fields; discover the running contract
 before relying on any future extension.
+
+## Reasoner text, image, and video understanding
+
+`/v1/reasoning` accepts an explicit `nvidia/Cosmos3-Nano` or
+`nvidia/Cosmos3-Super` model. It is a candidate-only exact Reasoner operation,
+not a Generator fallback. Before admission, the portable client verifies that
+authenticated discovery exposes `reasoning_understanding`, the fixed
+`cosmos3-reasoner-chat-v1` profile, the declared input modality, text output,
+required guardrails, and qualified/implemented/exposed runtime evidence. If
+any of those is absent, it exits before POST. The running endpoint remains the
+authority; these examples do not assert that either model is available.
+
+The complete request examples live in
+[`../examples/reasoning-text.json`](../examples/reasoning-text.json),
+[`../examples/reasoning-image.json`](../examples/reasoning-image.json), and
+[`../examples/reasoning-video.json`](../examples/reasoning-video.json). They
+contain only replacement markers. Use one privately, and keep the modality
+outside the JSON body so the client never invents an API field:
+
+```bash
+python3 scripts/cosmos_client.py submit --route /v1/reasoning --input-modality text --request "$WMH_WORK_DIR/reasoning-text.json" --state "$WMH_WORK_DIR/reasoning-text-state.json"
+python3 scripts/cosmos_client.py submit --route /v1/reasoning --input-modality image --request "$WMH_WORK_DIR/reasoning-image.json" --state "$WMH_WORK_DIR/reasoning-image-state.json"
+python3 scripts/cosmos_client.py submit --route /v1/reasoning --input-modality video --request "$WMH_WORK_DIR/reasoning-video.json" --state "$WMH_WORK_DIR/reasoning-video-state.json"
+```
+
+Text has no `input`. Image and video use one owner-scoped staged object with
+the same `connection_id`/`uri` shape as other requests. The service—not this
+filename-independent client—verifies JPEG/PNG for image or MP4/Matroska for
+video, plus immutable object identity and content limits. All modes require
+`generation.profile: "cosmos3-reasoner-chat-v1"` and an explicit integer
+`max_tokens` from 1 through 65,536. `seed: 0` and `temperature: 0.0` are valid
+and preserved. Optional `top_p` is in `(0,1]`; `top_k` is `-1` or an integer at
+least 1. A video may select exactly one sampler: `video_fps` in `(0,30]` or
+`video_num_frames` from 1 through 512. Do not send either sampler for text or
+image, and do not send undocumented backend settings.
+
+On successful technical delivery, retrieve all manifest-listed artifacts with
+the ordinary `resume` path and SHA-256 verification. A returned Reasoner text
+may serve as a caption or physical-scene analysis, but does not establish
+correct grounding, physical validity, semantic evaluation, training quality,
+or automated Cosmos Evaluator/Curator behavior. A generation
+`technical_report` remains a separate decode/timeline report; do not label
+Reasoner text as that report.
 
 ## Full-source video-to-video
 

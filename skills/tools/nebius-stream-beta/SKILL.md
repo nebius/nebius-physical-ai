@@ -1,6 +1,6 @@
 ---
 name: nebius-stream-beta
-description: Use Nebius Stream beta through a supplied Cosmos3 HTTPS API independently to register customer S3 storage, discover Nano or Super capabilities, transfer full-length videos with custom or multiple controls, individual weights and negative prompts, run paired iterations, manage source inventories and batches, recover verified artifacts, and export owner-scoped usage. Explain native LeRobot import limits without requiring a private SDK, repository, Nebius CLI or SSH.
+description: Use Nebius Stream beta through a supplied Cosmos3 HTTPS API independently to discover and submit qualified Nano/Super Reasoner text, image, or video understanding jobs; register customer S3 storage; generate or transfer video; recover verified artifacts; and export owner-scoped usage. Explain native LeRobot import limits without requiring a private SDK, repository, Nebius CLI or SSH.
 ---
 
 # Nebius Stream beta
@@ -93,6 +93,44 @@ into the private working directory before replacing its placeholders. Then use
 `submit --route /v1/transfers` and the same durable `resume` workflow. The
 portable client, verified TLS, storage checks and recovery need no private SDK.
 
+## Cosmos3 Reasoner understanding
+
+`POST /v1/reasoning` is a separate, durable candidate route for an explicitly
+selected `nvidia/Cosmos3-Nano` or `nvidia/Cosmos3-Super` Reasoner. It is not a
+Generator fallback, Cosmos-Reason substitution, action controller, evaluator,
+training pipeline, or streaming guarantee. First save authenticated discovery
+and require the exact `reasoning_understanding` row to advertise the
+`cosmos3-reasoner-chat-v1` profile, requested `text`, `image`, or `video`
+modality, text output, guardrails, an implemented/exposed runtime, and
+`qualified` evidence. Route presence alone is not capability availability.
+
+Copy one complete placeholder-only request from
+[`examples/`](examples): `reasoning-text.json`, `reasoning-image.json`, or
+`reasoning-video.json`. Replace values only in a private mode-0600 work file.
+For media, register an owner-scoped input connection and stage one immutable
+JPEG/PNG or MP4/Matroska object before submitting. The server verifies its
+actual content type, object version/ETag, ownership, and output connection;
+the helper deliberately does not guess a modality from an object name. State
+the modality explicitly at the CLI boundary:
+
+```bash
+python3 scripts/cosmos_client.py submit --route /v1/reasoning --input-modality text --request "$WMH_WORK_DIR/reasoning-text.json" --state "$WMH_WORK_DIR/reasoning-text-state.json"
+python3 scripts/cosmos_client.py submit --route /v1/reasoning --input-modality image --request "$WMH_WORK_DIR/reasoning-image.json" --state "$WMH_WORK_DIR/reasoning-image-state.json"
+python3 scripts/cosmos_client.py submit --route /v1/reasoning --input-modality video --request "$WMH_WORK_DIR/reasoning-video.json" --state "$WMH_WORK_DIR/reasoning-video-state.json"
+python3 scripts/cosmos_client.py resume --state "$WMH_WORK_DIR/reasoning-video-state.json" --output-dir "$WMH_WORK_DIR/reasoning-video-results"
+```
+
+The fixed profile accepts explicit `max_tokens` (1–65,536), optional integer
+`seed` (including `0`), `temperature` (0–2), `top_p` in `(0,1]`, and `top_k`
+of `-1` or at least `1`. Video additionally accepts exactly one of
+`video_fps` `(0,30]` or `video_num_frames` (1–512); neither is valid for text
+or image. A completed job publishes technical artifacts such as
+`reasoning.json` and `metrics.json` when the running contract says so. The
+returned model text can be used as a caption or a physical-scene observation,
+but it is not a measurement, guaranteed visual grounding, technical report,
+or semantic/training-quality verdict. A generation `technical_report` only
+reports its own media decode/timeline criteria and is not a Reasoner score.
+
 ## Submission, polling and waiting
 
 Generation is asynchronous. HTTP 202 acknowledges admission and returns a
@@ -116,7 +154,9 @@ private SDK to use the portable client.
 
 Inspect the saved authenticated `/v1/models` and `/v1/openapi.json` contract.
 Choose Super or Nano explicitly; use a profile only when its running capability
-is exposed, implemented and qualified. The helper refuses unsupported profiles.
+is exposed, implemented and qualified. The helper refuses unsupported profiles
+and refuses a Reasoner image/video declaration that the authenticated model
+matrix has not qualified.
 Do not infer speech-to-text, text-to-speech, arbitrary reference audio, arbitrary
 shapes, full-source preservation, or action fidelity from a model name. An
 example is a schema illustration, not proof that a deployment serves it.
