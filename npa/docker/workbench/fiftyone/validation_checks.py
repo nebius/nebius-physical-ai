@@ -106,7 +106,7 @@ def _compatibility(versions: dict[str, str]) -> dict:
     floors = {
         "fiftyone": "1.21.0",
         "datasets": "5.0.1",
-        "pillow": "12.3.0",
+        "pillow": "13.0.0",
         "paramiko": "5.0.0",
         "starlette": "1.3.1",
     }

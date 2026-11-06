@@ -572,7 +572,8 @@ jobs:
           # disposable GitHub-hosted root volume. These runner-image SDKs are
           # unrelated to public image builds; never alter Docker state here.
           printf '%s\0' \
-            /usr/local/lib/android /usr/share/dotnet /usr/share/swift /opt/ghc | \
+            /usr/local/lib/android /usr/share/dotnet /usr/share/swift /opt/ghc \
+            /usr/local/.ghcup /usr/local/share/boost | \
             xargs -0 -r -n1 -P4 sudo rm -rf --
           df -h /
 

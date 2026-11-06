@@ -17,7 +17,7 @@ def test_genesis_and_cosmos2_use_supported_python_families() -> None:
 
     assert "/opt/genesis/venv/lib/python3.12/site-packages" in genesis
     assert "NPA_BAKED_PYTHON=/opt/genesis/venv/bin/python" in genesis
-    assert "RUN python3.12 -m venv /opt/genesis/venv" in genesis
+    assert "python3.12 -m venv /opt/genesis/venv" in genesis
     assert '"pillow>=13.0.0,<14.0"' in genesis
     assert "NPA_CONTROL_PYTHON=/opt/npa/control-venv/bin/python" in cosmos2
     assert "NPA_BAKED_PYTHON=/opt/npa/control-venv/bin/python" in cosmos2

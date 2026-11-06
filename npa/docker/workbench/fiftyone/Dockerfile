@@ -7,7 +7,7 @@ ARG BOTO3_VERSION=1.43.6
 ARG DATASETS_VERSION=5.0.1
 ARG HUGGINGFACE_HUB_VERSION=1.14.0
 ARG PYARROW_VERSION=24.0.0
-ARG PILLOW_VERSION=12.3.0
+ARG PILLOW_VERSION=13.0.0
 # FiftyOne 1.22's pinned Strawberry GraphQL release imports ExecutionContext,
 # which graphql-core 3.3 removed. Keep the compatible current 3.2 patch line
 # explicit so a future resolver update cannot produce an image that fails on
