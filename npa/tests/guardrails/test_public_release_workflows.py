@@ -336,7 +336,9 @@ def test_hosted_builds_reclaim_only_unused_runner_sdks_before_local_export() -> 
     assert names.index("Reclaim unused hosted-runner SDK space") < build
 
 
-def test_groot_build_streams_full_byte_gates_without_duplicate_archives() -> None:
+def test_large_snapshot_builds_stream_full_byte_gates_without_duplicate_archives() -> (
+    None
+):
     spec = _spec(PUBLISH)
     steps = spec["jobs"]["build-development"]["steps"]
     buildx = next(
@@ -347,7 +349,8 @@ def test_groot_build_streams_full_byte_gates_without_duplicate_archives() -> Non
     names = [str(step.get("name") or "") for step in steps]
 
     assert buildx["with"]["driver"] == (
-        "${{ matrix.tool == 'groot' && 'docker' || 'docker-container' }}"
+        '${{ contains(fromJSON(\'["groot", "sim2real-control", "rerun-viewer"]\'), '
+        "matrix.tool) && 'docker' || 'docker-container' }}"
     )
     assert (
         "--load"
@@ -398,7 +401,14 @@ def test_large_image_scan_reclaims_build_cache_and_reuses_large_volume() -> None
     sbom = text.index("Generate pre-publication SBOM")
     push = text.index("Push only after every pre-publication gate passes")
     assert prepare < scan < sbom < push
-    assert "docker buildx prune --all --force" in text[prepare:scan]
+    capacity = text[prepare:scan]
+    assert 'docker image inspect "$IMAGE" >/dev/null' in capacity
+    assert "docker buildx prune --all --force" in capacity
+    assert "docker system prune --all --force --volumes" in capacity
+    assert "RUNNER_ENVIRONMENT: ${{ runner.environment }}" in capacity
+    assert '[[ "$RUNNER_ENVIRONMENT" == github-hosted ]]' in capacity
+    assert capacity.count('docker image inspect "$IMAGE" >/dev/null') == 2
+    assert "docker system df" in capacity
     # Three pinned Trivy invocations reach the push: the CRITICAL policy scan,
     # the all-severity secret scan, and the SBOM. Every one of them must reuse
     # the large volume, the shared cache and the unbounded timeout.

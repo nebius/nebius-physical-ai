@@ -489,12 +489,12 @@ jobs:
 
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
         with:
-          # The containerized builder retains a complete construction cache while
-          # exporting --load, which exceeds the hosted root volume for GR00T.
-          # Docker's direct driver places the exact resulting image in the
-          # daemon store without a second BuildKit-to-Docker import; every
-          # runtime, complete-byte, and security gate below still reads it.
-          driver: ${{ matrix.tool == 'groot' && 'docker' || 'docker-container' }}
+          # These images exhausted the containerized BuildKit daemon while an
+          # immutable snapshot apt transaction was still running. Docker's
+          # direct driver keeps the exact tagged image in the daemon store
+          # without a second BuildKit-to-Docker import; every runtime,
+          # complete-byte, and security gate below still reads those bytes.
+          driver: ${{ contains(fromJSON('["groot", "sim2real-control", "rerun-viewer"]'), matrix.tool) && 'docker' || 'docker-container' }}
           version: ${{ matrix.tool == 'gymnasium-robotics' && 'v0.30.1' || '' }}
           driver-opts: ${{ matrix.tool == 'gymnasium-robotics' && 'image=moby/buildkit:v0.32.2@sha256:28a898719c18a33f4e8000685287fa36fd0dd9560c6440227d3a732d79bb41d8' || '' }}
 
@@ -952,15 +952,27 @@ jobs:
           rm -f "$RUNNER_TEMP/${TOOL}.tar" \
             "$RUNNER_TEMP/${TOOL}-cosmos3-ray-serve-payload.json"
 
-      # CUDA/AI images can exceed 25 GB. Once the exact loaded image passes its
-      # contract, BuildKit's duplicate cache is no longer evidence and can be
-      # discarded. Trivy's export goes on the hosted runner's large temp disk so
-      # the unchanged vulnerability/secret/license gates inspect every layer.
+      # CUDA/AI images can exceed 25 GB. Once the exact tagged image has passed
+      # its runtime and payload gates, unreferenced Docker state is no longer
+      # evidence and can be discarded. Keep the tagged image and prove it still
+      # exists before Trivy exports every layer to the large temporary volume.
       - name: Prepare capacity for full-image security scans
         if: matrix.tool != 'ncore'
+        env:
+          RUNNER_ENVIRONMENT: ${{ runner.environment }}
         run: |
+          set -euo pipefail
+          docker image inspect "$IMAGE" >/dev/null
           docker buildx prune --all --force
+          # A hosted Actions VM is dedicated to this one matrix job. Never
+          # prune Docker state on an operator-selected runner pool.
+          if [[ "$RUNNER_ENVIRONMENT" == github-hosted ]]; then
+            docker system prune --all --force --volumes
+          fi
+          docker image inspect "$IMAGE" >/dev/null
           sudo install -d -m 0777 /mnt/npa-trivy
+          docker system df
+          df -h / /mnt
 
       - name: Pre-publication vulnerability, secret, and license scan
         if: matrix.tool != 'ncore'
