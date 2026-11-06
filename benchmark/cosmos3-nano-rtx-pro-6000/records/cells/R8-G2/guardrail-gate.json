@@ -1,0 +1,62 @@
+{
+ "cell": "R8-G2",
+ "pre_timing_checks": {
+  "description": "Gate session: the eight guardrails-on services were started, checked, sent one seed-17 request on GPU 0, then removed; the timed R8-G2 services were started fresh afterwards.",
+  "gate_servers_logging_guardrails_initialized": 8,
+  "probe_seed17_output_bytes": 6901974,
+  "probe_size_in_guardrails_off_seed17_sizes": false
+ },
+ "timed_run_checks": {
+  "servers_logging_guardrails_initialized": 8,
+  "servers_launched_with_no_guardrails_flag": 0,
+  "max_memory_used_mib": {
+   "R8-H": 49477,
+   "R8-G2": 55700
+  },
+  "guardrails_off_output_sizes_by_seed": {
+   "17": [
+    6767064,
+    6892162,
+    6894463
+   ],
+   "23": [
+    7224249,
+    7242180,
+    7271724
+   ],
+   "41": [
+    7090886,
+    7212506,
+    7315020
+   ]
+  },
+  "guardrails_on_output_sizes_by_seed": {
+   "17": [
+    6788653,
+    6856980,
+    6893775,
+    6969814
+   ],
+   "23": [
+    7236875,
+    7248956,
+    7253593,
+    7277195
+   ],
+   "41": [
+    7092888,
+    7219821,
+    7262749,
+    7321699
+   ]
+  },
+  "guardrails_on_outputs_with_a_guardrails_off_size": 0
+ },
+ "not_recorded": "Per-request guardrail verdicts were not recorded; every R8-G2 request returned HTTP 200 with a valid clip.",
+ "guardrails_off_cells": [
+  "R8",
+  "R8-H",
+  "an unpublished guardrails-off repeat of R8"
+ ],
+ "deploy_config_change": "model_config.guardrails: false -> true (records/deploy/cosmos3_omni_guardrails_on.yaml)"
+}
