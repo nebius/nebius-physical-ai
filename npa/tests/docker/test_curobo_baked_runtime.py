@@ -151,9 +151,9 @@ def test_full_distro_source_and_notice_closure_is_baked_and_byte_bound():
             {"sha256": selected["sha256"], "size": selected["size"]}
         ]
     assert binding["final_dpkg_database_sha256"] == source["final_dpkg_database_sha256"]
-    assert len(source["packages"]) == 250
+    assert len(source["packages"]) == 251
     assert len(source["dpkg_databases"]) == 4
-    assert len(source["notice_files"]) == 164
+    assert len(source["notice_files"]) == 165
     assert len(source["sources"]) == 143
     sources = {(row["package"], row["version"]) for row in source["sources"]}
     vendor = {
@@ -172,7 +172,14 @@ def test_full_distro_source_and_notice_closure_is_baked_and_byte_bound():
             assert artifact["bytes"] > 0
             assert len(bytes.fromhex(artifact["sha256"])) == 32
     notices = {row["path"]: row for row in source["notice_files"]}
-    assert len(notices) == 164
+    assert len(notices) == 165
+    assert {
+        "package": "xz-utils",
+        "version": "5.6.1+really5.4.5-1ubuntu0.3",
+        "source": "xz-utils",
+        "source_version": "5.6.1+really5.4.5-1ubuntu0.3",
+    } in source["packages"]
+    assert "usr/share/doc/xz-utils/copyright" in notices
     for row in source["vendor_source_exceptions"]:
         assert row["notice_path"] in notices
     for row in notices.values():

@@ -25,17 +25,17 @@
   "distro_source_closure": {
     "manifest": {
       "path": "usr/share/doc/npa-curobo/distro-source-closure.json",
-      "size": 254274,
-      "sha256": "f081e15c524b9ac1136a0d445aaf10dfdbd581ad8d1d48f6215d3d40b309ec46"
+      "size": 254785,
+      "sha256": "203045d1ce2e37aaa1c5554befbc64c75b9cdaa9c05940c58bbedd962f7918d2"
     },
     "package_databases": [
       {
-        "sha256": "0ce00bd079c818b83dbfb708ffdea15d8faa1e68cea0fb5b12e06f5349ed3fed",
-        "size": 183034,
-        "package_count": 194
+        "sha256": "344fcf532a966d02baa210044e1f5b4782a550ead45a2be334fe69aec1dce65d",
+        "size": 184519,
+        "package_count": 195
       }
     ],
-    "final_dpkg_database_sha256": "0ce00bd079c818b83dbfb708ffdea15d8faa1e68cea0fb5b12e06f5349ed3fed",
+    "final_dpkg_database_sha256": "344fcf532a966d02baa210044e1f5b4782a550ead45a2be334fe69aec1dce65d",
     "copyright_files": [
       {
         "path": "usr/share/doc/adduser/copyright",
@@ -1827,6 +1827,17 @@
           {
             "size": 1420,
             "sha256": "c58cb5a2d94f35f0e9b0f1a038d48b73477aa12782ff17328c21d8a86f5f99d5"
+          }
+        ]
+      },
+      {
+        "path": "usr/share/doc/xz-utils/copyright",
+        "size": 15465,
+        "sha256": "a2dc8fac0f496e1c58aff67018cf0c6b88336316afa5642f9335b71642e28aa8",
+        "ancestor_versions": [
+          {
+            "size": 15465,
+            "sha256": "a2dc8fac0f496e1c58aff67018cf0c6b88336316afa5642f9335b71642e28aa8"
           }
         ]
       },
