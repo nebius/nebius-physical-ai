@@ -4,8 +4,8 @@ torch==2.14.0
 # and CVE-2026-112940.
 filelock>=4.2.1
 # Reject setuptools releases affected by GHSA-xmj3-9gf7-h52w.
-# Reject the OAuthLib releases affected by CVE-2026-49264 and CVE-2026-49265.
-oauthlib>=4.0.0
+# Reject the OAuthLib releases affected by CVE-2026-49264, CVE-2026-49265, and CVE-2026-49272.
+oauthlib>=4.0.1
 # Keep Flask's Windows safe_join dependency above CVE-2026-102598.
 werkzeug>=3.1.9
 # Exclude aiohttp resource-exhaustion releases through 3.14.3 in CI.

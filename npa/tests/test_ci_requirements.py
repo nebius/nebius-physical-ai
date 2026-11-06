@@ -35,7 +35,7 @@ def test_committed_ci_pins_match_dependency_inputs() -> None:
 
 
 def test_oauthlib_security_floor_is_locked() -> None:
-    """Keep the CI environment above the two oauthlib 3.3.1 vulnerabilities."""
+    """Keep the CI environment above the known oauthlib vulnerabilities."""
 
     constraints = [
         Requirement(line)
@@ -46,7 +46,7 @@ def test_oauthlib_security_floor_is_locked() -> None:
     ]
     oauthlib_constraint = next(item for item in constraints if item.name == "oauthlib")
     assert Version("3.3.1") not in oauthlib_constraint.specifier
-    assert Version("4.0.0") in oauthlib_constraint.specifier
+    assert Version("4.0.1") in oauthlib_constraint.specifier
 
     pins = [
         Requirement(line)
@@ -57,7 +57,7 @@ def test_oauthlib_security_floor_is_locked() -> None:
     ]
     oauthlib_pin = next(item for item in pins if item.name == "oauthlib")
     assert str(oauthlib_pin.specifier).startswith("==")
-    assert Version(str(oauthlib_pin.specifier).removeprefix("==")) >= Version("4.0.0")
+    assert Version(str(oauthlib_pin.specifier).removeprefix("==")) >= Version("4.0.1")
 
 
 @pytest.mark.parametrize(

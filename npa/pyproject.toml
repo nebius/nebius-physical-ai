@@ -46,8 +46,8 @@ dependencies = [
     # Official API client matched to the production Kubernetes 1.33 cluster.
     # Sim2Real uses typed Job/Pod conditions instead of parsing kubectl prose.
     "kubernetes==36.0.3",
-    # Exclude OAuth transport versions affected by CVE-2026-49264/49265.
-    "oauthlib>=4.0.0",
+    # Exclude OAuth transport versions affected by CVE-2026-49264/49265/49272.
+    "oauthlib>=4.0.1",
     "numpy>=1.24",
     "pyarrow>=23.0.1",
     # Pillow 13 is the scanner-recognized secure line and requires Python 3.11.
