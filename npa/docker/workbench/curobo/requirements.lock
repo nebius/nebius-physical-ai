@@ -2377,9 +2377,9 @@ nvidia-nvvm==13.0.88 \
     --hash=sha256:c4376a291d72d22a315d9d2f69bdae8f8cd83a627f75bad395cee49a0fe65dc1 \
     --hash=sha256:c5f41ffeb6466944a026dfa5317d7d85355c119bbec279205d22f1869d1054e0
     # via cuda-toolkit
-oauthlib==4.0.0 \
-    --hash=sha256:624c28c13a0a59cabf9747dfa52af63be3e512a7f2714df16e91b5b3a145e6cd \
-    --hash=sha256:efb274799819440f95b4ab3b818869f1ce9ae26c5beacba0201d1a1b76b54f86
+oauthlib==4.0.1 \
+    --hash=sha256:3d73febdb6faa00f277c81fb04be7b7586fb96fc3b7f0b9c772dada69a25ede7 \
+    --hash=sha256:498a298876e996301950a5b053d12c31628bb7b895db03666430c69ce182eb61
     # via
     #   -r npa/docker/workbench/curobo/requirements.in
     #   npa (npa/pyproject.toml)

@@ -24,6 +24,8 @@ from .npa_workflow_live_helpers import (
     live_credential_markers,
     materialize_live_spec,
     parse_json_payload,
+    plan_only_immutable_image_args,
+    plan_only_immutable_image_overrides,
 )
 
 pytestmark = [
@@ -316,6 +318,8 @@ def test_live_golden_full_cli_on_real_bucket(
     assume = assume_decision_for(name)
     if assume:
         plan_args.extend(["--assume-decision", assume])
+    image_args = plan_only_immutable_image_args(load_spec(path).config)
+    plan_args.extend(image_args)
     plan = RUNNER.invoke(app, plan_args)
     plan_payload = parse_json_payload(plan, forbidden_markers)
     assert plan_payload["steps"], name
@@ -333,6 +337,7 @@ def test_live_golden_full_cli_on_real_bucket(
     ]
     if assume:
         run_args.extend(["--assume-decision", assume])
+    run_args.extend(image_args)
     run = RUNNER.invoke(app, run_args)
     run_payload = parse_json_payload(run, forbidden_markers)
     assert run_payload.get("scheduler", {}).get("tasks"), name
@@ -351,6 +356,7 @@ def test_live_golden_persist_manifest_on_real_s3(
     run_id = f"live-persist-{name.replace('.yaml', '')}"
     path = materialize_live_spec(tmp_path, name, bucket=bucket, run_id=run_id)
     spec = load_spec(path)
+    spec.config.update(plan_only_immutable_image_overrides(spec.config))
     prefix = str(spec.config.get("prefix") or run_id)
     store = _live_store(e2e_project, bucket=bucket, prefix=prefix)
 
@@ -394,6 +400,7 @@ def test_live_dynamic_golden_loop_back_cli(
             "--assume-decision",
             "loop_back",
             "--json",
+            *plan_only_immutable_image_args(load_spec(path).config),
         ],
     )
     payload = parse_json_payload(result, forbidden_markers)

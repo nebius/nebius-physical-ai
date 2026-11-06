@@ -6,7 +6,7 @@ nvidia-cuda-runtime>=13,<14
 importlib_resources
 networkx
 numpy-quaternion
-oauthlib==4.0.0
+oauthlib==4.0.1
 setuptools_scm>=6.2
 tqdm
 trimesh
