@@ -1,10 +1,20 @@
 {
-  "schema_version": "groot-n15-public-proof/v1",
-  "evidence_scope": "sanitized public summary; raw logs and checkpoint remain private",
-  "executed_source": {
-    "npa_commit": "d2216cfd33708cc8c91b8cd8dda5bd642595058f",
-    "native_n15_commit": "4af2b622892f7dcb5aae5a3fb70bcb02dc217b96",
-    "provenance_note": "The private bootstrap log records checkout of this NPA commit. An earlier private runner metadata constant reported 819b2d0f; that stale constant is not used as execution provenance."
+  "schema_version": "groot-n15-public-proof/v2",
+  "evidence_scope": "Sanitized public summary of one completed task-owned workflow run. Raw logs, storage locations, run configuration, and model weights remain private.",
+  "public_files": {
+    "html": "index.html",
+    "mp4": "offline-prediction.mp4",
+    "historical_short_proof": "historic-32-step-proof.html",
+    "historical_short_proof_receipt": "historic-32-step-proof-receipt.json"
+  },
+  "workflow": {
+    "api_version": "npa.workflow/v0.0.1",
+    "checked_in_path": "workflows/testing/groot-n15-offline-rl.yaml",
+    "checked_in_sha256": "6f9c4eb6404b1193b5ddecc8cb7d5c7d8de90d4da0d15a0c7adfdcecda30b8aa",
+    "executed_override_sha256": "72b80113b17752e711c2754e8cb4872d25fa107d09f8b57a08064793280d6cb3",
+    "source_staging_sha256": "f32e7d76c236a0e2b677e0f5ae3ed9729dfb8ce02f21fcb9d632e041df91cb3f",
+    "execution": "Completed through the generic Workbench workflow submit path. The private invocation supplied only run-owned storage and recovery overrides; no live identifiers are published here.",
+    "durable_readback": "verified"
   },
   "public_input": {
     "dataset": "youliangtan/so101-table-cleanup",
@@ -12,39 +22,117 @@
     "dataset_license": "Apache-2.0",
     "base_model": "nvidia/GR00T-N1.5-3B",
     "base_model_revision": "869830fc749c35f34771aa5209f923ac57e4564e",
-    "base_model_license": "NVIDIA One-Way Noncommercial License (March 2022)"
+    "native_groot_revision": "4af2b622892f7dcb5aae5a3fb70bcb02dc217b96",
+    "model_weights": "Runtime-fetched and private; not redistributed."
   },
   "data": {
-    "episodes": 80,
-    "episode_metadata_frames": 46963,
-    "info_total_frames": 47513,
-    "train": {"episodes": 64, "frames": 42325},
-    "eval": {"episodes": 16, "frames": 4638},
-    "grouping": "one group per episode; source metadata does not document collection sessions",
-    "video": {
-      "source_codec": "av1",
-      "derivative_codec": "h264",
-      "source_video_count": 160,
-      "derivative_video_count": 160,
-      "sample": "640x480, 30 fps, 855 frames",
-      "limitation": "The H.264 derivative is lossy; it preserves recorded video identity, frame count, resolution, and frame rate, not source pixels."
+    "grouping": "one group per episode",
+    "split": "contiguous tail: 64 train episodes / 16 held-out episodes",
+    "train_frames": 42325,
+    "held_out_frames": 4638,
+    "prepared_dataset_sha256": "cd21eaaa88f198aaded784311d001e686b1d0cf97df8281f427dd272a859fbea",
+    "prepared_manifest_sha256": "ec0a4e351021601ab6e42bafa88d5a0133fd2a53b318440f73f6e0f39402c6d9",
+    "modality_mapping": {
+      "native_data_config": "so100_dualcam",
+      "front_camera": "video.front",
+      "wrist_camera": "video.wrist",
+      "action_horizon": 16,
+      "action_dimensions": 6,
+      "decoder": "decord with a documented H.264 derivative"
+    },
+    "normalization": "Native min/max statistics frozen from the training split only; predictions inverse-transformed before metrics.",
+    "feedback": {
+      "mode": "uniform",
+      "objective": "uniform behavior cloning",
+      "weights": {"minimum": 1.0, "maximum": 1.0, "mean": 1.0},
+      "recorded_outcomes_or_progress_supplied": false
     }
   },
   "training": {
-    "objective": "uniform behavior cloning",
-    "observed_outcomes_supplied": false,
-    "weights": {"minimum": 1.0, "maximum": 1.0, "mean": 1.0},
-    "optimizer_steps": 32,
-    "training_loss": 0.6053695208393037,
-    "held_out_eval_loss": 0.7027613520622253,
-    "optimizer_trace": {"count": 32, "first": {"step": 1, "loss": 1.0653}, "last": {"step": 32, "loss": 0.2961}},
-    "cuda": {"visible_devices": 1, "capability": [12, 0], "bf16_supported": true},
-    "terminal_mask": {"valid_steps": 1, "masked_steps": 15, "decoded": {"video.front": [1,480,640,3], "video.wrist": [1,480,640,3]}},
-    "checkpoint_reload": {"verified": true, "model_class": "GR00T_N1_5", "action_dim": 32, "action_horizon": 16, "checkpoint_sha256": "54a4b50a0ebd676bb66453b0f2a63fad9da340a5e63c39d1da7aa8be098db540"},
-    "action_decoder_changed": true
+    "complete_train_passes": 1,
+    "batch_size": 4,
+    "required_optimizer_steps": 10582,
+    "observed_optimizer_steps": 10582,
+    "recovery_lineage": "The completed full-pass candidate was retained from the same task-owned workflow recovery lineage after an earlier evaluation defect, then reloaded for the complete held-out evaluation and publication. It was not duplicated as a second training allocation.",
+    "sampler": "native Trainer random sampler without replacement per epoch",
+    "learning_rate": 0.0001,
+    "seed": 42,
+    "loss_trace": {
+      "count": 10582,
+      "finite": true,
+      "minimum": 0.0019,
+      "maximum": 2.6326,
+      "samples": [
+        {"step": 1, "loss": 1.0385}, {"step": 962, "loss": 0.0636},
+        {"step": 1924, "loss": 0.071}, {"step": 2886, "loss": 0.0947},
+        {"step": 3848, "loss": 0.0908}, {"step": 4810, "loss": 0.0544},
+        {"step": 5772, "loss": 0.0653}, {"step": 6734, "loss": 0.0564},
+        {"step": 7696, "loss": 0.0583}, {"step": 8658, "loss": 0.0063},
+        {"step": 9620, "loss": 0.0149}, {"step": 10582, "loss": 0.0019}
+      ]
+    },
+    "held_out_native_loss": 0.08355839550495148,
+    "terminal_mask": {
+      "valid_horizon_steps": 1,
+      "masked_horizon_steps": 15,
+      "decoded_observation_shapes": {"video.front": [1, 480, 640, 3], "video.wrist": [1, 480, 640, 3]}
+    },
+    "runtime": {
+      "visible_cuda_devices": 1,
+      "device": "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+      "cuda": "12.8",
+      "torch": "2.7.1+cu128",
+      "flash_attention": "2.8.3",
+      "bf16_supported": true,
+      "compute_capability": [12, 0],
+      "sm_120_in_runtime_arch_list": true
+    },
+    "checkpoint": {
+      "candidate_sha256": "fee4002a595c9fe055fb6ac13a877e8636064e69cae24c407390aa4519907137",
+      "candidate_tree_sha256": "fefff53aa33d2b05a4e9cc55d03dc4e1b39ded2363e790a7688d94f2bffae0b8",
+      "reload_verified": true,
+      "native_model_class": "GR00T_N1_5",
+      "model_action_channels": 32,
+      "action_horizon": 16,
+      "action_decoder_changed": true
+    }
+  },
+  "held_out_offline_comparison": {
+    "episodes": 16,
+    "frames": 4638,
+    "valid_action_values": 433728,
+    "inference": "One native baseline and candidate get_action call per recorded observation, using the same per-frame diffusion seed 1701.",
+    "action_coordinates": "Raw source dataset coordinates; physical units are not declared by source metadata.",
+    "baseline": {"mae": 45.68220138549805, "mse": 3440.96728515625},
+    "candidate": {"mae": 8.554325103759766, "mse": 181.7137908935547},
+    "baseline_checkpoint_sha256": "94246f9e18a967f8f6db28736fb40b8c395895c12a93feb40454053903ed23ed",
+    "candidate_checkpoint_sha256": "fee4002a595c9fe055fb6ac13a877e8636064e69cae24c407390aa4519907137"
+  },
+  "video": {
+    "file": "offline-prediction.mp4",
+    "sha256": "9458d86bfe2484fdc0ab08047ebf2901ab75aa88848fa22da9bd17493882a666",
+    "ffprobe": {"codec": "h264", "width": 960, "height": 720, "fps": "30/1", "decoded_frames": 120},
+    "clip": {"held_out_episode": 64, "start_frame": 0, "frame_count": 120},
+    "independent_inspection": "Frames 0, 60, and 119 were decoded and visually checked. They show public recorded front/wrist observations, recorded action targets, and baseline/candidate offline prediction curves. The overlay explicitly says that this is not a rollout."
+  },
+  "durable_artifacts": {
+    "pipeline_html_sha256": "246fbe11ee35e87fc0ad36221dd7f7ee38d37529c45c5b4e19e507c86ac340d7",
+    "evaluation_json_sha256": "8b3d418d560726aeddc050b35fc462a6a961197ad2558590a49b550731fa0db6",
+    "media_validation_sha256": "af46d2c7f1e33770a70c8131ee78fd611e77000612dd6d0c92a813e738e89529",
+    "heldout_actions_sha256": "c1d85a923e71fad43f86130515e21e1c799bc8dd4c2a5cb002b22b129f965840",
+    "training_receipt_sha256": "a51d67662b9ab6a3863e900c38350286be853ccd48ccf28875d42d2778abaa2a",
+    "published_html": "index.html",
+    "published_html_is": "The pipeline-generated self-contained HTML plus this factual training-evidence section; the exact pipeline HTML hash above remains the durable artifact identity."
+  },
+  "review_history": {
+    "claude_review_invocations": 1,
+    "claude_reviewed_head": "477e6561ba745822eff244d491e5775c2c6303ff",
+    "note": "The one historical Claude Code review did not review this workflow/proof head. See claude-review-disposition.json."
   },
   "limitations": [
-    "No success/failure labels, measured progress, or synthetic label perturbation was used.",
-    "This does not establish reward discrimination, policy improvement, physical-robot success rates, deployment readiness, or safety."
+    "Recorded observation video is an offline input, not a generated policy rollout; no predicted next states or robot motion are shown.",
+    "No simulator or physical-robot evaluation was performed or claimed; a simulator was not required for this offline learning inspection.",
+    "Lower held-out action error does not establish robot success, safety, deployment readiness, reward discrimination, or real-world policy improvement.",
+    "No outcomes, success/failure labels, measured progress, or synthetic label perturbations were used."
   ]
 }

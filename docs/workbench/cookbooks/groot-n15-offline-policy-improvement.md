@@ -22,6 +22,26 @@ not promote N1.5 into the N1.7 image or command surface. The four standard
 runtime stages are public-input preparation, native training, whole held-out
 native inference/video evidence, and independent durable readback.
 
+### Completed public RTX proof
+
+The reproducible workflow has completed one full native pass on a single RTX
+PRO 6000 Blackwell GPU. The public evidence is a self-contained
+[offline HTML proof](../evidence/groot-n15-offline-rl-public-proof/index.html),
+the exact [offline-prediction MP4](../evidence/groot-n15-offline-rl-public-proof/offline-prediction.mp4),
+and its [sanitized receipt](../evidence/groot-n15-offline-rl-public-proof/proof-receipt.json).
+It records 10,582 finite optimizer updates for 42,325 training frames and
+whole-held-out native baseline/candidate `get_action` prediction for 4,638
+frames. The measured action MAE is 45.6822 for the base checkpoint and 8.5543
+for the candidate in raw dataset coordinates. This is an offline prediction
+metric, not a robot-success or policy-improvement claim.
+
+The video uses held-out public front and wrist observations, with recorded
+targets and actual native predictions plotted on the same frames. It is not a
+rollout and shows no generated next state or predicted robot motion. A simulator
+is therefore unnecessary for this inspection; a simulator or hardware trial is
+still required to make any closed-loop outcome claim. The earlier 32-step proof
+is retained beside this evidence as historical qualification only.
+
 The checked-in defaults pin `youliangtan/so101-table-cleanup` at a public
 Apache-2.0 revision and N1.5 source/model revisions. The model weights are
 fetched only in the worker and are neither committed nor included in the HTML.
