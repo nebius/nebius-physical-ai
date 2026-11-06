@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import builtins
 import hashlib
 import json
 from pathlib import Path
@@ -467,6 +468,16 @@ def test_missing_external_prepared_inputs_fail_before_public_download(
             return False
 
     monkeypatch.setattr(workflow, "S3Store", Store)
+    original_import = builtins.__import__
+
+    def reject_huggingface_import(name: str, *args: object, **kwargs: object) -> object:
+        if name == "huggingface_hub":
+            raise AssertionError(
+                "external prepared inputs must be rejected before download"
+            )
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", reject_huggingface_import)
     args = SimpleNamespace(
         workspace=tmp_path / "workspace",
         prepare_commit_uri="s3://bucket/old/prepare-commit.json",

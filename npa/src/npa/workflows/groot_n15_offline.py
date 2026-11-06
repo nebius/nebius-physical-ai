@@ -868,13 +868,6 @@ def _has_external_prepared_prefix(args: argparse.Namespace) -> bool:
 def _prepare(args: argparse.Namespace) -> dict[str, Any]:
     """Fetch public bytes, materialize the codec derivative, and bind feedback."""
 
-    from huggingface_hub import snapshot_download
-    from npa.workbench.groot.offline_feedback import (
-        dataset_digest,
-        file_digest,
-        prepare_feedback,
-    )
-
     stage = _new_directory(Path(args.workspace).resolve() / "prepare")
     store = S3Store()
     reused = _reuse_prepared_inputs(args, store, stage)
@@ -886,6 +879,13 @@ def _prepare(args: argparse.Namespace) -> dict[str, Any]:
         raise WorkflowArtifactError(
             "required prepared inputs are missing or unreadable; refusing to overwrite them"
         )
+    from huggingface_hub import snapshot_download
+    from npa.workbench.groot.offline_feedback import (
+        dataset_digest,
+        file_digest,
+        prepare_feedback,
+    )
+
     raw = stage / "raw-dataset"
     derivative = stage / "h264-dataset"
     snapshot_download(
