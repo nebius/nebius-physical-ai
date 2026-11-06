@@ -56,6 +56,7 @@ encord  Register S3 media with Encord SaaS and materialize curated results.
 scenario-gen  Adversarial scenario generation: mine hard scenarios that fail a policy-under-test (pluggable Isaac Lab RL backend; deterministic default).
 dataset  Dataset-of-record: ingest, validate, curate, and query production sensor data.
 insights  Insights: lineage graph + common metrics store over workflow-run artifacts.
+intrinsic  Intrinsic Core host-only, read-only validation: preflight, ICON status, and digital-twin reachability (mutating operations not exposed).
 vlm-eval  VLM evaluation for sim-to-real pipeline gating.
 token-factory  Nebius Token Factory hosted inference (zero-GPU, OpenAI-compatible).
 access  Configure Workbench accounts, allocations, connections, and service access.
@@ -120,6 +121,7 @@ golden-eval  Per-container golden-eval / hello-world reruns.
 | `scenario-gen` | Adversarial scenario generation: mine hard scenarios that fail a policy-under-test (pluggable Isaac Lab RL backend; deterministic default). |
 | `dataset` | Dataset-of-record: ingest, validate, curate, and query production sensor data. |
 | `insights` | Insights: lineage graph + common metrics store over workflow-run artifacts. |
+| `intrinsic` | Intrinsic Core host-only, read-only validation: preflight, ICON status, and digital-twin reachability (mutating operations not exposed). |
 | `vlm-eval` | VLM evaluation for sim-to-real pipeline gating. |
 | `token-factory` | Nebius Token Factory hosted inference (zero-GPU, OpenAI-compatible). |
 | `access` | Configure Workbench accounts, allocations, connections, and service access. |
