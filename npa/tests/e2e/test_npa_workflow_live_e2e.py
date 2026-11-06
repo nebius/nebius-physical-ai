@@ -20,6 +20,8 @@ from .npa_workflow_live_helpers import (
     live_credential_markers,
     materialize_live_spec,
     parse_json_payload,
+    plan_only_immutable_image_args,
+    plan_only_immutable_image_overrides,
     resolve_spec_path,
 )
 
@@ -44,6 +46,7 @@ def test_live_npa_workflow_specs_plan(name: str, forbidden_markers: list[str]) -
     """Ensure golden specs load and expand on the operator machine."""
 
     spec = load_spec(resolve_spec_path(name))
+    spec.config.update(plan_only_immutable_image_overrides(spec.config))
     validate_spec(spec)
     assume = assume_decision_for(name) or "promote_checkpoint"
     plan = build_plan(spec, run_id="live-spec-check", assume_decision=assume)
@@ -79,6 +82,8 @@ def test_live_npa_workflow_cli_validate_and_plan(
     assume = assume_decision_for(name)
     if assume:
         plan_args.extend(["--assume-decision", assume])
+    image_args = plan_only_immutable_image_args(load_spec(path).config)
+    plan_args.extend(image_args)
     plan = RUNNER.invoke(app, plan_args)
     plan_payload = parse_json_payload(plan, forbidden_markers)
     assert plan_payload["steps"], name
@@ -95,6 +100,7 @@ def test_live_npa_workflow_cli_validate_and_plan(
     ]
     if assume:
         run_args.extend(["--assume-decision", assume])
+    run_args.extend(image_args)
     run = RUNNER.invoke(app, run_args)
     run_payload = parse_json_payload(run, forbidden_markers)
     assert run_payload["steps"], name
@@ -118,6 +124,7 @@ def test_live_dynamic_specs_loop_back_plan(
             "--assume-decision",
             "loop_back",
             "--json",
+            *plan_only_immutable_image_args(load_spec(path).config),
         ],
     )
     payload = parse_json_payload(plan, forbidden_markers)
@@ -144,6 +151,7 @@ def test_live_golden_scheduler_json_no_leak(
     assume = assume_decision_for(name)
     if assume:
         args.extend(["--assume-decision", assume])
+    args.extend(plan_only_immutable_image_args(load_spec(path).config))
     result = RUNNER.invoke(app, args)
     payload = parse_json_payload(result, forbidden_markers)
     assert payload.get("scheduler", {}).get("tasks"), name

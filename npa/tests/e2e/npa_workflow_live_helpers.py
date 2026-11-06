@@ -25,7 +25,7 @@ import json
 import os
 import re
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Iterable, Mapping
 from urllib.parse import urlparse
 
 import httpx
@@ -56,6 +56,7 @@ ISAAC_ARENA_REPLAY_MEMBER = (
 )
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SPECS_DIR = REPO_ROOT / "workflows"
+_PLAN_ONLY_WORKFLOW_IMAGE = "registry.example.invalid/workflow-smoke@sha256:" + "0" * 64
 # CC0 photograph by Lav Varshney; see skills/NOTICE-PAIDF-STARTER-MEDIA.
 _PAIDF_CAMERA_REVISION = "e8a42ba85aaf5fd9322ef9ca51bc21063b22fcae"
 _PAIDF_CAMERA_URL = (
@@ -65,6 +66,37 @@ _PAIDF_CAMERA_URL = (
 _PAIDF_CAMERA_SHA256 = (
     "b0793d2adda0fa6ae899c03989482bff9a42d3d5690fc7e3648f2795d730c23a"
 )
+
+
+def plan_only_immutable_image_overrides(config: Mapping[str, Any]) -> dict[str, str]:
+    """Return inert exact-image inputs for a plan that never executes.
+
+    Canonical specs may deliberately leave required operator image roles blank.
+    A plan-only harness must still bind every declared role to exercise the
+    immutable-image validator, without treating an unreachable fixture image as
+    a runnable default.
+    """
+
+    required = config.get("required_immutable_images", [])
+    if not isinstance(required, list) or not all(
+        isinstance(key, str) and key for key in required
+    ):
+        raise ValueError(
+            "required_immutable_images must be a list of non-empty strings"
+        )
+    return {key: _PLAN_ONLY_WORKFLOW_IMAGE for key in required}
+
+
+def plan_only_immutable_image_args(config: Mapping[str, Any]) -> list[str]:
+    """Render :func:`plan_only_immutable_image_overrides` as CLI arguments."""
+
+    return [
+        argument
+        for key, image in plan_only_immutable_image_overrides(config).items()
+        for argument in ("--var", f"{key}={image}")
+    ]
+
+
 # A tiny, valid 64x64 H.264/MP4 clip generated from ffmpeg's deterministic
 # testsrc2 source. Keeping the bytes in the test harness makes input seeding
 # independent of an operator host's ffmpeg installation while the live worker

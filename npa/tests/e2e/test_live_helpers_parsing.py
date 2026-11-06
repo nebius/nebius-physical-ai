@@ -84,3 +84,37 @@ def test_live_bucket_prefers_explicit_e2e_bucket(
     )
 
     assert helpers.live_bucket("project") == "project-owned-live"
+
+
+def test_plan_only_image_fixture_binds_every_declared_role() -> None:
+    helpers = _helpers()
+    config = {
+        "required_immutable_images": ["controller_image", "viewer_image"],
+    }
+
+    overrides = helpers.plan_only_immutable_image_overrides(config)
+    args = helpers.plan_only_immutable_image_args(config)
+
+    assert set(overrides) == {"controller_image", "viewer_image"}
+    assert set(overrides.values()) == {
+        "registry.example.invalid/workflow-smoke@sha256:" + "0" * 64
+    }
+    assert args == [
+        "--var",
+        f"controller_image={overrides['controller_image']}",
+        "--var",
+        f"viewer_image={overrides['viewer_image']}",
+    ]
+
+
+@pytest.mark.parametrize(
+    "required",
+    ["controller_image", ["controller_image", ""], ["controller_image", 3]],
+)
+def test_plan_only_image_fixture_rejects_malformed_role_declarations(required) -> None:
+    helpers = _helpers()
+
+    with pytest.raises(ValueError, match="required_immutable_images"):
+        helpers.plan_only_immutable_image_overrides(
+            {"required_immutable_images": required}
+        )
