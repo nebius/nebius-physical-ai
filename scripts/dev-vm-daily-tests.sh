@@ -168,6 +168,12 @@ ensure_venv() {
 }
 
 load_live_e2e_environment() {
+  # The VM's existing cloud environment selects the Nebius CLI profile and
+  # control-plane tooling. It deliberately clears global S3 settings, so load
+  # it before the exact-project live environment below restores the dedicated
+  # S3 scope used by the daily checks.
+  # shellcheck source=/dev/null
+  [[ -f "${HOME}/bin/npa-cloud-env.sh" ]] && . "${HOME}/bin/npa-cloud-env.sh"
   local live_env="${HOME}/.npa/live-e2e.env"
   [[ -f "$live_env" ]] \
     || die "live infrastructure tiers require the VM-scoped ${live_env}"
