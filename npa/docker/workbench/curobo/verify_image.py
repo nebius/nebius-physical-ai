@@ -188,11 +188,16 @@ def _clean_root_findings(config, layers, contract, layer_identities):
         raise ImageVerificationError("unsupported clean-root runtime contract")
     findings = []
     # BuildKit may encode WORKDIR after COPY as this exact empty gzip/tar.
-    # Both compressed bytes and the verified uncompressed diff ID are pinned:
-    # an arbitrary empty tar, hidden gzip metadata, or a whiteout is not allowed.
+    # Docker's classic store materializes the same tar uncompressed. Both stored
+    # encodings and the verified uncompressed diff ID are pinned: arbitrary empty
+    # tars, hidden gzip metadata, and whiteouts remain disallowed.
+    empty_metadata_layers = (
+        expected["optional_empty_metadata_layer"],
+        expected["optional_empty_metadata_layer_classic"],
+    )
     canonical_empty_tail = (
         len(layers) == expected["layer_count"] + 1
-        and layer_identities[-1] == expected["optional_empty_metadata_layer"]
+        and layer_identities[-1] in empty_metadata_layers
     )
     if len(layers) != expected["layer_count"] and not canonical_empty_tail:
         findings.append({"code": "clean_root_layer_population_mismatch"})

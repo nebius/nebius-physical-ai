@@ -12,6 +12,11 @@
     "blob_bytes": 32,
     "diff_id": "sha256:5f70bf18a086007016e948b04aed3b82103a36bea41755b6cddfaf10ace3c6ef"
   },
+  "optional_empty_metadata_layer_classic": {
+    "blob_sha256": "5f70bf18a086007016e948b04aed3b82103a36bea41755b6cddfaf10ace3c6ef",
+    "blob_bytes": 1024,
+    "diff_id": "sha256:5f70bf18a086007016e948b04aed3b82103a36bea41755b6cddfaf10ace3c6ef"
+  },
   "config": {
     "User": "ubuntu",
     "ExposedPorts": {
