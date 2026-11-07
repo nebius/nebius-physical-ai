@@ -188,7 +188,9 @@ def test_custom_native_layout_requires_declared_raw_columns(tmp_path: Path) -> N
         )
 
 
-def test_custom_native_layout_rejects_string_language_annotations(tmp_path: Path) -> None:
+def test_custom_native_layout_rejects_string_language_annotations(
+    tmp_path: Path,
+) -> None:
     data = tmp_path / "data" / "chunk-000"
     data.mkdir(parents=True)
     pd.DataFrame(
