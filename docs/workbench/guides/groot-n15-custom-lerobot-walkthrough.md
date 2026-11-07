@@ -27,11 +27,14 @@ The workflow accepts only worker-readable `s3://` locations.
 | Adapter configuration JSON | The extension's source mappings, selected camera/state/action fields, split and annotation protocol | The adapter must produce a native LeRobot v2.0/v2.1 layout plus `meta/modality.json`. |
 | Runtime model/source pins | Exact GR00T repository/model revisions | Source and weights are fetched only in the worker. |
 
-The custom code is installed with `pip --no-deps --no-compile --target` after its
-archive digest is checked. Runtime dependencies remain owned by the pinned
-runtime image and native bootstrap. The adapter receives only a JSON request
-with controlled input/output paths and must return those exact paths; it cannot
-redirect output to an arbitrary location.
+The custom code is installed with
+`pip --no-deps --no-build-isolation --no-compile --target` after its archive
+digest is checked. Both runtime dependencies and package build tooling must
+already be present in the selected runtime image; an archive that needs an
+undeclared build dependency fails instead of resolving it from a package index.
+The adapter receives only a JSON request with controlled input/output paths and
+must return those exact paths; it cannot redirect output to an arbitrary
+location.
 
 ### Reference rehearsal profile
 

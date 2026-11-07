@@ -2,6 +2,7 @@
 
 import hashlib
 from pathlib import Path
+import sys
 import tarfile
 
 import numpy as np
@@ -92,6 +93,7 @@ def test_installs_and_invokes_only_declared_hash_bound_extension(tmp_path: Path)
         feedback_callable="reference_extension.adapter:feedback",
     )
     installed = install_external_code(archive, spec, tmp_path / "installed")
+    assert "--no-build-isolation" in installed.receipt["install"]
     request = {
         "schema_version": "npa.groot-custom-adapter-request/v1",
         "output_dataset_root": "/run/dataset",
@@ -106,6 +108,44 @@ def test_installs_and_invokes_only_declared_hash_bound_extension(tmp_path: Path)
         "feedback_path": "/run/feedback.json",
         "has_adapter_result": True,
     }
+
+
+def test_external_code_install_disables_build_isolation(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    archive = _archive_extension(tmp_path)
+    spec = ExternalCodeSpec(
+        archive_sha256=hashlib.sha256(archive.read_bytes()).hexdigest(),
+        package="reference_extension",
+        adapter_callable="reference_extension.adapter:adapt",
+        feedback_callable="reference_extension.adapter:feedback",
+    )
+    commands: list[list[str]] = []
+
+    def install_only_from_runtime(command, **_kwargs):
+        commands.append(command)
+        target = Path(command[command.index("--target") + 1])
+        (target / "reference_extension").mkdir(parents=True)
+
+    monkeypatch.setattr(
+        "npa.workbench.groot.custom_inputs.subprocess.run", install_only_from_runtime
+    )
+    install_external_code(archive, spec, tmp_path / "installed")
+
+    assert commands == [
+        [
+            sys.executable,
+            "-m",
+            "pip",
+            "install",
+            "--no-deps",
+            "--no-build-isolation",
+            "--no-compile",
+            "--target",
+            str(tmp_path / "installed" / "site"),
+            str(tmp_path / "installed" / "source" / "reference-extension"),
+        ]
+    ]
 
 
 def test_rejects_digest_mismatch_and_archive_path_escape(tmp_path: Path):

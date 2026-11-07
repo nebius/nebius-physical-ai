@@ -282,12 +282,19 @@ def install_external_code(
         "pip",
         "install",
         "--no-deps",
+        "--no-build-isolation",
         "--no-compile",
         "--target",
         str(target),
         str(project),
     ]
-    subprocess.run(command, check=True, capture_output=True, text=True)
+    try:
+        subprocess.run(command, check=True, capture_output=True, text=True)
+    except subprocess.CalledProcessError as exc:
+        raise ValueError(
+            "external-code archive must build using only the selected runtime "
+            "image's installed build tooling"
+        ) from exc
     if not (target / spec.package.split(".")[0]).exists():
         raise ValueError("declared external package was not installed")
     receipt = {
@@ -296,7 +303,10 @@ def install_external_code(
         "package": spec.package,
         "adapter_callable": spec.adapter_callable,
         "feedback_callable": spec.feedback_callable,
-        "install": "pip install --no-deps --no-compile --target <run-local>",
+        "install": (
+            "pip install --no-deps --no-build-isolation --no-compile "
+            "--target <run-local>"
+        ),
     }
     return InstalledExternalCode(project, target, receipt)
 
