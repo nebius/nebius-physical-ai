@@ -28,7 +28,7 @@ config:
   runtime_image: "nvcr.io/nvidia/cuda@sha256:ad6d59a3bbf3e82c1c849c9ac09cfc2a3e0bbb8655042fd899be6681b3fe2a85"
   runtime_workspace: /workspace/groot-n15
   accelerator: RTXPRO6000:1
-  gpu_cpus: "20"
+  gpu_cpus: "16"
   gpu_memory: 180Gi
 
   # Complete these source/code values through a run-specific override. They
