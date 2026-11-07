@@ -222,7 +222,25 @@ action targets in the declared coordinates; lower error is not robot success.
 For an interruption, first inspect the durable ledger and exact job status. Resume
 only the same `RUN_ID` and `WORKFLOW_ROOT` after its checkpoint/output contract
 is reconciled; never create a second job for the same prefix. The runtime refuses
-incompatible source, output, or checkpoint identities.
+incompatible source, output, or checkpoint identities. The default resume is
+deliberately non-relaunching:
+
+```bash
+npa/.venv/bin/npa workbench workflow submit "${SPEC}" --runtime \
+  --resume-run "${RUN_ID}" --project "${PROJECT_ALIAS}" \
+  --workflow-s3-uri "${WORKFLOW_ROOT}" --infra "k8s/<exact-context>" \
+  "${VAR_ARGS[@]}" --output-format json
+```
+
+It replays verified completed waves and reconciles the exact recorded managed
+job; it does not infer that an unavailable controller means the job is absent.
+Do **not** add `--retry-absent-in-flight` merely because a pod disappeared. That
+explicit recovery is permitted only after the generic status/ledger path proves
+the exact recorded managed-job identity absent *and* proves every unique
+declared output absent or incomplete while preserving any checkpoint fragments.
+If the controller is unavailable, retain the raw diagnostic and resume the same
+run after access is restored. Do not delete or replace a shared controller to
+recover one workflow.
 
 To rehearse the next feedback iteration, preserve the first archive and output
 prefix. Create a new immutable dataset and/or feedback archive revision, update
