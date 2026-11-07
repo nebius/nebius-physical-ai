@@ -361,6 +361,28 @@ def test_confidentiality_and_structural_findings_cannot_be_accepted(family):
 
 
 @pytest.mark.parametrize(
+    ("row", "code"),
+    [
+        (
+            {"type": "finding", "rule_id": "private_literal"},
+            "public_policy_confidentiality_fatal_literal",
+        ),
+        (
+            {"type": "finding", "rule_id": "pkcs12_payload"},
+            "public_policy_confidentiality_fatal_structural",
+        ),
+    ],
+)
+def test_public_fatal_receipt_discloses_only_safe_finding_category(
+    monkeypatch, row, code
+):
+    monkeypatch.setattr(P.A, "population", lambda _report, _rows: {})
+
+    with pytest.raises(W.ScanError, match=f"^{code}$"):
+        P.match_fresh_population({}, {}, lambda: iter([row]))
+
+
+@pytest.mark.parametrize(
     "mutation",
     ["incomplete", "helper_pending", "failure_code", "count_bool", "new_record_hash"],
 )

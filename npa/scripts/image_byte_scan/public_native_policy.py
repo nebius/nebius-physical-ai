@@ -240,7 +240,15 @@ def match_fresh_population(entries, report, rows):
     observed_ordinals = set()
     for row in row_pass():
         if row.get("type") == "finding":
-            raise W.ScanError("public_policy_confidentiality_fatal")
+            # Public CI must not disclose a detector rule, matched value, path,
+            # offset, or content hash.  This fixed category is enough to route a
+            # fatal result either to the protected literal-policy owner or to a
+            # structural-payload remediation, without making either finding
+            # acceptable.
+            category = (
+                "literal" if row.get("rule_id") == "private_literal" else "structural"
+            )
+            raise W.ScanError(f"public_policy_confidentiality_fatal_{category}")
         if row.get("type") != "record" or not row["findings"]:
             continue
         W.require(row["kind"] in KINDS, "public_policy_unsupported_record_kind")
