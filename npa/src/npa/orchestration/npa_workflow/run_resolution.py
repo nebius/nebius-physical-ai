@@ -160,9 +160,13 @@ def _state_from_uri(
     if normalized.endswith("/manifest.json"):
         normalized = normalized.removesuffix("/manifest.json")
     _bucket, prefix = parse_s3_uri(normalized)
-    if PAIDF_WORKFLOW_NAME in prefix.split("/") and prefix.rstrip("/").endswith(
-        f"/{run_id}"
-    ):
+    # Public workflow commands accept a run-root URI (``.../<run-id>``), while
+    # the durable control records live below its ``npa-workflow`` child.  Treat
+    # that exact trailing run ID as the documented shorthand for the control
+    # prefix for every workflow, not only the historical PAIDF layout.  A nested
+    # ``.../<run-id>/<workflow>`` URI remains unchanged because its tail is not
+    # the requested run ID.
+    if prefix.rstrip("/").endswith(f"/{run_id}"):
         normalized = f"{normalized}/npa-workflow"
     return resolve_workflow_s3_config(
         run_id=run_id,
@@ -318,6 +322,31 @@ def _attach_runtime_state(result: RunResolution, state: WorkflowS3Config) -> Non
     if active:
         result.job_id = str(active.get("job_id") or result.job_id)
         result.job_name = str(active.get("job_name") or result.job_name)
+
+
+def _runtime_has_active_attempt(payload: Mapping[str, Any]) -> bool:
+    """Return whether a validated runtime ledger records one active exact wave.
+
+    A resumed workflow can preserve an earlier terminal attempt in the local
+    project ledger while a later retry is running under the same run ID.  Only
+    a current runtime ledger with a non-terminal wave and both pieces of its
+    managed-job identity may supersede that historical terminal summary.
+    """
+
+    if str(payload.get("status") or "").lower() != "running":
+        return False
+    for wave in payload.get("waves") or []:
+        if not isinstance(wave, Mapping):
+            continue
+        if str(wave.get("status") or "").lower() in {
+            "succeeded",
+            "failed",
+            "cancelled",
+        }:
+            continue
+        if str(wave.get("job_id") or "") and str(wave.get("job_name") or ""):
+            return True
+    return False
 
 
 def _receipt_workflow(receipt: Mapping[str, Any]) -> dict[str, Any]:
@@ -640,7 +669,18 @@ def resolve_run(
     terminal_evidence = terminal_run_evidence(
         project=ledger_project, run_id=resolved_id
     )
-    if terminal_evidence:
+    if terminal_evidence and _runtime_has_active_attempt(result.runtime_state):
+        # A locally recorded terminal result remains historical evidence, but
+        # cannot hide a newer active retry that the exact durable runtime ledger
+        # binds to a distinct managed-job identity.
+        result.checks.append(
+            ResolutionCheck(
+                "project_run_terminal_ledger",
+                "skipped",
+                "historical terminal state does not override an active durable runtime attempt",
+            )
+        )
+    elif terminal_evidence:
         result.found = True
         result.source = "project_run_terminal_ledger"
         result.durable_terminal_state = str(

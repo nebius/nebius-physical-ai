@@ -4505,6 +4505,49 @@ def test_workflow_status_treats_successful_empty_queue_as_verified_absence(
     assert result.error == ""
 
 
+def test_workflow_status_kills_the_query_process_group_on_timeout(
+    monkeypatch, tmp_path
+) -> None:
+    """A forked SkyPilot status child cannot strand the workflow controller."""
+
+    sky_bin = _fake_sky(tmp_path)
+    monkeypatch.setattr(workflow_module, "ensure_skypilot_version", lambda path: path)
+    killed: list[tuple[int, object]] = []
+
+    class HungQuery:
+        pid = 731
+        returncode = -9
+
+        def __init__(self, *_args, **kwargs):
+            assert kwargs["start_new_session"] is True
+            self.calls = 0
+
+        def communicate(self, *, timeout):
+            self.calls += 1
+            if self.calls == 1:
+                raise subprocess.TimeoutExpired("sky", timeout, output="partial")
+            return "", ""
+
+    monkeypatch.setattr(workflow_module.subprocess, "Popen", HungQuery)
+    monkeypatch.setattr(
+        workflow_module.os,
+        "killpg",
+        lambda pid, signum: killed.append((pid, signum)),
+    )
+
+    result = workflow_status(
+        "42",
+        sky_bin=sky_bin,
+        timeout=1,
+        kill_process_group_on_timeout=True,
+    )
+
+    assert result.status == "UNKNOWN"
+    assert result.returncode == 124
+    assert "exceeded 1s" in result.error
+    assert killed == [(731, workflow_module.signal.SIGKILL)]
+
+
 @pytest.mark.parametrize(
     ("stdout", "stderr"),
     [

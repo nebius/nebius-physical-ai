@@ -1105,6 +1105,34 @@
       "source": {"url": "https://github.com/nebius/nebius-physical-ai/blob/c512452716e6deb4e1b898876e6ceab84044dfc6/npa/src/npa/workflows/sim_to_real.py", "revision": "c512452716e6deb4e1b898876e6ceab84044dfc6", "member": "npa/src/npa/workflows/sim_to_real.py"}
     },
     {
+      "sha256": "4a607aa7ed98e2210d16ed58867fb98ac98c1903dfc4959a9cb360792c83bde2",
+      "bytes": 142972,
+      "match_counts": {"credential_assignment": 10},
+      "reason": "NPA source references only operator-provided inputs, annotations, shell substitutions, and documented placeholders. The detector's named assignments are not an operational credential.",
+      "source": {"url": "https://github.com/nebius/nebius-physical-ai/blob/17acfed2ac137e32ae6fca5962398a0b8634f691/npa/src/npa/cli/main.py", "revision": "17acfed2ac137e32ae6fca5962398a0b8634f691", "member": "npa/src/npa/cli/main.py"}
+    },
+    {
+      "sha256": "6730b4c5750474184faf0e4508fb4beefc34013f206c56ff41d47d09fe3d9d51",
+      "bytes": 442936,
+      "match_counts": {"credential_assignment": 13},
+      "reason": "NPA source references only operator-provided inputs, annotations, shell substitutions, and documented placeholders. The detector's named assignments are not an operational credential.",
+      "source": {"url": "https://github.com/nebius/nebius-physical-ai/blob/17acfed2ac137e32ae6fca5962398a0b8634f691/npa/src/npa/cli/workbench/workflow/__init__.py", "revision": "17acfed2ac137e32ae6fca5962398a0b8634f691", "member": "npa/src/npa/cli/workbench/workflow/__init__.py"}
+    },
+    {
+      "sha256": "866b4b5a1a6e23ea19b6e7a910ffc1f29a3978a04d6cc15762b726fd231abd98",
+      "bytes": 81097,
+      "match_counts": {"credential_assignment": 10},
+      "reason": "NPA source references only operator-provided inputs, annotations, shell substitutions, and documented placeholders. The detector's named assignments are not an operational credential.",
+      "source": {"url": "https://github.com/nebius/nebius-physical-ai/blob/17acfed2ac137e32ae6fca5962398a0b8634f691/npa/src/npa/orchestration/npa_workflow/run_state.py", "revision": "17acfed2ac137e32ae6fca5962398a0b8634f691", "member": "npa/src/npa/orchestration/npa_workflow/run_state.py"}
+    },
+    {
+      "sha256": "36fc6e7231995d1b49a60e1e96e73a86f43e751b5e2b8632d572c2739314e5a8",
+      "bytes": 91831,
+      "match_counts": {"credential_assignment": 1},
+      "reason": "NPA source references only operator-provided inputs, annotations, shell substitutions, and documented placeholders. The detector's named assignments are not an operational credential.",
+      "source": {"url": "https://github.com/nebius/nebius-physical-ai/blob/b1b2f6073616a87c31a08d730d3784673ba1cb59/npa/src/npa/orchestration/npa_workflow/submit_matrix.py", "revision": "b1b2f6073616a87c31a08d730d3784673ba1cb59", "member": "npa/src/npa/orchestration/npa_workflow/submit_matrix.py"}
+    },
+    {
       "sha256": "96137275400f39510c9a533c6ad8a921e94266e664e7e09c9ad6ea9f23277c23",
       "bytes": 2057632,
       "match_counts": {

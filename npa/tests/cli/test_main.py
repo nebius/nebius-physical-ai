@@ -136,6 +136,69 @@ def test_version_flag_reports_package_version() -> None:
     assert result.stdout.strip() == f"npa {version('npa')}"
 
 
+def test_destroy_retain_project_requires_explicit_safe_shape() -> None:
+    result = runner.invoke(app, ["destroy", "--retain-project", "--yes"])
+
+    assert result.exit_code != 0
+    assert "requires exact --project and --operation-id" in result.output
+
+    result = runner.invoke(
+        app,
+        [
+            "destroy",
+            "--retain-project",
+            "--project",
+            "task",
+            "--operation-id",
+            "project-teardown-task-0000000000000000",
+            "--yes",
+            "--all",
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert "cannot be combined" in result.output
+
+
+def test_destroy_retain_project_delegates_only_after_explicit_confirmation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    called: dict[str, str] = {}
+
+    def _retain(*, project: str, operation_id: str) -> dict[str, str]:
+        called.update(project=project, operation_id=operation_id)
+        return {
+            "status": "retained",
+            "operation_id": operation_id,
+            "project": project,
+            "project_id": "project-task",
+        }
+
+    monkeypatch.setattr(
+        "npa.project_destroy.retain_recovery_required_project_teardown", _retain
+    )
+    result = runner.invoke(
+        app,
+        [
+            "destroy",
+            "--retain-project",
+            "--project",
+            "task",
+            "--operation-id",
+            "project-teardown-task-0000000000000000",
+            "--yes",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert called == {
+        "project": "task",
+        "operation_id": "project-teardown-task-0000000000000000",
+    }
+    assert json.loads(result.output)["status"] == "retained"
+
+
 @pytest.mark.parametrize("command", ["configure", "init"])
 def test_setup_guidance_commands_show_credentials_path(command: str) -> None:
     result = runner.invoke(app, [command])

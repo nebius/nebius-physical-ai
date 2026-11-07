@@ -99,6 +99,10 @@ _SUPERVISOR_RECOVERY_ACTIONS = frozenset(action.value for action in RecoveryActi
 
 DEFAULT_POLL_SECONDS = 30
 DEFAULT_MAX_WAIT_SECONDS = 3600
+# A query timeout is an observation health boundary, not a workload time limit.
+# It prevents an orphaned provider CLI child from pinning a durable controller;
+# the caller records UNKNOWN and reconciles the exact prior managed job.
+STATUS_QUERY_TIMEOUT_SECONDS = 120
 #: How many consecutive `sky jobs queue` failures to tolerate before giving up on a
 #: wave. A busy API server or a query timeout says nothing about the job itself, so
 #: transient errors must not orphan a running GPU job.
@@ -189,6 +193,27 @@ def _verified_absent_pre_id_attempt(
         item.get("state") == "absent"
         for item in record.get("reconciliation") or []
         if isinstance(item, Mapping)
+    )
+
+
+def _proven_interrupted_absence_with_incomplete_outputs(
+    attempt: WaveAttempt, record: Mapping[str, Any]
+) -> bool:
+    """Require narrow evidence before retaining incomplete output fragments.
+
+    This is deliberately stricter than ordinary explicit absent-job recovery.
+    A directory prefix can contain a partial producer upload after a worker was
+    interrupted, so treating *any* prefix content as a completed wave would
+    make that wave permanently unrecoverable. The caller may use this escape
+    hatch only after an operator opts in and the durable ledger proves the
+    exact job reached RUNNING before the scheduler reported it absent.
+    """
+
+    return (
+        str(record.get("status") or "") == "failed"
+        and attempt.status == "failed"
+        and _record_reached_running(record)
+        and "scheduler returned ABSENT" in str(record.get("error") or "")
     )
 
 
@@ -1334,7 +1359,11 @@ class SkyPilotWaveExecutor:
         category = str(record.get("error_category") or "")
         decision = str(record.get("recovery_decision") or "")
         if category == "operator_recovery":
-            return decision == "operator_authorized_verified_absent_relaunch"
+            return decision in {
+                "operator_authorized_verified_absent_relaunch",
+                "operator_authorized_interrupted_absent_relaunch_"
+                "with_incomplete_outputs",
+            }
         return category in {
             "kubernetes_transport",
             "kubernetes_rate_limit",
@@ -2385,6 +2414,50 @@ class SkyPilotWaveExecutor:
                     recovery_outputs
                 )
                 if not outputs_absent:
+                    outputs_complete = True
+                    if output_state == "present":
+                        try:
+                            outputs_complete = self._outputs_exist(recovery_outputs)
+                        except Exception:  # noqa: BLE001 - storage uncertainty fails closed
+                            outputs_complete = True
+                    if (
+                        output_state == "present"
+                        and not outputs_complete
+                        and _proven_interrupted_absence_with_incomplete_outputs(
+                            attempt, record
+                        )
+                    ):
+                        attempt.status = "failed"
+                        attempt.ended_at = utc_now()
+                        attempt.error_category = "operator_recovery"
+                        attempt.recovery_decision = (
+                            "operator_authorized_interrupted_absent_relaunch_"
+                            "with_incomplete_outputs"
+                        )
+                        attempt.reconciliation.append(
+                            {
+                                "outcome": "absent",
+                                "source": "exact_managed_job_reconciliation",
+                                "declared_outputs_complete": False,
+                                "incomplete_output_fragments_preserved": True,
+                                "checked_at": utc_now(),
+                            }
+                        )
+                        attempt.operator_remedy = (
+                            "The exact job was observed RUNNING before a scheduler "
+                            "ABSENT result and declared outputs remain incomplete; "
+                            "preserve the fragments and relaunch the same wave as a "
+                            "new durable attempt identity."
+                        )
+                        attempt.cancellation_state = "not_applicable"
+                        self.ledger.record(attempt)
+                        self._log(
+                            f"wave {key}: explicit recovery preserves incomplete "
+                            "durable fragments after a proven interrupted absent job; "
+                            "launching a new attempt"
+                        )
+                        self.attempts.pop()
+                        return None
                     attempt.status = "failed"
                     attempt.error = (
                         "explicit absent-job recovery refused because declared "
@@ -3342,6 +3415,8 @@ class SkyPilotWaveExecutor:
             isolated_config_dir=self.options.isolated_config_dir,
             config_path=self.options.config_path,
             sky_bin=self.options.sky_bin,
+            timeout=STATUS_QUERY_TIMEOUT_SECONDS,
+            kill_process_group_on_timeout=True,
         )
 
     def _timeline(self, job_id: str) -> list[dict[str, Any]]:

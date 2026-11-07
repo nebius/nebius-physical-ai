@@ -30,6 +30,104 @@ _BENIGN_INVENTORY_DIAGNOSTIC = re.compile(
 )
 
 
+def retain_recovery_required_project_teardown(
+    *, project: str, operation_id: str
+) -> dict[str, str]:
+    """Close one explicit, failed project-deletion intent without deleting it.
+
+    This is deliberately narrower than normal teardown recovery.  It exists for
+    a task whose authority changed from deleting a disposable project to reusing
+    that exact project: it proves the project still exists at the journal's
+    immutable identity, records the retention disposition, and releases only
+    the obsolete lifecycle lease.  It never changes a cloud resource.
+
+    Args:
+        project: Configured alias for the exact retained project.
+        operation_id: Durable ``npa destroy`` operation to close.
+    Returns:
+        A non-secret identity summary of the terminalized operation.
+    Raises:
+        RuntimeError: The journal is not an eligible failed project teardown or
+            the currently configured project identity differs from it.
+    """
+
+    from npa.clients.config import resolve_environment
+    from npa.clients.nebius import get_project_identity
+    from npa.provisioning_journal import ProvisioningOperation
+
+    alias = str(project or "").strip()
+    if not alias:
+        raise RuntimeError(
+            "project retention requires an exact configured project alias"
+        )
+    operation = ProvisioningOperation(str(operation_id or "").strip())
+    payload = operation.read()
+    if (
+        payload.get("command") != "npa destroy"
+        or payload.get("resource_type") != "project-teardown"
+        or payload.get("phase") != "recovery-required"
+        or payload.get("last_error_type") != "PartialProjectTeardown"
+    ):
+        raise RuntimeError(
+            "project retention only closes a recovery-required partial npa destroy"
+        )
+    if str(payload.get("project_alias") or "") != alias:
+        raise RuntimeError("project retention alias differs from the teardown journal")
+    if any(payload.get(key) for key in ("resources", "config_mutations")):
+        raise RuntimeError(
+            "project retention refuses a teardown journal that recorded mutations"
+        )
+    environment = resolve_environment(alias)
+    if environment is None:
+        raise RuntimeError("project retention requires configured project identity")
+    project_id = str(getattr(environment, "project_id", "") or "")
+    tenant_id = str(getattr(environment, "tenant_id", "") or "")
+    region = str(getattr(environment, "region", "") or "")
+    if not project_id or not tenant_id or not region:
+        raise RuntimeError(
+            "project retention requires project, tenant, and region identity"
+        )
+    if (
+        project_id != str(payload.get("project_id") or "")
+        or tenant_id != str(payload.get("tenant_id") or "")
+        or region != str(payload.get("region") or "")
+    ):
+        raise RuntimeError(
+            "project retention identity differs from the teardown journal"
+        )
+    identity = get_project_identity(project_id, tenant_id=tenant_id)
+    if identity is None:
+        raise RuntimeError(
+            "project retention requires the exact project to remain present"
+        )
+    if str(getattr(identity, "region", "") or "") != region:
+        raise RuntimeError("provider project region differs from the teardown journal")
+
+    reason = "explicit project retention superseded the failed deletion intent"
+    operation.record_rollback(
+        attempted=False,
+        completed=True,
+        removed=[],
+        preserved=[
+            {
+                "resource_type": "nebius_project",
+                "provider_id": project_id,
+                "project_id": project_id,
+                "ownership": "retained_by_explicit_authorization",
+                "ownership_source": "project-retention-recovery",
+            }
+        ],
+        error=reason,
+    )
+    operation.transition("rolled-back", error=reason)
+    return {
+        "status": "retained",
+        "operation_id": operation.operation_id,
+        "project": alias,
+        "project_id": project_id,
+    }
+
+
 def _project_bucket_name(project_id: str, state_bucket: str) -> str:
     """Resolve storage only from state or exact project-scoped credentials."""
 

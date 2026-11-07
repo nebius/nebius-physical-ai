@@ -7,6 +7,7 @@ import os
 import re
 import hashlib
 import fcntl
+import signal
 import stat
 import shutil
 import subprocess
@@ -2670,6 +2671,60 @@ def submit_workflow(
         raise
 
 
+def _run_killable_status_query(
+    command: Sequence[str],
+    *,
+    environment: Mapping[str, str],
+    cwd: Path,
+    timeout: int,
+) -> subprocess.CompletedProcess[str]:
+    """Run one queue query without allowing a forked child to strand a runtime.
+
+    ``subprocess.run(..., timeout=...)`` kills only the direct ``sky`` process.
+    Some provider/client failures leave a descendant holding the captured output
+    pipe, which makes ``communicate`` wait forever after that kill.  The runtime
+    must be able to record the failed observation and recover its exact managed
+    job, so isolate this one status query in its own process group and terminate
+    the entire group on its deadline.
+    """
+
+    process = subprocess.Popen(
+        command,
+        env=environment,
+        cwd=cwd,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        start_new_session=True,
+    )
+    try:
+        stdout, stderr = process.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired as exc:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        try:
+            stdout, stderr = process.communicate(timeout=10)
+        except subprocess.TimeoutExpired:
+            # The direct process is already gone; do not let an uncooperative
+            # descendant hold the controller process forever.
+            stdout = exc.output or ""
+            stderr = exc.stderr or ""
+        raise subprocess.TimeoutExpired(
+            command,
+            timeout,
+            output=stdout,
+            stderr=stderr,
+        ) from exc
+    return subprocess.CompletedProcess(
+        command,
+        process.returncode,
+        stdout=stdout,
+        stderr=stderr,
+    )
+
+
 def workflow_status(
     job_id: str,
     *,
@@ -2679,8 +2734,15 @@ def workflow_status(
     controller_backend: ControllerBackend = DEFAULT_CONTROLLER_BACKEND,
     timeout: int = 300,
     environment: Mapping[str, str] | None = None,
+    kill_process_group_on_timeout: bool = False,
 ) -> WorkflowResult:
-    """Query a SkyPilot managed job status via `sky jobs queue`."""
+    """Query a SkyPilot managed job status via `sky jobs queue`.
+
+    Runtime callers opt into process-group cleanup because a controller must not
+    remain blocked indefinitely if a provider CLI child keeps its output pipe
+    open after its parent is killed.  The default preserves the lightweight
+    direct-query contract used by existing callers.
+    """
 
     del controller_backend
     runtime_config = resolve_config(
@@ -2705,16 +2767,32 @@ def workflow_status(
             runtime_config.isolated_config_dir, environment=environment
         )
     )
-    result = subprocess.run(
-        cmd,
-        env=status_environment,
-        cwd=_stable_sky_cwd(runtime_config.isolated_config_dir),
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        timeout=timeout,
-        check=False,
-    )
+    try:
+        if kill_process_group_on_timeout:
+            result = _run_killable_status_query(
+                cmd,
+                environment=status_environment,
+                cwd=_stable_sky_cwd(runtime_config.isolated_config_dir),
+                timeout=timeout,
+            )
+        else:
+            result = subprocess.run(
+                cmd,
+                env=status_environment,
+                cwd=_stable_sky_cwd(runtime_config.isolated_config_dir),
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=timeout,
+                check=False,
+            )
+    except subprocess.TimeoutExpired:
+        return WorkflowResult(
+            status="UNKNOWN",
+            job_id=job_id,
+            returncode=124,
+            error=f"managed-job status query exceeded {timeout}s",
+        )
     if is_verified_empty_queue_result(result):
         return WorkflowResult(
             status="ABSENT",

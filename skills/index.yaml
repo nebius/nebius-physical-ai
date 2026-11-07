@@ -761,6 +761,8 @@ skills:
     when_to_use: "GR00T model download, finetuning, evaluation, serving, inference, conversion, status, and routing."
     path: skills/tools/groot/SKILL.md
     smoke:
+      - type: file_exists
+        path: docs/workbench/cookbooks/groot-n15-offline-policy-improvement.md
       - type: cli_help
         args: ["workbench", "groot", "download", "--help"]
         contains: "model"
