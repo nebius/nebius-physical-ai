@@ -596,8 +596,10 @@ def _validate_custom_native_layout(
 
     The native N1.5 reader resolves each logical ``state.*`` or ``action.*``
     key through ``meta/modality.json`` and then slices the declared raw column.
-    Checking that relation here keeps malformed custom adapters from spending a
-    GPU bootstrap only to fail in the trainer with a generic ``KeyError``.
+    Its language reader likewise resolves an annotation to a numeric task index
+    and looks that index up in ``meta/tasks.jsonl``. Checking those relations
+    here keeps malformed custom adapters from spending a GPU bootstrap only to
+    fail in the trainer with an opaque native-reader exception.
     """
 
     import numpy as np
@@ -636,6 +638,27 @@ def _validate_custom_native_layout(
                 )
             raw_widths[raw_key] = max(raw_widths.get(raw_key, 0), end)
 
+    language_raw_keys: set[str] = set()
+    annotations = modality_payload.get("annotation")
+    if annotations is not None:
+        if not isinstance(annotations, dict) or not annotations:
+            raise WorkflowArtifactError(
+                "custom adapter annotation modality must be a nonempty map"
+            )
+        for name, entry in annotations.items():
+            if not isinstance(name, str) or not isinstance(entry, Mapping):
+                raise WorkflowArtifactError(
+                    "custom adapter annotation metadata is invalid"
+                )
+            raw_key = entry.get("original_key")
+            if not isinstance(raw_key, str) or not raw_key:
+                raise WorkflowArtifactError(
+                    f"custom adapter annotation.{name} lacks an original_key"
+                )
+            language_raw_keys.add(raw_key)
+
+    observed_task_indices: set[int] = set()
+
     for episode in episodes:
         index = int(episode["episode_index"])
         matches = list((dataset_root / "data").rglob(f"episode_{index:06d}.parquet"))
@@ -666,6 +689,53 @@ def _validate_custom_native_layout(
                 raise WorkflowArtifactError(
                     f"custom adapter raw {raw_key!r} does not satisfy its declared slice"
                 )
+        for raw_key in language_raw_keys:
+            if raw_key not in table.columns:
+                raise WorkflowArtifactError(
+                    "custom adapter native language layout is missing raw "
+                    f"{raw_key!r} for episode {index}"
+                )
+            values = np.asarray(table[raw_key].tolist())
+            if (
+                values.ndim != 1
+                or not np.issubdtype(values.dtype, np.integer)
+                or (values < 0).any()
+            ):
+                raise WorkflowArtifactError(
+                    "custom adapter native language annotations must resolve to "
+                    "nonnegative integer task indices; store task text in "
+                    "meta/tasks.jsonl and map annotation.original_key to that index"
+                )
+            observed_task_indices.update(int(value) for value in values)
+
+    if language_raw_keys:
+        tasks_path = dataset_root / "meta" / "tasks.jsonl"
+        if not tasks_path.is_file():
+            raise WorkflowArtifactError(
+                "custom adapter language annotations require meta/tasks.jsonl"
+            )
+        try:
+            task_rows = [
+                json.loads(line)
+                for line in tasks_path.read_text().splitlines()
+                if line.strip()
+            ]
+        except json.JSONDecodeError as error:
+            raise WorkflowArtifactError(
+                "custom adapter meta/tasks.jsonl is not valid JSONL"
+            ) from error
+        task_indices = {
+            row.get("task_index")
+            for row in task_rows
+            if isinstance(row, dict)
+            and type(row.get("task_index")) is int
+            and isinstance(row.get("task"), str)
+            and row["task"]
+        }
+        if observed_task_indices - task_indices:
+            raise WorkflowArtifactError(
+                "custom adapter language task indices are absent from meta/tasks.jsonl"
+            )
 
 
 def _custom_action_roundtrip_evidence(

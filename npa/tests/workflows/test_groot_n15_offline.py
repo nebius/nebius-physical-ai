@@ -188,6 +188,32 @@ def test_custom_native_layout_requires_declared_raw_columns(tmp_path: Path) -> N
         )
 
 
+def test_custom_native_layout_rejects_string_language_annotations(tmp_path: Path) -> None:
+    data = tmp_path / "data" / "chunk-000"
+    data.mkdir(parents=True)
+    pd.DataFrame(
+        {
+            "observation.state": [np.asarray([1.0], dtype=np.float32)],
+            "action": [np.asarray([2.0], dtype=np.float32)],
+            "annotation.human.task_description": ["push cube"],
+        }
+    ).to_parquet(data / "episode_000000.parquet")
+    modality = {
+        "state": {"arm": {"start": 0, "end": 1, "original_key": "observation.state"}},
+        "action": {"arm": {"start": 0, "end": 1, "original_key": "action"}},
+        "annotation": {
+            "human.task_description": {
+                "original_key": "annotation.human.task_description"
+            }
+        },
+    }
+
+    with pytest.raises(workflow.WorkflowArtifactError, match="integer task indices"):
+        workflow._validate_custom_native_layout(
+            tmp_path, modality, [{"episode_index": 0, "length": 1}]
+        )
+
+
 def test_custom_action_roundtrip_records_terminal_mask_and_declared_keys(
     tmp_path: Path,
 ) -> None:
