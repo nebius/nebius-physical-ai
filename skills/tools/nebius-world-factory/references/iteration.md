@@ -16,7 +16,7 @@ customer and traffic class; customers cannot set identity or classification
 through requests. Do not count synthetic customer demos as production adoption. Keys for two genuinely separate customers must have separate
 owners; two keys under one owner share that owner's resources.
 
-From the `skills/tools/nebius-stream-beta` directory (or its portable copy):
+From the `skills/tools/nebius-world-factory` directory (or its portable copy):
 
 ```bash
 umask 077
