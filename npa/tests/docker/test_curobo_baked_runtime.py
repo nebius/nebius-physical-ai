@@ -89,6 +89,11 @@ def test_clean_root_recipe_retains_measured_cuda_and_launch_configuration():
         "blob_bytes": 32,
         "diff_id": "sha256:" + hashlib.sha256(b"\x00" * 1024).hexdigest(),
     }
+    assert expected["optional_empty_metadata_layer_classic"] == {
+        "blob_sha256": hashlib.sha256(b"\x00" * 1024).hexdigest(),
+        "blob_bytes": 1024,
+        "diff_id": "sha256:" + hashlib.sha256(b"\x00" * 1024).hexdigest(),
+    }
     assert expected["platform"] == {"os": "linux", "architecture": "amd64"}
 
 
