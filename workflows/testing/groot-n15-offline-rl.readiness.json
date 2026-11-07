@@ -1,10 +1,10 @@
 {
   "schema_version": "workflow-readiness/v1",
-  "workflow_sha256": "6f9c4eb6404b1193b5ddecc8cb7d5c7d8de90d4da0d15a0c7adfdcecda30b8aa",
+  "workflow_sha256": "0a65fded16d5a4af3db9d7e43b18cddc719be282ba7a9662eb8ee57e55cbbbd6",
   "planning": {
     "validation": {
       "status": "verified",
-      "reason": "The compositional specification validates, resolves per-stage operation overlays, and production-renders four serial runtime tasks with digest-pinned CUDA input.",
+      "reason": "The compositional specification validates, resolves one generic external-code/data contract through four serial runtime tasks, trains matched ordinary-BC and feedback-weighted policies from the same base, and production-renders the digest-pinned CUDA image without materializing credentials.",
       "evidence": [
         "npa workbench workflow validate-spec workflows/testing/groot-n15-offline-rl.yaml --json",
         "npa workbench workflow plan-spec workflows/testing/groot-n15-offline-rl.yaml --run-id groot-n15-plan --var bucket=example-bucket --check-render --json",
@@ -13,11 +13,12 @@
     },
     "task_fidelity": {
       "status": "verified",
-      "reason": "Hermetic tests bind grouped public-data feedback, train-only statistics, terminal action masks, finite offline metric handling, native command contracts, reusable checkpoint identity, and standalone HTML embedding. They do not establish CUDA execution or policy improvement.",
+      "reason": "Hermetic tests bind safe content-addressed extension installation, observed outcome/progress/recovery feedback, collection-group isolation, train-only statistics, terminal action masks, matched ordinary-BC/control identity, finite offline metric handling, native command contracts, reusable checkpoint identity, and an offline HTML/gallery artifact contract. They do not establish CUDA execution or policy improvement.",
       "evidence": [
         "npa/tests/workflows/test_groot_n15_offline.py",
         "npa/tests/workbench/test_groot_offline_training.py",
-        "npa/tests/workbench/test_groot_offline_feedback.py"
+        "npa/tests/workbench/test_groot_offline_feedback.py",
+        "npa/tests/workbench/test_groot_custom_inputs.py"
       ]
     }
   },
@@ -29,7 +30,7 @@
     },
     "worker_input": {
       "status": "verified",
-      "reason": "The YAML pins a public Apache-2.0 LeRobot revision and the runtime requires immutable snapshot download, Parquet rows, decoded videos, and a documented H.264 derivative before training.",
+      "reason": "A run must explicitly provide a content-addressed worker-readable dataset archive, source/provenance document, action contract, trusted code archive/package/callables, structured feedback document, and recorded-gallery reference. The adapter must emit native LeRobot v2 bytes, decoded video, and a documented H.264 derivative before training.",
       "evidence": [
         "workflows/testing/groot-n15-offline-rl.yaml",
         "docs/workbench/cookbooks/groot-n15-offline-policy-improvement.md"

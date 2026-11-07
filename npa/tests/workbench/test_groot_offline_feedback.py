@@ -89,6 +89,137 @@ def test_dense_feedback_keeps_regression_and_recovery(feedback_inputs):
     assert manifest.episodes[1].weights[0] > 0
 
 
+def test_hybrid_document_preserves_observed_labels_and_regression(feedback_inputs):
+    root, _feedback, directory = feedback_inputs
+    document = {
+        "schema_version": "npa.groot-feedback/v2",
+        "label_protocol": "observed task outcome plus aligned source progress",
+        "label_provenance": "independent reference adapter",
+        "privacy_classification": "public",
+        "progress_contract": {
+            "units": "source progress fraction",
+            "direction": "higher is forward; decreases are retained",
+            "alignment": "one value per recorded frame",
+        },
+        "episodes": [
+            {
+                "episode_index": 0,
+                "split": "train",
+                "success": True,
+                "group": "session-a",
+                "collection_kind": "operator_demonstration",
+                "label_source": "observed",
+            },
+            {
+                "episode_index": 1,
+                "split": "train",
+                "success": False,
+                "group": "session-b",
+                "collection_kind": "recorded_failure",
+                "label_source": "observed",
+            },
+            {
+                "episode_index": 2,
+                "split": "train",
+                "group": "session-c",
+                "progress": [0.0, 0.8, 0.3],
+                "progress_source": "measured",
+                "collection_kind": "operator_recovery",
+                "tags": ["recovery"],
+                "label_source": "source progress",
+            },
+            {
+                "episode_index": 3,
+                "split": "eval",
+                "success": False,
+                "group": "session-d",
+                "collection_kind": "policy_rollout",
+                "label_source": "observed",
+            },
+        ],
+    }
+    feedback_path = directory / "hybrid-feedback.json"
+    feedback_path.write_text(json.dumps(document))
+    manifest = prepare_feedback(
+        root,
+        feedback_path,
+        directory / "hybrid-weights.json",
+        action_horizon=1,
+        mode="hybrid",
+    )
+    assert manifest.schema_version == "npa.groot-offline/v2"
+    assert manifest.episodes[0].success is True
+    assert manifest.episodes[1].collection_kind == "recorded_failure"
+    assert manifest.episodes[2].tags == ["recovery"]
+    assert manifest.episodes[0].weights[0] > manifest.episodes[1].weights[0]
+    assert manifest.episodes[2].weights[0] > manifest.episodes[2].weights[1]
+    assert manifest.episodes[3].weights == [1.0, 1.0, 1.0]
+
+
+def test_annotation_derived_progress_requires_aligned_values(feedback_inputs):
+    _, feedback, directory = feedback_inputs
+    feedback[0].update(progress=[0.5, 0.0, 1.0], progress_source="annotation_derived")
+    path = directory / "annotation-derived.json"
+    path.write_text(json.dumps(feedback))
+    manifest = prepare_feedback(
+        feedback_inputs[0],
+        path,
+        directory / "annotation-derived-weights.json",
+        action_horizon=1,
+        mode="outcome",
+    )
+    assert manifest.episodes[0].progress_source == "annotation_derived"
+
+
+def test_hybrid_requires_observed_positive_and_negative_training_examples(
+    feedback_inputs,
+):
+    root, _feedback, directory = feedback_inputs
+    document = {
+        "schema_version": "npa.groot-feedback/v2",
+        "label_protocol": "observed",
+        "label_provenance": "reference",
+        "privacy_classification": "public",
+        "episodes": [
+            {
+                "episode_index": 0,
+                "split": "train",
+                "success": True,
+                "group": "a",
+            },
+            {
+                "episode_index": 1,
+                "split": "train",
+                "group": "b",
+                "progress": [0.0, 0.5, 1.0],
+                "progress_source": "measured",
+            },
+            {
+                "episode_index": 2,
+                "split": "eval",
+                "success": True,
+                "group": "c",
+            },
+            {
+                "episode_index": 3,
+                "split": "eval",
+                "success": True,
+                "group": "d",
+            },
+        ],
+    }
+    feedback_path = directory / "missing-failure.json"
+    feedback_path.write_text(json.dumps(document))
+    with pytest.raises(ValueError, match="successful and failed"):
+        prepare_feedback(
+            root,
+            feedback_path,
+            directory / "missing-failure-weights.json",
+            action_horizon=1,
+            mode="hybrid",
+        )
+
+
 def test_uniform_mode_accepts_unlabeled_demonstrations(feedback_inputs):
     _, feedback, directory = feedback_inputs
     for episode in feedback:

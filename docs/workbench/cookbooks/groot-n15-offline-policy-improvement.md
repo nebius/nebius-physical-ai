@@ -6,116 +6,48 @@ feedback revision, prepare weights, train a candidate, evaluate matched robot
 trials, and collect the next revision. Robot operation and deployment remain
 operator controlled. No simulator or robot connection is required for training.
 
-This is a runtime-local research recipe, separate from Workbench's promoted
+This is an experimental Workbench workflow, separate from the promoted
 [N1.7 image and workflow](groot-1-7-training.md). It does not install N1.5 into
-that image or change `npa workbench groot finetune`. The Python entrypoint is
-`npa.workbench.groot.offline`, with `prepare`, `train`, and `compare` commands.
-`prepare_feedback`, `train_offline`, and `compare_rollouts` in the corresponding
-Workbench modules provide the same operations to Python callers.
+that image or change `npa workbench groot finetune`.
 
-## Declarative public-data workflow
+## Declarative custom-LeRobot workflow
 
-For a reproducible, public-data execution use
-[`workflows/testing/groot-n15-offline-rl.yaml`](../../../workflows/testing/groot-n15-offline-rl.yaml).
-It is experimental and deliberately remains under `workflows/testing/`; it does
-not promote N1.5 into the N1.7 image or command surface. The four standard
-runtime stages are public-input preparation, native training, whole held-out
-native inference/video evidence, and independent durable readback.
+[`workflows/testing/groot-n15-offline-rl.yaml`](../../../workflows/testing/groot-n15-offline-rl.yaml)
+is the reproducible unit: generic Workbench `validate-spec`, `plan-spec`,
+`submit`, `status`, `logs`, and `artifacts` operations execute its four serial
+stages. It accepts a trusted, content-addressed external code archive plus an
+operator-staged LeRobot archive. The external adapter writes the native v2
+dataset, the explicit one-camera/state/action modality, structured feedback, and
+an optional recovery gallery. It does not execute code selected from dataset
+metadata, infer licenses, or publish private inputs.
 
-### Completed public RTX proof
+The workflow creates two matched policies from the same foundation checkpoint,
+split, seed, batch size, and schedule: an ordinary behavior-cloning control and
+a feedback-weighted candidate. It evaluates foundation, control, and candidate
+on every declared held-out recorded observation, then reads each artifact back
+from durable storage. The accompanying
+[custom-LeRobot operator walkthrough](../guides/groot-n15-custom-lerobot-walkthrough.md)
+is the source of truth for the required override file, staged-input contract,
+feedback-iteration rehearsal, fail-closed examples, and factual gallery.
 
-The reproducible workflow has completed one full native pass on a single RTX
-PRO 6000 Blackwell GPU. The public evidence is an offline evidence bundle:
-open the [offline HTML proof](../evidence/groot-n15-offline-rl-public-proof/index.html)
-beside the co-located
-the exact [offline-prediction MP4](../evidence/groot-n15-offline-rl-public-proof/offline-prediction.mp4),
-and its [sanitized receipt](../evidence/groot-n15-offline-rl-public-proof/proof-receipt.json).
-It records 10,582 finite optimizer updates for 42,325 training frames and
-whole-held-out native baseline/candidate `get_action` prediction for 4,638
-frames. The measured action MAE is 45.6822 for the base checkpoint and 8.5543
-for the candidate in raw dataset coordinates. This is an offline prediction
-metric, not a robot-success or policy-improvement claim.
+No simulator or robot connection is required for ingestion, offline learning,
+or recorded-observation evidence. The gallery and MP4 are not rollouts: they
+show recorded frames, recorded action targets, and offline predictions only.
+Hardware trials remain required for next-state, success, safety, promotion, or
+deployment claims.
 
-The video uses held-out public front and wrist observations, with recorded
-targets and actual native predictions plotted on the same frames. It is not a
-rollout and shows no generated next state or predicted robot motion. A simulator
-is therefore unnecessary for this inspection; a simulator or hardware trial is
-still required to make any closed-loop outcome claim. The earlier 32-step proof
-is retained beside this evidence as historical qualification only.
+### Historical public uniform proof
 
-The checked-in defaults pin `youliangtan/so101-table-cleanup` at a public
-Apache-2.0 revision and N1.5 source/model revisions. The model weights are
-fetched only in the worker and are neither committed nor included in the HTML.
-The dataset's AV1 observations are retained as the raw source and converted to
-an H.264 derivative because the native N1.5 reader is configured for `decord`.
-The receipt binds sample source/derivative hashes and frame-count, size, and
-rate parity; it explicitly calls the derivative lossy.
-
-Validate and preview with an operator-owned bucket placeholder before allocating
-compute. `PROJECT_ALIAS` and `BUCKET` are local configuration values, not values
-to commit.
-
-```bash
-SPEC=workflows/testing/groot-n15-offline-rl.yaml
-RUN_ID=groot-n15-offline-public-001
-
-npa/.venv/bin/npa workbench workflow validate-spec "$SPEC" --json
-npa/.venv/bin/npa workbench workflow plan-spec "$SPEC" \
-  --run-id "$RUN_ID" --var bucket="$BUCKET" --check-render --json
-npa/.venv/bin/npa workbench workflow stage-src \
-  --project "$PROJECT_ALIAS" --bucket "$BUCKET" --run-id "$RUN_ID"
-npa/.venv/bin/npa workbench workflow submit "$SPEC" --runtime \
-  --project "$PROJECT_ALIAS" --run-id "$RUN_ID" \
-  --var bucket="$BUCKET" --var prefix="groot-n15-offline-rl/$RUN_ID" \
-  --secret-env AWS_ACCESS_KEY_ID --secret-env AWS_SECRET_ACCESS_KEY \
-  --output-format json
-```
-
-`--secret-env` forwards only the named values from the selected project's
-credential store (or the operator environment); it never places their values in
-the YAML, rendered plan, logs, or source tree. The two AWS names are needed by
-every stage that reads or writes the run-owned durable prefix. Preflight the
-selected model with `npa workbench health access --capability groot` rather than
-placing a model token in the YAML. A run that reuses a prepared prefix from a
-compatible earlier run needs the same read scope.
-
-Use the generic `status`, `logs`, and `artifacts` operations with the same run
-and project identity. A recoverable interruption must resume that run only after
-its durable ledger and checkpoint pointer are reconciled; do not submit a second
-run with the same output prefix.
-
-When a prior prepare wave has already written a complete prepare commit but the
-workflow cannot safely resume its immutable source identity, a sequential
-successor may keep its own `prefix` and set `prepared_prefix` to the prior
-prepared-input prefix. The prepare stage then downloads and hashes every durable
-prepared object plus its feedback, manifest, and provenance records before it
-returns; it fails closed if the pinned dataset revision, split, feedback mode,
-action horizon, codec, or native modality differs. This recovery path never
-overwrites a complete prior prepare artifact and is not a shortcut for partial
-outputs or a different dataset configuration. The selected runtime credentials
-must be able to read that prefix: an absent or unreadable external commit fails
-before any public download or codec conversion, rather than recreating it.
-
-The typed YAML customization surface includes public data/source/model revisions,
-feedback mode and worker-readable feedback URI, episode split counts, action
-horizon, native modality and embodiment, `decord` backend, codec provenance,
-batch/learning-rate/seed/pass schedule, checkpoint cadence and root, output
-prefix, reusable prepared-input prefix/mode, and held-out evidence clip selection.
-`outcome` and `progress` modes
-require supplied recorded labels/progress; uniform mode intentionally fabricates
-neither. The schedule computes `ceil(train_frames / batch_size)` per requested
-complete pass after the pinned data revision is materialized, rather than using a
-time-based step limit. The N1.5 adapter requires exactly one visible GPU; it
-does not use DataParallel or DDP.
-
-The resulting MP4 contains held-out **recorded** front/wrist observations, plus
-aligned recorded action targets and baseline/candidate native `get_action`
-predictions. It labels raw action-coordinate units when the source metadata does
-not declare physical units, uses the same per-frame diffusion seed for both
-models, and says prominently that it is offline prediction rather than a policy
-rollout. A simulator is not required for that evidence and is not constructed to
-manufacture success footage. Hardware trials remain necessary for robot success,
-next-state, deployment, or policy-improvement claims.
+The older public bundle remains available as historical qualification:
+[offline HTML proof](../evidence/groot-n15-offline-rl-public-proof/index.html),
+[MP4](../evidence/groot-n15-offline-rl-public-proof/offline-prediction.mp4), and
+[sanitized receipt](../evidence/groot-n15-offline-rl-public-proof/proof-receipt.json).
+It completed a native pass and held-out baseline/candidate inference on an
+unlabelled uniform-BC public reference. It is not evidence of outcome learning,
+custom-code import, continuous feedback, positive/negative examples, recovery
+learning, Cartesian action semantics, or customer data. The prior proof's
+source/licensing statements apply only to that bundle, never to a new operator
+input.
 
 ## Learning method and ARM boundary
 
@@ -132,13 +64,22 @@ For a contiguous action horizon H, the score at frame t is
 Negative gains receive less weight than positive gains; recovery segments in
 failed episodes can still receive substantial weight.
 
-Both modes exponentiate scores divided by `temperature` (default 1), using a
-stable shift by the maximum training score. Training weights are normalized to
-mean one across training frames. Evaluation labels never fit these statistics.
-Lower temperatures concentrate weight; extremely small values can zero out
-lower-score samples. The loss weights valid action elements and retains the
-effect of weights with batch size one. Recorded action values remain intact;
-actions beyond the recorded episode are excluded from the loss.
+The `hybrid` mode combines observed episode outcome with the explicit progress
+gain without converting a recovery tag into a failure label. It requires both
+observed successes and failures in the training split, preserves regressions,
+and keeps evaluation weights at one. Every non-uniform run also materializes a
+matched ordinary-BC control manifest: it retains the exact dataset, groups,
+split, action horizon, base checkpoint, seed, batch size, learning rate, and
+complete-pass schedule, changing only training weights to one.
+
+The feedback-weighted modes exponentiate scores divided by `temperature`
+(default 1), using a stable shift by the maximum training score. Training
+weights are normalized to mean one across training frames. Evaluation labels
+never fit these statistics. Lower temperatures concentrate weight; extremely
+small values can zero out lower-score samples. The loss weights valid action
+elements and retains the effect of weights with batch size one. Recorded action
+values remain intact; actions beyond the recorded episode are excluded from the
+loss.
 
 The `uniform` mode is ordinary, unweighted behavior cloning for demonstrations
 that have no recorded outcome or dense progress. Its feedback entries omit both
@@ -147,15 +88,21 @@ so a demonstration-only corpus is not relabelled as successful. It proves data
 and policy-training integration, not reward discrimination, policy improvement,
 or robot success.
 
-[ARM's authors](https://aiming1998.github.io/ARM/) describe relative-advantage
-reward modeling and GR00T N1.5 policy reweighting. Their
+[ARM's authors](https://aiming1998.github.io/ARM/) and their
 [implementation guide](https://github.com/FluxVLA/FluxVLA/blob/main/docs/arm.md)
-uses additional reward-model supervision and a different weighting rule. This
-recipe accepts ARM-produced progress with a reward-checkpoint digest; it does
-not train ARM, reproduce its weighting, or implement a learned critic, IQL, or
-CQL. Episode outcomes must never be interpolated into invented dense progress.
+describe tri-state interval advantage, causal context, learned reward
+reconstruction, and length-normalized advantage-weighted BC. The experimental
+workflow here is outcome/progress-weighted N1.5 BC, not ARM: it does not train
+or invoke the official ARM reward model or claim its weighting rule. It can
+accept ARM-produced progress only when the adapter supplies a reward-checkpoint
+digest. Episode outcomes must never be interpolated into invented dense progress.
 
 ## Inputs and prerequisites
+
+The remainder of this cookbook documents the lower-level runtime-local module
+contracts and historic evidence boundary. It is not an alternative to the
+generic YAML operator path; use the linked walkthrough for a supported custom
+run.
 
 - A dedicated environment with exactly one visible BF16-capable CUDA GPU. Runtime
   dependencies must follow the upstream

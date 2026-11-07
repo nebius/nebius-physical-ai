@@ -5,12 +5,14 @@ metadata:
   name: groot-n15-offline-rl
   executionMode: runtime
   description: >-
-    Experimental public LeRobot GR00T N1.5 offline training: immutable public
-    source download, documented H.264 derivative, episode-grouped split with
-    train-only normalization, complete native training passes, held-out native
-    baseline/candidate action inference, factual recorded-observation MP4 and
-    standalone HTML, then independent durable readback. It never performs a
-    simulator or robot rollout.
+    Experimental custom LeRobot GR00T N1.5 offline policy-improvement workflow:
+    an explicit trusted code archive adapts an immutable operator dataset and
+    feedback sidecar, freezes training-only normalization, completes matched
+    ordinary-BC and feedback-weighted native single-GPU schedules, compares
+    held-out actions against the foundation checkpoint, renders
+    factual labeled recorded-observation media, and independently reads every
+    declared output back. It never performs a simulator, robot rollout, or
+    automatic deployment.
 
 config:
   bucket: example-bucket
@@ -29,28 +31,43 @@ config:
   gpu_cpus: "20"
   gpu_memory: 180Gi
 
-  dataset_repository: youliangtan/so101-table-cleanup
-  dataset_revision: f9b5e3f004d4dceee8bc8efbaf55cd013e46b707
-  dataset_license: Apache-2.0
+  # Complete these source/code values through a run-specific override. They
+  # are worker-readable S3 URIs and content hashes, never credentials. The
+  # workflow refuses a partial custom-code contract and does not infer a
+  # license, privacy class, code module, labels, camera, or action schema from
+  # a dataset.
+  dataset_repository: ""
+  dataset_revision: ""
+  dataset_archive_uri: ""
+  input_provenance_uri: ""
+  action_contract_uri: ""
+  external_code_uri: ""
+  external_code_sha256: ""
+  external_code_package: ""
+  adapter_callable: ""
+  feedback_callable: ""
+  adapter_config_uri: ""
   model_repository: nvidia/GR00T-N1.5-3B
   model_revision: 869830fc749c35f34771aa5209f923ac57e4564e
   groot_repository: https://github.com/NVIDIA/Isaac-GR00T.git
   groot_revision: 4af2b622892f7dcb5aae5a3fb70bcb02dc217b96
-  groot_modality_path: "{{config.runtime_workspace}}/runtime/Isaac-GR00T/examples/SO-100/so100_dualcam__modality.json"
+  # A custom adapter writes the native modality contract into its prepared
+  # dataset. This legacy field is used only by an explicitly configured legacy
+  # public-reference invocation.
+  groot_modality_path: ""
 
-  # Uniform mode generates only split/group membership and unit weights. For
-  # outcome or progress modes, feedback_uri is required and must contain actual
-  # observed labels/progress under the feedback schema; this workflow never
-  # invents either signal.
-  feedback_mode: uniform
+  # The reference override uses actual observed outcomes plus aligned progress
+  # supplied by its trusted hook. Uniform history is not positive/negative
+  # evidence and cannot satisfy this template's custom path.
+  feedback_mode: hybrid
   feedback_uri: ""
   feedback_temperature: "1.0"
-  grouping: episode
-  split_strategy: contiguous-tail
-  train_episode_count: "64"
-  eval_episode_count: "16"
+  grouping: collection
+  split_strategy: adapter
+  train_episode_count: "1"
+  eval_episode_count: "1"
   action_horizon: "16"
-  data_config: so100_dualcam
+  data_config: ""
   embodiment_tag: new_embodiment
   video_backend: decord
   derivative_codec: h264
@@ -66,20 +83,24 @@ config:
   checkpoint_interval_steps: "500"
   inference_seed: "1701"
 
-  evidence_episode_index: "64"
+  evidence_episode_index: "0"
   evidence_start_frame: "0"
   evidence_frame_count: "120"
   evidence_video_fps: "30"
+  evidence_video_key: video.wrist
+  action_target_keys: action.left_arm,action.right_arm
 
   root_uri: "s3://{{config.bucket}}/{{config.prefix}}"
   prepared_root_uri: "s3://{{config.bucket}}/{{config.prepared_prefix}}/prepared"
   prepared_dataset_uri: "{{config.prepared_root_uri}}/dataset"
   prepared_input_mode: build-or-reuse
   feedback_output_uri: "{{config.prepared_root_uri}}/feedback.json"
+  gallery_reference_uri: "{{config.prepared_root_uri}}/recorded-gallery-reference"
   manifest_uri: "{{config.prepared_root_uri}}/feedback-manifest.json"
   prepare_receipt_uri: "{{config.prepared_root_uri}}/provenance.json"
   prepare_commit_uri: "{{config.prepared_root_uri}}/commit.json"
   checkpoint_root_uri: "{{config.root_uri}}/checkpoints"
+  control_uri: "{{config.root_uri}}/ordinary-bc-control"
   candidate_uri: "{{config.root_uri}}/candidate"
   training_receipt_uri: "{{config.root_uri}}/training/offline-training.json"
   training_commit_uri: "{{config.root_uri}}/training/commit.json"
@@ -88,6 +109,7 @@ config:
   html_uri: "{{config.root_uri}}/evidence/offline-proof.html"
   evaluation_uri: "{{config.root_uri}}/evidence/evaluation.json"
   media_validation_uri: "{{config.root_uri}}/evidence/media-validation.json"
+  gallery_uri: "{{config.root_uri}}/evidence/labelled-gallery"
   evidence_commit_uri: "{{config.root_uri}}/evidence/commit.json"
   verify_receipt_uri: "{{config.root_uri}}/receipts/workflow-readback.json"
 
@@ -104,13 +126,14 @@ resources:
     memory: "{{config.gpu_memory}}"
     image: "{{config.runtime_image}}"
 
-initial: prepare-public-lerobot
+initial: prepare-custom-lerobot
 
 states:
-  prepare-public-lerobot:
+  prepare-custom-lerobot:
     description: >-
-      Download the immutable public dataset revision, make a documented H.264
-      derivative for native decord, create grouped feedback/split, freeze
+      Verify and install the declared trusted adapter, stage its immutable
+      LeRobot source archive, produce its single-camera/action/feedback v2
+      contract, make a documented H.264 derivative for native decord, freeze
       train-only normalization, and publish content-bound inputs.
     resources: cpu
     run:
@@ -125,6 +148,24 @@ states:
         - "{{config.dataset_repository}}"
         - --dataset-revision
         - "{{config.dataset_revision}}"
+        - --dataset-archive-uri
+        - "{{config.dataset_archive_uri}}"
+        - --input-provenance-uri
+        - "{{config.input_provenance_uri}}"
+        - --action-contract-uri
+        - "{{config.action_contract_uri}}"
+        - --external-code-uri
+        - "{{config.external_code_uri}}"
+        - --external-code-sha256
+        - "{{config.external_code_sha256}}"
+        - --external-code-package
+        - "{{config.external_code_package}}"
+        - --adapter-callable
+        - "{{config.adapter_callable}}"
+        - --feedback-callable
+        - "{{config.feedback_callable}}"
+        - --adapter-config-uri
+        - "{{config.adapter_config_uri}}"
         - --model-repository
         - "{{config.model_repository}}"
         - --model-revision
@@ -159,6 +200,8 @@ states:
         - "{{config.feedback_uri}}"
         - --feedback-output-uri
         - "{{config.feedback_output_uri}}"
+        - --gallery-reference-uri
+        - "{{config.gallery_reference_uri}}"
         - --feedback-temperature
         - "{{config.feedback_temperature}}"
         - --grouping
@@ -187,6 +230,8 @@ states:
         - "{{config.checkpoint_root_uri}}"
         - --candidate-uri
         - "{{config.candidate_uri}}"
+        - --control-uri
+        - "{{config.control_uri}}"
         - --training-receipt-uri
         - "{{config.training_receipt_uri}}"
         - --training-commit-uri
@@ -201,6 +246,10 @@ states:
         - "{{config.evidence_frame_count}}"
         - --evidence-video-fps
         - "{{config.evidence_video_fps}}"
+        - --evidence-video-key
+        - "{{config.evidence_video_key}}"
+        - --action-target-keys
+        - "{{config.action_target_keys}}"
         - --actions-uri
         - "{{config.actions_uri}}"
         - --video-uri
@@ -211,6 +260,8 @@ states:
         - "{{config.evaluation_uri}}"
         - --media-validation-uri
         - "{{config.media_validation_uri}}"
+        - --gallery-uri
+        - "{{config.gallery_uri}}"
         - --evidence-commit-uri
         - "{{config.evidence_commit_uri}}"
         - --verify-receipt-uri
@@ -223,21 +274,24 @@ states:
         kind: directory
       - uri: "{{config.feedback_output_uri}}"
         schema: npa.groot.n15.feedback-input.v1
+      - uri: "{{config.gallery_reference_uri}}"
+        schema: npa.groot.recorded-gallery-reference.v1
+        kind: directory
       - uri: "{{config.manifest_uri}}"
         schema: npa.groot.n15.feedback-manifest.v1
       - uri: "{{config.prepare_receipt_uri}}"
-        schema: npa.groot.n15.public-prepare.v1
+        schema: npa.groot.n15.custom-prepare.v1
       - uri: "{{config.prepare_commit_uri}}"
         schema: npa.groot.n15.commit.v1
     next: train-native-n15
 
   train-native-n15:
     description: >-
-      Train exactly one native N1.5 policy on one RTX PRO 6000 through the
-      derived complete-pass schedule, sync resumable checkpoints, evaluate every
-      held-out frame, and reload the final usable candidate.
+      Train matched ordinary-BC and feedback-weighted native N1.5 policies from
+      the same foundation checkpoint on one RTX PRO 6000 through the derived
+      complete-pass schedule, sync resumable checkpoints, and reload both.
     resources: rtxpro
-    needs: [prepare-public-lerobot]
+    needs: [prepare-custom-lerobot]
     params:
       operation: train
     run:
@@ -251,6 +305,9 @@ states:
       - uri: "{{config.candidate_uri}}"
         schema: npa.groot.n15.native-candidate.v1
         kind: directory
+      - uri: "{{config.control_uri}}"
+        schema: npa.groot.n15.native-ordinary-bc-control.v1
+        kind: directory
       - uri: "{{config.training_receipt_uri}}"
         schema: npa.groot.n15.native-training.v1
       - uri: "{{config.training_commit_uri}}"
@@ -259,9 +316,9 @@ states:
 
   evaluate-recorded-observations:
     description: >-
-      Reload native baseline and candidate checkpoints, call get_action on every
-      held-out recorded observation using comparable diffusion seeds, render a
-      labelled recorded-observation comparison MP4 and standalone offline HTML.
+      Reload foundation, matched ordinary-BC, and feedback-weighted candidate
+      checkpoints, call get_action on every held-out recorded observation using
+      comparable diffusion seeds, and render factual recorded-observation media.
     resources: rtxpro
     needs: [train-native-n15]
     params:
@@ -271,8 +328,13 @@ states:
     inputs:
       - uri: "{{config.candidate_uri}}"
         schema: npa.groot.n15.native-candidate.v1
+      - uri: "{{config.control_uri}}"
+        schema: npa.groot.n15.native-ordinary-bc-control.v1
       - uri: "{{config.training_receipt_uri}}"
         schema: npa.groot.n15.native-training.v1
+      - uri: "{{config.gallery_reference_uri}}"
+        schema: npa.groot.recorded-gallery-reference.v1
+        kind: directory
     outputs:
       - uri: "{{config.actions_uri}}"
         schema: application/x-npz
@@ -284,6 +346,9 @@ states:
         schema: npa.groot.n15.offline-action-comparison.v1
       - uri: "{{config.media_validation_uri}}"
         schema: npa.groot.n15.media-validation.v1
+      - uri: "{{config.gallery_uri}}"
+        schema: npa.groot.labelled-recorded-gallery.v1
+        kind: directory
       - uri: "{{config.evidence_commit_uri}}"
         schema: npa.groot.n15.commit.v1
     next: verify-durable-publication
@@ -302,6 +367,9 @@ states:
     inputs:
       - uri: "{{config.evidence_commit_uri}}"
         schema: npa.groot.n15.commit.v1
+      - uri: "{{config.gallery_uri}}"
+        schema: npa.groot.labelled-recorded-gallery.v1
+        kind: directory
     outputs:
       - uri: "{{config.verify_receipt_uri}}"
         schema: npa.groot.n15.workflow-readback.v1

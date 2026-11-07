@@ -563,7 +563,8 @@ def test_groot_n15_testing_case_is_runtime_backed_but_not_daily_rotation() -> No
     assert not case.plan_only
     assert case.rotation_skip
     assert set(case.secret_envs) == {"AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"}
-    assert "complete native N1.5 training" in case.notes
+    assert "matched ordinary-BC/control" in case.notes
+    assert "feedback-weighted candidate training" in case.notes
     assert "not a simulator" in case.notes
 
 

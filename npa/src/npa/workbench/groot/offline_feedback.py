@@ -6,7 +6,7 @@ import hashlib
 import json
 import math
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
 
@@ -20,7 +20,8 @@ class EpisodeFeedback(BaseModel):
         success: Observed episode outcome.
         group: Collection group kept entirely within one split.
         progress: Optional calibrated per-frame task progress in [0, 1].
-        progress_source: Whether progress was measured or predicted by ARM.
+        progress_source: Whether progress was measured, annotation-derived, or
+            predicted by ARM.
         reward_model_sha256: Required identity for ARM-produced progress.
     Returns:
         None.
@@ -34,8 +35,18 @@ class EpisodeFeedback(BaseModel):
     success: bool | None = None
     group: str = Field(min_length=1)
     progress: list[float] | None = None
-    progress_source: Literal["measured", "arm"] | None = None
+    progress_source: Literal["measured", "annotation_derived", "arm"] | None = None
     reward_model_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    collection_kind: Literal[
+        "operator_demonstration",
+        "policy_rollout",
+        "operator_recovery",
+        "recorded_failure",
+        "unknown",
+    ] = "unknown"
+    tags: list[str] = Field(default_factory=list)
+    source_episode_id: str | None = None
+    label_source: str | None = None
 
     @model_validator(mode="after")
     def _check_progress(self):
@@ -49,6 +60,34 @@ class EpisodeFeedback(BaseModel):
             raise ValueError("progress_source is required with progress")
         if self.progress_source == "arm" and not self.reward_model_sha256:
             raise ValueError("ARM progress requires reward_model_sha256")
+        return self
+
+
+class FeedbackDocument(BaseModel):
+    """Structured custom feedback with explicit label and privacy provenance.
+
+    Existing array-shaped feedback remains accepted only to preserve the
+    historical uniform recipe. New custom adapters emit this object.
+    """
+
+    model_config = ConfigDict(extra="forbid", strict=True, allow_inf_nan=False)
+    schema_version: Literal["npa.groot-feedback/v2"] = "npa.groot-feedback/v2"
+    label_protocol: str = Field(min_length=1)
+    label_provenance: str = Field(min_length=1)
+    privacy_classification: Literal["public", "private", "restricted"]
+    progress_contract: dict[str, Any] | None = None
+    episodes: list[EpisodeFeedback]
+
+    @model_validator(mode="after")
+    def _check_document(self) -> "FeedbackDocument":
+        if not self.episodes:
+            raise ValueError("feedback document needs episodes")
+        if self.progress_contract is not None and not {
+            "units",
+            "direction",
+            "alignment",
+        }.issubset(self.progress_contract):
+            raise ValueError("progress_contract needs units, direction, and alignment")
         return self
 
 
@@ -71,6 +110,10 @@ class PreparedEpisode(BaseModel):
     split: Literal["train", "eval"]
     length: int = Field(gt=0)
     weights: list[float]
+    success: bool | None = None
+    collection_kind: str = "unknown"
+    tags: list[str] = Field(default_factory=list)
+    progress_source: str | None = None
 
     @model_validator(mode="after")
     def _check_weights(self):
@@ -99,10 +142,12 @@ class OfflineManifest(BaseModel):
     """
 
     model_config = ConfigDict(extra="forbid", strict=True, allow_inf_nan=False)
-    schema_version: Literal["npa.groot-offline/v1"] = "npa.groot-offline/v1"
+    schema_version: Literal["npa.groot-offline/v1", "npa.groot-offline/v2"] = (
+        "npa.groot-offline/v1"
+    )
     dataset_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     feedback_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
-    mode: Literal["outcome", "progress", "uniform"]
+    mode: Literal["outcome", "progress", "uniform", "hybrid"]
     action_horizon: int = Field(gt=0)
     temperature: float = Field(gt=0)
     episodes: list[PreparedEpisode]
@@ -173,7 +218,7 @@ def prepare_feedback(
     output_path: Path,
     *,
     action_horizon: int,
-    mode: Literal["outcome", "progress"],
+    mode: Literal["outcome", "progress", "uniform", "hybrid"],
     temperature: float = 1.0,
 ) -> OfflineManifest:
     """Prepare feedback weights without modifying the source LeRobot dataset.
@@ -200,16 +245,24 @@ def prepare_feedback(
         or temperature <= 0
     ):
         raise ValueError("temperature must be positive and finite")
-    if mode not in {"outcome", "progress", "uniform"}:
-        raise ValueError("mode must be outcome, progress, or uniform")
-    feedback = TypeAdapter(list[EpisodeFeedback]).validate_json(
-        feedback_path.read_text()
-    )
+    if mode not in {"outcome", "progress", "uniform", "hybrid"}:
+        raise ValueError("mode must be outcome, progress, uniform, or hybrid")
+    payload = json.loads(feedback_path.read_text())
+    structured = isinstance(payload, dict)
+    if isinstance(payload, list):
+        feedback = TypeAdapter(list[EpisodeFeedback]).validate_python(payload)
+    elif isinstance(payload, dict):
+        feedback = FeedbackDocument.model_validate(payload).episodes
+    else:
+        raise ValueError("feedback root must be an array or structured document")
     digest = dataset_digest(dataset_root)
     lengths = _read_episode_lengths(dataset_root)
     _validate_feedback(feedback, lengths, mode)
     episodes = _prepare_episodes(feedback, lengths, action_horizon, mode, temperature)
     manifest = OfflineManifest(
+        schema_version="npa.groot-offline/v2"
+        if structured or mode == "hybrid"
+        else "npa.groot-offline/v1",
         dataset_sha256=digest,
         feedback_sha256=file_digest(feedback_path),
         mode=mode,
@@ -321,11 +374,23 @@ def _validate_feedback(feedback, lengths, mode):
             episode.success is not None or episode.progress is not None
         ):
             raise ValueError("uniform mode accepts only unlabeled episodes")
+        if mode == "hybrid" and (episode.success is None and episode.progress is None):
+            raise ValueError("hybrid mode needs observed outcome or per-frame progress")
     training = [episode for episode in feedback if episode.split == "train"]
     if not training or not any(episode.split == "eval" for episode in feedback):
         raise ValueError("both train and eval episodes are required")
     if mode == "outcome" and not any(episode.success for episode in training):
         raise ValueError("outcome mode needs at least one successful training episode")
+    if mode in {"outcome", "hybrid"}:
+        observed = [
+            episode.success for episode in training if episode.success is not None
+        ]
+        if not any(value is True for value in observed) or not any(
+            value is False for value in observed
+        ):
+            raise ValueError(
+                "outcome/hybrid mode needs both observed successful and failed training episodes"
+            )
 
 
 def _prepare_episodes(feedback, lengths, horizon, mode, temperature):
@@ -338,12 +403,25 @@ def _prepare_episodes(feedback, lengths, horizon, mode, temperature):
             gains[episode.episode_index] = [0.0] * length
         elif mode == "outcome":
             gains[episode.episode_index] = [float(episode.success)] * length
-        else:
+        elif mode == "progress":
             progress = episode.progress
             gains[episode.episode_index] = [
                 progress[min(frame + horizon, length - 1)] - progress[frame]
                 for frame in range(length)
             ]
+        elif episode.progress is not None:
+            progress = episode.progress
+            outcome_return = (
+                float(episode.success) if episode.success is not None else 0.0
+            )
+            gains[episode.episode_index] = [
+                outcome_return
+                + progress[min(frame + horizon, length - 1)]
+                - progress[frame]
+                for frame in range(length)
+            ]
+        else:
+            gains[episode.episode_index] = [float(episode.success)] * length
     maximum = max(value for values in gains.values() for value in values)
     weights = {
         identifier: [math.exp((v - maximum) / temperature) for v in values]
@@ -360,6 +438,10 @@ def _prepare_episodes(feedback, lengths, horizon, mode, temperature):
             weights=[w / mean for w in weights[e.episode_index]]
             if e.split == "train"
             else [1.0] * lengths[e.episode_index],
+            success=e.success,
+            collection_kind=e.collection_kind,
+            tags=e.tags,
+            progress_source=e.progress_source,
         )
         for e in feedback
     ]

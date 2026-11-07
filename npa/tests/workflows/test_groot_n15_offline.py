@@ -12,6 +12,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from npa.workbench.groot.custom_inputs import verify_minmax_roundtrip
 from npa.workflows import groot_n15_offline as workflow
 
 
@@ -73,6 +74,77 @@ def test_s3_uri_child_cannot_escape_prefix() -> None:
         root.child("../receipt.json")
 
 
+def test_custom_arguments_require_an_explicit_source_identity(tmp_path: Path) -> None:
+    args = workflow._parser().parse_args(
+        [
+            "prepare",
+            "--workspace",
+            str(tmp_path),
+            "--prepared-dataset-uri",
+            "s3://bucket/prepared/dataset",
+            "--manifest-uri",
+            "s3://bucket/prepared/manifest.json",
+            "--prepare-receipt-uri",
+            "s3://bucket/prepared/provenance.json",
+            "--prepare-commit-uri",
+            "s3://bucket/prepared/commit.json",
+            "--feedback-output-uri",
+            "s3://bucket/prepared/feedback.json",
+            "--checkpoint-root-uri",
+            "s3://bucket/checkpoints",
+            "--candidate-uri",
+            "s3://bucket/candidate",
+            "--training-receipt-uri",
+            "s3://bucket/training.json",
+            "--training-commit-uri",
+            "s3://bucket/training-commit.json",
+            "--actions-uri",
+            "s3://bucket/actions.npz",
+            "--video-uri",
+            "s3://bucket/video.mp4",
+            "--html-uri",
+            "s3://bucket/proof.html",
+            "--evaluation-uri",
+            "s3://bucket/evaluation.json",
+            "--media-validation-uri",
+            "s3://bucket/media.json",
+            "--gallery-uri",
+            "s3://bucket/gallery",
+            "--evidence-commit-uri",
+            "s3://bucket/evidence-commit.json",
+            "--verify-receipt-uri",
+            "s3://bucket/readback.json",
+            "--dataset-repository",
+            "",
+            "--dataset-revision",
+            "",
+            "--dataset-archive-uri",
+            "s3://bucket/input.tar",
+            "--input-provenance-uri",
+            "s3://bucket/provenance.json",
+            "--action-contract-uri",
+            "s3://bucket/action.json",
+            "--external-code-uri",
+            "s3://bucket/code.tar",
+            "--external-code-sha256",
+            "a" * 64,
+            "--external-code-package",
+            "operator_extension",
+            "--adapter-callable",
+            "operator_extension.adapter:adapt",
+            "--feedback-callable",
+            "operator_extension.adapter:feedback",
+            "--data-config",
+            "operator_extension.config:Profile",
+            "--gallery-reference-uri",
+            "s3://bucket/gallery-reference",
+        ]
+    )
+
+    with pytest.raises(ValueError, match="explicit dataset_repository"):
+        workflow._validate_arguments(args)
+
+
 def test_train_only_statistics_do_not_read_eval_parquet(tmp_path: Path) -> None:
     data = tmp_path / "data" / "chunk-000"
     data.mkdir(parents=True)
@@ -88,6 +160,35 @@ def test_train_only_statistics_do_not_read_eval_parquet(tmp_path: Path) -> None:
 
     assert stats["action"]["mean"] == [1.0]
     assert stats["observation.state"]["max"] == [2.0]
+
+
+def test_custom_action_roundtrip_records_terminal_mask_and_declared_keys(
+    tmp_path: Path,
+) -> None:
+    data = tmp_path / "data" / "chunk-000"
+    data.mkdir(parents=True)
+    pd.DataFrame(
+        {
+            "action.left_arm": [np.asarray([1.0], dtype=np.float32)] * 2,
+            "action.right_arm": [np.asarray([-2.0], dtype=np.float32)] * 2,
+        }
+    ).to_parquet(data / "episode_000000.parquet")
+    evidence = workflow._custom_action_roundtrip_evidence(
+        tmp_path,
+        [{"episode_index": 0, "length": 2}],
+        {0},
+        ("action.left_arm", "action.right_arm"),
+        4,
+        {
+            "action.left_arm": {"min": [1.0], "max": [1.0]},
+            "action.right_arm": {"min": [-3.0], "max": [3.0]},
+        },
+        verify_minmax_roundtrip,
+    )
+    assert evidence["action_keys"] == ["action.left_arm", "action.right_arm"]
+    assert evidence["valid_action_horizon_steps"] == 1
+    assert evidence["masked_action_horizon_steps"] == 3
+    assert evidence["constant_training_dimensions"] == 1
 
 
 def test_metrics_apply_terminal_mask_without_claiming_outcomes() -> None:
@@ -108,6 +209,53 @@ def test_metrics_reject_nonfinite_native_action_predictions() -> None:
             np.asarray([[[0.0]]]),
             np.asarray([[True]]),
         )
+
+
+def test_matched_ordinary_bc_manifest_changes_only_training_weights(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "feedback-manifest.json"
+    source.write_text(
+        json.dumps(
+            {
+                "schema_version": "npa.groot-offline/v2",
+                "dataset_sha256": "d" * 64,
+                "feedback_sha256": "f" * 64,
+                "mode": "hybrid",
+                "action_horizon": 2,
+                "temperature": 1.0,
+                "episodes": [
+                    {
+                        "episode_index": 1,
+                        "split": "train",
+                        "length": 3,
+                        "weights": [0.25, 1.0, 2.75],
+                        "success": False,
+                        "collection_kind": "policy_rollout",
+                    },
+                    {
+                        "episode_index": 2,
+                        "split": "eval",
+                        "length": 2,
+                        "weights": [1.0, 1.0],
+                        "success": True,
+                        "collection_kind": "operator_recovery",
+                    },
+                ],
+            }
+        )
+    )
+
+    control_path = tmp_path / "ordinary-bc-manifest.json"
+    digest = workflow._ordinary_bc_manifest(source, control_path)
+    control = json.loads(control_path.read_text())
+
+    assert digest == workflow.sha256_file(control_path)
+    assert control["mode"] == "uniform"
+    assert control["dataset_sha256"] == "d" * 64
+    assert [item["episode_index"] for item in control["episodes"]] == [1, 2]
+    assert control["episodes"][0]["weights"] == [1.0, 1.0, 1.0]
+    assert control["episodes"][1]["weights"] == [1.0, 1.0]
 
 
 def test_inverse_transformed_actions_use_recorded_target_width_not_model_padding() -> (
@@ -157,6 +305,53 @@ def test_standalone_html_embeds_video_and_no_remote_dependency(tmp_path: Path) -
     assert "not a policy rollout" in document
 
 
+def test_gallery_reference_binds_media_hash_and_recorded_frame_range(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    media = tmp_path / "recovery.mp4"
+    media.write_bytes(b"recorded-reference")
+    payload = {
+        "schema_version": "npa.groot-recorded-gallery-reference/v1",
+        "items": [
+            {
+                "id": "recovery-0",
+                "media_path": "recovery.mp4",
+                "media_sha256": workflow.sha256_file(media),
+                "source": {"revision": "public-immutable-revision"},
+                "license": "CC-BY-4.0",
+                "privacy_classification": "public",
+                "source_episode_index": 0,
+                "camera_key": "observation.images.wrist",
+                "recorded_fps": 15,
+                "recorded_frame_count": 10,
+                "frame_start": 3,
+                "frame_end": 7,
+                "outcome": "unknown",
+                "collection_kind": "operator_recovery",
+                "tags": ["human_intervention"],
+                "label_source": "upstream recorded intervention field",
+                "action_predictions_available": False,
+                "limitation": "recorded reference only",
+            }
+        ],
+    }
+    (tmp_path / "gallery.json").write_text(json.dumps(payload))
+    monkeypatch.setattr(
+        workflow,
+        "_validate_video",
+        lambda _path, count: {"ffprobe": {"avg_frame_rate": "15/1"}, "count": count},
+    )
+
+    result = workflow._validate_gallery_reference(tmp_path)
+
+    assert result["item_count"] == 1
+    assert result["items"][0]["collection_kind"] == "operator_recovery"
+    payload["items"][0]["media_path"] = "../escape.mp4"
+    (tmp_path / "gallery.json").write_text(json.dumps(payload))
+    with pytest.raises(workflow.WorkflowArtifactError, match="unsafe"):
+        workflow._validate_gallery_reference(tmp_path)
+
+
 def test_workflow_argument_validation_requires_progress_input_and_safe_uris(
     tmp_path: Path,
 ) -> None:
@@ -196,6 +391,8 @@ def test_workflow_argument_validation_requires_progress_input_and_safe_uris(
             "s3://bucket/evaluation.json",
             "--media-validation-uri",
             "s3://bucket/media.json",
+            "--gallery-uri",
+            "s3://bucket/gallery",
             "--evidence-commit-uri",
             "s3://bucket/evidence-commit.json",
             "--verify-receipt-uri",
@@ -207,6 +404,78 @@ def test_workflow_argument_validation_requires_progress_input_and_safe_uris(
 
     with pytest.raises(ValueError, match="feedback_uri"):
         workflow._validate_arguments(args)
+
+
+def test_custom_workflow_requires_a_profile_from_the_declared_extension(
+    tmp_path: Path,
+) -> None:
+    parser = workflow._parser()
+    common = [
+        "prepare",
+        "--workspace",
+        str(tmp_path),
+        "--prepared-dataset-uri",
+        "s3://bucket/prepared",
+        "--manifest-uri",
+        "s3://bucket/manifest.json",
+        "--prepare-receipt-uri",
+        "s3://bucket/prepare.json",
+        "--prepare-commit-uri",
+        "s3://bucket/prepare-commit.json",
+        "--feedback-output-uri",
+        "s3://bucket/feedback.json",
+        "--gallery-reference-uri",
+        "s3://bucket/prepared/gallery-reference",
+        "--checkpoint-root-uri",
+        "s3://bucket/checkpoints",
+        "--candidate-uri",
+        "s3://bucket/candidate",
+        "--training-receipt-uri",
+        "s3://bucket/training.json",
+        "--training-commit-uri",
+        "s3://bucket/training-commit.json",
+        "--actions-uri",
+        "s3://bucket/actions.npz",
+        "--video-uri",
+        "s3://bucket/video.mp4",
+        "--html-uri",
+        "s3://bucket/proof.html",
+        "--evaluation-uri",
+        "s3://bucket/evaluation.json",
+        "--media-validation-uri",
+        "s3://bucket/media.json",
+        "--gallery-uri",
+        "s3://bucket/gallery",
+        "--evidence-commit-uri",
+        "s3://bucket/evidence-commit.json",
+        "--verify-receipt-uri",
+        "s3://bucket/verify.json",
+        "--dataset-archive-uri",
+        "s3://bucket/source.tar.gz",
+        "--input-provenance-uri",
+        "s3://bucket/provenance.json",
+        "--action-contract-uri",
+        "s3://bucket/action.json",
+        "--external-code-uri",
+        "s3://bucket/extension.tar.gz",
+        "--external-code-sha256",
+        "a" * 64,
+        "--external-code-package",
+        "operator_extension",
+        "--adapter-callable",
+        "operator_extension.adapter:adapt",
+        "--feedback-callable",
+        "operator_extension.adapter:feedback",
+    ]
+    mismatched = parser.parse_args(
+        [*common, "--data-config", "other_extension.profile:Config"]
+    )
+    with pytest.raises(ValueError, match="data_config"):
+        workflow._validate_arguments(mismatched)
+    matching = parser.parse_args(
+        [*common, "--data-config", "operator_extension.profile:Config"]
+    )
+    workflow._validate_arguments(matching)
 
 
 def test_resume_identity_binds_all_model_and_training_inputs(tmp_path: Path) -> None:
@@ -245,6 +514,8 @@ def test_resume_identity_binds_all_model_and_training_inputs(tmp_path: Path) -> 
         "s3://bucket/evaluation.json",
         "--media-validation-uri",
         "s3://bucket/media.json",
+        "--gallery-uri",
+        "s3://bucket/gallery",
         "--evidence-commit-uri",
         "s3://bucket/evidence-commit.json",
         "--verify-receipt-uri",
@@ -526,7 +797,7 @@ def test_fresh_train_keeps_candidate_directory_new_for_native_trainer(
     )
     dataset = tmp_path / "dataset"
     dataset.mkdir()
-    captured: dict[str, Path] = {}
+    captured: list[Path] = []
 
     class Store:
         def put_directory(self, _path: Path, _uri: str) -> dict[str, object]:
@@ -555,13 +826,21 @@ def test_fresh_train_keeps_candidate_directory_new_for_native_trainer(
         output = kwargs["output_dir"]
         assert isinstance(output, Path)
         assert not output.exists()
-        captured["output"] = output
+        captured.append(output)
         output.mkdir()
         (output / "weights.safetensors").write_bytes(b"candidate")
         return {
+            "dataset_sha256": "d" * 64,
+            "base_checkpoint_sha256": "b" * 64,
             "candidate_checkpoint_sha256": "c" * 64,
             "optimizer_steps": 1,
             "held_out_eval_loss": 1.0,
+            "optimizer_loss_trace": [{"step": 1, "loss": 1.0}],
+            "training_config": {
+                "batch_size": 4,
+                "learning_rate": 1e-4,
+                "seed": 42,
+            },
         }
 
     monkeypatch.setattr(workflow, "S3Store", Store)
@@ -604,6 +883,7 @@ def test_fresh_train_keeps_candidate_directory_new_for_native_trainer(
         complete_train_passes=1,
         checkpoint_root_uri="s3://bucket/checkpoints",
         candidate_uri="s3://bucket/candidate",
+        control_uri="s3://bucket/ordinary-bc-control",
         training_receipt_uri="s3://bucket/training.json",
         training_commit_uri="s3://bucket/training-commit.json",
         groot_revision=workflow.GROOT_REVISION_DEFAULT,
@@ -622,7 +902,8 @@ def test_fresh_train_keeps_candidate_directory_new_for_native_trainer(
     result = workflow._train(args)
 
     assert result["status"] == "trained"
-    assert captured["output"].is_dir()
+    assert {path.name for path in captured} == {"candidate", "ordinary-bc-control"}
+    assert all(path.is_dir() for path in captured)
 
 
 def test_checked_in_workflow_dispatches_every_compositional_stage() -> None:
@@ -638,7 +919,7 @@ def test_checked_in_workflow_dispatches_every_compositional_stage() -> None:
     plan = build_plan(spec, run_id="groot-n15-test-plan")
 
     assert [step.state for step in plan.steps] == [
-        "prepare-public-lerobot",
+        "prepare-custom-lerobot",
         "train-native-n15",
         "evaluate-recorded-observations",
         "verify-durable-publication",
@@ -649,6 +930,13 @@ def test_checked_in_workflow_dispatches_every_compositional_stage() -> None:
         "evaluate",
         "verify",
     ]
+    for step in plan.steps:
+        assert "--dataset-archive-uri" in step.argv
+        assert "--external-code-uri" in step.argv
+        assert "--feedback-callable" in step.argv
+        assert "--action-contract-uri" in step.argv
+        assert "--control-uri" in step.argv
+        assert "--evidence-video-key" in step.argv
 
 
 def test_readiness_record_is_bound_to_the_checked_in_workflow() -> None:

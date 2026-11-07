@@ -49,28 +49,29 @@ conversion, serving, inference, and validation.
 ## Routing And Validation
 
 For experimental N1.5 improvement from real rollouts, use
-`docs/workbench/cookbooks/groot-n15-offline-policy-improvement.md` and the
-runtime-local `npa.workbench.groot.offline` module. Keep its clean pinned native
-N1.5 environment separate from the promoted N1.7 image. Prepare explicit grouped
-train/eval splits before training. Outcome mode uses recorded binary returns;
-progress mode needs measured or ARM-produced per-frame progress. This recipe
-does not train ARM or a critic. Preserve action units and frames through the
-operator's native data config, require precomputed frozen statistics, and never
-fabricate dense progress from episode labels. Training receipts are not robot
-success evidence; compare real matched trials and leave deployment to the
-operator. The opt-in native CUDA test is
-`npa/tests/e2e/test_groot_n15_offline_live.py`; an unconfigured skip is not proof.
+`workflows/testing/groot-n15-offline-rl.yaml`, its
+`docs/workbench/cookbooks/groot-n15-offline-policy-improvement.md`, and the
+operator walkthrough at
+`docs/workbench/guides/groot-n15-custom-lerobot-walkthrough.md`. The generic
+workflow accepts only an explicit content-addressed custom-code archive plus a
+provenance-bound LeRobot archive; dataset metadata never selects code. Keep the
+clean pinned native N1.5 environment separate from the promoted N1.7 image.
+Preserve action units and frames through the explicit action contract, require
+training-only frozen statistics, keep collection groups split-isolated, and never
+fabricate dense progress from episode labels. The workflow compares a matched
+ordinary-BC control with the outcome/progress-weighted candidate; it does not
+train ARM or a critic. Training receipts are not robot-success evidence; compare
+real matched trials and leave deployment to the operator. The opt-in native CUDA
+test is `npa/tests/e2e/test_groot_n15_offline_live.py`; an unconfigured skip is
+not proof.
 
-For the reproducible public-data path, use the experimental declarative
-`workflows/testing/groot-n15-offline-rl.yaml` rather than a private shell job.
-It stages a public pinned LeRobot revision, creates a declared H.264 derivative
-for native `decord`, runs exactly one configurable complete train pass on one
-RTX PRO 6000, evaluates every held-out recorded observation with native baseline
-and candidate `get_action`, and independently reads back a labelled MP4 plus
-standalone HTML. The MP4 visualizes recorded observations and offline action
-predictions only; it is never a simulator or robot rollout. Keep runtime-only
-model weights and live storage identity out of the workflow defaults and public
-evidence.
+The workflow creates a declared H.264 derivative for native `decord`, runs the
+configurable complete schedule on one RTX PRO 6000, evaluates every held-out
+recorded observation with native foundation/control/candidate `get_action`, and
+independently reads back a labelled MP4/gallery plus standalone HTML. The media
+visualizes recorded observations and offline action predictions only; it is never
+a simulator or robot rollout. Keep runtime-only model weights, private data/code,
+and live storage identity out of workflow defaults and public evidence.
 
 - GR00T does not require RT cores for the standard model paths.
 - Route throughput-heavy training/eval to H100/H200 unless a command or image

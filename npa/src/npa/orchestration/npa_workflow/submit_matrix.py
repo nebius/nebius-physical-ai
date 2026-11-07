@@ -1503,17 +1503,18 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         runtime=True,
         rotation_skip=True,
         skip_reason=(
-            "A complete public 80-episode codec-derivative, native N1.5 train, "
-            "and whole-held-out inference run needs an explicitly owned RTX PRO "
-            "6000 placement plus a fresh model/storage access preflight."
+            "A complete custom-code/data, mixed-outcome native N1.5 control/candidate "
+            "run needs an explicitly owned RTX PRO 6000 placement plus fresh "
+            "model/storage and immutable operator-input preflight."
         ),
         notes=(
-            "Experimental one-GPU public LeRobot pipeline: immutable download -> "
-            "H.264/decord derivative and episode-group split -> complete native "
-            "N1.5 training with durable resume -> full held-out baseline/candidate "
-            "get_action comparison -> decoded recorded-observation MP4 and "
-            "standalone HTML. It is not a simulator, closed-loop rollout, or "
-            "physical-robot task-success claim."
+            "Experimental one-GPU custom LeRobot pipeline: content-addressed trusted "
+            "adapter/data -> H.264/decord derivative and collection-group split -> "
+            "complete native N1.5 matched ordinary-BC/control and feedback-weighted "
+            "candidate training with durable resume -> full held-out foundation/control/"
+            "candidate get_action comparison -> decoded labelled recorded-observation "
+            "gallery and standalone HTML. It is not a simulator, closed-loop rollout, "
+            "or physical-robot task-success claim."
         ),
     ),
     SubmitLiveCase(
