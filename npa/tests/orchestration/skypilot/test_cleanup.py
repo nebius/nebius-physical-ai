@@ -1195,7 +1195,9 @@ def test_failed_controller_recovery_deletes_only_bound_terminal_controller(
     monkeypatch.setattr(
         cleanup_module,
         "_delete_orphan_controller_pods",
-        lambda pods, **_kwargs: (commands, "") if pods == [target] else pytest.fail("unexpected pod"),
+        lambda pods, **_kwargs: (
+            (commands, "") if pods == [target] else pytest.fail("unexpected pod")
+        ),
     )
     monkeypatch.setattr(
         cleanup_module,
@@ -1209,7 +1211,9 @@ def test_failed_controller_recovery_deletes_only_bound_terminal_controller(
     monkeypatch.setattr(
         cleanup_module,
         "_jobs_controller_clusters",
-        lambda **_kwargs: pytest.fail("shared controller metadata must not be consulted"),
+        lambda **_kwargs: pytest.fail(
+            "shared controller metadata must not be consulted"
+        ),
     )
 
     result = cleanup_module.cleanup_jobs_controller(

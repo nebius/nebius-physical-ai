@@ -250,7 +250,9 @@ def cleanup_jobs_controller(
         r"sky-jobs-controller-npa-[a-f0-9]{12}", failed_controller
     ):
         cleanup.outcome = "unsafe"
-        cleanup.errors.append("failed-controller recovery requires one NPA controller name")
+        cleanup.errors.append(
+            "failed-controller recovery requires one NPA controller name"
+        )
         return cleanup
     from npa.cluster.identity import (
         ClusterIdentityError,
@@ -1968,11 +1970,7 @@ def _verify_failed_controller_pod(
     from npa.cluster.drain import _noninteractive_kubeconfig_env
 
     namespace, pod_name, observed_controller = pod_identity
-    if (
-        not namespace
-        or not pod_name
-        or observed_controller != controller_name
-    ):
+    if not namespace or not pod_name or observed_controller != controller_name:
         return "failed-controller pod identity is incomplete or changed"
     command = [
         "kubectl",
@@ -2000,7 +1998,9 @@ def _verify_failed_controller_pod(
                 check=False,
             )
         except (OSError, subprocess.SubprocessError) as exc:
-            return f"failed-controller pod inspection failed: {type(exc).__name__}: {exc}"
+            return (
+                f"failed-controller pod inspection failed: {type(exc).__name__}: {exc}"
+            )
     if result.returncode != 0:
         return _format_command_error(command, result)
     try:

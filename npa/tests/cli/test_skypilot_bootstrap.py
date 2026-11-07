@@ -1329,7 +1329,10 @@ def test_skypilot_controller_cleanup_forwards_explicit_orphan_recovery_attestati
             "project": "",
             "context": "",
             "sky_bin": None,
+            "isolated_config_dir": None,
+            "config_path": None,
             "recover_orphan_controller": True,
+            "recover_failed_controller": "",
             "attest_no_active_jobs": True,
         }
     ]

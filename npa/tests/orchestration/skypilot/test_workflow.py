@@ -7203,10 +7203,10 @@ def test_exact_lookup_uses_task_local_kubernetes_absence_only_for_controller_los
     )
     kubeconfig = tmp_path / "kubeconfig"
     calls: list[object] = []
-    monkeypatch.setattr(workflow_module, "resolve_config", lambda **_kwargs: runtime_config)
     monkeypatch.setattr(
-        workflow_module, "ensure_skypilot_version", lambda value: value
+        workflow_module, "resolve_config", lambda **_kwargs: runtime_config
     )
+    monkeypatch.setattr(workflow_module, "ensure_skypilot_version", lambda value: value)
     monkeypatch.setattr(workflow_module, "sky_environment", lambda _path: {})
     monkeypatch.setattr(
         workflow_module,
@@ -7241,7 +7241,9 @@ def test_exact_lookup_uses_task_local_kubernetes_absence_only_for_controller_los
 
     assert evidence.outcome == "absent"
     assert not evidence.workload_observable
-    assert evidence.workload_evidence == "kubernetes_exact_controller_and_worker_absence"
+    assert (
+        evidence.workload_evidence == "kubernetes_exact_controller_and_worker_absence"
+    )
     assert len(calls) == 2
     assert calls[1] == ("task-context", kubeconfig, {"KUBECONFIG": str(kubeconfig)})
 
@@ -7255,10 +7257,10 @@ def test_exact_lookup_refuses_kubernetes_absence_when_exact_worker_is_present(
         isolated_config_dir=tmp_path / "isolated",
         global_config_path=tmp_path / "sky.yaml",
     )
-    monkeypatch.setattr(workflow_module, "resolve_config", lambda **_kwargs: runtime_config)
     monkeypatch.setattr(
-        workflow_module, "ensure_skypilot_version", lambda value: value
+        workflow_module, "resolve_config", lambda **_kwargs: runtime_config
     )
+    monkeypatch.setattr(workflow_module, "ensure_skypilot_version", lambda value: value)
     monkeypatch.setattr(workflow_module, "sky_environment", lambda _path: {})
     monkeypatch.setattr(
         workflow_module,
@@ -7312,10 +7314,10 @@ def test_exact_lookup_never_uses_kubernetes_absence_without_immutable_id(
         isolated_config_dir=tmp_path / "isolated",
         global_config_path=tmp_path / "sky.yaml",
     )
-    monkeypatch.setattr(workflow_module, "resolve_config", lambda **_kwargs: runtime_config)
     monkeypatch.setattr(
-        workflow_module, "ensure_skypilot_version", lambda value: value
+        workflow_module, "resolve_config", lambda **_kwargs: runtime_config
     )
+    monkeypatch.setattr(workflow_module, "ensure_skypilot_version", lambda value: value)
     monkeypatch.setattr(
         subprocess,
         "run",
