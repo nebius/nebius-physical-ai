@@ -111,9 +111,14 @@ def test_daily_workflow_has_no_pr_trigger_and_always_cleans_credentials():
     assert steps.index(cleanup) < steps.index("Clean up SSH key")
 
 
-def test_live_e2e_tiers_load_only_the_vm_scoped_environment() -> None:
+def test_live_e2e_tiers_load_vm_scoped_cloud_then_live_environment() -> None:
     loader = _function_body("load_live_e2e_environment")
+    cloud_env = "${HOME}/bin/npa-cloud-env.sh"
     assert 'live_env="${HOME}/.npa/live-e2e.env"' in loader
+    assert cloud_env in loader
+    assert loader.index(cloud_env) < loader.index(
+        'live_env="${HOME}/.npa/live-e2e.env"'
+    )
     assert '. "$live_env"' in loader
     assert "set -a" in loader and "set +a" in loader
     assert "NPA_SKYPILOT_BIN" in loader
