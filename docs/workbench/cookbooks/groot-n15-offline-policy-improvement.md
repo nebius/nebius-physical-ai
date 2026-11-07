@@ -96,6 +96,10 @@ workflow here is outcome/progress-weighted N1.5 BC, not ARM: it does not train
 or invoke the official ARM reward model or claim its weighting rule. It can
 accept ARM-produced progress only when the adapter supplies a reward-checkpoint
 digest. Episode outcomes must never be interpolated into invented dense progress.
+This reference-only comparison is pinned to
+[arXiv:2604.03037v2](https://arxiv.org/abs/2604.03037v2) and the FluxVLA
+`docs/arm.md` snapshot at `249531b78ee922757a6e4b56d2f5965487f9f0fc`; neither
+is a runtime dependency of this workflow.
 
 ## Inputs and prerequisites
 
