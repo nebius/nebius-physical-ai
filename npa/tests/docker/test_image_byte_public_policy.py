@@ -382,6 +382,22 @@ def test_public_fatal_receipt_discloses_only_safe_finding_category(
         P.match_fresh_population({}, {}, lambda: iter([row]))
 
 
+def test_native_finding_schema_failure_uses_safe_regex_receipt():
+    with pytest.raises(
+        W.ScanError, match="^public_policy_confidentiality_fatal_regex$"
+    ):
+        P.native_multiset(
+            [
+                {
+                    "rule_id": "untrusted-rule",
+                    "start_line": 1,
+                    "end_line": 1,
+                    "untrusted_extra": "must-not-be-disclosed",
+                }
+            ]
+        )
+
+
 @pytest.mark.parametrize(
     "mutation",
     ["incomplete", "helper_pending", "failure_code", "count_bool", "new_record_hash"],

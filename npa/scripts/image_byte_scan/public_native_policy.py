@@ -97,7 +97,10 @@ def native_multiset(findings):
         A.fields(
             finding,
             {"rule_id", "start_line", "end_line"},
-            "public_policy_confidentiality_fatal",
+            # Native scanner detections are confidentiality findings too.  The
+            # public receipt may identify that safe category, but must not
+            # disclose the rule, match, path, range, or record identity.
+            "public_policy_confidentiality_fatal_regex",
         )
         W.require(
             isinstance(finding["rule_id"], str) and bool(finding["rule_id"]),
