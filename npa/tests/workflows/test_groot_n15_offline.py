@@ -162,6 +162,32 @@ def test_train_only_statistics_do_not_read_eval_parquet(tmp_path: Path) -> None:
     assert stats["observation.state"]["max"] == [2.0]
 
 
+def test_custom_native_layout_requires_declared_raw_columns(tmp_path: Path) -> None:
+    data = tmp_path / "data" / "chunk-000"
+    data.mkdir(parents=True)
+    pd.DataFrame(
+        {
+            "observation.state": [np.asarray([1.0, 2.0], dtype=np.float32)],
+            "action": [np.asarray([3.0, 4.0], dtype=np.float32)],
+        }
+    ).to_parquet(data / "episode_000000.parquet")
+    modality = {
+        "state": {"arm": {"start": 0, "end": 2, "original_key": "observation.state"}},
+        "action": {"arm": {"start": 0, "end": 2, "original_key": "action"}},
+    }
+    workflow._validate_custom_native_layout(
+        tmp_path, modality, [{"episode_index": 0, "length": 1}]
+    )
+
+    pd.DataFrame({"action": [np.asarray([3.0, 4.0], dtype=np.float32)]}).to_parquet(
+        data / "episode_000000.parquet"
+    )
+    with pytest.raises(workflow.WorkflowArtifactError, match="observation.state"):
+        workflow._validate_custom_native_layout(
+            tmp_path, modality, [{"episode_index": 0, "length": 1}]
+        )
+
+
 def test_custom_action_roundtrip_records_terminal_mask_and_declared_keys(
     tmp_path: Path,
 ) -> None:
@@ -189,6 +215,31 @@ def test_custom_action_roundtrip_records_terminal_mask_and_declared_keys(
     assert evidence["valid_action_horizon_steps"] == 1
     assert evidence["masked_action_horizon_steps"] == 3
     assert evidence["constant_training_dimensions"] == 1
+
+
+def test_custom_action_roundtrip_resolves_declared_raw_action_slices(
+    tmp_path: Path,
+) -> None:
+    data = tmp_path / "data" / "chunk-000"
+    data.mkdir(parents=True)
+    pd.DataFrame(
+        {"action": [np.asarray([1.0, -2.0], dtype=np.float32)] * 2}
+    ).to_parquet(data / "episode_000000.parquet")
+    evidence = workflow._custom_action_roundtrip_evidence(
+        tmp_path,
+        [{"episode_index": 0, "length": 2}],
+        {0},
+        ("action.left_arm", "action.right_arm"),
+        4,
+        {"action": {"min": [1.0, -3.0], "max": [1.0, 3.0]}},
+        verify_minmax_roundtrip,
+        {
+            "left_arm": {"start": 0, "end": 1, "original_key": "action"},
+            "right_arm": {"start": 1, "end": 2, "original_key": "action"},
+        },
+    )
+    assert evidence["action_keys"] == ["action.left_arm", "action.right_arm"]
+    assert evidence["valid_action_horizon_steps"] == 1
 
 
 def test_metrics_apply_terminal_mask_without_claiming_outcomes() -> None:

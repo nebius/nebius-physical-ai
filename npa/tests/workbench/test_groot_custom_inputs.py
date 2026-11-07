@@ -124,6 +124,18 @@ def test_rejects_digest_mismatch_and_archive_path_escape(tmp_path: Path):
         extract_content_addressed_archive(escaped, digest, tmp_path / "unsafe")
 
 
+def test_rejects_nonregular_archive_members(tmp_path: Path):
+    archive = tmp_path / "symlink.tar"
+    with tarfile.open(archive, "w") as opened:
+        entry = tarfile.TarInfo("extension-link")
+        entry.type = tarfile.SYMTYPE
+        entry.linkname = "outside"
+        opened.addfile(entry)
+    digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+    with pytest.raises(ValueError, match="unsafe"):
+        extract_content_addressed_archive(archive, digest, tmp_path / "symlink")
+
+
 def test_cartesian_contract_fixture_roundtrips_declared_units_and_terminal_mask():
     """A numerical fixture, not a claim about a recorded robot trajectory."""
 

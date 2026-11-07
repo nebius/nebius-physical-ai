@@ -91,21 +91,21 @@ and their hashes in a private receipt rather than publishing its storage paths.
 
 ```bash
 export SPEC=workflows/testing/groot-n15-offline-rl.yaml
-export RUN_ID=<new-immutable-run-id>
-export PROJECT_ALIAS=<configured-task-project>
-export BUCKET=<operator-owned-bucket>
+export RUN_ID="<new-immutable-run-id>"
+export PROJECT_ALIAS="<configured-task-project>"
+export BUCKET="<operator-owned-bucket>"
 export WORKFLOW_ROOT="s3://${BUCKET}/workflow-ledger/${RUN_ID}"
 export OUTPUT_PREFIX="groot-n15-offline-rl/${RUN_ID}"
-export DATASET_ID=<stable-source-identifier>
-export DATASET_REVISION=<immutable-source-revision>
+export DATASET_ID="<stable-source-identifier>"
+export DATASET_REVISION="<immutable-source-revision>"
 export DATASET_ARCHIVE_URI="s3://${BUCKET}/inputs/<dataset-sha256>.tar.gz"
 export PROVENANCE_URI="s3://${BUCKET}/inputs/<provenance-sha256>.json"
 export ACTION_CONTRACT_URI="s3://${BUCKET}/inputs/<action-contract-sha256>.json"
 export EXTERNAL_CODE_URI="s3://${BUCKET}/inputs/<extension-sha256>.tar.gz"
-export EXTERNAL_CODE_SHA256=<64-lowercase-hex>
+export EXTERNAL_CODE_SHA256="<64-lowercase-hex>"
 export ADAPTER_CONFIG_URI="s3://${BUCKET}/inputs/<adapter-config-sha256>.json"
-export DATA_CONFIG=<external_package.config:SingleCameraProfile>
-export EVIDENCE_EPISODE=<held-out-episode-with-recorded-wrist-video>
+export DATA_CONFIG="<external_package.config:SingleCameraProfile>"
+export EVIDENCE_EPISODE="<held-out-episode-with-recorded-wrist-video>"
 ```
 
 The reference profile then supplies these exact configuration overrides:

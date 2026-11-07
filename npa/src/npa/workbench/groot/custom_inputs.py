@@ -16,6 +16,7 @@ import hashlib
 import importlib
 import json
 from pathlib import Path
+from shutil import copyfileobj
 import subprocess
 import sys
 import tarfile
@@ -197,9 +198,35 @@ def _safe_members(archive: tarfile.TarFile) -> list[tarfile.TarInfo]:
             or member.issym()
             or member.islnk()
             or member.isdev()
+            or not (member.isdir() or member.isfile())
         ):
             raise ValueError("external-code archive has unsafe member")
     return members
+
+
+def _extract_safe_members(
+    archive: tarfile.TarFile, members: list[tarfile.TarInfo], destination: Path
+) -> None:
+    """Copy validated regular files without delegating extraction to ``tarfile``.
+
+    ``TarFile.extractall`` is deliberately avoided even after validation: this
+    keeps the archive boundary auditable and prevents a later tarfile behavior
+    change from bypassing the member contract above.
+    """
+
+    for member in members:
+        target = destination / Path(member.name)
+        if member.isdir():
+            target.mkdir(parents=True, exist_ok=True)
+            continue
+        if target.exists():
+            raise ValueError("external-code archive has duplicate file member")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        source = archive.extractfile(member)
+        if source is None:
+            raise ValueError("external-code archive regular member is unreadable")
+        with source, target.open("xb") as output:
+            copyfileobj(source, output)
 
 
 def extract_content_addressed_archive(
@@ -219,10 +246,7 @@ def extract_content_addressed_archive(
     try:
         with tarfile.open(archive, "r:*") as opened:
             members = _safe_members(opened)
-            if sys.version_info >= (3, 12):
-                opened.extractall(destination, members=members, filter="data")
-            else:
-                opened.extractall(destination, members=members)
+            _extract_safe_members(opened, members, destination)
     except (tarfile.TarError, OSError) as error:
         raise ValueError(
             "declared input archive could not be safely extracted"

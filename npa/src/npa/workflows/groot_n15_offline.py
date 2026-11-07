@@ -587,6 +587,87 @@ def _statistics_from_train_parquet(
     return result
 
 
+def _validate_custom_native_layout(
+    dataset_root: Path,
+    modality_payload: Mapping[str, Any],
+    episodes: list[dict[str, Any]],
+) -> None:
+    """Reject adapter output that the pinned native LeRobot reader cannot load.
+
+    The native N1.5 reader resolves each logical ``state.*`` or ``action.*``
+    key through ``meta/modality.json`` and then slices the declared raw column.
+    Checking that relation here keeps malformed custom adapters from spending a
+    GPU bootstrap only to fail in the trainer with a generic ``KeyError``.
+    """
+
+    import numpy as np
+    import pandas as pd
+
+    raw_widths: dict[str, int] = {}
+    for modality, fallback_raw_key in (
+        ("state", "observation.state"),
+        ("action", "action"),
+    ):
+        entries = modality_payload.get(modality)
+        if not isinstance(entries, dict) or not entries:
+            raise WorkflowArtifactError(
+                f"custom adapter modality needs a nonempty {modality} map"
+            )
+        for name, entry in entries.items():
+            if not isinstance(name, str) or not isinstance(entry, Mapping):
+                raise WorkflowArtifactError(
+                    f"custom adapter {modality} metadata is invalid"
+                )
+            start = entry.get("start")
+            end = entry.get("end")
+            if (
+                type(start) is not int
+                or type(end) is not int
+                or start < 0
+                or end <= start
+            ):
+                raise WorkflowArtifactError(
+                    f"custom adapter {modality}.{name} has an invalid raw slice"
+                )
+            raw_key = entry.get("original_key", fallback_raw_key)
+            if not isinstance(raw_key, str) or not raw_key:
+                raise WorkflowArtifactError(
+                    f"custom adapter {modality}.{name} lacks an original_key"
+                )
+            raw_widths[raw_key] = max(raw_widths.get(raw_key, 0), end)
+
+    for episode in episodes:
+        index = int(episode["episode_index"])
+        matches = list((dataset_root / "data").rglob(f"episode_{index:06d}.parquet"))
+        if len(matches) != 1:
+            raise WorkflowArtifactError(
+                f"expected one parquet file for custom episode {index}"
+            )
+        table = pd.read_parquet(matches[0])
+        for raw_key, required_width in raw_widths.items():
+            if raw_key not in table.columns:
+                raise WorkflowArtifactError(
+                    "custom adapter native layout is missing raw "
+                    f"{raw_key!r} for episode {index}"
+                )
+            try:
+                values = np.vstack(
+                    [np.asarray(value, dtype=np.float32) for value in table[raw_key]]
+                )
+            except (TypeError, ValueError) as error:
+                raise WorkflowArtifactError(
+                    f"custom adapter raw {raw_key!r} is not a rectangular numeric vector"
+                ) from error
+            if (
+                values.ndim != 2
+                or values.shape[1] < required_width
+                or not np.isfinite(values).all()
+            ):
+                raise WorkflowArtifactError(
+                    f"custom adapter raw {raw_key!r} does not satisfy its declared slice"
+                )
+
+
 def _custom_action_roundtrip_evidence(
     dataset_root: Path,
     episodes: list[dict[str, Any]],
@@ -595,6 +676,7 @@ def _custom_action_roundtrip_evidence(
     action_horizon: int,
     statistics: Mapping[str, Mapping[str, Any]],
     verifier: Callable[[Any, Any, Any, Any], dict[str, Any]],
+    action_modalities: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Bind custom raw actions, frozen train statistics, and a terminal mask.
 
@@ -626,19 +708,56 @@ def _custom_action_roundtrip_evidence(
         raise WorkflowArtifactError(
             "custom training episode length differs for action roundtrip"
         )
-    if any(key not in table.columns or key not in statistics for key in action_keys):
-        raise WorkflowArtifactError(
-            "custom action statistics do not cover declared targets"
-        )
-    raw_action = np.concatenate(
-        [np.asarray(table[key].iloc[-1], dtype=np.float32) for key in action_keys]
-    )
-    lower = np.concatenate(
-        [np.asarray(statistics[key]["min"], dtype=np.float32) for key in action_keys]
-    )
-    upper = np.concatenate(
-        [np.asarray(statistics[key]["max"], dtype=np.float32) for key in action_keys]
-    )
+    parts = []
+    lower_parts = []
+    upper_parts = []
+    for key in action_keys:
+        if action_modalities is None:
+            raw_key, start, end = key, 0, None
+        else:
+            logical_key = key.removeprefix("action.")
+            entry = action_modalities.get(logical_key)
+            if not isinstance(entry, Mapping):
+                raise WorkflowArtifactError(
+                    f"custom action modality is missing {logical_key!r}"
+                )
+            raw_key = entry.get("original_key", "action")
+            start = entry.get("start")
+            end = entry.get("end")
+            if (
+                not isinstance(raw_key, str)
+                or type(start) is not int
+                or type(end) is not int
+                or start < 0
+                or end <= start
+            ):
+                raise WorkflowArtifactError(
+                    f"custom action modality has an invalid raw slice for {logical_key!r}"
+                )
+        if raw_key not in table.columns or raw_key not in statistics:
+            raise WorkflowArtifactError(
+                "custom action statistics do not cover declared raw targets"
+            )
+        raw = np.asarray(table[raw_key].iloc[-1], dtype=np.float32)
+        minimum = np.asarray(statistics[raw_key]["min"], dtype=np.float32)
+        maximum = np.asarray(statistics[raw_key]["max"], dtype=np.float32)
+        if end is None:
+            end = raw.shape[0]
+        if (
+            raw.ndim != 1
+            or minimum.shape != raw.shape
+            or maximum.shape != raw.shape
+            or end > raw.shape[0]
+        ):
+            raise WorkflowArtifactError(
+                "custom action raw target differs from its frozen statistics"
+            )
+        parts.append(raw[start:end])
+        lower_parts.append(minimum[start:end])
+        upper_parts.append(maximum[start:end])
+    raw_action = np.concatenate(parts)
+    lower = np.concatenate(lower_parts)
+    upper = np.concatenate(upper_parts)
     result = verifier(
         np.repeat(raw_action[None, :], action_horizon, axis=0),
         lower,
@@ -1090,12 +1209,15 @@ def _prepare_custom_inputs(
     if not isinstance(modality_payload, dict):
         raise WorkflowArtifactError("custom adapter modality must be a JSON object")
     video_modalities = modality_payload.get("video")
+    state_modalities = modality_payload.get("state")
     action_modalities = modality_payload.get("action")
-    if not isinstance(video_modalities, dict) or not isinstance(
-        action_modalities, dict
+    if (
+        not isinstance(video_modalities, dict)
+        or not isinstance(state_modalities, dict)
+        or not isinstance(action_modalities, dict)
     ):
         raise WorkflowArtifactError(
-            "custom adapter modality needs video and action maps"
+            "custom adapter modality needs video, state, and action maps"
         )
     declared_video_keys = {f"video.{name}" for name in video_modalities}
     if args.evidence_video_key not in declared_video_keys:
@@ -1113,6 +1235,7 @@ def _prepare_custom_inputs(
             "configured, action-contract, and custom-modality action keys must match"
         )
     episodes = _episode_records(derivative)
+    _validate_custom_native_layout(derivative, modality_payload, episodes)
     feedback = custom["feedback_records"]
     train_indices = {
         int(record["episode_index"])
@@ -1149,6 +1272,7 @@ def _prepare_custom_inputs(
         args.action_horizon,
         stats,
         verify_minmax_roundtrip,
+        action_modalities,
     )
     manifest_path = stage / "feedback-manifest.json"
     manifest = prepare_feedback(
