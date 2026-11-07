@@ -26,6 +26,41 @@ ROLES = {
     "numeric-source-constant",
 }
 KINDS = {"layer_regular_content", "logical_tar_path"}
+DETECTOR_INPUTS_SCHEMA = "npa.image-native-detector-inputs.v1"
+
+
+def detector_inputs_sha256(sources):
+    """Bind the exact public scanner closure before accepting a policy review.
+
+    The native helper receipt identifies the resulting binary.  This separate
+    binding makes a configuration, toolchain, module-lock, source, or builder
+    change fail before an image build can reach the complete-byte gate.
+    """
+    from image_byte_scan.go_helper import build as B
+
+    names = (
+        ".gitleaks.toml",
+        *(f"npa/scripts/image_byte_scan/go_helper/{name}" for name in B.GO_NAMES),
+        "npa/scripts/image_byte_scan/go_helper/build.py",
+    )
+    bindings = {}
+    for name in names:
+        W.require(name in sources, "public_policy_detector_input_missing")
+        bindings[name] = A.digest(sources[name]["sha256"])
+    return W.sha(
+        W.canonical(
+            {
+                "schema_version": DETECTOR_INPUTS_SCHEMA,
+                "toolchain": {
+                    "go_version": B.GO_VERSION,
+                    "go_archive_url": B.GO_ARCHIVE_URL,
+                    "go_archive_sha256": B.GO_ARCHIVE_SHA256,
+                    "gitleaks_version": B.GITLEAKS_VERSION,
+                },
+                "sources": bindings,
+            }
+        )
+    )
 
 
 def native_multiset(findings):
@@ -94,16 +129,25 @@ def validate_public_wheel_references(value):
             validate_public_wheel_references(child)
 
 
-def compile_catalog(catalog, detector_identity, proof_loader):
+def compile_catalog(catalog, detector_identity, detector_inputs, proof_loader):
     A.fields(
         catalog,
-        {"schema_version", "detector_identity", "entries"},
+        {
+            "schema_version",
+            "detector_identity",
+            "detector_inputs_sha256",
+            "entries",
+        },
         "public_policy_schema",
     )
     W.require(catalog["schema_version"] == SCHEMA, "public_policy_version")
     W.require(
         catalog["detector_identity"] == detector_identity,
         "public_policy_detector_changed",
+    )
+    W.require(
+        A.digest(catalog["detector_inputs_sha256"]) == detector_inputs,
+        "public_policy_detector_inputs_changed",
     )
     W.require(isinstance(catalog["entries"], list), "public_policy_entries")
     entries = {}
@@ -233,7 +277,12 @@ class FreshPolicyReview:
         }
         self.proof_bindings = {}
         catalog = A.decode(self._public_source(self.catalog_path, self.catalog_sha256))
-        self.entries = compile_catalog(catalog, self.detector_identity, self._proof)
+        self.entries = compile_catalog(
+            catalog,
+            self.detector_identity,
+            detector_inputs_sha256(self.sources),
+            self._proof,
+        )
 
     def _committed_revision(self):
         import subprocess
@@ -332,6 +381,7 @@ class FreshPolicyReview:
             "scanner_sources_sha256": W.sha(W.canonical(self.sources)),
             "public_proof_sources_sha256": W.sha(W.canonical(self.proof_bindings)),
             "detector_identity": self.detector_identity,
+            "detector_inputs_sha256": detector_inputs_sha256(self.sources),
             "authorization_sha256": report["authorization_sha256"],
             "archive_sha256": report["archive_sha256"],
             "image_config_digest": report["image_config_digest"],
