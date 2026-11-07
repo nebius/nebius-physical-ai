@@ -324,7 +324,7 @@ def test_current_npa_source_review_bindings_are_content_exact() -> None:
         "src/npa/orchestration/npa_workflow/run_state.py": "866b4b5a1a6e23ea19b6e7a910ffc1f29a3978a04d6cc15762b726fd231abd98",
         "src/npa/orchestration/npa_workflow/sim2real_preflight.py": "b9e4436bc9f4ff1557da3bf60975fd210a1e55c5b206198bc9e51ac5ddd66cd3",
         "src/npa/orchestration/npa_workflow/src_staging.py": "e59bbbd5336a9570e8d67342b49df971b0f106fb3d0cb2296156f9dfa9c54d24",
-        "src/npa/orchestration/npa_workflow/submit_matrix.py": "8e3fe7d1db5c9b952a1eacb533d0f456784491371f86c6ecf9e962cde9d0d58f",
+        "src/npa/orchestration/npa_workflow/submit_matrix.py": "36fc6e7231995d1b49a60e1e96e73a86f43e751b5e2b8632d572c2739314e5a8",
         "src/npa/orchestration/skypilot/workflow_state.py": "b23b811dd9b83881f968ef7cd2f5643d3dd27d9b7f9d584f7474922c484112dd",
         "src/npa/smoke/golden_evals.yaml": "5c65176a0a328303e8abb2a53c1842c2fe521d78e52f8973343f1ae9fd69994c",
         "src/npa/workflows/rerun_serve.py": "330d9d817fd2c2d50b2c50e358c5b6a218ebcae130051f73a4c13fe6c51fe117",

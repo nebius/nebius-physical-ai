@@ -1126,11 +1126,11 @@
       "source": {"url": "https://github.com/nebius/nebius-physical-ai/blob/17acfed2ac137e32ae6fca5962398a0b8634f691/npa/src/npa/orchestration/npa_workflow/run_state.py", "revision": "17acfed2ac137e32ae6fca5962398a0b8634f691", "member": "npa/src/npa/orchestration/npa_workflow/run_state.py"}
     },
     {
-      "sha256": "8e3fe7d1db5c9b952a1eacb533d0f456784491371f86c6ecf9e962cde9d0d58f",
-      "bytes": 91712,
+      "sha256": "36fc6e7231995d1b49a60e1e96e73a86f43e751b5e2b8632d572c2739314e5a8",
+      "bytes": 91831,
       "match_counts": {"credential_assignment": 1},
       "reason": "NPA source references only operator-provided inputs, annotations, shell substitutions, and documented placeholders. The detector's named assignments are not an operational credential.",
-      "source": {"url": "https://github.com/nebius/nebius-physical-ai/blob/17acfed2ac137e32ae6fca5962398a0b8634f691/npa/src/npa/orchestration/npa_workflow/submit_matrix.py", "revision": "17acfed2ac137e32ae6fca5962398a0b8634f691", "member": "npa/src/npa/orchestration/npa_workflow/submit_matrix.py"}
+      "source": {"url": "https://github.com/nebius/nebius-physical-ai/blob/b1b2f6073616a87c31a08d730d3784673ba1cb59/npa/src/npa/orchestration/npa_workflow/submit_matrix.py", "revision": "b1b2f6073616a87c31a08d730d3784673ba1cb59", "member": "npa/src/npa/orchestration/npa_workflow/submit_matrix.py"}
     },
     {
       "sha256": "96137275400f39510c9a533c6ad8a921e94266e664e7e09c9ad6ea9f23277c23",
