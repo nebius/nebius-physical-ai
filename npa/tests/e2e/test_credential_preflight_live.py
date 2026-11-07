@@ -109,7 +109,11 @@ def test_s3_and_nebius_checks_pass_against_the_dedicated_project(live_project):
     returncode, payload, elapsed = _run_preflight(live_project, "s3,nebius")
 
     checks = {check["name"]: check["status"] for check in payload["checks"]}
-    assert checks == {"s3": "PASS", "nebius": "PASS"}
+    nebius = next(check for check in payload["checks"] if check["name"] == "nebius")
+    safe_nebius_diagnostic = {
+        name: nebius.get(name) for name in ("status", "summary", "remedy", "details")
+    }
+    assert checks == {"s3": "PASS", "nebius": "PASS"}, safe_nebius_diagnostic
     assert returncode == 0
     print(
         json.dumps(

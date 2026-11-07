@@ -331,6 +331,24 @@ def check_nebius(_credentials: Any, probes: CredentialProbes) -> CheckResult:
             remedy="Run the same check without `--offline` before provisioning.",
         )
     verification = probes.nebius_profile_verifier()
+    # ``verify_profile`` intentionally discards provider command output. Keep
+    # its finite internal outcome available to automation instead: it lets a
+    # protected live check distinguish profile selection, IAM identity, and
+    # token-mint failures without revealing a profile name, token, endpoint, or
+    # CLI stderr. Do not serialize arbitrary values supplied by a custom probe.
+    failure_reason = getattr(verification, "failure_reason", "")
+    diagnostic = (
+        (f"failure_reason={failure_reason}",)
+        if failure_reason
+        in {
+            "cli_unavailable",
+            "timeout",
+            "probe_error",
+            "identity_failed",
+            "token_mint_failed",
+        }
+        else ()
+    )
     profile_source = (
         "Configured Nebius CLI profile"
         if getattr(verification, "profile", "")
@@ -342,13 +360,13 @@ def check_nebius(_credentials: Any, probes: CredentialProbes) -> CheckResult:
             status=PASS,
             summary=f"{profile_source} is authenticated.",
         )
-    failure_reason = getattr(verification, "failure_reason", "")
     if failure_reason == "cli_unavailable":
         return CheckResult(
             name="nebius",
             status=FAIL,
             summary="Nebius CLI is not available.",
             remedy="Install the Nebius CLI or put `nebius` on PATH, then retry.",
+            details=diagnostic,
         )
     if failure_reason == "timeout":
         return CheckResult(
@@ -359,6 +377,7 @@ def check_nebius(_credentials: Any, probes: CredentialProbes) -> CheckResult:
                 "Check connectivity to Nebius IAM and retry. Re-authenticate the "
                 "selected profile if the timeout persists."
             ),
+            details=diagnostic,
         )
     if failure_reason == "probe_error":
         return CheckResult(
@@ -369,6 +388,7 @@ def check_nebius(_credentials: Any, probes: CredentialProbes) -> CheckResult:
                 "Run `nebius --profile <profile> --no-browser --no-check-update iam "
                 "whoami` with the selected profile to diagnose, then retry."
             ),
+            details=diagnostic,
         )
     if failure_reason == "token_mint_failed" or verification.identity_verified:
         return CheckResult(
@@ -376,12 +396,14 @@ def check_nebius(_credentials: Any, probes: CredentialProbes) -> CheckResult:
             status=FAIL,
             summary=f"{profile_source} resolved identity but could not mint an IAM token.",
             remedy="Re-authenticate the selected Nebius CLI profile, then retry.",
+            details=diagnostic,
         )
     return CheckResult(
         name="nebius",
         status=FAIL,
         summary=f"{profile_source} could not resolve an authenticated identity.",
         remedy="Authenticate the selected Nebius CLI profile, then retry.",
+        details=diagnostic,
     )
 
 

@@ -222,6 +222,7 @@ def test_nebius_passes_only_when_identity_and_token_mint_succeed() -> None:
     result = check_nebius(_Creds(), probes)
     assert result.status == PASS
     assert result.summary == "Configured Nebius CLI profile is authenticated."
+    assert result.details == ()
     assert "operator" not in result.summary
 
 
@@ -265,7 +266,27 @@ def test_nebius_reports_execution_failure_reason(
     result = check_nebius(_Creds(), probes)
     assert result.status == FAIL
     assert result.summary == expected_summary
+    assert result.details == (f"failure_reason={failure_reason}",)
     assert "operator" not in " ".join((result.summary, result.remedy, *result.details))
+
+
+def test_nebius_does_not_serialize_unrecognized_probe_failure_reason() -> None:
+    probes = CredentialProbes(
+        nebius_profile_verifier=lambda: _ProfileVerification(
+            False,
+            False,
+            profile="operator",
+            failure_reason="untrusted diagnostic text",
+        )
+    )
+
+    result = check_nebius(_Creds(), probes)
+
+    assert result.status == FAIL
+    assert result.details == ()
+    assert "untrusted diagnostic text" not in " ".join(
+        (result.summary, result.remedy, *result.details)
+    )
 
 
 def test_nebius_names_default_profile_source_without_identifier() -> None:
