@@ -8,6 +8,7 @@ confidentiality findings. A successful receipt is separate from the raw verdict.
 from __future__ import annotations
 
 from collections import Counter
+import re
 
 from image_byte_scan import adjudicate as A
 
@@ -27,6 +28,32 @@ ROLES = {
 }
 KINDS = {"layer_regular_content", "logical_tar_path"}
 DETECTOR_INPUTS_SCHEMA = "npa.image-native-detector-inputs.v1"
+
+
+def require_complete_report(report):
+    """Reject incomplete raw scans before native-policy adjudication.
+
+    Args:
+        report: The internally produced scanner report.
+
+    Returns:
+        None.
+
+    Raises:
+        W.ScanError: If the scanner did not produce a complete joined report.
+    """
+    complete = (
+        report.get("schema_version") == "npa.image-byte-scan.v1"
+        and report.get("complete") is True
+        and report.get("helper_joined") is True
+        and "failure_code" not in report
+    )
+    if complete:
+        return
+    code = report.get("failure_code")
+    if isinstance(code, str) and re.fullmatch(r"[a-z0-9_]{1,128}", code):
+        raise W.ScanError(code)
+    raise W.ScanError("adjudication_incomplete_scan")
 
 
 def detector_inputs_sha256(sources):
@@ -336,6 +363,7 @@ class FreshPolicyReview:
         import json
 
         W.output_identity(directory, self.output_fd)
+        require_complete_report(report)
         # Only core.main calls this after _scan returns and the raw report is
         # written. There is no input-report CLI and no hash synthesized to imply
         # that an untrusted caller's purported scan had actually executed.

@@ -2341,6 +2341,69 @@ def test_pending_pax_bounds_reset_after_target_entry(tmp_path, monkeypatch):
     assert report["regular_files"] == 2
 
 
+def test_local_pax_size_controls_the_following_member_body():
+    class Sink:
+        def data(self, *_args):
+            return None
+
+        def zeros(self, *_args):
+            return None
+
+        def issue(self, *_args):
+            pytest.fail("unexpected tar finding")
+
+        def flush_zeros(self):
+            return None
+
+    name = "blobs/sha256/" + "a" * 64
+    extension, _ = raw_pax_entry([("size", b"3")])
+    member = tarfile.TarInfo(name)
+    member.size = 0
+    raw = (
+        extension
+        + member.tobuf(format=tarfile.GNU_FORMAT)
+        + b"abc"
+        + b"\0" * 509
+        + b"\0" * 1024
+    )
+    seen = []
+
+    def consume(reader, size, path, _context):
+        seen.append((path, size, reader.read(size)))
+
+    W.walk_tar(
+        io.BytesIO(raw),
+        Sink(),
+        {"scope": "outer"},
+        consume,
+        encoded_layer_sizes={name: 3},
+    )
+
+    assert seen == [(name, 3, b"abc")]
+
+
+@pytest.mark.parametrize("value", [b"01", b"-1", b"1.0"])
+def test_local_pax_size_requires_a_bounded_nonnegative_decimal(value):
+    extension, _ = raw_pax_entry([("size", value)])
+    raw = extension + raw_tar_entry("opt/body", b"neutral") + b"\0" * 1024
+
+    with pytest.raises(W.ScanError, match="pax_size_encoding"):
+        W.walk_tar(
+            io.BytesIO(raw),
+            type(
+                "Sink",
+                (),
+                {
+                    "data": lambda *_args: None,
+                    "zeros": lambda *_args: None,
+                    "issue": lambda *_args: None,
+                },
+            )(),
+            {"scope": "outer"},
+            lambda *_args: None,
+        )
+
+
 def test_global_pax_xattrs_are_scanned_then_discarded(tmp_path, monkeypatch):
     global_headers = b"".join(
         raw_pax_entry(
