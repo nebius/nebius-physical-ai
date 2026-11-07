@@ -401,6 +401,16 @@ def cleanup_controller_cmd(
     sky_bin: str = typer.Option(
         "", "--sky-bin", help="Pinned NPA SkyPilot executable override."
     ),
+    isolated_config_dir: Path | None = typer.Option(
+        None,
+        "--isolated-config-dir",
+        help="Exact isolated SkyPilot state for a task-bound controller recovery.",
+    ),
+    config_path: Path | None = typer.Option(
+        None,
+        "--config-path",
+        help="Exact SkyPilot config paired with --isolated-config-dir.",
+    ),
     project: str = typer.Option(
         "",
         "--project",
@@ -432,6 +442,14 @@ def cleanup_controller_cmd(
         help=(
             "Delete exact controller pods when verified NPA ownership exists but "
             "SkyPilot metadata is absent; requires --attest-no-active-jobs."
+        ),
+    ),
+    recover_failed_controller: str = typer.Option(
+        "",
+        "--recover-failed-controller",
+        help=(
+            "Delete one terminally failed, task-bound controller pod only when it "
+            "matches --isolated-config-dir; requires --attest-no-active-jobs."
         ),
     ),
     attest_no_active_jobs: bool = typer.Option(
@@ -480,10 +498,17 @@ def cleanup_controller_cmd(
             "project": project,
             "context": context,
             "sky_bin": sky_bin or None,
+            "isolated_config_dir": isolated_config_dir,
+            "config_path": config_path,
         }
-        if recover_orphan_controller or attest_no_active_jobs:
+        if (
+            recover_orphan_controller
+            or recover_failed_controller
+            or attest_no_active_jobs
+        ):
             cleanup_kwargs.update(
                 recover_orphan_controller=recover_orphan_controller,
+                recover_failed_controller=recover_failed_controller,
                 attest_no_active_jobs=attest_no_active_jobs,
             )
         cleanup_kwargs.update(

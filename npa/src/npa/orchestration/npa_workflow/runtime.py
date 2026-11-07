@@ -475,7 +475,8 @@ class RuntimeOptions:
     #: only after the exact managed job and every declared output are proven absent.
     #: This is deliberately separate from ordinary workload retries: the default
     #: remains fail closed because an absent scheduler record alone cannot prove an
-    #: arbitrary stage has no external side effects.
+    #: arbitrary stage has no external side effects. A failed launch before a
+    #: managed-job ID is eligible only after the same absence/output proof.
     retry_absent_in_flight: bool = False
     #: Explicit operator authorization to replace the current plan fingerprint
     #: only when every prior attempt failed terminally and produced no output.
@@ -2385,12 +2386,27 @@ class SkyPilotWaveExecutor:
             verified_pre_id_launch_failure = _verified_absent_pre_id_attempt(
                 attempt, record
             )
+            failed_pre_id_launch = (
+                not job_id
+                and attempt.status == "failed"
+                and bool(attempt.error)
+                and attempt.launch_sequence > 0
+                and attempt.recovery_decision
+                in {
+                    "block_indeterminate",
+                    "resume_block_terminal_or_legacy_absence",
+                    "resume_block_output_present",
+                    "resume_block_output_indeterminate",
+                    "verified_absent_no_retry",
+                }
+            )
             explicit_retry = (
                 self.options.retry_absent_in_flight
                 and (
                     bool(job_id)
                     or typed_pre_id_launch_failure
                     or verified_pre_id_launch_failure
+                    or failed_pre_id_launch
                 )
                 and bool(job_name)
                 and bool(attempt.logical_launch_id)

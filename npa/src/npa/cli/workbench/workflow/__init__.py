@@ -1139,7 +1139,7 @@ def submit_cmd(
         help=(
             "With --runtime and explicit resume: authorize a new attempt only when "
             "the exact previously reconciled managed-job identity (including a "
-            "typed transport failure before job-ID assignment) and every wave-unique "
+            "verified failed launch before job-ID assignment) and every wave-unique "
             "durable output are proven absent. For an exact job recorded RUNNING "
             "then proven scheduler-ABSENT after interruption, this also permits a "
             "relaunch when outputs are demonstrably incomplete and partial fragments "

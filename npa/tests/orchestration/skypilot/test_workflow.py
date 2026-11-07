@@ -7190,6 +7190,156 @@ def test_exact_managed_job_lookup_accepts_real_0_12_2_empty_queue(
     assert evidence.outcome == "absent"
 
 
+def test_exact_lookup_uses_task_local_kubernetes_absence_only_for_controller_loss(
+    monkeypatch, tmp_path
+) -> None:
+    """A missing controller is recoverable only with one immutable job identity."""
+
+    sky_bin = _fake_sky(tmp_path)
+    runtime_config = SimpleNamespace(
+        sky_bin=sky_bin,
+        isolated_config_dir=tmp_path / "isolated",
+        global_config_path=tmp_path / "sky.yaml",
+    )
+    kubeconfig = tmp_path / "kubeconfig"
+    calls: list[object] = []
+    monkeypatch.setattr(workflow_module, "resolve_config", lambda **_kwargs: runtime_config)
+    monkeypatch.setattr(
+        workflow_module, "ensure_skypilot_version", lambda value: value
+    )
+    monkeypatch.setattr(workflow_module, "sky_environment", lambda _path: {})
+    monkeypatch.setattr(
+        workflow_module,
+        "_task_local_kubernetes_binding",
+        lambda _config: ("task-context", kubeconfig, "npa-0123456789ab"),
+    )
+
+    def fake_run(command, **_kwargs):
+        calls.append(command)
+        return subprocess.CompletedProcess(
+            command,
+            1,
+            stdout="",
+            stderr=(
+                "sky.exceptions.ClusterNotUpError: Failed to connect to jobs "
+                "controller, please try again later."
+            ),
+        )
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    monkeypatch.setattr(
+        workflow_module,
+        "_kubernetes_pod_inventory",
+        lambda context, path, environment: (
+            calls.append((context, path, environment.copy())) or []
+        ),
+    )
+
+    evidence = workflow_module.lookup_managed_job(
+        "exact-run", job_id="42", sky_bin=sky_bin
+    )
+
+    assert evidence.outcome == "absent"
+    assert not evidence.workload_observable
+    assert evidence.workload_evidence == "kubernetes_exact_controller_and_worker_absence"
+    assert len(calls) == 2
+    assert calls[1] == ("task-context", kubeconfig, {"KUBECONFIG": str(kubeconfig)})
+
+
+def test_exact_lookup_refuses_kubernetes_absence_when_exact_worker_is_present(
+    monkeypatch, tmp_path
+) -> None:
+    sky_bin = _fake_sky(tmp_path)
+    runtime_config = SimpleNamespace(
+        sky_bin=sky_bin,
+        isolated_config_dir=tmp_path / "isolated",
+        global_config_path=tmp_path / "sky.yaml",
+    )
+    monkeypatch.setattr(workflow_module, "resolve_config", lambda **_kwargs: runtime_config)
+    monkeypatch.setattr(
+        workflow_module, "ensure_skypilot_version", lambda value: value
+    )
+    monkeypatch.setattr(workflow_module, "sky_environment", lambda _path: {})
+    monkeypatch.setattr(
+        workflow_module,
+        "_task_local_kubernetes_binding",
+        lambda _config: ("task-context", tmp_path / "kubeconfig", "npa-0123456789ab"),
+    )
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda command, **_kwargs: subprocess.CompletedProcess(
+            command,
+            1,
+            stdout="",
+            stderr=(
+                "sky.exceptions.ClusterNotUpError: Failed to connect to jobs "
+                "controller, please try again later."
+            ),
+        ),
+    )
+    monkeypatch.setattr(
+        workflow_module,
+        "_kubernetes_pod_inventory",
+        lambda *_args: [
+            {
+                "metadata": {
+                    "name": "unrelated-pod",
+                    "labels": {},
+                    "annotations": {
+                        "skypilot-managed-job-id": "42",
+                        "skypilot-cluster-name": "sky-jobs-controller-npa-0123456789ab",
+                    },
+                }
+            }
+        ],
+    )
+
+    evidence = workflow_module.lookup_managed_job(
+        "exact-run", job_id="42", sky_bin=sky_bin
+    )
+
+    assert evidence.outcome == "unavailable"
+    assert "Failed to connect to jobs controller" in evidence.error
+
+
+def test_exact_lookup_never_uses_kubernetes_absence_without_immutable_id(
+    monkeypatch, tmp_path
+) -> None:
+    sky_bin = _fake_sky(tmp_path)
+    runtime_config = SimpleNamespace(
+        sky_bin=sky_bin,
+        isolated_config_dir=tmp_path / "isolated",
+        global_config_path=tmp_path / "sky.yaml",
+    )
+    monkeypatch.setattr(workflow_module, "resolve_config", lambda **_kwargs: runtime_config)
+    monkeypatch.setattr(
+        workflow_module, "ensure_skypilot_version", lambda value: value
+    )
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda command, **_kwargs: subprocess.CompletedProcess(
+            command,
+            1,
+            stdout="",
+            stderr=(
+                "sky.exceptions.ClusterNotUpError: Failed to connect to jobs "
+                "controller, please try again later."
+            ),
+        ),
+    )
+    monkeypatch.setattr(
+        workflow_module,
+        "_task_local_kubernetes_binding",
+        lambda _config: pytest.fail("fallback binding must not be consulted"),
+    )
+
+    evidence = workflow_module.lookup_managed_job("exact-run", sky_bin=sky_bin)
+
+    assert evidence.outcome == "unavailable"
+
+
 @pytest.mark.parametrize("job_id", ["", "42"])
 @pytest.mark.parametrize("include_job", [False, True])
 @pytest.mark.parametrize(

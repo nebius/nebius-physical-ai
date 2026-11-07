@@ -3034,8 +3034,10 @@ def lookup_managed_job(
 ) -> ManagedJobEvidence:
     """Authoritatively find one exact job name/id without fuzzy matching.
 
-    A failed provider/auth/CLI request is ``unavailable``. Only a successful,
-    parseable ``jobs queue --all --output json`` response can return ``absent``.
+    A failed provider/auth/CLI request is ``unavailable``. A queue request that
+    specifically reports an unreachable controller may instead use the retained
+    task-local Kubernetes binding to prove that one exact controller and worker
+    are both absent. All other queue failures remain unavailable.
     """
 
     try:
@@ -3074,6 +3076,14 @@ def lookup_managed_job(
             or result.stdout.strip()
             or f"exit {result.returncode}"
         )
+        if _controller_unreachable_queue_error(detail):
+            absence = _exact_kubernetes_job_absence(
+                runtime_config,
+                job_name=job_name,
+                job_id=job_id,
+            )
+            if absence is not None:
+                return absence
         return ManagedJobEvidence("unavailable", error=redact_text(detail))
     else:
         parsed_jobs = verified_structured_queue_rows(result)
@@ -3145,6 +3155,177 @@ def lookup_managed_job(
         workload_evidence=",".join(markers),
         job_name=_exact_queue_job_name(jobs, selected),
     )
+
+
+def _controller_unreachable_queue_error(detail: str) -> bool:
+    """Return whether SkyPilot reports only an unreachable jobs controller."""
+
+    normalized = str(detail or "").lower()
+    return (
+        "clusternotuperror" in normalized
+        and "failed to connect to jobs controller" in normalized
+    )
+
+
+def _exact_kubernetes_job_absence(
+    runtime_config: Any,
+    *,
+    job_name: str,
+    job_id: str,
+) -> ManagedJobEvidence | None:
+    """Return absence only when the retained task controller and worker are absent."""
+
+    if not _exact_managed_job_identity(job_name, job_id):
+        return None
+    binding = _task_local_kubernetes_binding(runtime_config)
+    if binding is None:
+        return None
+    context, kubeconfig, user_id = binding
+    environment = sky_environment(runtime_config.isolated_config_dir)
+    environment["KUBECONFIG"] = str(kubeconfig)
+    pods = _kubernetes_pod_inventory(context, kubeconfig, environment)
+    if pods is None or _matching_controller_or_worker(
+        pods, user_id=user_id, job_name=job_name, job_id=job_id
+    ):
+        return None
+    return ManagedJobEvidence(
+        "absent",
+        workload_observable=False,
+        workload_evidence="kubernetes_exact_controller_and_worker_absence",
+    )
+
+
+def _task_local_kubernetes_binding(
+    runtime_config: Any,
+) -> tuple[str, Path, str] | None:
+    """Load one validated cached context and its isolated controller identity."""
+
+    isolated_dir = runtime_config.isolated_config_dir
+    context = _single_kubernetes_context(runtime_config.global_config_path)
+    user_id = _isolated_controller_user(isolated_dir)
+    if isolated_dir is None or not context or not user_id:
+        return None
+    try:
+        from npa.cluster.state import existing_kubeconfig
+        from npa.orchestration.skypilot.cluster_validation import (
+            resolve_validation_target,
+        )
+
+        cached = existing_kubeconfig(context)
+        if cached is None:
+            return None
+        kubeconfig, selected_context = resolve_validation_target(cached, context)
+    except (OSError, ValueError):
+        return None
+    return selected_context, kubeconfig, user_id
+
+
+def _single_kubernetes_context(config_path: Path | None) -> str:
+    """Return the sole configured Kubernetes context, otherwise an empty value."""
+
+    try:
+        kubernetes = _load_base_config(config_path).get("kubernetes") or {}
+        contexts = kubernetes.get("allowed_contexts")
+    except (OSError, ValueError, AttributeError):
+        return ""
+    if not isinstance(contexts, list) or len(contexts) != 1:
+        return ""
+    context = contexts[0]
+    return context.strip() if isinstance(context, str) else ""
+
+
+def _isolated_controller_user(isolated_dir: Path | None) -> str:
+    """Read the stable isolated user only from its private SkyPilot state file."""
+
+    if isolated_dir is None:
+        return ""
+    path = Path(isolated_dir) / "home" / ".sky" / "user_hash"
+    try:
+        if path.is_symlink() or not path.is_file():
+            return ""
+        user_id = path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+    return user_id if re.fullmatch(r"npa-[a-f0-9]{12}", user_id) else ""
+
+
+def _exact_managed_job_identity(job_name: str, job_id: str) -> bool:
+    """Require a durable numeric job ID before a Kubernetes absence fallback."""
+
+    return bool(job_name) and bool(re.fullmatch(r"[1-9][0-9]*", str(job_id or "")))
+
+
+def _kubernetes_pod_inventory(
+    context: str,
+    kubeconfig: Path,
+    environment: Mapping[str, str],
+) -> list[Mapping[str, Any]] | None:
+    """Read the exact cached context's pod inventory without a scheduler mutation."""
+
+    kubectl = shutil.which("kubectl")
+    if kubectl is None:
+        return None
+    command = [
+        kubectl,
+        "--kubeconfig",
+        str(kubeconfig),
+        "--context",
+        context,
+        "get",
+        "pods",
+        "--all-namespaces",
+        "--output",
+        "json",
+    ]
+    try:
+        result = subprocess.run(
+            command,
+            env=_controller_probe_environment(environment),
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=30,
+            check=False,
+        )
+        payload = json.loads(result.stdout or "{}") if result.returncode == 0 else {}
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return None
+    items = payload.get("items") if isinstance(payload, dict) else None
+    return items if isinstance(items, list) else None
+
+
+def _matching_controller_or_worker(
+    pods: Sequence[Mapping[str, Any]],
+    *,
+    user_id: str,
+    job_name: str,
+    job_id: str,
+) -> bool:
+    """Reject absence when any exact or malformed controller/worker match exists."""
+
+    controller = f"{JOBS_CONTROLLER_PREFIX}{user_id}"
+    head = f"{controller}-head"
+    for pod in pods:
+        metadata = pod.get("metadata") if isinstance(pod, Mapping) else None
+        if not isinstance(metadata, Mapping):
+            return True
+        labels = metadata.get("labels") or {}
+        annotations = metadata.get("annotations") or {}
+        if not isinstance(labels, Mapping) or not isinstance(annotations, Mapping):
+            return True
+        if (
+            metadata.get("name") == head
+            or labels.get("skypilot-cluster-name") == controller
+            # Kubernetes shortens the pod/label name, but SkyPilot preserves the
+            # unshortened controller identity in this annotation.
+            or annotations.get("skypilot-cluster-name") == controller
+        ):
+            return True
+        observed_name = str(annotations.get("skypilot-managed-job-name") or "")
+        observed_id = str(annotations.get("skypilot-managed-job-id") or "")
+        if observed_name == job_name or observed_id == job_id:
+            return True
+    return False
 
 
 def _exact_queue_job_name(rows: Sequence[Mapping[str, Any]], job_id: str) -> str:

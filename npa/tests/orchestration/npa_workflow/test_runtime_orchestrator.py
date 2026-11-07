@@ -4789,9 +4789,11 @@ def test_explicit_resume_rejects_untyped_running_task_evidence(
 
 
 @pytest.mark.parametrize("default_resumes", [0, 1, 2])
-def test_explicit_resume_relaunches_typed_pre_id_transport_failure(
+@pytest.mark.parametrize("error_category", ["kubernetes_transport", "schema"])
+def test_explicit_resume_relaunches_verified_pre_id_failure(
     tmp_path: Path,
     default_resumes: int,
+    error_category: str,
 ) -> None:
     from npa.orchestration.skypilot.workflow import ManagedJobEvidence
 
@@ -4831,7 +4833,8 @@ def test_explicit_resume_relaunches_typed_pre_id_transport_failure(
             "sky_status": "",
             "logical_launch_id": "logical-pre-id-transport",
             "launch_sequence": 1,
-            "error_category": "kubernetes_transport",
+            "error_category": error_category,
+            "error": "launch failed before a managed job ID",
             "recovery_decision": "block_indeterminate",
         }
     )

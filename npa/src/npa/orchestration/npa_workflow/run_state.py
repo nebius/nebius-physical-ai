@@ -1647,6 +1647,12 @@ def build_actionable_run_status(
         elif step_terminal:
             state = step_state
             outcome_provenance = "authoritative_stage_record"
+        elif attempt_terminal and not scheduler_terminal:
+            # A reconstructed SkyPilot controller can restart its numeric job
+            # sequence.  A nonterminal observation for that reused number must
+            # not rewrite the terminal outcome of this stage's named wave.
+            state = attempt_state
+            outcome_provenance = "durable_runtime_attempt"
         elif raw_scheduler:
             state = _TASK_STATUS_MAP.get(scheduler_state, scheduler_state)
             outcome_provenance = "scheduler_final_attempt"

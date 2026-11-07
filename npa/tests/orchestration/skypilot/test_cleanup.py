@@ -1001,6 +1001,233 @@ def test_controller_pod_inventory_never_directly_deletes_a_lingering_pod(
     assert not any("delete" in call for call in calls)
 
 
+def test_controller_pod_inventory_uses_untruncated_identity_annotation(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    kubeconfig = tmp_path / "kubeconfig"
+    kubeconfig.write_text("{}\n", encoding="utf-8")
+
+    def fake_run(cmd, **_kwargs):
+        return subprocess.CompletedProcess(
+            cmd,
+            0,
+            stdout=(
+                '{"items": [{"metadata": {"namespace": "default", '
+                '"name": "sky-jobs-controller-np-aa-npa-0123456789ab-head", '
+                '"annotations": {"skypilot-cluster-name": '
+                '"sky-jobs-controller-npa-0123456789ab"}, '
+                '"labels": {"skypilot-cluster-name": '
+                '"sky-jobs-controller-np-aa-npa-0123456789ab"}}}]}'
+            ),
+            stderr="",
+        )
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    pods, error = cleanup_module._kubernetes_controller_pods(
+        kubeconfig=kubeconfig, context="verified"
+    )
+
+    assert error == ""
+    assert pods == [
+        (
+            "default",
+            "sky-jobs-controller-np-aa-npa-0123456789ab-head",
+            "sky-jobs-controller-npa-0123456789ab",
+        )
+    ]
+
+
+@pytest.mark.parametrize("phase", ["Running", "Unknown", "Succeeded"])
+def test_failed_controller_recovery_refuses_nonterminal_pod(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, phase: str
+) -> None:
+    kubeconfig = tmp_path / "kubeconfig"
+    kubeconfig.write_text("{}\n", encoding="utf-8")
+    controller = "sky-jobs-controller-npa-0123456789ab"
+
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda cmd, **_kwargs: subprocess.CompletedProcess(
+            cmd,
+            0,
+            stdout=json.dumps(
+                {
+                    "metadata": {
+                        "name": "exact-head",
+                        "namespace": "controller-ns",
+                        "annotations": {"skypilot-cluster-name": controller},
+                        "labels": {"parent": "skypilot", "skypilot-head-node": "1"},
+                    },
+                    "status": {"phase": phase},
+                }
+            ),
+            stderr="",
+        ),
+    )
+
+    error = cleanup_module._verify_failed_controller_pod(
+        ("controller-ns", "exact-head", controller),
+        controller_name=controller,
+        kubeconfig=kubeconfig,
+        context="verified",
+    )
+
+    assert "no longer has the exact terminal task ownership" in error
+
+
+def test_failed_controller_recovery_accepts_exact_terminal_pod(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    kubeconfig = tmp_path / "kubeconfig"
+    kubeconfig.write_text("{}\n", encoding="utf-8")
+    controller = "sky-jobs-controller-npa-0123456789ab"
+
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda cmd, **_kwargs: subprocess.CompletedProcess(
+            cmd,
+            0,
+            stdout=json.dumps(
+                {
+                    "metadata": {
+                        "name": "exact-head",
+                        "namespace": "controller-ns",
+                        "annotations": {"skypilot-cluster-name": controller},
+                        "labels": {"parent": "skypilot", "skypilot-head-node": "1"},
+                    },
+                    "status": {"phase": "Failed"},
+                }
+            ),
+            stderr="",
+        ),
+    )
+
+    assert (
+        cleanup_module._verify_failed_controller_pod(
+            ("controller-ns", "exact-head", controller),
+            controller_name=controller,
+            kubeconfig=kubeconfig,
+            context="verified",
+        )
+        == ""
+    )
+
+
+def test_failed_controller_recovery_refuses_owned_pod(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    kubeconfig = tmp_path / "kubeconfig"
+    kubeconfig.write_text("{}\n", encoding="utf-8")
+    controller = "sky-jobs-controller-npa-0123456789ab"
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda cmd, **_kwargs: subprocess.CompletedProcess(
+            cmd,
+            0,
+            stdout=json.dumps(
+                {
+                    "metadata": {
+                        "name": "exact-head",
+                        "namespace": "controller-ns",
+                        "annotations": {"skypilot-cluster-name": controller},
+                        "labels": {"parent": "skypilot", "skypilot-head-node": "1"},
+                        "ownerReferences": [{"uid": "other-controller"}],
+                    },
+                    "status": {"phase": "Failed"},
+                }
+            ),
+            stderr="",
+        ),
+    )
+
+    error = cleanup_module._verify_failed_controller_pod(
+        ("controller-ns", "exact-head", controller),
+        controller_name=controller,
+        kubeconfig=kubeconfig,
+        context="verified",
+    )
+
+    assert "no longer has the exact terminal task ownership" in error
+
+
+def test_failed_controller_recovery_deletes_only_bound_terminal_controller(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The narrow recovery path preserves local/shared controller state."""
+
+    from npa.cluster.identity import VerifiedClusterIdentity
+
+    controller = "sky-jobs-controller-npa-0123456789ab"
+    isolated = tmp_path / "isolated"
+    user_hash = isolated / "home" / ".sky" / "user_hash"
+    user_hash.parent.mkdir(parents=True)
+    user_hash.write_text("npa-0123456789ab\n", encoding="utf-8")
+    kubeconfig = tmp_path / "kubeconfig"
+    kubeconfig.write_text("{}\n", encoding="utf-8")
+    identity = VerifiedClusterIdentity(
+        project_alias="task-project",
+        project_id="project-owned",
+        context="task-context",
+        cluster_id="cluster-owned",
+        cluster_name="cluster-owned",
+        kubeconfig=kubeconfig,
+    )
+    target = ("controller-ns", "exact-terminal-head", controller)
+    commands = [["kubectl", "delete", "pod", target[1]]]
+
+    monkeypatch.setenv("NPA_TEARDOWN_RECEIPT_DIR", str(tmp_path / "receipts"))
+    monkeypatch.setattr(
+        "npa.cluster.identity.resolve_verified_cluster_identity",
+        lambda **_kwargs: identity,
+    )
+    monkeypatch.setattr(
+        cleanup_module,
+        "_kubernetes_controller_pods",
+        lambda **_kwargs: ([target], ""),
+    )
+    monkeypatch.setattr(
+        cleanup_module, "_verify_failed_controller_pod", lambda *_args, **_kwargs: ""
+    )
+    monkeypatch.setattr(
+        cleanup_module,
+        "_delete_orphan_controller_pods",
+        lambda pods, **_kwargs: (commands, "") if pods == [target] else pytest.fail("unexpected pod"),
+    )
+    monkeypatch.setattr(
+        cleanup_module,
+        "_wait_for_controller_pods_absent",
+        lambda controllers, **_kwargs: (
+            ([], "")
+            if controllers == {controller}
+            else pytest.fail("unexpected controller set")
+        ),
+    )
+    monkeypatch.setattr(
+        cleanup_module,
+        "_jobs_controller_clusters",
+        lambda **_kwargs: pytest.fail("shared controller metadata must not be consulted"),
+    )
+
+    result = cleanup_module.cleanup_jobs_controller(
+        project="task-project",
+        context="task-context",
+        isolated_config_dir=isolated,
+        recover_failed_controller=controller,
+        attest_no_active_jobs=True,
+    )
+
+    assert result.ok
+    assert result.outcome == "failed_controller_deleted"
+    assert result.resources_removed == [controller]
+    assert result.commands == commands
+    assert result.remote_absence_verified
+    assert not result.verified
+
+
 def test_orphan_controller_recovery_deletes_only_exact_discovered_pod(
     monkeypatch: pytest.MonkeyPatch, tmp_path
 ) -> None:
