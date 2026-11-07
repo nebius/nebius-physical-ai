@@ -1173,7 +1173,15 @@ def test_skypilot_controller_cleanup_requires_confirmation_and_is_npa_only(
     assert cleanup_payload["local_metadata_cleared"] is True
     assert cleanup_payload["overall_verified"] is True
     assert cleanup_payload["verified"] is True
-    assert calls == [{"project": "", "context": "", "sky_bin": "/npa/pinned/sky"}]
+    assert calls == [
+        {
+            "project": "",
+            "context": "",
+            "sky_bin": "/npa/pinned/sky",
+            "isolated_config_dir": None,
+            "config_path": None,
+        }
+    ]
 
     monkeypatch.setattr(
         "npa.orchestration.skypilot.cleanup.cleanup_jobs_controller",

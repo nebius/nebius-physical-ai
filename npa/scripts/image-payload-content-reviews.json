@@ -1119,11 +1119,25 @@
       "source": {"url": "https://github.com/nebius/nebius-physical-ai/blob/17acfed2ac137e32ae6fca5962398a0b8634f691/npa/src/npa/cli/workbench/workflow/__init__.py", "revision": "17acfed2ac137e32ae6fca5962398a0b8634f691", "member": "npa/src/npa/cli/workbench/workflow/__init__.py"}
     },
     {
+      "sha256": "525e2bc4e2f1da2fcb26fb1a04191675674ccf53fc6043246f177ea7d3bf2304",
+      "bytes": 442935,
+      "match_counts": {"credential_assignment": 13},
+      "reason": "The exact absent-job recovery help text does not add credential assignments. Existing named assignments remain operator-provided inputs, annotations, shell substitutions, or documented placeholders; no operational credential literal is present.",
+      "source": {"url": "https://github.com/nebius/nebius-physical-ai/blob/6ce53b4723171b1fa7ef1599a9e65c77e3da6b52/npa/src/npa/cli/workbench/workflow/__init__.py", "revision": "6ce53b4723171b1fa7ef1599a9e65c77e3da6b52", "member": "npa/src/npa/cli/workbench/workflow/__init__.py"}
+    },
+    {
       "sha256": "866b4b5a1a6e23ea19b6e7a910ffc1f29a3978a04d6cc15762b726fd231abd98",
       "bytes": 81097,
       "match_counts": {"credential_assignment": 10},
       "reason": "NPA source references only operator-provided inputs, annotations, shell substitutions, and documented placeholders. The detector's named assignments are not an operational credential.",
       "source": {"url": "https://github.com/nebius/nebius-physical-ai/blob/17acfed2ac137e32ae6fca5962398a0b8634f691/npa/src/npa/orchestration/npa_workflow/run_state.py", "revision": "17acfed2ac137e32ae6fca5962398a0b8634f691", "member": "npa/src/npa/orchestration/npa_workflow/run_state.py"}
+    },
+    {
+      "sha256": "f9c01212540c9e3556204263025049f051a1b5d34989438ec13a060f27ab2321",
+      "bytes": 81480,
+      "match_counts": {"credential_assignment": 10},
+      "reason": "The observer-only SkyPilot recovery change does not add credential assignments. The existing named assignments remain operator-provided inputs, annotations, shell substitutions, or documented placeholders; no operational credential literal is present.",
+      "source": {"url": "https://github.com/nebius/nebius-physical-ai/blob/59779929d2a5d9e3cb0f93f1a9391ad1cd394f05/npa/src/npa/orchestration/npa_workflow/run_state.py", "revision": "59779929d2a5d9e3cb0f93f1a9391ad1cd394f05", "member": "npa/src/npa/orchestration/npa_workflow/run_state.py"}
     },
     {
       "sha256": "36fc6e7231995d1b49a60e1e96e73a86f43e751b5e2b8632d572c2739314e5a8",
