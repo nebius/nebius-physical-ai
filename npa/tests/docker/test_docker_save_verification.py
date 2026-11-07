@@ -39,6 +39,19 @@ def _tar(entries: list[tuple[str, bytes]]) -> bytes:
     return stream.getvalue()
 
 
+def _tar_with_outer_pax_size(entries: list[tuple[str, bytes]], target: str) -> bytes:
+    """Emit one Docker-compatible local PAX size override for a layer blob."""
+    stream = io.BytesIO()
+    with tarfile.open(fileobj=stream, mode="w", format=tarfile.PAX_FORMAT) as archive:
+        for name, payload in entries:
+            member = tarfile.TarInfo(name)
+            member.size = len(payload)
+            if name == target:
+                member.pax_headers = {"size": str(len(payload))}
+            archive.addfile(member, io.BytesIO(payload))
+    return stream.getvalue()
+
+
 def _archive(
     tmp_path: Path,
     *,
@@ -47,6 +60,7 @@ def _archive(
     layer_entries: list[tuple[str, bytes]] | None = None,
     layer_payload: bytes | None = None,
     repeat: int = 1,
+    outer_pax_size: bool = False,
 ) -> tuple[Path, str]:
     raw_layer = _tar(layer_entries or [("opt/result.txt", b"physical-ai")])
     stored_layer = (
@@ -129,7 +143,11 @@ def _archive(
         )
         image_id = "sha256:" + manifest_digest
     archive = tmp_path / "image.tar"
-    archive.write_bytes(_tar(members))
+    archive.write_bytes(
+        _tar_with_outer_pax_size(members, layer_name)
+        if outer_pax_size
+        else _tar(members)
+    )
     archive.chmod(0o600)
     return archive, image_id
 
@@ -397,6 +415,44 @@ def test_outer_extension_is_rejected_before_tarfile_can_allocate_it(
             core.graph(fd, os.fstat(fd).st_size, {}, "sha256:" + "f" * 64)
     finally:
         os.close(fd)
+
+
+def test_outer_pax_size_binds_a_valid_oci_layer_without_name_override(
+    tmp_path: Path,
+) -> None:
+    archive, image_id = _archive(tmp_path, oci_layout=True, outer_pax_size=True)
+
+    report = VERIFIER.verify(archive, image_id)
+
+    assert report["valid"]
+    fd = os.open(archive, os.O_RDONLY)
+    try:
+        layers = core.graph(fd, os.fstat(fd).st_size, report, image_id)
+    finally:
+        os.close(fd)
+    assert len(layers) == 1
+
+
+def test_outer_pax_name_override_is_rejected_before_tarfile_can_allocate_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    archive = tmp_path / "image.tar"
+    stream = io.BytesIO()
+    with tarfile.open(fileobj=stream, mode="w", format=tarfile.PAX_FORMAT) as output:
+        member = tarfile.TarInfo("regular")
+        member.size = len(b"data")
+        member.pax_headers = {"path": "unexpected"}
+        output.addfile(member, io.BytesIO(b"data"))
+    archive.write_bytes(stream.getvalue())
+    archive.chmod(0o600)
+    monkeypatch.setattr(
+        VERIFIER.tarfile,
+        "open",
+        lambda *args, **kwargs: pytest.fail("tarfile opened before outer preflight"),
+    )
+
+    with pytest.raises(core.ScanError, match="unsupported_pax_semantics"):
+        VERIFIER.verify(archive, "sha256:" + "f" * 64)
 
 
 def test_outer_metadata_is_bounded_before_read(
