@@ -7103,21 +7103,23 @@ def _durable_workflow_status(
                     "observed_at": attempted_at,
                     "job_name": expected_job_name,
                     "identity_absent": bool(
-                        expected_job_name
-                        and str(live.status or "").upper() == "ABSENT"
+                        expected_job_name and str(live.status or "").upper() == "ABSENT"
                     ),
                 }
                 if managed_job_id == run_manifest.sky_job_id and not runtime_waves:
                     task_rows = observed_rows
-                if not job_observations[identity]["identity_absent"] and str(
-                    observed_status or run_manifest.status
-                ).upper() not in {
-                    "SUCCEEDED",
-                    "CANCELLED",
-                    "ABSENT",
-                } and not str(
-                    observed_status or run_manifest.status
-                ).upper().startswith("FAILED"):
+                if (
+                    not job_observations[identity]["identity_absent"]
+                    and str(observed_status or run_manifest.status).upper()
+                    not in {
+                        "SUCCEEDED",
+                        "CANCELLED",
+                        "ABSENT",
+                    }
+                    and not str(observed_status or run_manifest.status)
+                    .upper()
+                    .startswith("FAILED")
+                ):
                     controller_logs = call_with_workflow_storage(
                         resolution.state,
                         workflow_controller_logs,
@@ -7135,9 +7137,7 @@ def _durable_workflow_status(
                         ).splitlines()
                     )
                     if controller_logs.returncode == 0:
-                        job_observations[identity]["controller_output"] = output[
-                            -4000:
-                        ]
+                        job_observations[identity]["controller_output"] = output[-4000:]
                     output = output[:4000]
                     if output:
                         controller_output += (

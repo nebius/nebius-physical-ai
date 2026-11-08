@@ -4914,14 +4914,11 @@ def test_queue_status_parser_uses_recorded_name_when_controller_reuses_id() -> N
         == "SUCCEEDED"
     )
     assert (
-        _status_from_queue_payload(
-            payload, "1", expected_job_name="replacement-wave"
-        )
+        _status_from_queue_payload(payload, "1", expected_job_name="replacement-wave")
         == "RUNNING"
     )
     assert (
-        _status_from_queue_payload(payload, "1", expected_job_name="missing-wave")
-        == ""
+        _status_from_queue_payload(payload, "1", expected_job_name="missing-wave") == ""
     )
 
 

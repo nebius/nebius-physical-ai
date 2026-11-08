@@ -4192,8 +4192,7 @@ def parse_task_statuses(
             continue
         current_id = str(job.get("job_id") or job.get("id") or "")
         if current_id != str(job_id) or (
-            expected_job_name
-            and str(job.get("job_name") or "") != expected_job_name
+            expected_job_name and str(job.get("job_name") or "") != expected_job_name
         ):
             continue
         row = {
@@ -5736,8 +5735,7 @@ def _status_from_queue_rows(
     for job in jobs:
         current_id = _queue_row_job_id(job)
         if current_id == str(job_id) and (
-            not expected_job_name
-            or str(job.get("job_name") or "") == expected_job_name
+            not expected_job_name or str(job.get("job_name") or "") == expected_job_name
         ):
             statuses.append(str(job.get("status") or "").upper())
     if not statuses:
