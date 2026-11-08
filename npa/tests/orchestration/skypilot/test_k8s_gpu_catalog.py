@@ -1969,20 +1969,43 @@ def test_validation_environment_drops_parent_api_endpoint(
     isolated_root = tmp_path / "isolated"
     monkeypatch.setenv("NPA_SKYPILOT_ISOLATED_CONFIG_DIR", str(isolated_root))
     monkeypatch.setenv("SKYPILOT_GLOBAL_CONFIG", str(parent_config))
+    monkeypatch.setenv("SKYPILOT_API_SERVER_ENDPOINT", "http://127.0.0.1:36471")
 
     from npa.orchestration.skypilot import cleanup, local_api
 
+    parent_api_root = isolated_root / "local-api"
+    parent_api_root.mkdir(parents=True)
+    local_api._write(
+        parent_api_root / "daemon.json",
+        {
+            "schema_version": 1,
+            "root": str(parent_api_root.absolute()),
+            "port": 36471,
+            "metrics_port": 36472,
+            "queue_port": 36473,
+            "marker": "parent-fixture",
+            "state": "intent",
+        },
+    )
+    monkeypatch.setenv("NPA_SKYPILOT_ISOLATED_API_DIR", str(isolated_root))
+
     client_configs: list[dict] = []
+    supplied_environments: list[dict[str, str]] = []
 
     def fake_sky_environment(
-        _scope: Path, *, environment: dict[str, str]
+        scope: Path, *, environment: dict[str, str]
     ) -> dict[str, str]:
+        supplied_environments.append(dict(environment))
         client_configs.append(
             yaml.safe_load(
                 Path(environment["SKYPILOT_GLOBAL_CONFIG"]).read_text(encoding="utf-8")
             )
         )
-        return dict(environment)
+        return {
+            **environment,
+            "SKYPILOT_API_SERVER_ENDPOINT": "http://127.0.0.1:36472",
+            "NPA_SKYPILOT_ISOLATED_API_DIR": str(scope / "local-api"),
+        }
 
     monkeypatch.setattr(cleanup, "sky_environment", fake_sky_environment)
     monkeypatch.setattr(local_api, "ensure_isolated_api", lambda **_kwargs: None)
@@ -1994,6 +2017,8 @@ def test_validation_environment_drops_parent_api_endpoint(
     )
 
     assert len(client_configs) == 1
+    assert "SKYPILOT_API_SERVER_ENDPOINT" not in supplied_environments[0]
+    assert "NPA_SKYPILOT_ISOLATED_API_DIR" not in supplied_environments[0]
     assert "api_server" not in client_configs[0]
     assert client_configs[0]["allowed_clouds"] == ["kubernetes"]
     assert client_configs[0]["kubernetes"]["allowed_contexts"] == ["exact-context"]

@@ -314,6 +314,26 @@ def kubernetes_sky_environment(
             os.fsync(handle.fileno())
     env["SKYPILOT_GLOBAL_CONFIG"] = str(config_path)
     base_environment = dict(env)
+    # The run controller can legitimately be selected in the parent process,
+    # but this read-only validation scope owns a separate local API.  Do not
+    # hand a *verified parent* endpoint (or its ownership marker) to
+    # ``sky_environment``: ``isolated_api_environment`` correctly rejects an
+    # endpoint belonging to another scope before it can create this scope's
+    # receipt.  An unverified explicit endpoint must remain intact so the
+    # normal fail-closed ownership check rejects it rather than hiding it.
+    parent_api_root = local_api._isolated_api_root(isolated_root) if isolated_root else None
+    parent_record = local_api._read(parent_api_root) if parent_api_root else None
+    parent_endpoint = str(base_environment.get("SKYPILOT_API_SERVER_ENDPOINT") or "")
+    parent_marker = str(
+        base_environment.get("NPA_SKYPILOT_ISOLATED_API_DIR") or ""
+    )
+    if (
+        parent_record is not None
+        and parent_endpoint == local_api._endpoint(parent_record)
+        and parent_marker == str(isolated_root.resolve())
+    ):
+        base_environment.pop("SKYPILOT_API_SERVER_ENDPOINT", None)
+        base_environment.pop("NPA_SKYPILOT_ISOLATED_API_DIR", None)
 
     def start_validation_api() -> dict[str, str]:
         validation_env = sky_environment(scope, environment=base_environment)
