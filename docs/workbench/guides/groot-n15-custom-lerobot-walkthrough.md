@@ -41,8 +41,9 @@ location.
 The independent reference rehearsal uses a separately maintained, task-private
 LeRobot extension archive at an immutable revision. It adapts a public,
 recorded real-robot source into a v2.1 dataset with exactly one wrist camera:
-`video.wrist`. It maps two state and two action fields, retains source timestamps
-and source episode identifiers, and emits upstream per-episode observed
+`observation.images.cam_right_wrist`, emitted by the adapter as `video.wrist`.
+It maps two state and two action fields, retains source timestamps and source
+episode identifiers, and emits upstream per-episode observed
 success/failure annotations. Failed rollouts carry an annotation-derived,
 per-frame corrective phase; its non-monotonic decrease is retained. A separate
 public intervention recording is a gallery-only `operator_recovery` item with
@@ -56,6 +57,42 @@ Cartesian-relative, millimetre/tool-frame contract fixture verifies raw →
 min/max model coordinates → raw numerical roundtrip and terminal action masks;
 it is a mechanical invariant, not a claim that the reference data have Cartesian
 physical semantics.
+
+### Public-safe extension shape
+
+The independently executed extension is private, but it uses the following
+public-safe, pinned interface shape. This is an interface example, not a
+substitute for staging a real archive: `adapt` must materialize a LeRobot v2
+tree and `extract_feedback` must write the declared feedback document before
+returning paths. An operator replaces the package and immutable archive digest
+without publishing either one.
+
+```toml
+# pyproject.toml in the trusted external archive
+[project]
+name = "my-lerobot-extension"
+version = "0.1.0"
+requires-python = ">=3.10"
+```
+
+```python
+# my_lerobot_extension/adapter.py
+def adapt(request: dict) -> dict:
+    # Validate the configured source keys, write only under these request paths,
+    # preserve episode/frame identity and return a native LeRobot v2 tree.
+    return {"dataset_root": request["output_dataset_root"],
+            "gallery_root": request["output_gallery_root"]}
+
+
+def extract_feedback(request: dict) -> dict:
+    # Write npa.groot-feedback/v2 with labels, groups, kinds and aligned progress.
+    return {"feedback_path": request["output_feedback_path"]}
+```
+
+The actual rehearsal installed a separately archived extension through the
+workflow's digest-checked runtime install path; it was not an in-repository
+helper call. Unsupported return paths, missing callables, digest mismatches, or
+untrusted executable metadata fail before training.
 
 ## Feedback and split contract
 
@@ -99,6 +136,8 @@ export PROJECT_ALIAS="<configured-task-project>"
 export K8S_CONTEXT="<exact-task-owned-context>"
 export BUCKET="<operator-owned-bucket>"
 export WORKFLOW_ROOT="s3://${BUCKET}/workflow-ledger/${RUN_ID}"
+# Submission owns the run root. Lifecycle reads use its canonical durable child.
+export WORKFLOW_STATE_URI="${WORKFLOW_ROOT}/npa-workflow"
 export OUTPUT_PREFIX="groot-n15-offline-rl/${RUN_ID}"
 export ISOLATED_CONFIG_DIR="<private-task-local-skypilot-state>"
 # A SkyPilot-only YAML, not ${NPA_CONFIG_DIR}/config.yaml. It contains the
@@ -214,13 +253,13 @@ Use only the generic lifecycle commands against the same immutable run identity:
 
 ```bash
 npa/.venv/bin/npa workbench workflow status "${RUN_ID}" --project "${PROJECT_ALIAS}" \
-  --workflow-s3-uri "${WORKFLOW_ROOT}" \
+  --workflow-s3-uri "${WORKFLOW_STATE_URI}" \
   --isolated-config-dir "${ISOLATED_CONFIG_DIR}" --config-path "${SKYPILOT_CONFIG}" --json
 npa/.venv/bin/npa workbench workflow logs "${RUN_ID}" train-native-n15 \
-  --project "${PROJECT_ALIAS}" --workflow-s3-uri "${WORKFLOW_ROOT}" \
+  --project "${PROJECT_ALIAS}" --workflow-s3-uri "${WORKFLOW_STATE_URI}" \
   --cached
 npa/.venv/bin/npa workbench workflow artifacts "${RUN_ID}" --project "${PROJECT_ALIAS}" \
-  --workflow-s3-uri "${WORKFLOW_ROOT}" --json
+  --workflow-s3-uri "${WORKFLOW_STATE_URI}" --json
 ```
 
 The durable provenance, training receipt, evaluation, actions, media validation,
@@ -295,6 +334,50 @@ lineage and held-out diagnostics, reporting a regression as a regression. New
 operator recovery recordings may be added with their own collection kind and
 outcome; do not label them as failures merely because intervention occurred.
 
+## Completed independent reference rehearsal
+
+This workflow was exercised twice with independently staged public recorded
+data and a task-private external extension. It was not exercised with customer
+code, customer data, a private robot, a simulator, or a robot connection.
+Private storage locations, live infrastructure identifiers, and raw media stay
+outside this guide.
+
+The first immutable revision (`i1r3`) completed the 1,237-update matched
+ordinary-BC and hybrid-feedback passes, checkpoint reload, held-out inference,
+gallery, MP4/HTML generation, and durable readback. Its feedback manifest SHA-256
+is `28a5cf1714c354c963da246b322cbd161fb9b4cd9aa11cceef45b30c62f28d2f`; the
+held-out candidate action MAE was `0.07843011617660522`, compared with
+`0.08146637678146362` for the matched ordinary-BC control. These are offline
+recorded-action errors, not robot success rates.
+
+The second immutable revision (`i2r1`) changed only the declared feedback
+revision: it retained observed outcomes, frame/action bytes, collection groups,
+and the held-out split while revising the annotation-derived recovery/progress
+mapping. The staged data archive SHA-256 was
+`d867905a8674415f3120dd563d82c501fa6e68a617626e53e5554cb70ca2d82a`; external
+code SHA-256 was `0c197e551f31017d0f7449801bb04e4220d8c8377414ba97624459a16e60a88a`;
+the feedback manifest SHA-256 was
+`8021ee0d304ba4e5a7d76782209712ad643cd239c440c81ff3e608d155688e92`.
+It also completed 1,237 updates, checkpoint reload, all 2,084 held-out frames,
+gallery/media generation, and a 153-artifact durable readback. Candidate MAE
+was `0.07990594953298569`; ordinary-BC MAE was `0.0814637765288353`. The
+weighted candidate remained lower than the matched control by
+`0.0015578269958496094`, but regressed by `0.0014758333563804626` versus the
+first revision's candidate. That regression is retained rather than explained
+away.
+
+The second gallery contains 1,664 held-out failure-labelled observations and
+420 success-labelled observations. Its separate recovery reference has
+`collection_kind: operator_recovery` and `outcome: unknown`; it is displayed,
+not silently converted into a failure or a training example. The failure,
+success, and recovery MP4s decoded successfully; their selected gallery frame
+counts were respectively 120, 120, and 719. The standalone HTML referenced no
+remote media assets when read back, so it remains usable offline after an
+authorized download. The run records a joint-coordinate source action contract;
+its raw-to-model-to-raw numerical maximum absolute error was
+`1.4901161193847656e-08`. Cartesian-relative millimetre/tool-frame behavior is
+still evidenced only by the separate contract fixture.
+
 ## Fail-closed checks and promotion boundary
 
 The rehearsal exercises these correction paths before GPU work:
@@ -315,17 +398,19 @@ offline loss nor this gallery authorizes robot deployment.
 
 ## Verification record
 
-This table is filled with content-bound receipts when the independent reference
-rehearsal completes. It intentionally does not treat the historical uniform
-public proof as coverage for the labelled custom path.
+This table records the completed independent reference rehearsal. Receipt
+details are retained in authorized private storage; the identities below are
+content hashes or run labels, not storage locations. It intentionally does not
+treat the historical uniform public proof as coverage for the labelled custom
+path.
 
 | Step | Evidence type | Observed outcome and limit |
 | --- | --- | --- |
-| External code/archive staging | Runtime receipt | Pending live reference run; local contract test alone is insufficient. |
-| Single-camera custom preparation | Runtime receipt | Pending live reference run; no fabricated front camera. |
-| Mixed outcome/progress training and ordinary-BC control | Training receipt | Pending live reference run; no convergence or robot-success claim. |
-| Held-out prediction and labelled positive/negative/recovery gallery | Evaluation and decode receipt | Pending live reference run; images remain recorded observations. |
-| Second immutable feedback revision | Separate run and lineage receipt | Pending live reference run; first outputs remain preserved. |
-| Cartesian action numerical contract | Hermetic fixture | Verified mechanically only; not real-robot Cartesian calibration evidence. |
-| Task-bound controller recovery | Independent reference rehearsal receipt | Rehearsed only after exact terminal ownership and no-active-job proof; no shared controller was removed. Full identifiers remain private. |
-| Missing/misaligned feedback, split leakage, contract mismatch, and resume binding | Hermetic contract fixtures | Fail closed before training or relaunch. They verify operator-visible errors and recovery guards, not a physical rollout. |
+| External code/archive staging | Live preparation receipts; archive SHA-256 `0c197e…e60a88a`, data SHA-256 `d86790…a2d82a` | The pinned external adapter was installed and executed through the workflow for both revisions. It is independent reference code/data, not customer input. |
+| Single-camera custom preparation | Live i1r3/i2r1 preparation receipts; adapter config SHA-256 `a3452b…1877ba` | One mapped wrist camera only; no fabricated front camera. The recorded source action kind is joint-coordinate. |
+| Mixed outcome/progress training and ordinary-BC control | Live i1r3/i2r1 training receipts; i2 feedback SHA-256 `8021ee…688e92` | Both runs completed 1,237 updates with matched controls. i2 weighted MAE was lower than control, but worse than i1 candidate by `0.0014758333563804626`; no convergence, robot-success, or avoidance claim. |
+| Held-out prediction and labelled positive/negative/recovery gallery | i2 evaluation/media/readback receipts; checkpoint SHA-256 `cbd673…2918ed1` | All 2,084 held-out frames evaluated; gallery reports 1,664 failures, 420 successes, and a separate unknown-outcome recovery reference. MP4 decode and offline HTML readback passed; frames remain recorded observations. |
+| Second immutable feedback revision | i1r3 and i2r1 lineage/readback receipts | i2 preserves data/actions/groups/holdout and changes the declared progress revision under a new immutable input/run prefix. Earlier outputs remain preserved. |
+| Cartesian action numerical contract | Hermetic fixture, SHA-256 `e37927…ceebff` | Verified mechanically only. The real reference recording does not supply Cartesian calibration evidence. |
+| Task-bound controller recovery | Private recovery receipt and exact-run status receipts | Rehearsed only after exact terminal ownership and no-active-job proof. No shared controller was removed; final i1r3 and i2r1 live status are `SUCCEEDED`. |
+| Missing/misaligned feedback, split leakage, contract mismatch, and resume binding | Hermetic contract fixtures plus supported same-run recovery | Inputs fail closed before training or relaunch. These verify operator-visible errors and recovery guards, not a physical rollout. |

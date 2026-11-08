@@ -36,6 +36,18 @@ show recorded frames, recorded action targets, and offline predictions only.
 Hardware trials remain required for next-state, success, safety, promotion, or
 deployment claims.
 
+### Independent operator-journey rehearsal
+
+The linked walkthrough records a completed two-revision independent rehearsal:
+trusted external adapter installation, one-wrist-camera preparation, observed
+success/failure labels plus an unknown-outcome recovery reference, aligned
+annotation-derived progress, matched ordinary-BC and weighted N1.5 training,
+held-out reload/inference, labelled offline HTML/MP4 evidence, and durable
+readback. The second revision retained the evaluation groups and reported its
+candidate regression versus the first revision. This is evidence of the generic
+offline workflow only; it was not run with customer inputs or hardware, and
+offline action error is not a deployment decision.
+
 ### Historical public uniform proof
 
 The older public bundle remains available as historical qualification:
