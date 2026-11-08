@@ -497,6 +497,14 @@ def _isolated_controller_option(path: Path | None) -> str:
     return f" --isolated-config-dir {shlex.quote(str(path))}"
 
 
+def _skypilot_config_option(path: Path | None) -> str:
+    """Render an explicit private SkyPilot config for an exact live route."""
+
+    if path is None:
+        return ""
+    return f" --config-path {shlex.quote(str(path))}"
+
+
 def _emit_log_truncation(metadata: Mapping[str, object]) -> None:
     if metadata.get("log_truncated"):
         typer.echo(
@@ -6657,6 +6665,8 @@ def _runtime_handoff_error(
     runtime_state: dict[str, object],
     observations: dict,
 ) -> str:
+    from npa.orchestration.npa_workflow.run_state import _job_observation
+
     if any(not isinstance(wave, dict) for wave in runtime_state.get("waves") or []):
         return "Runtime ledger contains malformed wave evidence"
     for stage in (payload.get("stages") or {}).values():
@@ -6665,7 +6675,11 @@ def _runtime_handoff_error(
             or stage.get("job_attribution") == "ambiguous"
         ):
             return "Recorded successful stage lacks an unambiguous managed-job identity"
-        observation = observations.get(stage.get("managed_job_id")) or {}
+        observation = _job_observation(
+            observations,
+            str(stage.get("managed_job_id") or ""),
+            str(stage.get("job_name") or ""),
+        )
         # Job and task queues are separate snapshots. A recognized nonterminal
         # job can precede stage success without invalidating the live query.
         if stage.get("state") == "SUCCEEDED" and str(
@@ -6766,6 +6780,7 @@ def _durable_workflow_status(
     s3_endpoint: str = "",
     sky_bin: str = "",
     isolated_config_dir: Path | None = None,
+    config_path: Path | None = None,
     startup_failure_threshold: int = 3,
     cached: bool = False,
 ) -> dict[str, object]:
@@ -6812,6 +6827,7 @@ def _durable_workflow_status(
         f"npa workbench workflow status {_display_run_id(run_id)}"
         + (f" --project {project}" if project else "")
         + _isolated_controller_option(isolated_config_dir)
+        + _skypilot_config_option(config_path)
     )
     if resolution.not_submitted:
         payload = {
@@ -6932,6 +6948,7 @@ def _durable_workflow_status(
             project=project,
             sky_bin=sky_bin,
             isolated_config_dir=isolated_config_dir,
+            config_path=config_path,
             startup_failure_threshold=startup_failure_threshold,
             cached=cached,
         )
@@ -6940,6 +6957,7 @@ def _durable_workflow_status(
     if manifest.get("schema_version") == "npa.workflow.run.v1":
         from npa.orchestration.npa_workflow.run_state import (
             RunManifest,
+            _job_observation,
             build_actionable_run_status,
             manifest_workflow_lifecycle_state,
             reconstruct_stage_job_attribution,
@@ -6982,7 +7000,7 @@ def _durable_workflow_status(
             run_manifest.sky_job_id = resolution.job_id
         live_status = ""
         task_rows: list[dict[str, object]] = []
-        job_observations: dict[str, dict[str, object]] = {}
+        job_observations: dict[tuple[str, str], dict[str, object]] = {}
         controller_output = ""
         diagnostics: list[str] = []
         verification_errors: list[str] = (
@@ -6992,30 +7010,60 @@ def _durable_workflow_status(
             run_manifest, runtime_waves=runtime_waves
         )
         claims_by_job = _rendered_claims_by_managed_job(run_manifest, attribution)
-        job_ids = sorted(
+        job_identities = sorted(
             {
-                str(item.get("managed_job_id") or "")
+                (
+                    str(item.get("managed_job_id") or ""),
+                    str(item.get("job_name") or ""),
+                )
                 for item in attribution.values()
                 if str(item.get("managed_job_id") or "")
             },
-            key=lambda item: (0, int(item)) if item.isdigit() else (1, item),
+            key=lambda item: (
+                (0, int(item[0])) if item[0].isdigit() else (1, item[0]),
+                item[1],
+            ),
         )
         if (
             run_manifest.sky_job_id
             and not runtime_waves
-            and run_manifest.sky_job_id not in job_ids
+            and (run_manifest.sky_job_id, "") not in job_identities
         ):
-            job_ids.append(run_manifest.sky_job_id)
+            job_identities.append((run_manifest.sky_job_id, ""))
+        job_ids = sorted(
+            {managed_job_id for managed_job_id, _job_name in job_identities},
+            key=lambda item: (0, int(item)) if item.isdigit() else (1, item),
+        )
         if controller_route_error:
             verification_errors.append(controller_route_error)
-        for managed_job_id in job_ids if live_controller_queries else []:
+        for managed_job_id, expected_job_name in (
+            job_identities if live_controller_queries else []
+        ):
+            identity = (managed_job_id, expected_job_name)
+            # ``sky_status`` is historical scheduler evidence and can remain
+            # SUBMITTED when the runtime driver terminalized an interrupted
+            # attempt after exact reconciliation.  The durable wave state is
+            # the authoritative terminal fact for this exact name/id pair.
+            matching_wave_states = [
+                str(wave.get("status") or "").upper()
+                for wave in runtime_waves
+                if str(wave.get("job_id") or "") == managed_job_id
+                and str(wave.get("job_name") or "") == expected_job_name
+            ]
+            identity_terminal = bool(matching_wave_states) and all(
+                state in {"SUCCEEDED", "CANCELLED", "BLOCKED"}
+                or state.startswith("FAILED")
+                for state in matching_wave_states
+            )
             try:
                 live = call_with_workflow_storage(
                     resolution.state,
                     workflow_status,
                     managed_job_id,
+                    expected_job_name=expected_job_name,
                     sky_bin=sky_bin or None,
                     isolated_config_dir=isolated_config_dir,
+                    config_path=config_path,
                 )
                 if live.error:
                     safe_error = sanitize_reason(live.error)
@@ -7025,6 +7073,12 @@ def _durable_workflow_status(
                     )
                     observed_status = ""
                     verification_errors.append(safe_error)
+                elif str(live.status or "").upper() == "ABSENT" and expected_job_name:
+                    observed_status = ""
+                    if not identity_terminal:
+                        verification_errors.append(
+                            "active named managed-job identity is absent from a verified live queue response"
+                        )
                 elif str(live.status or "").upper() in {"", "UNKNOWN"}:
                     observed_status = ""
                     verification_errors.append(
@@ -7036,19 +7090,28 @@ def _durable_workflow_status(
                     resolution.state,
                     workflow_task_statuses,
                     managed_job_id,
+                    expected_job_name=expected_job_name,
                     sky_bin=sky_bin or None,
                     isolated_config_dir=isolated_config_dir,
+                    config_path=config_path,
                     raise_on_error=True,
                 )
-                job_observations[managed_job_id] = {
+                job_observations[identity] = {
                     "status": observed_status,
                     "task_rows": observed_rows,
                     "error": live.error,
                     "observed_at": attempted_at,
+                    "job_name": expected_job_name,
+                    "identity_absent": bool(
+                        expected_job_name
+                        and str(live.status or "").upper() == "ABSENT"
+                    ),
                 }
                 if managed_job_id == run_manifest.sky_job_id and not runtime_waves:
                     task_rows = observed_rows
-                if str(observed_status or run_manifest.status).upper() not in {
+                if not job_observations[identity]["identity_absent"] and str(
+                    observed_status or run_manifest.status
+                ).upper() not in {
                     "SUCCEEDED",
                     "CANCELLED",
                     "ABSENT",
@@ -7061,6 +7124,7 @@ def _durable_workflow_status(
                         managed_job_id,
                         sky_bin=sky_bin or None,
                         isolated_config_dir=isolated_config_dir,
+                        config_path=config_path,
                     )
                     output = "\n".join(
                         sanitize_reason(line)
@@ -7071,7 +7135,7 @@ def _durable_workflow_status(
                         ).splitlines()
                     )
                     if controller_logs.returncode == 0:
-                        job_observations[managed_job_id]["controller_output"] = output[
+                        job_observations[identity]["controller_output"] = output[
                             -4000:
                         ]
                     output = output[:4000]
@@ -7097,9 +7161,19 @@ def _durable_workflow_status(
             for item in job_observations.values()
             if str(item.get("status") or "").strip()
         ]
-        active_wave_status = str(
-            job_observations.get(resolution.job_id, {}).get("status") or ""
-        ).upper()
+        active_wave_status = ""
+        for wave in reversed(runtime_waves):
+            if not isinstance(wave, dict):
+                continue
+            observation = _job_observation(
+                job_observations,
+                str(wave.get("job_id") or ""),
+                str(wave.get("job_name") or ""),
+            )
+            candidate = str(observation.get("status") or "").upper()
+            if candidate in {"RUNNING", "STARTING", "PENDING", "RECOVERING"}:
+                active_wave_status = candidate
+                break
         if runtime_waves and active_wave_status in {
             "RUNNING",
             "STARTING",
@@ -7202,15 +7276,16 @@ def _durable_workflow_status(
             run_payload.setdefault("diagnostics", []).extend(diagnostics)
         blockers = [
             blocker
-            for managed_job_id, observation in job_observations.items()
+            for identity, observation in job_observations.items()
             for blocker in call_with_workflow_storage(
                 resolution.state,
                 _stalled_job_blockers,
-                managed_job_id,
+                identity[0],
                 str(observation.get("status") or ""),
                 sky_bin=sky_bin,
                 isolated_config_dir=isolated_config_dir,
-                claim_names=claims_by_job.get(managed_job_id, ()),
+                config_path=config_path,
+                claim_names=claims_by_job.get(identity[0], ()),
                 controller_output=str(observation.get("controller_output") or ""),
             )
         ]
@@ -7303,6 +7378,7 @@ def _durable_workflow_status(
                 job_id,
                 sky_bin=sky_bin or None,
                 isolated_config_dir=isolated_config_dir,
+                config_path=config_path,
             )
             if live.error:
                 legacy_verification_errors.append(str(live.error))
@@ -7338,6 +7414,7 @@ def _durable_workflow_status(
         live_status,
         sky_bin=sky_bin,
         isolated_config_dir=isolated_config_dir,
+        config_path=config_path,
     )
     if blockers:
         legacy_payload["blockers"] = blockers
@@ -7411,6 +7488,7 @@ def _manifest_pending_status(
     sky_bin: str,
     startup_failure_threshold: int,
     isolated_config_dir: Path | None = None,
+    config_path: Path | None = None,
     cached: bool = False,
 ) -> dict[str, object]:
     """Project receipt/S3/Sky evidence through the shared actionable model."""
@@ -7515,6 +7593,7 @@ def _manifest_pending_status(
                 job_id,
                 sky_bin=sky_bin or None,
                 isolated_config_dir=isolated_config_dir,
+                config_path=config_path,
             )
             if live.error:
                 safe_error = sanitize_reason(live.error)
@@ -7535,6 +7614,7 @@ def _manifest_pending_status(
                 job_id,
                 sky_bin=sky_bin or None,
                 isolated_config_dir=isolated_config_dir,
+                config_path=config_path,
                 raise_on_error=True,
             )
         except Exception as exc:  # noqa: BLE001 - durable evidence still proves the run
@@ -7599,6 +7679,7 @@ def _manifest_pending_status(
                 job_id,
                 sky_bin=sky_bin or None,
                 isolated_config_dir=isolated_config_dir,
+                config_path=config_path,
             )
             controller_output = "\n".join(
                 sanitize_reason(line)
@@ -7701,6 +7782,7 @@ def _manifest_pending_status(
         live_status,
         sky_bin=sky_bin,
         isolated_config_dir=isolated_config_dir,
+        config_path=config_path,
         claim_names=_rendered_claims_by_managed_job(
             pending_manifest,
             reconstruct_stage_job_attribution(
@@ -7723,6 +7805,7 @@ def _manifest_pending_status(
         f"npa workbench workflow status {resolution.run_id}"
         + (f" --project {project}" if project else "")
         + _isolated_controller_option(isolated_config_dir)
+        + _skypilot_config_option(config_path)
     )
     if cached:
         verification_status = CACHED
@@ -7815,6 +7898,7 @@ def _stalled_job_blockers(
     *,
     sky_bin: str = "",
     isolated_config_dir: Path | None = None,
+    config_path: Path | None = None,
     claim_names: tuple[str, ...] = (),
     controller_output: str = "",
 ) -> list[dict[str, object]]:
@@ -7847,6 +7931,7 @@ def _stalled_job_blockers(
             job_id,
             sky_bin=_resolve_sky_bin(sky_bin),
             isolated_config_dir=isolated_config_dir,
+            config_path=config_path,
         )
     except Exception:
         rows = []
@@ -7900,9 +7985,9 @@ def _stalled_job_blockers(
                     "live": False,
                     "remedy": (
                         f"npa workbench workflow status {job_id}"
-                        f"{_isolated_controller_option(isolated_config_dir)}; "
-                        f"then retry npa workbench workflow logs {job_id} --cached"
                         f"{_isolated_controller_option(isolated_config_dir)}"
+                        f"{_skypilot_config_option(config_path)}; "
+                        f"then retry npa workbench workflow logs {job_id} --cached"
                     ),
                 }
             )
@@ -8289,6 +8374,14 @@ def status_cmd(
         "--isolated-config-dir",
         help="Exact SkyPilot state root that owns the recorded managed-job IDs.",
     ),
+    config_path: Path | None = typer.Option(
+        None,
+        "--config-path",
+        help=(
+            "Pinned SkyPilot global config for exact live controller and "
+            "Kubernetes-route verification."
+        ),
+    ),
     watch: bool = typer.Option(
         False,
         "--watch/--no-watch",
@@ -8380,6 +8473,7 @@ def status_cmd(
                     s3_endpoint=s3_endpoint,
                     sky_bin=sky_bin,
                     isolated_config_dir=isolated_config_dir,
+                    config_path=config_path,
                     startup_failure_threshold=startup_failure_threshold,
                     cached=cached,
                 )

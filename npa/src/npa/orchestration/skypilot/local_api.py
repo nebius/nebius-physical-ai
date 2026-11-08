@@ -1383,6 +1383,20 @@ def ensure_isolated_api(
             )
         config_bytes = config_source.read_bytes()
         parsed_config = _yaml_document(config_bytes)
+        if not isinstance(parsed_config, dict):
+            raise IsolatedApiError(
+                "isolated SkyPilot API requires a mapping-valued SkyPilot global configuration"
+            )
+        npa_only_fields = sorted(
+            {"default_project", "projects", "skypilot"}.intersection(parsed_config)
+        )
+        if npa_only_fields:
+            raise IsolatedApiError(
+                "isolated SkyPilot API requires a SkyPilot global configuration, "
+                "not an NPA settings file (found NPA-only top-level field(s): "
+                + ", ".join(npa_only_fields)
+                + ")"
+            )
         if parsed_config.get("db"):
             raise IsolatedApiError(
                 "isolated SkyPilot API cannot use a shared external database"

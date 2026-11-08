@@ -612,6 +612,19 @@ def test_external_database_rejected_before_process_creation(local_runtime):
     assert not _record(local_runtime).get("pid")
 
 
+def test_npa_settings_file_is_rejected_before_process_creation(local_runtime):
+    config = Path(local_runtime["environment"]["SKYPILOT_GLOBAL_CONFIG"])
+    config.write_text("default_project: fixture-project\nprojects: {}\nskypilot: {}\n")
+
+    with pytest.raises(api.IsolatedApiError, match="not an NPA settings file"):
+        api.ensure_isolated_api(**local_runtime)
+
+    record = _record(local_runtime)
+    assert record["state"] == "intent"
+    assert not record.get("interpreter")
+    assert not (local_runtime["isolated_dir"] / "local-api" / "server.log").exists()
+
+
 def test_tampered_pid_is_not_signaled(local_runtime):
     api.ensure_isolated_api(**local_runtime)
     original = _record(local_runtime)

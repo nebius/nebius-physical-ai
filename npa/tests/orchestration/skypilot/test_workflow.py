@@ -4901,6 +4901,51 @@ def test_queue_status_parser_is_preamble_tolerant_but_never_guesses(
     assert _status_from_queue_payload(output, "42") == expected
 
 
+def test_queue_status_parser_uses_recorded_name_when_controller_reuses_id() -> None:
+    payload = json.dumps(
+        [
+            {"job_id": 1, "job_name": "prior-wave", "status": "SUCCEEDED"},
+            {"job_id": 1, "job_name": "replacement-wave", "status": "RUNNING"},
+        ]
+    )
+
+    assert (
+        _status_from_queue_payload(payload, "1", expected_job_name="prior-wave")
+        == "SUCCEEDED"
+    )
+    assert (
+        _status_from_queue_payload(
+            payload, "1", expected_job_name="replacement-wave"
+        )
+        == "RUNNING"
+    )
+    assert (
+        _status_from_queue_payload(payload, "1", expected_job_name="missing-wave")
+        == ""
+    )
+
+
+def test_workflow_status_returns_absent_for_reused_id_with_other_name(
+    monkeypatch, tmp_path
+) -> None:
+    sky_bin = _fake_sky(tmp_path)
+    payload = json.dumps(
+        [{"job_id": 1, "job_name": "replacement-wave", "status": "RUNNING"}]
+    )
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda cmd, **kwargs: subprocess.CompletedProcess(
+            cmd, 0, stdout=payload, stderr=""
+        ),
+    )
+
+    result = workflow_status("1", expected_job_name="prior-wave", sky_bin=sky_bin)
+
+    assert result.status == "ABSENT"
+    assert result.error == ""
+
+
 def test_status_from_queue_payload_waits_for_all_dag_tasks() -> None:
     payload = [
         {"job_id": 1, "task_id": 0, "status": "SUCCEEDED"},
@@ -7089,6 +7134,33 @@ def test_parse_task_statuses_isolates_other_jobs_and_bad_payloads() -> None:
     assert parse_task_statuses(_QUEUE_JSON, "999") == []
     assert parse_task_statuses("not json", "75") == []
     assert parse_task_statuses("", "75") == []
+
+
+def test_parse_task_statuses_uses_recorded_name_when_controller_reuses_id() -> None:
+    from npa.orchestration.skypilot.workflow import parse_task_statuses
+
+    payload = json.dumps(
+        [
+            {
+                "job_id": 1,
+                "job_name": "prior-wave",
+                "task_id": 0,
+                "status": "SUCCEEDED",
+            },
+            {
+                "job_id": 1,
+                "job_name": "replacement-wave",
+                "task_id": 0,
+                "status": "RUNNING",
+            },
+        ]
+    )
+
+    rows = parse_task_statuses(payload, "1", expected_job_name="prior-wave")
+    assert [(row["job_name"], row["status"]) for row in rows] == [
+        ("prior-wave", "SUCCEEDED")
+    ]
+    assert parse_task_statuses(payload, "1", expected_job_name="missing-wave") == []
 
 
 def test_workflow_task_statuses_returns_empty_on_command_failure(mocker) -> None:

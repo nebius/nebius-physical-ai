@@ -99,6 +99,97 @@ def test_empty_manifest_queries_each_observed_job(observed_status):
     assert resolution.manifest["steps"] == []
 
 
+def test_status_keeps_same_numeric_id_observations_bound_to_wave_name(
+    observed_status,
+):
+    resolution, jobs = observed_status
+    resolution.job_id = "1"
+    resolution.runtime_state["waves"] = [
+        {**_wave("prepare", "1", "succeeded"), "job_name": "prepare-wave"},
+        {**_wave("train", "1", "running"), "job_name": "train-wave"},
+    ]
+
+    def exact_name_status(_job_id, **kwargs):
+        return SimpleNamespace(
+            status={
+                "prepare-wave": "SUCCEEDED",
+                "train-wave": "RUNNING",
+            }[kwargs["expected_job_name"]],
+            error="",
+        )
+
+    jobs.side_effect = exact_name_status
+
+    payload = _durable_workflow_status("run-test")
+
+    assert [call.kwargs["expected_job_name"] for call in jobs.call_args_list] == [
+        "prepare-wave",
+        "train-wave",
+    ]
+    assert payload["stages"]["prepare"]["scheduler_state"] == "SUCCEEDED"
+    assert payload["stages"]["train"]["scheduler_state"] == "RUNNING"
+    assert payload["status"] == "RUNNING"
+
+
+def test_status_binds_exact_live_queries_to_explicit_skypilot_config(
+    observed_status,
+):
+    """The isolated state root alone cannot prove a Kubernetes fallback route."""
+
+    resolution, jobs = observed_status
+    resolution.job_id = "12"
+    resolution.runtime_state["waves"] = [_wave("train", "12", "running")]
+    config_path = Path("/private/task/skypilot.yaml")
+
+    payload = _durable_workflow_status("run-test", config_path=config_path)
+
+    assert payload["status"] == "RUNNING"
+    assert all(
+        call.kwargs["config_path"] == config_path for call in jobs.call_args_list
+    )
+
+
+def test_status_cli_forwards_explicit_skypilot_config(observed_status, mocker):
+    resolution, jobs = observed_status
+    resolution.job_id = "12"
+    resolution.runtime_state["waves"] = [_wave("train", "12", "running")]
+
+    result = _status_cli(
+        mocker, "--config-path", "/private/task/skypilot.yaml", "--json"
+    )
+
+    assert result.exit_code == 0, result.output
+    assert all(
+        call.kwargs["config_path"] == Path("/private/task/skypilot.yaml")
+        for call in jobs.call_args_list
+    )
+
+
+def test_terminal_wave_accepts_verified_absence_of_its_exact_named_job(
+    observed_status,
+):
+    """A terminal runtime wave is not made nonterminal by an evicted controller."""
+
+    resolution, jobs = observed_status
+    resolution.job_id = "1"
+    resolution.runtime_state["waves"] = [
+        {
+            **_wave("train", "1", "failed"),
+            "job_name": "train-attempt-two",
+            # The old scheduler snapshot may remain SUBMITTED after the driver
+            # receives an exact absent reconciliation.
+            "sky_status": "SUBMITTED",
+        }
+    ]
+    jobs.return_value = SimpleNamespace(status="ABSENT", error="")
+
+    payload = _durable_workflow_status("run-test")
+
+    assert payload["status"] == "FAILED"
+    assert payload["verification_status"] == "VERIFIED"
+    assert payload["live_verified"] is True
+
+
 @pytest.mark.parametrize("current_status", ["running", "starting", "failed"])
 @pytest.mark.parametrize("prior_status", ["cancelled", "failed"])
 def test_rebatched_resume_reports_current_job_not_old_cancelled_batch(

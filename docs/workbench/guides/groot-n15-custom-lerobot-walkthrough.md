@@ -96,9 +96,14 @@ and their hashes in a private receipt rather than publishing its storage paths.
 export SPEC=workflows/testing/groot-n15-offline-rl.yaml
 export RUN_ID="<new-immutable-run-id>"
 export PROJECT_ALIAS="<configured-task-project>"
+export K8S_CONTEXT="<exact-task-owned-context>"
 export BUCKET="<operator-owned-bucket>"
 export WORKFLOW_ROOT="s3://${BUCKET}/workflow-ledger/${RUN_ID}"
 export OUTPUT_PREFIX="groot-n15-offline-rl/${RUN_ID}"
+export ISOLATED_CONFIG_DIR="<private-task-local-skypilot-state>"
+# A SkyPilot-only YAML, not ${NPA_CONFIG_DIR}/config.yaml. It contains the
+# selected context/placement policy but no credentials or API endpoint.
+export SKYPILOT_CONFIG="<private-skypilot-global-config.yaml>"
 export DATASET_ID="<stable-source-identifier>"
 export DATASET_REVISION="<immutable-source-revision>"
 export DATASET_ARCHIVE_URI="s3://${BUCKET}/inputs/<dataset-sha256>.tar.gz"
@@ -115,7 +120,7 @@ The reference profile then supplies these exact configuration overrides:
 
 ```bash
 CUSTOM_VARS=(
-  "bucket=${BUCKET}" "prefix=${OUTPUT_PREFIX}"
+  "bucket=${BUCKET}" "prefix=${OUTPUT_PREFIX}" "prepared_prefix=${OUTPUT_PREFIX}"
   "dataset_repository=${DATASET_ID}" "dataset_revision=${DATASET_REVISION}"
   "dataset_archive_uri=${DATASET_ARCHIVE_URI}"
   "input_provenance_uri=${PROVENANCE_URI}"
@@ -132,7 +137,9 @@ CUSTOM_VARS=(
   "action_horizon=16" "video_backend=decord" "derivative_codec=h264"
   "complete_train_passes=1" "batch_size=4" "learning_rate=0.0001"
   "training_seed=42" "inference_seed=1701"
-  "evidence_episode_index=${EVIDENCE_EPISODE}" "evidence_video_key=video.wrist"
+  "evidence_episode_index=${EVIDENCE_EPISODE}" "evidence_start_frame=0"
+  "evidence_frame_count=120" "evidence_video_fps=25"
+  "evidence_video_key=video.wrist" "accelerator=RTXPRO6000:1"
   "action_target_keys=<action.key.one,action.key.two>"
 )
 VAR_ARGS=()
@@ -144,6 +151,13 @@ done
 These are shell values, not a shell job. Expand them into the generic CLI; do
 not place S3 credentials in `CUSTOM_VARS`. The native adapter supports exactly
 one visible GPU. It fails rather than silently using DataParallel or DDP.
+
+`--config-path` accepts a SkyPilot global configuration only. Keep this file
+separate from the NPA settings file selected through `NPA_CONFIG_DIR`: passing
+an NPA file (for example one with `default_project`, `projects`, or `skypilot`
+at the top level) is rejected before an API process or managed job is created.
+The SkyPilot file names the selected Kubernetes context and placement policy;
+the task-local API injects its own loopback endpoint.
 
 ## Validate, plan, preflight, and submit
 
@@ -174,11 +188,13 @@ not serialized into the YAML, rendered plan, archive, or receipts.
 
 ```bash
 npa/.venv/bin/npa workbench workflow preflight-images "${SPEC}" \
-  --project "${PROJECT_ALIAS}" --infra "k8s/<exact-context>" \
+  --project "${PROJECT_ALIAS}" --infra "k8s/${K8S_CONTEXT}" \
+  --config-path "${SKYPILOT_CONFIG}" \
   "${VAR_ARGS[@]}" --json
 npa/.venv/bin/npa workbench workflow submit "${SPEC}" --runtime \
   --project "${PROJECT_ALIAS}" --run-id "${RUN_ID}" \
-  --workflow-s3-uri "${WORKFLOW_ROOT}" --infra "k8s/<exact-context>" \
+  --workflow-s3-uri "${WORKFLOW_ROOT}" --infra "k8s/${K8S_CONTEXT}" \
+  --isolated-config-dir "${ISOLATED_CONFIG_DIR}" --config-path "${SKYPILOT_CONFIG}" \
   "${VAR_ARGS[@]}" \
   --secret-env AWS_ACCESS_KEY_ID --secret-env AWS_SECRET_ACCESS_KEY \
   --output-format json
@@ -198,9 +214,11 @@ Use only the generic lifecycle commands against the same immutable run identity:
 
 ```bash
 npa/.venv/bin/npa workbench workflow status "${RUN_ID}" --project "${PROJECT_ALIAS}" \
-  --workflow-s3-uri "${WORKFLOW_ROOT}" --json
+  --workflow-s3-uri "${WORKFLOW_ROOT}" \
+  --isolated-config-dir "${ISOLATED_CONFIG_DIR}" --config-path "${SKYPILOT_CONFIG}" --json
 npa/.venv/bin/npa workbench workflow logs "${RUN_ID}" train-native-n15 \
-  --project "${PROJECT_ALIAS}" --workflow-s3-uri "${WORKFLOW_ROOT}"
+  --project "${PROJECT_ALIAS}" --workflow-s3-uri "${WORKFLOW_ROOT}" \
+  --cached
 npa/.venv/bin/npa workbench workflow artifacts "${RUN_ID}" --project "${PROJECT_ALIAS}" \
   --workflow-s3-uri "${WORKFLOW_ROOT}" --json
 ```
@@ -231,7 +249,8 @@ deliberately non-relaunching:
 ```bash
 npa/.venv/bin/npa workbench workflow submit "${SPEC}" --runtime \
   --resume-run "${RUN_ID}" --project "${PROJECT_ALIAS}" \
-  --workflow-s3-uri "${WORKFLOW_ROOT}" --infra "k8s/<exact-context>" \
+  --workflow-s3-uri "${WORKFLOW_ROOT}" --infra "k8s/${K8S_CONTEXT}" \
+  --isolated-config-dir "${ISOLATED_CONFIG_DIR}" --config-path "${SKYPILOT_CONFIG}" \
   "${VAR_ARGS[@]}" --output-format json
 ```
 
@@ -241,9 +260,31 @@ Do **not** add `--retry-absent-in-flight` merely because a pod disappeared. That
 explicit recovery is permitted only after the generic status/ledger path proves
 the exact recorded managed-job identity absent *and* proves every unique
 declared output absent or incomplete while preserving any checkpoint fragments.
-If the controller is unavailable, retain the raw diagnostic and resume the same
-run after access is restored. Do not delete or replace a shared controller to
-recover one workflow.
+
+`npa skypilot cleanup-controller` is normally a shared-controller command. That
+does **not** make every controller shared: an operator using
+`--isolated-config-dir` has a task-bound controller identity. If that exact
+controller is terminally failed, and the prior status evidence proves that no
+managed job is active, the only supported repair is the narrowly scoped form
+below. It verifies the project/context, isolated state, controller annotations,
+terminal failure, and absence of an owner reference before deleting exactly the
+recorded controller pod; it does not discover, bind, or delete another
+controller. Retain the command's JSON receipt with the workflow ledger.
+
+```bash
+npa/.venv/bin/npa skypilot cleanup-controller \
+  --project "${PROJECT_ALIAS}" --context "${K8S_CONTEXT}" \
+  --isolated-config-dir "${ISOLATED_CONFIG_DIR}" \
+  --config-path "${SKYPILOT_CONFIG}" \
+  --recover-failed-controller "${RECORDED_CONTROLLER_NAME}" \
+  --attest-no-active-jobs --yes --json
+```
+
+For a genuinely shared controller, or where the exact identity/terminal state
+cannot be proven, do not run that command: preserve the diagnostic and restore
+the supported observation route instead. After a task-bound controller cleanup,
+use the same `RUN_ID`, `WORKFLOW_ROOT`, immutable inputs, and explicit
+`--retry-absent-in-flight` only if its documented absent-output proof holds.
 
 To rehearse the next feedback iteration, preserve the first archive and output
 prefix. Create a new immutable dataset and/or feedback archive revision, update
@@ -286,3 +327,5 @@ public proof as coverage for the labelled custom path.
 | Held-out prediction and labelled positive/negative/recovery gallery | Evaluation and decode receipt | Pending live reference run; images remain recorded observations. |
 | Second immutable feedback revision | Separate run and lineage receipt | Pending live reference run; first outputs remain preserved. |
 | Cartesian action numerical contract | Hermetic fixture | Verified mechanically only; not real-robot Cartesian calibration evidence. |
+| Task-bound controller recovery | Independent reference rehearsal receipt | Rehearsed only after exact terminal ownership and no-active-job proof; no shared controller was removed. Full identifiers remain private. |
+| Missing/misaligned feedback, split leakage, contract mismatch, and resume binding | Hermetic contract fixtures | Fail closed before training or relaunch. They verify operator-visible errors and recovery guards, not a physical rollout. |

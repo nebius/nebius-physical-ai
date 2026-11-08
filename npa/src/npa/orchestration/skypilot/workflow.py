@@ -2728,6 +2728,7 @@ def _run_killable_status_query(
 def workflow_status(
     job_id: str,
     *,
+    expected_job_name: str = "",
     isolated_config_dir: Path | None = None,
     config_path: Path | None = None,
     sky_bin: SkyBin = None,
@@ -2823,8 +2824,20 @@ def workflow_status(
                 result, "malformed rows or conflicting diagnostics"
             ),
         )
-    status = _status_from_queue_rows(rows, job_id)
+    status = _status_from_queue_rows(rows, job_id, expected_job_name=expected_job_name)
     if not status:
+        if expected_job_name:
+            # Managed-job IDs restart when a task-local controller is rebuilt.
+            # A matching numeric ID for a different name is not evidence about
+            # this recorded wave.  Keep it distinguishable from a controller
+            # failure so the caller can retain an already-terminal durable wave.
+            return WorkflowResult(
+                status="ABSENT",
+                job_id=job_id,
+                returncode=result.returncode,
+                stdout=result.stdout,
+                stderr=result.stderr,
+            )
         # A verified queue response is authoritative: if the recorded id is
         # absent, the managed-jobs controller has lost (or garbage-collected) its
         # execution record.  Treating this as UNKNOWN makes an unbounded runtime
@@ -2877,6 +2890,7 @@ def _verify_task_queue_result(result: subprocess.CompletedProcess[str]) -> None:
 def workflow_task_statuses(
     job_id: str,
     *,
+    expected_job_name: str = "",
     isolated_config_dir: Path | None = None,
     config_path: Path | None = None,
     sky_bin: SkyBin = None,
@@ -2937,7 +2951,9 @@ def workflow_task_statuses(
         _verify_task_queue_result(result)
     if result.returncode != 0:
         return []
-    return parse_task_statuses(result.stdout, job_id)
+    return parse_task_statuses(
+        result.stdout, job_id, expected_job_name=expected_job_name
+    )
 
 
 def workflow_controller_logs(
@@ -4162,7 +4178,9 @@ def parse_job_ids_by_name(output: str, job_name: str) -> list[str]:
     return [str(value) for value in sorted(ids, reverse=True)]
 
 
-def parse_task_statuses(output: str, job_id: str) -> list[dict[str, Any]]:
+def parse_task_statuses(
+    output: str, job_id: str, *, expected_job_name: str = ""
+) -> list[dict[str, Any]]:
     """Extract per-task rows for ``job_id`` from ``sky jobs queue --output json``."""
 
     jobs = queue_rows_from_output(output)
@@ -4173,10 +4191,14 @@ def parse_task_statuses(output: str, job_id: str) -> list[dict[str, Any]]:
         if not isinstance(job, dict):
             continue
         current_id = str(job.get("job_id") or job.get("id") or "")
-        if current_id != str(job_id):
+        if current_id != str(job_id) or (
+            expected_job_name
+            and str(job.get("job_name") or "") != expected_job_name
+        ):
             continue
         row = {
             "job_id": current_id,
+            "job_name": str(job.get("job_name") or ""),
             "task_id": job.get("task_id"),
             "task_name": job.get("task_name") or job.get("job_name") or "",
             "status": str(job.get("status") or "").upper(),
@@ -5696,20 +5718,27 @@ def _queue_verification_error(
     )
 
 
-def _status_from_queue_payload(output: str, job_id: str) -> str:
+def _status_from_queue_payload(
+    output: str, job_id: str, *, expected_job_name: str = ""
+) -> str:
     jobs = queue_rows_from_output(output)
     if jobs is None:
         return ""
-    return _status_from_queue_rows(jobs, job_id)
+    return _status_from_queue_rows(jobs, job_id, expected_job_name=expected_job_name)
 
 
-def _status_from_queue_rows(jobs: list[dict[str, Any]], job_id: str) -> str:
+def _status_from_queue_rows(
+    jobs: list[dict[str, Any]], job_id: str, *, expected_job_name: str = ""
+) -> str:
     """Return the aggregate state for one job in verified SkyPilot queue rows."""
 
     statuses = []
     for job in jobs:
         current_id = _queue_row_job_id(job)
-        if current_id == str(job_id):
+        if current_id == str(job_id) and (
+            not expected_job_name
+            or str(job.get("job_name") or "") == expected_job_name
+        ):
             statuses.append(str(job.get("status") or "").upper())
     if not statuses:
         return ""

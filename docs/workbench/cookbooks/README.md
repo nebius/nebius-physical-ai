@@ -12,7 +12,7 @@ validation scope. Dated measurements apply to the versions and hardware recorded
 | --- | --- |
 | [Public RL improvement](public-rl-improvement-demo.md) | Run scan reconstruction, baseline continuation and paired evaluation; the full coefficient-10.0 experiment retained the baseline after failed quality gates |
 | [GR00T N1.7](groot-1-7-training.md) | Fine-tune, recover the run ID, and inspect checkpoint provenance |
-| [GR00T N1.5 offline workflow](groot-n15-offline-policy-improvement.md) | Experimental public LeRobot recipe: native training, held-out action comparison, and factual recorded-observation video |
+| [GR00T N1.5 offline workflow](groot-n15-offline-policy-improvement.md) | Experimental custom-LeRobot offline workflow: trusted external adapter/data, labelled outcome/progress weighting, matched control, and factual recorded-observation evidence; see the linked operator walkthrough |
 | [Public VLA training](public-vla-training.md) | Run SmolVLA training, task adaptation and native LIBERO evaluation on MK8s or Slurm |
 | [Isaac Lab BYOF](byof-isaac-lab/README.md) | Run a custom Isaac Lab fork in a container |
 | [SONIC training](sonic-train-runbook.md) | Prepare a single training stage and its runtime |

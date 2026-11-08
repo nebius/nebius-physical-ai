@@ -1469,23 +1469,53 @@ def _task_observation_matches(members, rows, *, legacy=False):
     return matches, unresolved
 
 
+def _job_observation(
+    observations: Mapping[object, Mapping[str, Any]], job_id: str, job_name: str
+) -> Mapping[str, Any]:
+    """Select a scheduler observation by immutable job ID and recorded name.
+
+    A rebuilt task-local SkyPilot controller may reuse numeric IDs.  Callers
+    that have a recorded name therefore store exact observations under the
+    ``(job_id, job_name)`` pair.  The string-key fallback preserves the older
+    one-ID contract for callers and persisted fixtures that do not know a name.
+    """
+
+    identity = (str(job_id), str(job_name))
+    exact = observations.get(identity)
+    if isinstance(exact, Mapping):
+        return exact
+    legacy = observations.get(str(job_id))
+    if not isinstance(legacy, Mapping):
+        return {}
+    observed_name = str(legacy.get("job_name") or "")
+    if job_name and observed_name and observed_name != job_name:
+        return {}
+    return legacy
+
+
 def _scheduler_task_observations(stages, task_rows, observations):
     if not observations:
         return _task_observation_matches(stages, task_rows, legacy=True)
     matches, unresolved = {}, set()
-    job_ids = {stage["managed_job_id"] for stage in stages.values()}
-    for job_id in job_ids:
+    identities = {
+        (str(stage["managed_job_id"]), str(stage.get("job_name") or ""))
+        for stage in stages.values()
+    }
+    for job_id, job_name in identities:
         members = {
             key: stage
             for key, stage in stages.items()
-            if stage["managed_job_id"] == job_id
+            if str(stage["managed_job_id"]) == job_id
+            and str(stage.get("job_name") or "") == job_name
         }
-        rows = observations.get(job_id, {}).get("task_rows") or []
+        observation = _job_observation(observations, job_id, job_name)
+        if observation.get("identity_absent"):
+            matches.update({key: [] for key in members})
+            continue
+        rows = observation.get("task_rows") or []
         job_matches, job_unresolved = _task_observation_matches(members, rows)
         matches.update(job_matches)
         unresolved.update(job_unresolved)
-    if set(observations) - job_ids:
-        unresolved.update(stages)
     return matches, unresolved
 
 
@@ -1524,7 +1554,7 @@ def build_actionable_run_status(
     live_status: str = "",
     task_rows: Sequence[Mapping[str, Any]] = (),
     runtime_waves: Sequence[Mapping[str, Any]] = (),
-    job_observations: Mapping[str, Mapping[str, Any]] | None = None,
+    job_observations: Mapping[object, Mapping[str, Any]] | None = None,
     controller_output: str = "",
     project: str = "",
     isolated_config_dir: str = "",
@@ -1566,7 +1596,9 @@ def build_actionable_run_status(
             key = f"{key}@{index}"
         attribution = attributions.get(key, {})
         managed_job_id = str(attribution.get("managed_job_id") or "")
-        observation = observations.get(managed_job_id, {})
+        observation = _job_observation(
+            observations, managed_job_id, str(attribution.get("job_name") or "")
+        )
         observed_rows = [
             item
             for item in observation.get("task_rows") or []
