@@ -1988,6 +1988,11 @@ def test_validation_environment_drops_parent_api_endpoint(
         },
     )
     monkeypatch.setenv("NPA_SKYPILOT_ISOLATED_API_DIR", str(isolated_root))
+    monkeypatch.setenv(
+        "SKYPILOT_SERVER_PLUGINS_CONFIG", str(parent_api_root / "server-plugins.yaml")
+    )
+    monkeypatch.setenv("NPA_OWNED_SKYPILOT_API_ID", "parent-fixture")
+    monkeypatch.setenv("IS_SKYPILOT_SERVER", "true")
 
     client_configs: list[dict] = []
     supplied_environments: list[dict[str, str]] = []
@@ -2017,8 +2022,14 @@ def test_validation_environment_drops_parent_api_endpoint(
     )
 
     assert len(client_configs) == 1
-    assert "SKYPILOT_API_SERVER_ENDPOINT" not in supplied_environments[0]
-    assert "NPA_SKYPILOT_ISOLATED_API_DIR" not in supplied_environments[0]
+    for key in (
+        "SKYPILOT_API_SERVER_ENDPOINT",
+        "SKYPILOT_SERVER_PLUGINS_CONFIG",
+        "NPA_OWNED_SKYPILOT_API_ID",
+        "IS_SKYPILOT_SERVER",
+        "NPA_SKYPILOT_ISOLATED_API_DIR",
+    ):
+        assert key not in supplied_environments[0]
     assert "api_server" not in client_configs[0]
     assert client_configs[0]["allowed_clouds"] == ["kubernetes"]
     assert client_configs[0]["kubernetes"]["allowed_contexts"] == ["exact-context"]
