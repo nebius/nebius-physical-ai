@@ -864,9 +864,7 @@ def _ensure_local_api_daemon_cwd_locked(
         # check the daemon with the receipt's own durable configuration.
         from npa.orchestration.skypilot import local_api
 
-        daemon_env = local_api.owned_api_health_environment(
-            Path(isolated_api_dir), env
-        )
+        daemon_env = local_api.owned_api_health_environment(Path(isolated_api_dir), env)
         return _ensure_isolated_api(
             isolated_dir=Path(isolated_api_dir),
             sky_executable=sky_executable,

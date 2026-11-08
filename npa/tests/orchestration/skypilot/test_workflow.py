@@ -2309,8 +2309,10 @@ def test_isolated_daemon_health_preserves_unverified_client_endpoint(
     monkeypatch.setattr(
         workflow_module,
         "_ensure_isolated_api",
-        lambda **kwargs: captured.update(kwargs)
-        or workflow_module.ApiDaemonCwdProbe(True, "fixture"),
+        lambda **kwargs: (
+            captured.update(kwargs)
+            or workflow_module.ApiDaemonCwdProbe(True, "fixture")
+        ),
     )
 
     workflow_module._ensure_local_api_daemon_cwd_locked(

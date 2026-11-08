@@ -73,12 +73,8 @@ class WorkflowJobRecord:
             return False
         if all(is_terminal_workflow_state(item) for item in states):
             return True
-        return (
-            any(is_terminal_workflow_state(item) for item in states)
-            and all(
-                is_terminal_workflow_state(item) or item == "SUBMITTED"
-                for item in states
-            )
+        return any(is_terminal_workflow_state(item) for item in states) and all(
+            is_terminal_workflow_state(item) or item == "SUBMITTED" for item in states
         )
 
     def to_dict(self) -> dict[str, object]:

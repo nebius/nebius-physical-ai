@@ -327,12 +327,8 @@ def kubernetes_sky_environment(
     )
     parent_record = local_api._read(parent_api_root) if parent_api_root else None
     parent_endpoint = str(base_environment.get("SKYPILOT_API_SERVER_ENDPOINT") or "")
-    parent_marker = str(
-        base_environment.get("NPA_SKYPILOT_ISOLATED_API_DIR") or ""
-    )
-    parent_plugins = str(
-        base_environment.get("SKYPILOT_SERVER_PLUGINS_CONFIG") or ""
-    )
+    parent_marker = str(base_environment.get("NPA_SKYPILOT_ISOLATED_API_DIR") or "")
+    parent_plugins = str(base_environment.get("SKYPILOT_SERVER_PLUGINS_CONFIG") or "")
     parent_api_id = str(base_environment.get("NPA_OWNED_SKYPILOT_API_ID") or "")
     parent_is_server = str(base_environment.get("IS_SKYPILOT_SERVER") or "")
     if (
@@ -357,9 +353,7 @@ def kubernetes_sky_environment(
         ensure_isolated_api(
             isolated_dir=scope,
             sky_executable=sky_executable,
-            environment=local_api.owned_api_health_environment(
-                scope, validation_env
-            ),
+            environment=local_api.owned_api_health_environment(scope, validation_env),
             cwd=str(scope),
         )
         return validation_env
