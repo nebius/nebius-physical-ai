@@ -1976,6 +1976,17 @@
       }
     },
     {
+      "sha256": "a44f9823797481a912e5daf03e594300eaee4133ff1ba16b22a9bb6acce07756",
+      "bytes": 447177,
+      "match_counts": {"credential_assignment": 13},
+      "reason": "The exact controller-routing changes preserve the existing operator-provided credential parameter flow. The detector's named assignments are references or placeholders, not operational credential literals.",
+      "source": {
+        "url": "https://github.com/nebius/nebius-physical-ai/blob/2d02d929ad4953024a6a483c238c616f71f55f34/npa/src/npa/cli/workbench/workflow/__init__.py",
+        "revision": "2d02d929ad4953024a6a483c238c616f71f55f34",
+        "member": "npa/src/npa/cli/workbench/workflow/__init__.py"
+      }
+    },
+    {
       "sha256": "5c5000bd231f4b073591ca8bec7359aad8f768b2d47cc88289dc1ba21972ff78",
       "bytes": 83802,
       "match_counts": {"credential_assignment": 10},

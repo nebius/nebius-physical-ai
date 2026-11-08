@@ -319,7 +319,7 @@ def test_current_npa_source_review_bindings_are_content_exact() -> None:
         "src/npa/cli/workbench/lerobot.py": "2e6c2e467e395ebf566f75642f012a768d2ad806689a7615c962a531318170a5",
         "src/npa/cli/workbench/robocasa/deploy.py": "bf2ffee8ca78ba05d125677942d76a40258835b44466919a2b783aa73b746b90",
         "src/npa/cli/workbench/sim2real.py": "a37f80fbd26c66e10eeaa2a11dcc1f04bb360470ad7f12820455b4108f877964",
-        "src/npa/cli/workbench/workflow/__init__.py": "8a979d1cd96da262051c06b8ca33a5c763724d2beb8a8edc0507e700720b82ab",
+        "src/npa/cli/workbench/workflow/__init__.py": "a44f9823797481a912e5daf03e594300eaee4133ff1ba16b22a9bb6acce07756",
         "src/npa/clients/storage.py": "abbc54e878eccfca0d85391b316be85642b6a417ae25d95ae222c4d0cb4dedd1",
         "src/npa/orchestration/npa_workflow/run_state.py": "5c5000bd231f4b073591ca8bec7359aad8f768b2d47cc88289dc1ba21972ff78",
         "src/npa/orchestration/npa_workflow/sim2real_preflight.py": "b9e4436bc9f4ff1557da3bf60975fd210a1e55c5b206198bc9e51ac5ddd66cd3",
