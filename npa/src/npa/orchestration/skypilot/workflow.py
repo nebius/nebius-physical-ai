@@ -855,10 +855,48 @@ def _ensure_local_api_daemon_cwd_locked(
 
     isolated_api_dir = env.get("NPA_SKYPILOT_ISOLATED_API_DIR")
     if isolated_api_dir:
+        # ``env`` is also the SkyPilot *client* environment.  Its generated
+        # per-submit config is intentionally different from the durable local
+        # API server config, so passing it into the server health check would
+        # make a live, owned daemon reject its own client as a changed identity.
+        # Retain unverified client bindings for the fail-closed helper, but
+        # when every server-only binding matches the recorded API receipt,
+        # check the daemon with the receipt's own durable configuration.
+        from npa.orchestration.skypilot import local_api
+
+        daemon_env = dict(env)
+        api_root = local_api._isolated_api_root(Path(isolated_api_dir))
+        record = local_api._read(api_root)
+        server_config = api_root / "server-config.yaml"
+        server_plugins = api_root / "server-plugins.yaml"
+        if record is not None and server_config.is_file():
+            expected_endpoint = local_api._endpoint(record)
+            expected_marker = str(record["marker"])
+            endpoint = str(daemon_env.get("SKYPILOT_API_SERVER_ENDPOINT") or "")
+            plugin_config = str(
+                daemon_env.get("SKYPILOT_SERVER_PLUGINS_CONFIG") or ""
+            )
+            marker = str(daemon_env.get("NPA_OWNED_SKYPILOT_API_ID") or "")
+            is_server = str(daemon_env.get("IS_SKYPILOT_SERVER") or "")
+            if (
+                (not endpoint or endpoint == expected_endpoint)
+                and (not plugin_config or plugin_config == str(server_plugins))
+                and (not marker or marker == expected_marker)
+                and (not is_server or is_server == "true")
+            ):
+                daemon_env.update(
+                    {
+                        "SKYPILOT_API_SERVER_ENDPOINT": expected_endpoint,
+                        "SKYPILOT_GLOBAL_CONFIG": str(server_config),
+                        "SKYPILOT_SERVER_PLUGINS_CONFIG": str(server_plugins),
+                        "NPA_OWNED_SKYPILOT_API_ID": expected_marker,
+                        "IS_SKYPILOT_SERVER": "true",
+                    }
+                )
         return _ensure_isolated_api(
             isolated_dir=Path(isolated_api_dir),
             sky_executable=sky_executable,
-            environment=env,
+            environment=daemon_env,
             cwd=cwd,
         )
 

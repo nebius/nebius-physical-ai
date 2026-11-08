@@ -2233,6 +2233,101 @@ def test_locked_api_daemon_repair_serializes_call_path(
     assert second_entered.is_set()
 
 
+def test_isolated_daemon_health_uses_recorded_server_config(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A per-submit client config must not rebind a live owned API server."""
+
+    isolated = tmp_path / "isolated"
+    api_root = isolated / "local-api"
+    api_root.mkdir(parents=True)
+    server_config = api_root / "server-config.yaml"
+    server_config.write_text("allowed_clouds: [kubernetes]\n", encoding="utf-8")
+    client_config = tmp_path / "per-submit-config.yaml"
+    client_config.write_text("allowed_clouds: [kubernetes]\n", encoding="utf-8")
+    record = {
+        "schema_version": 1,
+        "root": str(api_root.absolute()),
+        "port": 36471,
+        "metrics_port": 36472,
+        "queue_port": 36473,
+        "marker": "owned-fixture",
+        "state": "ready",
+    }
+    local_api_module._write(api_root / "daemon.json", record)
+    captured: dict[str, object] = {}
+
+    def fake_ensure(**kwargs):
+        captured.update(kwargs)
+        return workflow_module.ApiDaemonCwdProbe(True, "isolated_api_ready")
+
+    monkeypatch.setattr(workflow_module, "_ensure_isolated_api", fake_ensure)
+    result = workflow_module._ensure_local_api_daemon_cwd_locked(
+        "/opt/sky/bin/sky",
+        env={
+            "NPA_SKYPILOT_ISOLATED_API_DIR": str(isolated),
+            "SKYPILOT_API_SERVER_ENDPOINT": "http://127.0.0.1:36471",
+            "SKYPILOT_GLOBAL_CONFIG": str(client_config),
+            "SKYPILOT_SERVER_PLUGINS_CONFIG": str(api_root / "server-plugins.yaml"),
+            "NPA_OWNED_SKYPILOT_API_ID": "owned-fixture",
+            "IS_SKYPILOT_SERVER": "true",
+        },
+        cwd=str(tmp_path),
+        runtime_dir=isolated,
+    )
+
+    assert result.healthy
+    assert captured["isolated_dir"] == isolated
+    assert captured["environment"]["SKYPILOT_GLOBAL_CONFIG"] == str(server_config)
+    assert captured["environment"]["SKYPILOT_SERVER_PLUGINS_CONFIG"] == str(
+        api_root / "server-plugins.yaml"
+    )
+
+
+def test_isolated_daemon_health_preserves_unverified_client_endpoint(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The health gate must leave a foreign client endpoint fail-closed."""
+
+    isolated = tmp_path / "isolated"
+    api_root = isolated / "local-api"
+    api_root.mkdir(parents=True)
+    (api_root / "server-config.yaml").write_text("{}\n", encoding="utf-8")
+    local_api_module._write(
+        api_root / "daemon.json",
+        {
+            "schema_version": 1,
+            "root": str(api_root.absolute()),
+            "port": 36471,
+            "metrics_port": 36472,
+            "queue_port": 36473,
+            "marker": "owned-fixture",
+            "state": "ready",
+        },
+    )
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(
+        workflow_module,
+        "_ensure_isolated_api",
+        lambda **kwargs: captured.update(kwargs)
+        or workflow_module.ApiDaemonCwdProbe(True, "fixture"),
+    )
+
+    workflow_module._ensure_local_api_daemon_cwd_locked(
+        "/opt/sky/bin/sky",
+        env={
+            "NPA_SKYPILOT_ISOLATED_API_DIR": str(isolated),
+            "SKYPILOT_API_SERVER_ENDPOINT": "http://127.0.0.1:36499",
+        },
+        cwd=str(tmp_path),
+        runtime_dir=isolated,
+    )
+
+    assert captured["environment"]["SKYPILOT_API_SERVER_ENDPOINT"] == (
+        "http://127.0.0.1:36499"
+    )
+
+
 def test_deleted_api_daemon_is_restarted_from_durable_cwd() -> None:
     probes = iter(
         (
