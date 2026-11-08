@@ -1963,6 +1963,28 @@
         "revision": "67d8c43bc35627f7b71fc233dbd7be2c1aec582d",
         "member": "npa/src/npa/orchestration/npa_workflow/run_state.py"
       }
+    },
+    {
+      "sha256": "8a979d1cd96da262051c06b8ca33a5c763724d2beb8a8edc0507e700720b82ab",
+      "bytes": 446869,
+      "match_counts": {"credential_assignment": 13},
+      "reason": "The workflow observation and recovery changes preserve the existing operator-provided credential parameter flow. The detector's named assignments are references or placeholders, not operational credential literals.",
+      "source": {
+        "url": "https://github.com/nebius/nebius-physical-ai/blob/364779829305c9d5d7a41cb58b3aa9f98f9d0e73/npa/src/npa/cli/workbench/workflow/__init__.py",
+        "revision": "364779829305c9d5d7a41cb58b3aa9f98f9d0e73",
+        "member": "npa/src/npa/cli/workbench/workflow/__init__.py"
+      }
+    },
+    {
+      "sha256": "5c5000bd231f4b073591ca8bec7359aad8f768b2d47cc88289dc1ba21972ff78",
+      "bytes": 83802,
+      "match_counts": {"credential_assignment": 10},
+      "reason": "The exact-directory output check and observer changes preserve the existing operator-provided credential parameter flow. The detector's named assignments are references or placeholders, not operational credential literals.",
+      "source": {
+        "url": "https://github.com/nebius/nebius-physical-ai/blob/364779829305c9d5d7a41cb58b3aa9f98f9d0e73/npa/src/npa/orchestration/npa_workflow/run_state.py",
+        "revision": "364779829305c9d5d7a41cb58b3aa9f98f9d0e73",
+        "member": "npa/src/npa/orchestration/npa_workflow/run_state.py"
+      }
     }
   ]
 }
