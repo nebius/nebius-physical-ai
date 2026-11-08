@@ -975,19 +975,41 @@ class RunStateStore:
             aws_access_key_id=self._aws_access_key_id,
             aws_secret_access_key=self._aws_secret_access_key,
         )._s3
-        try:
-            if uri.endswith("/"):
+        if uri.endswith("/"):
+            try:
                 return s3_prefix_has_nonempty_object(
                     client,
                     bucket=parsed.netloc,
                     prefix=key,
                 )
+            except ClientError as exc:
+                code = str(exc.response.get("Error", {}).get("Code", ""))
+                if code in {"404", "NoSuchKey", "NotFound"}:
+                    return False
+                raise
+        try:
             response = client.head_object(Bucket=parsed.netloc, Key=key)
             return int(response.get("ContentLength") or 0) > 0
         except ClientError as exc:
             code = str(exc.response.get("Error", {}).get("Code", ""))
             if code in {"404", "NoSuchKey", "NotFound"}:
-                return False
+                # Declarative directory outputs are commonly written without a
+                # trailing slash.  A direct object miss is not absence until the
+                # exact child prefix has also been checked; do not match a
+                # neighboring prefix such as ``candidate-old``.
+                try:
+                    return s3_prefix_has_nonempty_object(
+                        client,
+                        bucket=parsed.netloc,
+                        prefix=f"{key.rstrip('/')}/",
+                    )
+                except ClientError as prefix_error:
+                    prefix_code = str(
+                        prefix_error.response.get("Error", {}).get("Code", "")
+                    )
+                    if prefix_code in {"404", "NoSuchKey", "NotFound"}:
+                        return False
+                    raise
             raise
 
     def read_manifest(self) -> RunManifest | None:

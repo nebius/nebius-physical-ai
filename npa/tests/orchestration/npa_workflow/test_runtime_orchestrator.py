@@ -17,6 +17,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+from botocore.exceptions import ClientError
 import pytest
 import yaml
 
@@ -1183,6 +1184,37 @@ def test_prefix_marker_does_not_authorize_absent_output_recovery(
 
     assert executor._outputs_exist([output])
     assert executor._declared_outputs_absent([output]) == (False, "present")
+
+
+def test_runtime_output_without_trailing_slash_checks_exact_children(
+    monkeypatch,
+) -> None:
+    calls: list[dict[str, object]] = []
+
+    class FakeS3:
+        def head_object(self, **_kwargs: object) -> object:
+            raise ClientError({"Error": {"Code": "NoSuchKey"}}, "HeadObject")
+
+        def list_objects_v2(self, **kwargs: object) -> dict[str, object]:
+            calls.append(dict(kwargs))
+            return {
+                "Contents": [{"Key": "gate-loop/run/output/result.json", "Size": 17}],
+                "IsTruncated": False,
+            }
+
+    monkeypatch.setattr(
+        "npa.clients.storage.StorageClient.from_environment",
+        lambda **_kwargs: SimpleNamespace(s3=FakeS3()),
+    )
+
+    assert s3_artifact_exists("s3://example-bucket/gate-loop/run/output")
+    assert calls == [
+        {
+            "Bucket": "example-bucket",
+            "Prefix": "gate-loop/run/output/",
+            "MaxKeys": 1000,
+        }
+    ]
 
 
 def test_malformed_prefix_pagination_is_indeterminate_for_recovery(

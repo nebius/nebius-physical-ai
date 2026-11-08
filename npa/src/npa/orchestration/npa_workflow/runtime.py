@@ -143,19 +143,40 @@ def s3_artifact_exists(uri: str) -> bool:
         raise NpaWorkflowError(f"runtime output must be an explicit s3:// URI: {uri!r}")
     client = StorageClient.from_environment().s3
     key = parsed.path.lstrip("/")
-    try:
-        if uri.endswith("/"):
+    if uri.endswith("/"):
+        try:
             return s3_prefix_has_nonempty_object(
                 client,
                 bucket=parsed.netloc,
                 prefix=key,
             )
+        except ClientError as exc:
+            code = str(exc.response.get("Error", {}).get("Code", ""))
+            if code in {"404", "NoSuchKey", "NotFound"}:
+                return False
+            raise
+    try:
         response = client.head_object(Bucket=parsed.netloc, Key=key)
         return int(response.get("ContentLength") or 0) > 0
     except ClientError as exc:
         code = str(exc.response.get("Error", {}).get("Code", ""))
         if code in {"404", "NoSuchKey", "NotFound"}:
-            return False
+            # A directory declaration can omit its trailing slash.  Confirm
+            # the exact child prefix before treating the direct object miss as
+            # absent, without accepting a similarly named neighbor.
+            try:
+                return s3_prefix_has_nonempty_object(
+                    client,
+                    bucket=parsed.netloc,
+                    prefix=f"{key.rstrip('/')}/",
+                )
+            except ClientError as prefix_error:
+                prefix_code = str(
+                    prefix_error.response.get("Error", {}).get("Code", "")
+                )
+                if prefix_code in {"404", "NoSuchKey", "NotFound"}:
+                    return False
+                raise
         raise
 
 
