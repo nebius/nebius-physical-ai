@@ -32,6 +32,9 @@ from npa.orchestration.skypilot.workflow_state import (
 
 
 _RUN_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,95}$")
+_CONTENT_BOUND_RUN_ROOT_RE = re.compile(
+    r"^(?P<run_id>[A-Za-z0-9][A-Za-z0-9._-]{0,95})-(?P<digest>[0-9a-f]{12,64})$"
+)
 ResolutionOutcome = Literal["found", "absent", "unavailable", "not_supplied", "skipped"]
 
 
@@ -112,7 +115,11 @@ def run_id_from_locator(run_id: str, workflow_s3_uri: str = "") -> str:
         # identify the supplied run. Accepting an earlier component lets the exact-
         # prefix fallback misreport an unrelated populated prefix as this run while
         # its manifest is still absent.
-        if supplied not in parts[-2:]:
+        trailing_root = parts[-1]
+        content_bound_root = _CONTENT_BOUND_RUN_ROOT_RE.fullmatch(trailing_root)
+        if supplied not in parts[-2:] and not (
+            content_bound_root and content_bound_root["run_id"] == supplied
+        ):
             raise WorkflowStateError(
                 f"run ID {supplied!r} is not in the trailing run/workflow layout "
                 "of --workflow-s3-uri"

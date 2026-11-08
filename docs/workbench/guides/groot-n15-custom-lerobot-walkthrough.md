@@ -136,8 +136,6 @@ export PROJECT_ALIAS="<configured-task-project>"
 export K8S_CONTEXT="<exact-task-owned-context>"
 export BUCKET="<operator-owned-bucket>"
 export WORKFLOW_ROOT="s3://${BUCKET}/workflow-ledger/${RUN_ID}"
-# Submission owns the run root. Lifecycle reads use its canonical durable child.
-export WORKFLOW_STATE_URI="${WORKFLOW_ROOT}/npa-workflow"
 export OUTPUT_PREFIX="groot-n15-offline-rl/${RUN_ID}"
 export ISOLATED_CONFIG_DIR="<private-task-local-skypilot-state>"
 # A SkyPilot-only YAML, not ${NPA_CONFIG_DIR}/config.yaml. It contains the
@@ -253,14 +251,19 @@ Use only the generic lifecycle commands against the same immutable run identity:
 
 ```bash
 npa/.venv/bin/npa workbench workflow status "${RUN_ID}" --project "${PROJECT_ALIAS}" \
-  --workflow-s3-uri "${WORKFLOW_STATE_URI}" \
   --isolated-config-dir "${ISOLATED_CONFIG_DIR}" --config-path "${SKYPILOT_CONFIG}" --json
 npa/.venv/bin/npa workbench workflow logs "${RUN_ID}" train-native-n15 \
-  --project "${PROJECT_ALIAS}" --workflow-s3-uri "${WORKFLOW_STATE_URI}" \
+  --project "${PROJECT_ALIAS}" \
   --cached
 npa/.venv/bin/npa workbench workflow artifacts "${RUN_ID}" --project "${PROJECT_ALIAS}" \
-  --workflow-s3-uri "${WORKFLOW_STATE_URI}" --json
+  --json
 ```
+
+The rehearsed commands resolve the content-bound durable run root from the
+submission receipt. If an operator supplies `--workflow-s3-uri` explicitly,
+use the exact run root or its `npa-workflow` child; a root ending in
+`<RUN_ID>-<content-digest>` is accepted only when its durable manifest names
+the same `RUN_ID`.
 
 The durable provenance, training receipt, evaluation, actions, media validation,
 gallery, and readback receipt bind the source/configuration/checkpoint hashes.
@@ -291,6 +294,16 @@ npa/.venv/bin/npa workbench workflow submit "${SPEC}" --runtime \
   --workflow-s3-uri "${WORKFLOW_ROOT}" --infra "k8s/${K8S_CONTEXT}" \
   --isolated-config-dir "${ISOLATED_CONFIG_DIR}" --config-path "${SKYPILOT_CONFIG}" \
   "${VAR_ARGS[@]}" --output-format json
+```
+
+After a terminal status, the same generic cancellation command is a repeat-safe
+no-op and records the terminal teardown boundary. Pass the same pinned
+`--config-path` used for status so exact job verification cannot silently switch
+controllers:
+
+```bash
+npa/.venv/bin/npa workbench workflow cancel "${RUN_ID}" --project "${PROJECT_ALIAS}" \
+  --isolated-config-dir "${ISOLATED_CONFIG_DIR}" --config-path "${SKYPILOT_CONFIG}" --json
 ```
 
 It replays verified completed waves and reconciles the exact recorded managed

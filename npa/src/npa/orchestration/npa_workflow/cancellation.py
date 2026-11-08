@@ -69,7 +69,17 @@ class WorkflowJobRecord:
     @property
     def terminal_in_durable_state(self) -> bool:
         states = {normalize_workflow_state(item) for item in self.persisted_states}
-        return bool(states) and all(is_terminal_workflow_state(item) for item in states)
+        if not states:
+            return False
+        if all(is_terminal_workflow_state(item) for item in states):
+            return True
+        return (
+            any(is_terminal_workflow_state(item) for item in states)
+            and all(
+                is_terminal_workflow_state(item) or item == "SUBMITTED"
+                for item in states
+            )
+        )
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -130,6 +140,7 @@ def assess_run_cancellation(
     lookup: LookupFn | None = None,
     exact_job_id: str = "",
     isolated_config_dir: Path | None = None,
+    config_path: Path | None = None,
 ) -> CancellationAssessment:
     """Inspect every durable job/stage record and identify only active jobs.
 
@@ -364,6 +375,7 @@ def assess_run_cancellation(
                 job_id=record.job_id,
                 sky_bin=sky_bin or None,
                 isolated_config_dir=isolated_config_dir,
+                config_path=config_path,
             )
             if force_live_lookup
             else _cached_evidence(resolution, record.job_id)
@@ -389,6 +401,7 @@ def assess_run_cancellation(
                 job_id=record.job_id,
                 sky_bin=sky_bin or None,
                 isolated_config_dir=isolated_config_dir,
+                config_path=config_path,
             )
         record.live_outcome = evidence.outcome
         record.live_status = normalize_workflow_state(evidence.status)
@@ -473,6 +486,7 @@ def reverify_active_cancellation(
     sky_bin: str = "",
     lookup: LookupFn | None = None,
     isolated_config_dir: Path | None = None,
+    config_path: Path | None = None,
 ) -> list[str]:
     """Recheck every exact active identity immediately before cancellation."""
 
@@ -484,6 +498,7 @@ def reverify_active_cancellation(
             job_id=record.job_id,
             sky_bin=sky_bin or None,
             isolated_config_dir=isolated_config_dir,
+            config_path=config_path,
         )
         status = normalize_workflow_state(evidence.status)
         if evidence.outcome != "found":

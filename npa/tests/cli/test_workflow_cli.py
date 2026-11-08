@@ -3769,7 +3769,9 @@ def test_launched_workflow_cancel_uses_guarded_cleanup_and_reports_cancelled(
     monkeypatch.setattr(
         "npa.orchestration.npa_workflow.cancellation.lookup_managed_job", lookup
     )
-    calls: list[tuple[list[tuple[str, str]], str, str, object, object, bool]] = []
+    calls: list[
+        tuple[list[tuple[str, str]], str, str, object, object, object, bool]
+    ] = []
 
     def fake_cleanup(
         jobs,
@@ -3778,6 +3780,7 @@ def test_launched_workflow_cancel_uses_guarded_cleanup_and_reports_cancelled(
         cluster="",
         sky_bin=None,
         isolated_config_dir=None,
+        config_path=None,
         teardown_cluster=True,
     ):
         calls.append(
@@ -3787,6 +3790,7 @@ def test_launched_workflow_cancel_uses_guarded_cleanup_and_reports_cancelled(
                 cluster,
                 sky_bin,
                 isolated_config_dir,
+                config_path,
                 teardown_cluster,
             )
         )
@@ -3810,6 +3814,8 @@ def test_launched_workflow_cancel_uses_guarded_cleanup_and_reports_cancelled(
         "/npa/pinned/sky",
         "--isolated-config-dir",
         "/npa/controllers/run-55",
+        "--config-path",
+        "/npa/controllers/run-55.yaml",
         "--json",
     ]
     if preserve_cluster:
@@ -3829,6 +3835,7 @@ def test_launched_workflow_cancel_uses_guarded_cleanup_and_reports_cancelled(
             "",
             "/npa/pinned/sky",
             Path("/npa/controllers/run-55"),
+            Path("/npa/controllers/run-55.yaml"),
             not preserve_cluster,
         )
     ]

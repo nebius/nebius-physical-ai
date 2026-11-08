@@ -1235,6 +1235,23 @@ def test_explicit_nested_uri_must_contain_supplied_run_id(
     assert resolver_env.queries == []
 
 
+def test_explicit_content_bound_run_root_requires_matching_manifest(
+    resolver_env: ExactS3,
+) -> None:
+    run_id = "wanted-run"
+    root = f"archive/{run_id}-0123456789ab/npa-workflow"
+    resolver_env.put_json("alias-bucket", f"{root}/manifest.json", _manifest(run_id))
+
+    resolved = resolve_run(
+        run_id,
+        project="paidf",
+        workflow_s3_uri=f"s3://alias-bucket/{root}",
+    )
+
+    assert resolved.found is True
+    assert resolved.manifest_uri == f"s3://alias-bucket/{root}/manifest.json"
+
+
 def test_explicit_uri_rejects_misleading_earlier_run_component_before_prefix_probe(
     resolver_env: ExactS3,
 ) -> None:

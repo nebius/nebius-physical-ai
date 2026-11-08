@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from botocore.exceptions import ClientError
+from pathlib import Path
 import pytest
 
 from npa.orchestration.npa_workflow.cancellation import (
@@ -58,6 +59,49 @@ def test_terminal_multistage_run_without_root_job_id_is_an_explicit_noop() -> No
     assert assessment.no_cancellation_needed
     assert assessment.active_jobs == []
     assert [job.job_id for job in assessment.terminal_jobs] == ["101", "102"]
+
+
+def test_terminal_wave_tolerates_a_stale_submitted_manifest_snapshot() -> None:
+    resolution = _resolution(
+        {"status": "succeeded", "waves": [{"job_id": "101", "status": "succeeded"}]},
+        manifest={
+            "schema_version": "npa.workflow.run.v1",
+            "run_id": "paidf-runtime",
+            "status": "submitted",
+            "steps": [{"state": "train", "status": "submitted", "job_id": "101"}],
+        },
+    )
+
+    assessment = assess_run_cancellation(
+        resolution,
+        lookup=lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("terminal success must not be reopened by stale submission")
+        ),
+    )
+
+    assert assessment.detected_state == "SUCCEEDED"
+    assert assessment.no_cancellation_needed
+
+
+def test_exact_cancellation_lookup_uses_the_pinned_skypilot_config() -> None:
+    resolution = _resolution(
+        {"status": "running", "waves": [{"job_id": "101", "status": "running"}]}
+    )
+    config_path = Path("/private/task/skypilot.yaml")
+    observed_configs: list[Path | None] = []
+
+    def lookup(_job_name: str, *, config_path=None, **_kwargs) -> ManagedJobEvidence:
+        observed_configs.append(config_path)
+        return ManagedJobEvidence("found", job_id="101", status="RUNNING")
+
+    assessment = assess_run_cancellation(
+        resolution,
+        lookup=lookup,
+        config_path=config_path,
+    )
+
+    assert assessment.detected_state == "ACTIVE"
+    assert observed_configs == [config_path]
 
 
 def test_denied_stage_status_blocks_a_terminal_cancellation_noop(

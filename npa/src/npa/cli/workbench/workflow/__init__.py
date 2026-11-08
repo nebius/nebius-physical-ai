@@ -9552,6 +9552,11 @@ def cancel_cmd(
         "--isolated-config-dir",
         help="Exact SkyPilot state root that owns the recorded managed-job IDs.",
     ),
+    config_path: Path | None = typer.Option(
+        None,
+        "--config-path",
+        help="Pinned SkyPilot global config for exact managed-job verification.",
+    ),
     cluster: str = typer.Option(
         "", "--cluster", help="SkyPilot cluster name to tear down. Defaults to run ID."
     ),
@@ -9709,6 +9714,7 @@ def cancel_cmd(
                 sky_bin=sky_bin,
                 exact_job_id=str(job_id or identity.get("sky_job_id") or ""),
                 isolated_config_dir=isolated_config_dir,
+                config_path=config_path,
             )
             jobs_payload = [item.to_dict() for item in assessment.jobs]
             job_ids = [item.job_id for item in assessment.jobs]
@@ -9784,6 +9790,7 @@ def cancel_cmd(
                     assessment,
                     sky_bin=sky_bin,
                     isolated_config_dir=isolated_config_dir,
+                    config_path=config_path,
                 )
                 if reverify_errors:
                     result = {
@@ -9820,6 +9827,7 @@ def cancel_cmd(
                         cluster=cluster,
                         sky_bin=sky_bin or None,
                         isolated_config_dir=isolated_config_dir,
+                        config_path=config_path,
                         **cleanup_options,
                     )
                     errors = [*assessment.errors, *cleanup.errors]
