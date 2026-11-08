@@ -2979,6 +2979,11 @@ def workflow_controller_logs(
         str(job_id),
         "--no-follow",
     ]
+    if runtime_config.global_config_path is not None:
+        # A numeric managed-job ID is meaningful only in the task's recorded
+        # SkyPilot controller namespace.  Keep controller-log observation on
+        # the same pinned config route as status and exact-job lookup.
+        cmd[3:3] = ["--config", str(runtime_config.global_config_path)]
     return subprocess.run(
         cmd,
         env=sky_environment(runtime_config.isolated_config_dir),

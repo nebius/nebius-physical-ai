@@ -4686,6 +4686,7 @@ def test_workflow_status_detects_job_missing_from_verified_nonempty_queue(
         workflow_module.workflow_status,
         workflow_module.workflow_task_statuses,
         workflow_module.find_job_ids_by_name,
+        workflow_module.workflow_controller_logs,
     ],
 )
 def test_workflow_queries_preserve_explicit_config(
