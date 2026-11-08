@@ -357,7 +357,9 @@ def kubernetes_sky_environment(
         ensure_isolated_api(
             isolated_dir=scope,
             sky_executable=sky_executable,
-            environment=validation_env,
+            environment=local_api.owned_api_health_environment(
+                scope, validation_env
+            ),
             cwd=str(scope),
         )
         return validation_env

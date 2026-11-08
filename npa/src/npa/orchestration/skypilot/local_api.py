@@ -1345,6 +1345,53 @@ def isolated_api_environment(
     return selected
 
 
+def owned_api_health_environment(
+    isolated_dir: Path, environment: Mapping[str, str]
+) -> dict[str, str]:
+    """Select a recorded server identity for a compatible health check.
+
+    A SkyPilot client may use an owner-only per-request config while a live
+    isolated API necessarily keeps its durable server config.  This helper is
+    deliberately narrow: it substitutes only the server-owned bindings when
+    the supplied endpoint/scope/plugin/marker values are absent or already
+    compatible with the recorded receipt.  A foreign binding is preserved so
+    :func:`ensure_isolated_api` rejects it fail-closed.
+    """
+
+    selected = dict(environment)
+    root = _isolated_api_root(isolated_dir)
+    record = _read(root)
+    server_config = root / "server-config.yaml"
+    server_plugins = root / "server-plugins.yaml"
+    if record is None or not server_config.is_file():
+        return selected
+    expected_scope = str(Path(isolated_dir).expanduser().resolve(strict=False))
+    endpoint = str(selected.get(_ENDPOINT) or "")
+    scope = str(selected.get("NPA_SKYPILOT_ISOLATED_API_DIR") or "")
+    plugins = str(selected.get("SKYPILOT_SERVER_PLUGINS_CONFIG") or "")
+    marker = str(selected.get(_MARKER) or "")
+    is_server = str(selected.get("IS_SKYPILOT_SERVER") or "")
+    if not (
+        (not endpoint or endpoint == _endpoint(record))
+        and (not scope or scope == expected_scope)
+        and (not plugins or plugins == str(server_plugins))
+        and (not marker or marker == str(record["marker"]))
+        and (not is_server or is_server == "true")
+    ):
+        return selected
+    selected.update(
+        {
+            _ENDPOINT: _endpoint(record),
+            "SKYPILOT_GLOBAL_CONFIG": str(server_config),
+            "SKYPILOT_SERVER_PLUGINS_CONFIG": str(server_plugins),
+            _MARKER: str(record["marker"]),
+            "IS_SKYPILOT_SERVER": "true",
+            "NPA_SKYPILOT_ISOLATED_API_DIR": expected_scope,
+        }
+    )
+    return selected
+
+
 def ensure_isolated_api(
     *,
     isolated_dir: Path,

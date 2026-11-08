@@ -2035,6 +2035,70 @@ def test_validation_environment_drops_parent_api_endpoint(
     assert client_configs[0]["kubernetes"]["allowed_contexts"] == ["exact-context"]
 
 
+def test_validation_environment_reuses_its_recorded_server_config(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Repeated discovery keeps a live validation API's server identity."""
+
+    kubeconfig = tmp_path / "kubeconfig"
+    kubeconfig.write_text("apiVersion: v1\n", encoding="utf-8")
+    isolated_root = tmp_path / "isolated"
+    context = "exact-context"
+    scope = (
+        isolated_root
+        / "cluster-validation"
+        / hashlib.sha256(f"{kubeconfig.resolve()}\0{context}".encode()).hexdigest()[:24]
+    )
+    api_root = scope / "local-api"
+    api_root.mkdir(parents=True)
+    (api_root / "server-config.yaml").write_text("{}\n", encoding="utf-8")
+    from npa.orchestration.skypilot import cleanup, local_api
+
+    local_api._write(
+        api_root / "daemon.json",
+        {
+            "schema_version": 1,
+            "root": str(api_root.absolute()),
+            "port": 36471,
+            "metrics_port": 36472,
+            "queue_port": 36473,
+            "marker": "validation-fixture",
+            "state": "ready",
+        },
+    )
+    monkeypatch.setenv("NPA_SKYPILOT_ISOLATED_CONFIG_DIR", str(isolated_root))
+    captured: dict[str, object] = {}
+
+    def fake_sky_environment(
+        selected_scope: Path, *, environment: dict[str, str]
+    ) -> dict[str, str]:
+        return {
+            **environment,
+            "SKYPILOT_API_SERVER_ENDPOINT": "http://127.0.0.1:36471",
+            "NPA_SKYPILOT_ISOLATED_API_DIR": str(selected_scope),
+        }
+
+    monkeypatch.setattr(cleanup, "sky_environment", fake_sky_environment)
+    monkeypatch.setattr(
+        local_api,
+        "ensure_isolated_api",
+        lambda **kwargs: captured.update(kwargs),
+    )
+
+    gpu_catalog.kubernetes_sky_environment(
+        context=context,
+        kubeconfig=kubeconfig,
+        sky_executable="/opt/sky/bin/sky",
+    )
+
+    assert captured["environment"]["SKYPILOT_GLOBAL_CONFIG"] == str(
+        api_root / "server-config.yaml"
+    )
+    assert captured["environment"]["SKYPILOT_SERVER_PLUGINS_CONFIG"] == str(
+        api_root / "server-plugins.yaml"
+    )
+
+
 def test_readiness_retries_quarantined_snapshot_before_healthy_inventory(monkeypatch):
     invalid = _inventory_with_node_spec({"unschedulable": "false"})
     healthy = KubernetesGpuInventory("ctx", 1, 1, 8, 8, ("NVIDIA-B200",), {})

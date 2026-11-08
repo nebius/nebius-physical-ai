@@ -864,35 +864,9 @@ def _ensure_local_api_daemon_cwd_locked(
         # check the daemon with the receipt's own durable configuration.
         from npa.orchestration.skypilot import local_api
 
-        daemon_env = dict(env)
-        api_root = local_api._isolated_api_root(Path(isolated_api_dir))
-        record = local_api._read(api_root)
-        server_config = api_root / "server-config.yaml"
-        server_plugins = api_root / "server-plugins.yaml"
-        if record is not None and server_config.is_file():
-            expected_endpoint = local_api._endpoint(record)
-            expected_marker = str(record["marker"])
-            endpoint = str(daemon_env.get("SKYPILOT_API_SERVER_ENDPOINT") or "")
-            plugin_config = str(
-                daemon_env.get("SKYPILOT_SERVER_PLUGINS_CONFIG") or ""
-            )
-            marker = str(daemon_env.get("NPA_OWNED_SKYPILOT_API_ID") or "")
-            is_server = str(daemon_env.get("IS_SKYPILOT_SERVER") or "")
-            if (
-                (not endpoint or endpoint == expected_endpoint)
-                and (not plugin_config or plugin_config == str(server_plugins))
-                and (not marker or marker == expected_marker)
-                and (not is_server or is_server == "true")
-            ):
-                daemon_env.update(
-                    {
-                        "SKYPILOT_API_SERVER_ENDPOINT": expected_endpoint,
-                        "SKYPILOT_GLOBAL_CONFIG": str(server_config),
-                        "SKYPILOT_SERVER_PLUGINS_CONFIG": str(server_plugins),
-                        "NPA_OWNED_SKYPILOT_API_ID": expected_marker,
-                        "IS_SKYPILOT_SERVER": "true",
-                    }
-                )
+        daemon_env = local_api.owned_api_health_environment(
+            Path(isolated_api_dir), env
+        )
         return _ensure_isolated_api(
             isolated_dir=Path(isolated_api_dir),
             sky_executable=sky_executable,
