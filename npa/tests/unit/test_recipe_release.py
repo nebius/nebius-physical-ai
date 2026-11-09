@@ -51,6 +51,17 @@ def test_new_install_selects_current_date_release_once(tmp_path: Path) -> None:
     assert len(selected.upstream_commit) == 40
 
 
+def test_selected_release_matches_shipped_vendored_source_before_materialization():
+    """The selected catalog entry must bind the exact source Fleet validates."""
+
+    source = _find_vendored_recipe_root()
+    assert source is not None
+    release = releases.resolve_mk8s_release("mk8s-v2026-10-22")
+
+    validate_release_source(release, source)
+    assert recipe_bundle_sha256(source) == release.bundle_sha256
+
+
 def test_existing_install_keeps_exact_saved_release(tmp_path: Path) -> None:
     release = default_mk8s_release()
     install_dir = tmp_path / "install"

@@ -115,7 +115,7 @@ _MK8S_RELEASES = {
         release_id="mk8s-v2026-10-22",
         upstream_tag="main-v2026-10-12",
         upstream_commit="fba7148cecd8bd38bccf60ba194ab8f5fdb02194",
-        bundle_sha256="4620c72688a582747eb99a2984051cec45f9822d489412933cec210640dbf491",
+        bundle_sha256="993e784af00ccb60c91c243eb2226670f2a515828db9c79e656a4f35476c3446",
         provider_lock_sha256="f4d96577faf2f583803b1b1495681f24574730a0a00201db1440633238a40505",
         configuration_contract_sha256="e32ff0bc1c36b1b377cc998d44df19f5ca6d673278c1f73e52681d3d48561628",
     ),
@@ -162,10 +162,11 @@ def resolve_mk8s_release(release_id: str) -> MK8sRecipeRelease:
 
 
 def recipe_bundle_sha256(recipe_root: Path) -> str:
-    """Return a deterministic digest for the complete materialized source bundle.
+    """Return a deterministic digest for a complete pre-materialization recipe root.
 
     Args:
-        recipe_root: Root containing the upstream k8s-training and modules trees.
+        recipe_root: Source root containing the vendored k8s-training and modules
+            trees before any per-installation copy or rendering patch.
 
     Returns:
         Lowercase SHA-256 digest of paths and bytes below the source root.
@@ -257,7 +258,7 @@ def provider_lock_path(recipe_root: Path) -> Path:
     """Find the reviewed Terraform provider lock that accompanies a recipe root.
 
     Args:
-        recipe_root: Materialized solutions-library source root.
+        recipe_root: Vendored or otherwise selected recipe source root.
 
     Returns:
         The nearest enclosing tracked Terraform provider lock.
@@ -282,7 +283,8 @@ def validate_release_source(release: MK8sRecipeRelease, recipe_root: Path) -> No
 
     Args:
         release: Catalog release selected for an installation.
-        recipe_root: Source tree about to be copied into that installation.
+        recipe_root: Source tree before it is copied and rendered into an
+            installation-specific materialized recipe.
 
     Returns:
         None.
