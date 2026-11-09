@@ -339,7 +339,10 @@ def test_report_embeds_thirteen_verified_videos_and_escapes_notes(
     parser = _Videos()
     parser.feed(output.read_text())
     assert len(parser.videos) == 13
-    assert all(url.startswith("data:video/mp4;base64,") for url in parser.videos)
+    assert all(
+        url.startswith(("data:video/mp4;base64,", "data:video/webm;base64,"))
+        for url in parser.videos
+    )
     assert not parser.scripts
     assert "&lt;script&gt;private note&lt;/script&gt;" in output.read_text()
     assert output.stat().st_mode & 0o077 == 0

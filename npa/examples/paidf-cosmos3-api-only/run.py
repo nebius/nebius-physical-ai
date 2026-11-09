@@ -372,6 +372,10 @@ def _collect(module, work, document):
         published, preservation = _publish_padding(
             module, work, variant["id"], directory, region
         )
+        if preservation:
+            published, preservation = _browser_padding(
+                module, directory, published, region, preservation
+            )
         records.append(
             {
                 "variant_id": variant["id"],
@@ -414,7 +418,9 @@ def _publish_padding(module, work, identifier, directory, region):
     return target, receipt
 
 
-def _verify_padding_cache(source, raw, published, region, receipt):
+def _verify_padding_cache(
+    source, raw, published, region, receipt, encoding="lossless-h264-rgb"
+):
     expected = {
         "schema": "npa.video.padding-preservation.v1",
         "status": "verified",
@@ -425,10 +431,86 @@ def _verify_padding_cache(source, raw, published, region, receipt):
         "bounds": region["bounds"],
         "scene_pixels_unchanged": True,
         "padding_matches_source": True,
-        "encoding": "lossless-h264-rgb",
+        "encoding": encoding,
     }
     if any(receipt.get(key) != value for key, value in expected.items()):
         raise ValueError("padding publication no longer matches its verified lineage")
+
+
+def _browser_padding(module, directory, intermediate, region, receipt):
+    from npa.workflows.video_content_region import validate_content_region
+    from npa.workflows.video_padding_preservation import _pixel_hashes
+
+    target = intermediate.with_suffix(".webm")
+    proof_path = intermediate.with_name("padding-webm.json")
+    if target.is_symlink():
+        raise ValueError("browser publication must not be a symlink")
+    if target.exists() and proof_path.exists():
+        proof = module.read_json(proof_path)
+        _verify_padding_cache(
+            directory / "source.mp4",
+            directory / "generated.mp4",
+            target,
+            region,
+            proof,
+            encoding="lossless-vp9-rgb",
+        )
+        if proof.get("intermediate_rgb_h264_sha256") != receipt["published_sha256"]:
+            raise ValueError("browser publication differs from its RGB intermediate")
+        return target, proof
+    with tempfile.TemporaryDirectory(dir=intermediate.parent) as temporary:
+        candidate = Path(temporary) / "augmented.webm"
+        _encode_browser_rgb(intermediate, candidate)
+        validate_content_region(region, directory / "source.mp4", candidate)
+        expected = {
+            key: receipt[key] for key in ("scene_rgb_sha256", "padding_rgb_sha256")
+        }
+        if _pixel_hashes(candidate, region) != expected:
+            raise ValueError("browser encoding changed scene or border pixels")
+        proof = {
+            **receipt,
+            "encoding": "lossless-vp9-rgb",
+            "published_sha256": _sha256(candidate),
+            "intermediate_rgb_h264_sha256": receipt["published_sha256"],
+        }
+        candidate.chmod(0o600)
+        os.replace(candidate, target)
+    module.save_private(proof_path, proof)
+    return target, proof
+
+
+def _encode_browser_rgb(source, destination):
+    # RGB H.264 is not displayed correctly by every browser decoder. VP9 RGB
+    # retains the verified pixels while giving Chrome an explicit RGB contract.
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-nostdin",
+            "-v",
+            "error",
+            "-xerror",
+            "-i",
+            str(source),
+            "-an",
+            "-c:v",
+            "libvpx-vp9",
+            "-lossless",
+            "1",
+            "-pix_fmt",
+            "gbrp",
+            "-colorspace",
+            "rgb",
+            "-color_range",
+            "pc",
+            "-cpu-used",
+            "4",
+            "-row-mt",
+            "1",
+            str(destination),
+        ],
+        check=True,
+        capture_output=True,
+    )
 
 
 def _review(module, path, document):
@@ -455,8 +537,11 @@ def _review(module, path, document):
 
 def _video(path):
     encoded = base64.b64encode(path.read_bytes()).decode("ascii")
+    mime = "video/webm" if path.suffix == ".webm" else "video/mp4"
     return (
-        '<video controls preload="metadata" src="data:video/mp4;base64,'
+        '<video controls preload="metadata" src="data:'
+        + mime
+        + ";base64,"
         + encoded
         + '"></video>'
     )
