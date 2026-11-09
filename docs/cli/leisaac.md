@@ -8,7 +8,7 @@ Usage: npa workbench leisaac [OPTIONS] COMMAND [ARGS]...
 LeIsaac SO101 browser teleoperation on the RTX PRO 6000 Kubernetes pool.
 
 Options
---help  Show this message and exit.
+--help  -h  Show this message and exit.
 Commands
 list-tasks  List the pinned SO101 tasks that support browser keyboard control.
 export-paidf  Export one finalized episode directly from S3 into a PAIDF run input.
@@ -23,7 +23,7 @@ destroy  Delete this run's transient GPU deployment and LBs, preserving S3 evide
 
 | Option | Description |
 | --- | --- |
-| `--help` | Show this message and exit. |
+| `--help` | -h  Show this message and exit. |
 
 ## Subcommands
 

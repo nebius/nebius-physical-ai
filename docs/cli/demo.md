@@ -8,7 +8,7 @@ Usage: npa demo [OPTIONS] COMMAND [ARGS]...
 Demo artifact bootstrap and verification helpers.
 
 Options
---help  Show this message and exit.
+--help  -h  Show this message and exit.
 Commands
 stage  Stage demo artifacts into an operator-owned bucket.
 verify  Verify staged demo artifacts against their manifest requirements.
@@ -18,7 +18,7 @@ verify  Verify staged demo artifacts against their manifest requirements.
 
 | Option | Description |
 | --- | --- |
-| `--help` | Show this message and exit. |
+| `--help` | -h  Show this message and exit. |
 
 ## Subcommands
 

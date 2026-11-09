@@ -8,7 +8,7 @@ Usage: npa workbench fiftyone datasets [OPTIONS] COMMAND [ARGS]...
 Inspect datasets through the FiftyOne GraphQL API.
 
 Options
---help  Show this message and exit.
+--help  -h  Show this message and exit.
 Commands
 list  List FiftyOne datasets through the app GraphQL API.
 ```
@@ -17,7 +17,7 @@ list  List FiftyOne datasets through the app GraphQL API.
 
 | Option | Description |
 | --- | --- |
-| `--help` | Show this message and exit. |
+| `--help` | -h  Show this message and exit. |
 
 ## Subcommands
 

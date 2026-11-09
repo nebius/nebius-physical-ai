@@ -8,7 +8,7 @@ Usage: npa skypilot [OPTIONS] COMMAND [ARGS]...
 Manage the isolated SkyPilot runtime used by NPA workflows.
 
 Options
---help  Show this message and exit.
+--help  -h  Show this message and exit.
 Commands
 bootstrap  Install SkyPilot into an isolated, idempotent virtualenv.
 uninstall  Remove the isolated SkyPilot venv and clear the saved sky binary.
@@ -22,7 +22,7 @@ verify  Verify the runtime, using an owned API for an explicit Kubernetes target
 
 | Option | Description |
 | --- | --- |
-| `--help` | Show this message and exit. |
+| `--help` | -h  Show this message and exit. |
 
 ## Subcommands
 

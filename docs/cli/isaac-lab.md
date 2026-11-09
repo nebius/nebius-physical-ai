@@ -10,7 +10,7 @@ Isaac Lab simulation workbench deployment, training, and evaluation.
 Options
 --project  -p  <str>  Project alias from ~/.npa/config.yaml.
 --name  -n  <str>  Workbench instance name within the project.
---help  Show this message and exit.
+--help  -h  Show this message and exit.
 Commands
 list  List configured Isaac Lab workbenches.
 cleanup-partial  Clean up orphaned Terraform resources from an interrupted Isaac Lab deploy.
@@ -30,7 +30,7 @@ export-onnx  Export a trained rsl_rl actor checkpoint to ONNX with an obs/action
 | --- | --- |
 | `--project` | -p  <str>  Project alias from ~/.npa/config.yaml. |
 | `--name` | -n  <str>  Workbench instance name within the project. |
-| `--help` | Show this message and exit. |
+| `--help` | -h  Show this message and exit. |
 
 ## Subcommands
 

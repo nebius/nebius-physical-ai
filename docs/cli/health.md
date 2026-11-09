@@ -8,7 +8,7 @@ Usage: npa workbench health [OPTIONS] COMMAND [ARGS]...
 Preflight health checks for workbench workflows.
 
 Options
---help  Show this message and exit.
+--help  -h  Show this message and exit.
 Commands
 preflight  Validate service credentials and optional Nebius CLI authentication.
 access  Check HF + NGC access to every gated model the workbench capabilities need.
@@ -19,7 +19,7 @@ sim2real  Check canonical Sim2Real preimage prerequisites before a workflow run.
 
 | Option | Description |
 | --- | --- |
-| `--help` | Show this message and exit. |
+| `--help` | -h  Show this message and exit. |
 
 ## Subcommands
 

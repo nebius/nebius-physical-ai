@@ -8,7 +8,7 @@ Usage: npa workbench golden-eval [OPTIONS] COMMAND [ARGS]...
 Per-container golden-eval / hello-world reruns.
 
 Options
---help  Show this message and exit.
+--help  -h  Show this message and exit.
 Commands
 list  List every container and its golden eval.
 show  Show the full safety + Physical AI + golden-eval record for a container.
@@ -21,7 +21,7 @@ run-all  Run golden evals for every container (optionally in parallel).
 
 | Option | Description |
 | --- | --- |
-| `--help` | Show this message and exit. |
+| `--help` | -h  Show this message and exit. |
 
 ## Subcommands
 

@@ -8,7 +8,7 @@ Usage: npa workbench lancedb [OPTIONS] COMMAND [ARGS]...
 Deploy and query LanceDB vector-search workbenches.
 
 Options
---help  Show this message and exit.
+--help  -h  Show this message and exit.
 Commands
 deploy  Deploy or register a LanceDB service.
 status  Check endpoint reachability.
@@ -27,7 +27,7 @@ query-table  Run a bounded SQL-filtered LanceDB table query.
 
 | Option | Description |
 | --- | --- |
-| `--help` | Show this message and exit. |
+| `--help` | -h  Show this message and exit. |
 
 ## Subcommands
 

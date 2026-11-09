@@ -8,7 +8,7 @@ Usage: npa workbench sonic retargeting [OPTIONS] COMMAND [ARGS]...
 Motion retargeting for SONIC locomotion workflows.
 
 Options
---help  Show this message and exit.
+--help  -h  Show this message and exit.
 Commands
 run  Retarget source motion artifacts into the SONIC embodiment schema.
 workflow  Show the npa.workflow spec for retargeting.
@@ -20,7 +20,7 @@ list  List supported retargeting source formats.
 
 | Option | Description |
 | --- | --- |
-| `--help` | Show this message and exit. |
+| `--help` | -h  Show this message and exit. |
 
 ## Subcommands
 

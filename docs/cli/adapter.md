@@ -8,7 +8,7 @@ Usage: npa adapter [OPTIONS] COMMAND [ARGS]...
 Convert simulation data to training dataset formats.
 
 Options
---help  Show this message and exit.
+--help  -h  Show this message and exit.
 Commands
 convert  Convert Genesis/sim demo numpy arrays to LeRobotDataset v3 format.
 ```
@@ -17,7 +17,7 @@ convert  Convert Genesis/sim demo numpy arrays to LeRobotDataset v3 format.
 
 | Option | Description |
 | --- | --- |
-| `--help` | Show this message and exit. |
+| `--help` | -h  Show this message and exit. |
 
 ## Subcommands
 

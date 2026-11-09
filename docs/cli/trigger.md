@@ -8,7 +8,7 @@ Usage: npa workbench workflow trigger [OPTIONS] COMMAND [ARGS]...
 Watch S3-compatible data prefixes and retrigger Workbench workflows.
 
 Options
---help  Show this message and exit.
+--help  -h  Show this message and exit.
 Commands
 list-presets  List explicit workflow trigger/seed presets.
 stage-preset  Runtime-fetch and stage a verified preset into a run-scoped trigger prefix.
@@ -20,7 +20,7 @@ watch  Poll continuously and launch one pipeline run per new LeRobot data batch.
 
 | Option | Description |
 | --- | --- |
-| `--help` | Show this message and exit. |
+| `--help` | -h  Show this message and exit. |
 
 ## Subcommands
 

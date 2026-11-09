@@ -8,7 +8,7 @@ Usage: npa agent [OPTIONS] COMMAND [ARGS]...
 Deploy and operate a public NPA chat agent VM.
 
 Options
---help  Show this message and exit.
+--help  -h  Show this message and exit.
 Commands
 auth-profile  Complete a human Nebius CLI profile on this operator/dev VM.
 list  List agent deployments recorded in ~/.npa/config.yaml.
@@ -26,7 +26,7 @@ verify-live  Exit 0 only when live infra checks and tests pass.
 
 | Option | Description |
 | --- | --- |
-| `--help` | Show this message and exit. |
+| `--help` | -h  Show this message and exit. |
 
 ## Subcommands
 

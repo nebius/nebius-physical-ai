@@ -8,7 +8,7 @@ Usage: npa workbench antioch [OPTIONS] COMMAND [ARGS]...
 Run Antioch simulations and collect policy-compatible data.
 
 Options
---help  Show this message and exit.
+--help  -h  Show this message and exit.
 Commands
 health
 terms-preflight  Verify explicit, scoped Antioch terms acceptance before runtime use.
@@ -36,7 +36,7 @@ deploy
 
 | Option | Description |
 | --- | --- |
-| `--help` | Show this message and exit. |
+| `--help` | -h  Show this message and exit. |
 
 ## Subcommands
 

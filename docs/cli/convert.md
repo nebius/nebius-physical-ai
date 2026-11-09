@@ -8,7 +8,7 @@ Usage: npa convert [OPTIONS] COMMAND [ARGS]...
 Convert datasets and prediction artifacts between standalone formats.
 
 Options
---help  Show this message and exit.
+--help  -h  Show this message and exit.
 Commands
 lerobot-to-rrd  Convert a LeRobotDataset to a Rerun .rrd recording.
 lerobot-to-mp4  Convert a LeRobotDataset trajectory to MP4.
@@ -18,7 +18,7 @@ lerobot-to-mp4  Convert a LeRobotDataset trajectory to MP4.
 
 | Option | Description |
 | --- | --- |
-| `--help` | Show this message and exit. |
+| `--help` | -h  Show this message and exit. |
 
 ## Subcommands
 

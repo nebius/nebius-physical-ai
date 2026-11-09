@@ -8,7 +8,7 @@ Usage: npa viz [OPTIONS] COMMAND [ARGS]...
 Render Physical AI dataset and prediction visualizations.
 
 Options
---help  Show this message and exit.
+--help  -h  Show this message and exit.
 Commands
 lerobot  [DEPRECATED] Use `npa convert lerobot-to-mp4` instead.
 ```
@@ -17,7 +17,7 @@ lerobot  [DEPRECATED] Use `npa convert lerobot-to-mp4` instead.
 
 | Option | Description |
 | --- | --- |
-| `--help` | Show this message and exit. |
+| `--help` | -h  Show this message and exit. |
 
 ## Subcommands
 

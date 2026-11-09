@@ -8,7 +8,7 @@ Usage: npa workbench foxglove [OPTIONS] COMMAND [ARGS]...
 Foxglove embedded viewer: MCAP conversion, inspection, and SDK assets.
 
 Options
---help  Show this message and exit.
+--help  -h  Show this message and exit.
 Commands
 convert-run  Convert a run's artifacts into an MCAP recording the Foxglove viewer can open.
 inspect  Report the channels, schemas, and message counts inside an MCAP recording.
@@ -22,7 +22,7 @@ config  Show the resolved Foxglove embed settings for this environment.
 
 | Option | Description |
 | --- | --- |
-| `--help` | Show this message and exit. |
+| `--help` | -h  Show this message and exit. |
 
 ## Subcommands
 

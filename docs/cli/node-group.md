@@ -8,7 +8,7 @@ Usage: npa cluster node-group [OPTIONS] COMMAND [ARGS]...
 Manage GPU node groups attached to NPA Workbench cluster targets.
 
 Options
---help  Show this message and exit.
+--help  -h  Show this message and exit.
 Commands
 add  Attach a GPU node-group profile to an NPA Workbench cluster target.
 add-cpu  Attach a CPU node-group profile to an NPA Workbench cluster target.
@@ -24,7 +24,7 @@ directly.
 
 | Option | Description |
 | --- | --- |
-| `--help` | Show this message and exit. |
+| `--help` | -h  Show this message and exit. |
 
 ## Subcommands
 

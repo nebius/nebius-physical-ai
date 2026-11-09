@@ -8,7 +8,7 @@ Usage: npa workbench encord [OPTIONS] COMMAND [ARGS]...
 Register S3 media with Encord SaaS and materialize curated results.
 
 Options
---help  Show this message and exit.
+--help  -h  Show this message and exit.
 Commands
 import-labels  Create an ontology and project, then save unreviewed video prelabels.
 render-labels  Verify exported Encord labels and render them over returned video bytes.
@@ -21,7 +21,7 @@ verify-roundtrip  Verify identity, destination existence, size, and compatible c
 
 | Option | Description |
 | --- | --- |
-| `--help` | Show this message and exit. |
+| `--help` | -h  Show this message and exit. |
 
 ## Subcommands
 

@@ -8,7 +8,7 @@ Usage: npa workbench detection-training [OPTIONS] COMMAND [ARGS]...
 Train Faster R-CNN detectors from LanceDB materialized views.
 
 Options
---help  Show this message and exit.
+--help  -h  Show this message and exit.
 Commands
 deploy  Deploy the detection-training service to an NPA Workbench Kubernetes cluster.
 train  Start a detection-training run.
@@ -22,7 +22,7 @@ list  List service-managed runs or Kubernetes resources.
 
 | Option | Description |
 | --- | --- |
-| `--help` | Show this message and exit. |
+| `--help` | -h  Show this message and exit. |
 
 ## Subcommands
 

@@ -8,7 +8,7 @@ Usage: npa workbench namespace [OPTIONS] COMMAND [ARGS]...
 Create or select Kubernetes namespaces.
 
 Options
---help  Show this message and exit.
+--help  -h  Show this message and exit.
 Commands
 apply  Create a missing namespace; reuse existing namespaces without changing access.
 context  Select a namespace privately, preserving existing credentials and access.
@@ -18,7 +18,7 @@ context  Select a namespace privately, preserving existing credentials and acces
 
 | Option | Description |
 | --- | --- |
-| `--help` | Show this message and exit. |
+| `--help` | -h  Show this message and exit. |
 
 ## Subcommands
 

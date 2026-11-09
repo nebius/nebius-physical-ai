@@ -8,7 +8,7 @@ Usage: npa workbench access [OPTIONS] COMMAND [ARGS]...
 Configure Workbench accounts, allocations, connections, and service access.
 
 Options
---help  Show this message and exit.
+--help  -h  Show this message and exit.
 Commands
 export-connections  Prepare private connections to existing Kubernetes clusters on any cloud.
 check-clusters  Verify existing cluster access and boundaries from the server environment.
@@ -27,7 +27,7 @@ account  Operator-managed users, personal keys, and optional SSO links.
 
 | Option | Description |
 | --- | --- |
-| `--help` | Show this message and exit. |
+| `--help` | -h  Show this message and exit. |
 
 ## Subcommands
 

@@ -109,6 +109,8 @@ app = typer.Typer(
         "Start with `npa workbench --help` for Workbench tools and workflows."
     ),
     no_args_is_help=True,
+    # -h is inherited as a help alias by every subcommand via Click.
+    context_settings={"help_option_names": ["-h", "--help"]},
 )
 app.add_typer(
     workbench_app,

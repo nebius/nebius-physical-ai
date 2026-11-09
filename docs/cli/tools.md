@@ -8,7 +8,7 @@ Usage: npa tools [OPTIONS] COMMAND [ARGS]...
 Development and operator tools, independent of Workbench.
 
 Options
---help  Show this message and exit.
+--help  -h  Show this message and exit.
 Commands
 desktop  Persistent Ubuntu desktop with VS Code and Codex on an existing VM.
 ```
@@ -17,7 +17,7 @@ desktop  Persistent Ubuntu desktop with VS Code and Codex on an existing VM.
 
 | Option | Description |
 | --- | --- |
-| `--help` | Show this message and exit. |
+| `--help` | -h  Show this message and exit. |
 
 ## Subcommands
 

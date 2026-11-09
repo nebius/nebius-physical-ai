@@ -14,7 +14,7 @@ Options
 --yes  -y  Execute the rendered plan.
 --delete-project  Also delete an exact, empty project with durable NPA creation proof.
 --json  Emit JSON.
---help  Show this message and exit.
+--help  -h  Show this message and exit.
 ```
 
 ## Options
@@ -27,7 +27,7 @@ Options
 | `--yes` | -y  Execute the rendered plan. |
 | `--delete-project` | Also delete an exact, empty project with durable NPA creation proof. |
 | `--json` | Emit JSON. |
-| `--help` | Show this message and exit. |
+| `--help` | -h  Show this message and exit. |
 
 ## Subcommands
 

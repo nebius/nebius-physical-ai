@@ -8,7 +8,7 @@ Usage: npa workbench robocasa [OPTIONS] COMMAND [ARGS]...
 RoboCasa kitchen-task simulation workbench.
 
 Options
---help  Show this message and exit.
+--help  -h  Show this message and exit.
 Commands
 deploy  Deploy the RoboCasa service to an NPA Workbench Kubernetes cluster.
 run  Run a RoboCasa capability (task registration, asset check, EGL reset, or random rollout).
@@ -21,7 +21,7 @@ list  List service-managed runs or Kubernetes resources.
 
 | Option | Description |
 | --- | --- |
-| `--help` | Show this message and exit. |
+| `--help` | -h  Show this message and exit. |
 
 ## Subcommands
 

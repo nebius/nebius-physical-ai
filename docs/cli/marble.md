@@ -8,7 +8,7 @@ Usage: npa workbench marble [OPTIONS] COMMAND [ARGS]...
 World Labs Marble worlds, CUDA camera datasets, and spatial scans.
 
 Options
---help  Show this message and exit.
+--help  -h  Show this message and exit.
 Commands
 quadruped-collect  Collect policy-driven Go1 observations and Cycles GPU robot imagery.
 navigation-prepare  Prepare a Marble collider for native ANYmal navigation learning.
@@ -26,7 +26,7 @@ pallet-report  Publish the measured pallet comparison as static JSON and HTML.
 
 | Option | Description |
 | --- | --- |
-| `--help` | Show this message and exit. |
+| `--help` | -h  Show this message and exit. |
 
 ## Subcommands
 

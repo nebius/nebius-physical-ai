@@ -40,8 +40,8 @@ Options
 --mig-config  <str>  [default: all-balanced]
 --capacity-block-group  <str>  Runtime-only strict GPU capacity block selector.
 --infiniband-fabric  <str>  InfiniBand fabric required by NVSwitch GPU clusters, matching `npa cluster up`.
---preemptible  --on-demand  Run the GPU node group as preemptible, matching `npa cluster up`. This changes the capacity pool but not hard
-    instance/disk/IP quotas; a reclaim stops the node mid-run.
+--preemptible  --on-demand  Run the GPU node group as preemptible, matching `npa cluster up`. This changes the capacity pool but not
+    hard instance/disk/IP quotas; a reclaim stops the node mid-run.
 --dry-run  Resolve settings and print intended actions only.
 --timeout  <int>  Terraform apply timeout in minutes. [default: 120]
 --accelerator  <str>  Requested SkyPilot accelerator (for example RTXPRO6000:1) to gate readiness.
@@ -49,7 +49,7 @@ Options
 --gpu-readiness-poll-interval  <float>  Seconds between SkyPilot GPU discovery checks. [default: 10.0]
 --sky-bin  <str>  Pinned SkyPilot executable.
 --output-format  <text|json>  Output format. [default: text]
---help  Show this message and exit.
+--help  -h  Show this message and exit.
 ```
 
 ## Options
@@ -93,7 +93,7 @@ Options
 | `--gpu-readiness-poll-interval` | <float>  Seconds between SkyPilot GPU discovery checks. [default: 10.0] |
 | `--sky-bin` | <str>  Pinned SkyPilot executable. |
 | `--output-format` | <text\|json>  Output format. [default: text] |
-| `--help` | Show this message and exit. |
+| `--help` | -h  Show this message and exit. |
 
 ## Subcommands
 

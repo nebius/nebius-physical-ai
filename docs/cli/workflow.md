@@ -8,7 +8,7 @@ Usage: npa workbench workflow [OPTIONS] COMMAND [ARGS]...
 Multi-stage training workflow orchestration.
 
 Options
---help  Show this message and exit.
+--help  -h  Show this message and exit.
 Commands
 schema  Print the authoritative workflow JSON Schema as one JSON document.
 prepare-run  Prepare a project/workflow-scoped fresh or explicit-resume run ID.
@@ -41,7 +41,7 @@ challenge  Prepare a BEHAVIOR DEV evaluation from one setup file.
 
 | Option | Description |
 | --- | --- |
-| `--help` | Show this message and exit. |
+| `--help` | -h  Show this message and exit. |
 
 ## Subcommands
 

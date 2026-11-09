@@ -14,8 +14,8 @@ Options
     project-only unless --provision is passed. --no-provision performs no provider calls or storage adoption.
 --save-env-credentials  Persist supported credentials already present in environment variables to ~/.npa/credentials.yaml using an atomic 0600 write; values are
     never printed.
---env  Print the saved project/bucket/kube-context values as NPA_* shell assignments (no secrets) instead of prompting: eval "$(npa configure --show
-    --env)".
+--env  Print the saved project/bucket/kube-context values as NPA_* shell assignments (no secrets) instead of prompting: eval "$(npa configure
+    --show --env)".
 --forget-project  <str>  Remove a project stanza (and its terraform_state) from ~/.npa/config.yaml, then exit - the inverse of writing it. Use `npa storage bucket
     delete` and `npa agent destroy` to clean up the cloud resources and their credentials first.
 --src-s3-uri  <str>  Persist the staged npa source prefix (s3://bucket/prefix/npa) in ~/.npa/config.yaml so workflow submits resolve NPA_SRC_S3_URI without
@@ -28,7 +28,7 @@ Options
 --bucket-size-gb  <str>  GiB cap for a newly created known-project bucket; 0 means unlimited.
 --prepare-catalog-access  Audit every exact gated HF/NGC artifact in the current Workbench catalog without changing project or storage configuration.
 --open-approval-pages  Affirmatively open missing official HF/NGC pages during the catalog audit; NPA never submits acceptance.
---help  Show this message and exit.
+--help  -h  Show this message and exit.
 ```
 
 ## Options
@@ -50,7 +50,7 @@ Options
 | `--bucket-size-gb` | <str>  GiB cap for a newly created known-project bucket; 0 means unlimited. |
 | `--prepare-catalog-access` | Audit every exact gated HF/NGC artifact in the current Workbench catalog without changing project or storage configuration. |
 | `--open-approval-pages` | Affirmatively open missing official HF/NGC pages during the catalog audit; NPA never submits acceptance. |
-| `--help` | Show this message and exit. |
+| `--help` | -h  Show this message and exit. |
 
 ## Subcommands
 

@@ -8,7 +8,7 @@ Usage: npa workbench cosmos3 [OPTIONS] COMMAND [ARGS]...
 Cosmos3 omni-model generation and reasoning workflow contracts.
 
 Options
---help  Show this message and exit.
+--help  -h  Show this message and exit.
 Commands
 policy-train  Run native LIBERO-10 action-policy SFT and publish its complete DCP.
 policy-eval  Measure the trained policy in native LIBERO closed-loop simulation.
@@ -33,7 +33,7 @@ text-to-image  Generate an image from a prompt with the Cosmos3 framework, and p
 
 | Option | Description |
 | --- | --- |
-| `--help` | Show this message and exit. |
+| `--help` | -h  Show this message and exit. |
 
 ## Subcommands
 

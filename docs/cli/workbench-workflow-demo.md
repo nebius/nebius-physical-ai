@@ -8,7 +8,7 @@ Usage: npa workbench workflow demo [OPTIONS] COMMAND [ARGS]...
 Run complete public sample workflows and view their results.
 
 Options
---help  Show this message and exit.
+--help  -h  Show this message and exit.
 Commands
 list  Show the four public sample demos; no credentials or GPUs are needed.
 run  Fetch public samples and run a complete demo through the standard workflow engine.
@@ -19,7 +19,7 @@ view  Open a compact offline HTML report containing the actual run's evidence.
 
 | Option | Description |
 | --- | --- |
-| `--help` | Show this message and exit. |
+| `--help` | -h  Show this message and exit. |
 
 ## Subcommands
 

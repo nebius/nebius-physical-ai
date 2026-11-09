@@ -8,7 +8,7 @@ Usage: npa workbench vlm-eval [OPTIONS] COMMAND [ARGS]...
 VLM evaluation for sim-to-real pipeline gating.
 
 Options
---help  Show this message and exit.
+--help  -h  Show this message and exit.
 Commands
 run  Score a rollout artifact with a VLM backend.
 compare-judges  Compare hosted judges, excluding one measured shared-failure pair.
@@ -25,7 +25,7 @@ compare-preference  Compare two images under blinded labels in both orders.
 
 | Option | Description |
 | --- | --- |
-| `--help` | Show this message and exit. |
+| `--help` | -h  Show this message and exit. |
 
 ## Subcommands
 

@@ -10,7 +10,7 @@ NVIDIA Cosmos world model serving and inference endpoints.
 Options
 --project  -p  <str>  Project alias from ~/.npa/config.yaml.
 --name  -n  <str>  Workbench instance name within the project.
---help  Show this message and exit.
+--help  -h  Show this message and exit.
 Commands
 check  Check Cosmos3 source and HF checkpoint access without downloading weights.
 fetch  Clone source and download the HF checkpoint into ephemeral runtime cache.
@@ -35,7 +35,7 @@ system-info  Collect and display system hardware information from the Cosmos VM.
 | --- | --- |
 | `--project` | -p  <str>  Project alias from ~/.npa/config.yaml. |
 | `--name` | -n  <str>  Workbench instance name within the project. |
-| `--help` | Show this message and exit. |
+| `--help` | -h  Show this message and exit. |
 
 ## Subcommands
 

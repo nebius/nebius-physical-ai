@@ -10,7 +10,7 @@ Genesis simulation: teacher training, demo generation, evaluation.
 Options
 --project  -p  <str>  Project alias from ~/.npa/config.yaml. When set, the command runs on the workbench VM via SSH instead of locally.
 --name  -n  <str>  Workbench instance name within the project.
---help  Show this message and exit.
+--help  -h  Show this message and exit.
 Commands
 train-teacher  Train an RL teacher policy with PPO using privileged state in Genesis.
 generate-demos  Generate camera-only demonstrations using a trained teacher policy.
@@ -31,7 +31,7 @@ system-info  Collect and display system hardware information from the Genesis VM
 | --- | --- |
 | `--project` | -p  <str>  Project alias from ~/.npa/config.yaml. When set, the command runs on the workbench VM via SSH instead of locally. |
 | `--name` | -n  <str>  Workbench instance name within the project. |
-| `--help` | Show this message and exit. |
+| `--help` | -h  Show this message and exit. |
 
 ## Subcommands
 

@@ -8,7 +8,7 @@ Usage: npa workbench insights [OPTIONS] COMMAND [ARGS]...
 Insights: lineage graph + common metrics store over workflow-run artifacts.
 
 Options
---help  Show this message and exit.
+--help  -h  Show this message and exit.
 Commands
 report  Inspect a supported report without running inference or changing artifacts.
 record  Record metric emissions + lineage into the store.
@@ -26,7 +26,7 @@ list  List service-tracked insights stores.
 
 | Option | Description |
 | --- | --- |
-| `--help` | Show this message and exit. |
+| `--help` | -h  Show this message and exit. |
 
 ## Subcommands
 

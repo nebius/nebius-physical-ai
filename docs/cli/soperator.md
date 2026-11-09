@@ -8,7 +8,7 @@ Usage: npa soperator [OPTIONS] COMMAND [ARGS]...
 Deploy and manage Nebius soperator (Slurm-on-Kubernetes) clusters.
 
 Options
---help  Show this message and exit.
+--help  -h  Show this message and exit.
 Commands
 plan  Show a public-safe, provider-free Soperator capacity plan.
 deploy  Deploy or reconcile a pinned-contract Soperator cluster spec.
@@ -20,7 +20,7 @@ status  Show a soperator cluster's Slurm partitions/nodes via kubectl.
 
 | Option | Description |
 | --- | --- |
-| `--help` | Show this message and exit. |
+| `--help` | -h  Show this message and exit. |
 
 ## Subcommands
 

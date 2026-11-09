@@ -8,7 +8,7 @@ Usage: npa workbench mjlab [OPTIONS] COMMAND [ARGS]...
 MJLab GPU robot learning, evaluation and ONNX export.
 
 Options
---help  Show this message and exit.
+--help  -h  Show this message and exit.
 Commands
 train  Train or resume a native MJLab policy on the current GPU node.
 eval  Measure complete episodes from a native MJLab/RSL-RL checkpoint.
@@ -24,7 +24,7 @@ deploy  Deploy a private service on an existing GPU cluster using existing Secre
 
 | Option | Description |
 | --- | --- |
-| `--help` | Show this message and exit. |
+| `--help` | -h  Show this message and exit. |
 
 ## Subcommands
 

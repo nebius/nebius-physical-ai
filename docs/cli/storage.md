@@ -8,7 +8,7 @@ Usage: npa storage [OPTIONS] COMMAND [ARGS]...
 Inspect, configure, and tear down npa-managed object storage.
 
 Options
---help  Show this message and exit.
+--help  -h  Show this message and exit.
 Commands
 bucket  Object-storage buckets.
 service-account  NPA-owned object-storage service accounts.
@@ -18,7 +18,7 @@ service-account  NPA-owned object-storage service accounts.
 
 | Option | Description |
 | --- | --- |
-| `--help` | Show this message and exit. |
+| `--help` | -h  Show this message and exit. |
 
 ## Subcommands
 

@@ -8,7 +8,7 @@ Usage: npa workbench ros2 [OPTIONS] COMMAND [ARGS]...
 ROS 2 Jazzy prerequisite detection and deployment planning (bridge/bag-conversion/fleet execution not implemented).
 
 Options
---help  Show this message and exit.
+--help  -h  Show this message and exit.
 Commands
 preflight  Check ROS 2 Jazzy prerequisites; fail fast with remediation if unusable.
 ```
@@ -17,7 +17,7 @@ preflight  Check ROS 2 Jazzy prerequisites; fail fast with remediation if unusab
 
 | Option | Description |
 | --- | --- |
-| `--help` | Show this message and exit. |
+| `--help` | -h  Show this message and exit. |
 
 ## Subcommands
 

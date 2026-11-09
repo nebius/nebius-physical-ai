@@ -8,7 +8,7 @@ Usage: npa workbench molmoact [OPTIONS] COMMAND [ARGS]...
 MolmoAct VLA: validate fine-tune/serve/eval configs (planning only; execution not implemented).
 
 Options
---help  Show this message and exit.
+--help  -h  Show this message and exit.
 Commands
 finetune  Fine-tune a MolmoAct policy on a demonstration dataset.
 serve  Serve a MolmoAct policy behind an HTTP endpoint.
@@ -19,7 +19,7 @@ eval  Evaluate a MolmoAct policy on an evaluation dataset.
 
 | Option | Description |
 | --- | --- |
-| `--help` | Show this message and exit. |
+| `--help` | -h  Show this message and exit. |
 
 ## Subcommands
 

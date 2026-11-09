@@ -4,7 +4,7 @@
 
 ```text
 Usage: npa workbench specialists [OPTIONS] COMMAND [ARGS]...
-Try 'npa workbench specialists --help' for help.
+Try 'npa workbench specialists -h' for help.
 Missing option '--config'.
 ```
 

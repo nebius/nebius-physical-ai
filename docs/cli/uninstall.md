@@ -17,7 +17,7 @@ Options
 --status  <str>  Show one uninstall receipt by id and exit.
 --retry  <str>  Retry a failed deferred uninstall receipt by id.
 --json  Emit machine-readable output.
---help  Show this message and exit.
+--help  -h  Show this message and exit.
 ```
 
 ## Options
@@ -29,7 +29,7 @@ Options
 | `--status` | <str>  Show one uninstall receipt by id and exit. |
 | `--retry` | <str>  Retry a failed deferred uninstall receipt by id. |
 | `--json` | Emit machine-readable output. |
-| `--help` | Show this message and exit. |
+| `--help` | -h  Show this message and exit. |
 
 ## Subcommands
 

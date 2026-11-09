@@ -30,7 +30,7 @@ Options
 --list-receipts  List retained non-secret teardown audit receipts and exit.
 --prune-receipts  Explicitly prune only terminal teardown receipts older than --receipt-retention-days; requires --yes.
 --receipt-retention-days  <int range> [x>=0]  Minimum age for explicit terminal-receipt pruning (default: 90 days). [default: 90]
---help  Show this message and exit.
+--help  -h  Show this message and exit.
 ```
 
 ## Options
@@ -48,7 +48,7 @@ Options
 | `--list-receipts` | List retained non-secret teardown audit receipts and exit. |
 | `--prune-receipts` | Explicitly prune only terminal teardown receipts older than --receipt-retention-days; requires --yes. |
 | `--receipt-retention-days` | <int range> [x>=0]  Minimum age for explicit terminal-receipt pruning (default: 90 days). [default: 90] |
-| `--help` | Show this message and exit. |
+| `--help` | -h  Show this message and exit. |
 
 ## Subcommands
 

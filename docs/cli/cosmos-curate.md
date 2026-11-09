@@ -8,7 +8,7 @@ Usage: npa workbench cosmos-curate [OPTIONS] COMMAND [ARGS]...
 NVIDIA Cosmos Curator: split, transcode, motion-score, and catalog video clips.
 
 Options
---help  Show this message and exit.
+--help  -h  Show this message and exit.
 Commands
 curate-augmented  Curate a run's augmented variants with the real Cosmos Curator stages.
 curate-videos  Run the curator stages over a local directory of videos.
@@ -22,7 +22,7 @@ engine  Report whether the upstream curator can run in this environment.
 
 | Option | Description |
 | --- | --- |
-| `--help` | Show this message and exit. |
+| `--help` | -h  Show this message and exit. |
 
 ## Subcommands
 

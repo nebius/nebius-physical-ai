@@ -158,7 +158,10 @@ def test_colmap_audit_help_and_json_contract(monkeypatch):
     help_result = CliRunner().invoke(
         app,
         ["workbench", "nurec", "audit-colmap", "--help"],
-        terminal_width=180,
+        # The -h help alias widens the option row; give Rich enough width that
+        # --conversion-path is not truncated by the 80-column default. 200
+        # matches scripts/build_docs.sh's COLUMNS for the generated reference.
+        env={"COLUMNS": "200"},
     )
     assert help_result.exit_code == 0
     for flag in (

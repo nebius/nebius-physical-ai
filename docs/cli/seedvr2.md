@@ -8,7 +8,7 @@ Usage: npa workbench seedvr2 [OPTIONS] COMMAND [ARGS]...
 Restore low-resolution video with official ByteDance SeedVR2-3B.
 
 Options
---help  Show this message and exit.
+--help  -h  Show this message and exit.
 Commands
 probe  Decode the exact input video and publish a verified media manifest.
 restore  Run pinned one-step SeedVR2-3B and publish immutable artifacts.
@@ -24,7 +24,7 @@ list  List the real video-restoration and evidence operations.
 
 | Option | Description |
 | --- | --- |
-| `--help` | Show this message and exit. |
+| `--help` | -h  Show this message and exit. |
 
 ## Subcommands
 

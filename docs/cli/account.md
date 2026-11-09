@@ -8,7 +8,7 @@ Usage: npa workbench access account [OPTIONS] COMMAND [ARGS]...
 Operator-managed users, personal keys, and optional SSO links.
 
 Options
---help  Show this message and exit.
+--help  -h  Show this message and exit.
 Commands
 create  Create a permanent user with optional locally managed groups.
 list  List local users and credential IDs without disclosing keys.
@@ -23,7 +23,7 @@ unlink  Remove an exact SSO link while retaining the user's keys and ownership.
 
 | Option | Description |
 | --- | --- |
-| `--help` | Show this message and exit. |
+| `--help` | -h  Show this message and exit. |
 
 ## Subcommands
 

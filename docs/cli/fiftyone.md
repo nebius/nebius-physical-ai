@@ -10,7 +10,7 @@ Voxel51 FiftyOne dataset curation and visualization workbench.
 Options
 --project  -p  <str>  Project alias from ~/.npa/config.yaml.
 --name  -n  <str>  Workbench instance name within the project.
---help  Show this message and exit.
+--help  -h  Show this message and exit.
 Commands
 ensure-ingress  Explain the authenticated local access route for FiftyOne.
 register-byovm  Register an existing VM for authenticated SSH access to FiftyOne.
@@ -37,7 +37,7 @@ datasets  Inspect datasets through the FiftyOne GraphQL API.
 | --- | --- |
 | `--project` | -p  <str>  Project alias from ~/.npa/config.yaml. |
 | `--name` | -n  <str>  Workbench instance name within the project. |
-| `--help` | Show this message and exit. |
+| `--help` | -h  Show this message and exit. |
 
 ## Subcommands
 

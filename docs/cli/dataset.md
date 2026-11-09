@@ -8,7 +8,7 @@ Usage: npa workbench dataset [OPTIONS] COMMAND [ARGS]...
 Dataset-of-record: ingest, validate, curate, and query production sensor data.
 
 Options
---help  Show this message and exit.
+--help  -h  Show this message and exit.
 Commands
 ingest  Ingest raw sensor data into a versioned dataset-of-record manifest.
 validate  Validate a dataset manifest against schema + quality thresholds.
@@ -23,7 +23,7 @@ list  List service-managed dataset versions.
 
 | Option | Description |
 | --- | --- |
-| `--help` | Show this message and exit. |
+| `--help` | -h  Show this message and exit. |
 
 ## Subcommands
 

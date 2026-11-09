@@ -8,7 +8,7 @@ Usage: npa workbench [OPTIONS] COMMAND [ARGS]...
 Physical AI workbench tools.
 
 Options
---help  Show this message and exit.
+--help  -h  Show this message and exit.
 Commands
 whoami  Show verified identity and workspace access without a personal cloud account.
 submit  Start a workflow and return its run ID; unchanged retries reuse that run.
@@ -70,7 +70,7 @@ golden-eval  Per-container golden-eval / hello-world reruns.
 
 | Option | Description |
 | --- | --- |
-| `--help` | Show this message and exit. |
+| `--help` | -h  Show this message and exit. |
 
 ## Subcommands
 

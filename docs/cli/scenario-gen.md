@@ -8,7 +8,7 @@ Usage: npa workbench scenario-gen [OPTIONS] COMMAND [ARGS]...
 Adversarial scenario generation: mine hard scenarios that fail a policy-under-test (pluggable Isaac Lab RL backend; deterministic default).
 
 Options
---help  Show this message and exit.
+--help  -h  Show this message and exit.
 Commands
 generate  Mine ranked adversarial scenarios against a policy-under-test.
 rank  Score and rank generated adversarial scenarios.
@@ -21,7 +21,7 @@ list  List service-managed scenario-gen runs.
 
 | Option | Description |
 | --- | --- |
-| `--help` | Show this message and exit. |
+| `--help` | -h  Show this message and exit. |
 
 ## Subcommands
 

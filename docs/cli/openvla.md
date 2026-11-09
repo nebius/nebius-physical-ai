@@ -8,7 +8,7 @@ Usage: npa workbench openvla [OPTIONS] COMMAND [ARGS]...
 OpenVLA: OFT fine-tuning, checkpoint serving, evaluation.
 
 Options
---help  Show this message and exit.
+--help  -h  Show this message and exit.
 Commands
 train  Fine-tune OpenVLA with the OpenVLA-OFT LoRA recipe (stub).
 serve  Serve an OpenVLA checkpoint over HTTP (stub).
@@ -19,7 +19,7 @@ eval  Evaluate an OpenVLA checkpoint (stub).
 
 | Option | Description |
 | --- | --- |
-| `--help` | Show this message and exit. |
+| `--help` | -h  Show this message and exit. |
 
 ## Subcommands
 

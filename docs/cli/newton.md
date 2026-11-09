@@ -8,7 +8,7 @@ Usage: npa workbench newton [OPTIONS] COMMAND [ARGS]...
 Newton physics engine: teacher training, demo generation, evaluation.
 
 Options
---help  Show this message and exit.
+--help  -h  Show this message and exit.
 Commands
 train-teacher  Train a teacher policy in Newton simulation.
 generate-demos  Generate demonstration rollouts from a Newton teacher policy.
@@ -19,7 +19,7 @@ eval  Evaluate a policy in Newton simulation.
 
 | Option | Description |
 | --- | --- |
-| `--help` | Show this message and exit. |
+| `--help` | -h  Show this message and exit. |
 
 ## Subcommands
 

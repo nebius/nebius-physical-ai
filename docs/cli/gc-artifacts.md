@@ -16,7 +16,7 @@ Options
 --apply,--yes  Execute the plan. Without this flag nothing is deleted.
 --json  Emit the plan as JSON instead of a table.
 --journal  <path>  Write the JSON plan journal to this path.
---help  Show this message and exit.
+--help  -h  Show this message and exit.
 ```
 
 ## Options
@@ -31,7 +31,7 @@ Options
 | `--apply,--yes` | Execute the plan. Without this flag nothing is deleted. |
 | `--json` | Emit the plan as JSON instead of a table. |
 | `--journal` | <path>  Write the JSON plan journal to this path. |
-| `--help` | Show this message and exit. |
+| `--help` | -h  Show this message and exit. |
 
 ## Subcommands
 

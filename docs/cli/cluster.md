@@ -8,7 +8,7 @@ Usage: npa cluster [OPTIONS] COMMAND [ARGS]...
 Manage NPA Workbench cluster targets and profiles.
 
 Options
---help  Show this message and exit.
+--help  -h  Show this message and exit.
 Commands
 deploy  Bootstrap an NPA Workbench cluster target with local state and a cached kubeconfig.
 destroy  Delete a Managed Kubernetes cluster through the API and drop its local state.
@@ -30,7 +30,7 @@ directly.
 
 | Option | Description |
 | --- | --- |
-| `--help` | Show this message and exit. |
+| `--help` | -h  Show this message and exit. |
 
 ## Subcommands
 

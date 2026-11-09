@@ -8,7 +8,7 @@ Usage: npa tools desktop [OPTIONS] COMMAND [ARGS]...
 Persistent Ubuntu desktop with VS Code and Codex on an existing VM.
 
 Options
---help  Show this message and exit.
+--help  -h  Show this message and exit.
 Commands
 setup  Install a private desktop, preserving existing credentials and sessions.
 display  Change desktop density without restarting applications.
@@ -23,7 +23,7 @@ chat-setup  Install authenticated mobile chat on the existing desktop HTTPS gate
 
 | Option | Description |
 | --- | --- |
-| `--help` | Show this message and exit. |
+| `--help` | -h  Show this message and exit. |
 
 ## Subcommands
 

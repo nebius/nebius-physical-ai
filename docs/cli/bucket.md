@@ -8,7 +8,7 @@ Usage: npa storage bucket [OPTIONS] COMMAND [ARGS]...
 Object-storage buckets.
 
 Options
---help  Show this message and exit.
+--help  -h  Show this message and exit.
 Commands
 list  List the object-storage buckets in a project, marking the configured one.
 cors  Check or configure the app.rerun.io browser CORS contract.
@@ -19,7 +19,7 @@ delete  Delete an object-storage bucket npa provisioned, contents and versions i
 
 | Option | Description |
 | --- | --- |
-| `--help` | Show this message and exit. |
+| `--help` | -h  Show this message and exit. |
 
 ## Subcommands
 

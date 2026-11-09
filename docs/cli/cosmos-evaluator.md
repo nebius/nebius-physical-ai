@@ -8,7 +8,7 @@ Usage: npa workbench cosmos-evaluator [OPTIONS] COMMAND [ARGS]...
 Cosmos Evaluator checks plus NPA source-relative temporal and protected-appearance diagnostics.
 
 Options
---help  Show this message and exit.
+--help  -h  Show this message and exit.
 Commands
 report  Inspect a Cosmos report; use insights report for the shared interface.
 evaluate  Grade every augmented variant of a run and write one evaluator report.
@@ -21,7 +21,7 @@ engine  Report which evaluator engine this environment resolves to.
 
 | Option | Description |
 | --- | --- |
-| `--help` | Show this message and exit. |
+| `--help` | -h  Show this message and exit. |
 
 ## Subcommands
 

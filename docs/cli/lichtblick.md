@@ -8,7 +8,7 @@ Usage: npa workbench lichtblick [OPTIONS] COMMAND [ARGS]...
 Lichtblick (MPL-2.0) - an open-source, Foxglove-compatible MCAP / ROS-bag log viewer.
 
 Options
---help  Show this message and exit.
+--help  -h  Show this message and exit.
 Commands
 serve  Serve a robotics log in Lichtblick, staged from S3.
 launch  Alias for ``serve``: stage and view a robotics log in Lichtblick.
@@ -21,7 +21,7 @@ list  List artifact formats the Lichtblick viewer can open.
 
 | Option | Description |
 | --- | --- |
-| `--help` | Show this message and exit. |
+| `--help` | -h  Show this message and exit. |
 
 ## Subcommands
 

@@ -8,7 +8,7 @@ Usage: npa workbench open3d [OPTIONS] COMMAND [ARGS]...
 Open3D point-cloud registration and surface reconstruction.
 
 Options
---help  Show this message and exit.
+--help  -h  Show this message and exit.
 Commands
 prepare  Index the scans under a prefix into a registration manifest.
 stage-demo  Publish the upstream open3d.data DemoICPPointClouds scans as input.
@@ -23,7 +23,7 @@ visualize  Build and verify an RRD of the optimized scans, fusion and surface.
 
 | Option | Description |
 | --- | --- |
-| `--help` | Show this message and exit. |
+| `--help` | -h  Show this message and exit. |
 
 ## Subcommands
 

@@ -8,7 +8,7 @@ Usage: npa workbench curobo [OPTIONS] COMMAND [ARGS]...
 NVIDIA cuRobo V2 motion planning and complete benchmark evaluation.
 
 Options
---help  Show this message and exit.
+--help  -h  Show this message and exit.
 Commands
 prepare  Write a complete benchmark recipe (both full datasets; no problem cap).
 benchmark  Run every benchmark problem in each selected dynamics configuration.
@@ -21,7 +21,7 @@ visualize  Build and verify RRD joint timelines and actual forward-kinematics pa
 
 | Option | Description |
 | --- | --- |
-| `--help` | Show this message and exit. |
+| `--help` | -h  Show this message and exit. |
 
 ## Subcommands
 

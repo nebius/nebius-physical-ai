@@ -8,7 +8,7 @@ Usage: npa rerun [OPTIONS] COMMAND [ARGS]...
 Host and share Rerun .rrd recordings through app.rerun.io.
 
 Options
---help  Show this message and exit.
+--help  -h  Show this message and exit.
 Commands
 host  Upload or reference a Rerun .rrd and print an app.rerun.io URL.
 share  Create a durable S3-backed Rerun share URL, capped at 7 days.
@@ -20,7 +20,7 @@ revoke  Delete matching shared Rerun recordings from S3.
 
 | Option | Description |
 | --- | --- |
-| `--help` | Show this message and exit. |
+| `--help` | -h  Show this message and exit. |
 
 ## Subcommands
 

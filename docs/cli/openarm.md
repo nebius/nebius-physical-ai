@@ -8,7 +8,7 @@ Usage: npa workbench openarm [OPTIONS] COMMAND [ARGS]...
 Enactic OpenArm simulation with real MuJoCo and Isaac Sim/Isaac Lab.
 
 Options
---help  Show this message and exit.
+--help  -h  Show this message and exit.
 Commands
 run  Run a real OpenArm control rollout or upstream Isaac Lab training.
 qualify  Validate every MuJoCo and Isaac artifact and write a qualification report.
@@ -24,7 +24,7 @@ delete  Delete only the named OpenArm service resources; retain cache PVCs.
 
 | Option | Description |
 | --- | --- |
-| `--help` | Show this message and exit. |
+| `--help` | -h  Show this message and exit. |
 
 ## Subcommands
 

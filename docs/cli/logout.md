@@ -18,7 +18,7 @@ TeamError: Session storage cannot be safely updated.
 Options
 --profile  <str>  Connection to forget; defaults to the active connection.
 --output-format  <str>  text or json. [default: text]
---help  Show this message and exit.
+--help  -h  Show this message and exit.
 ```
 
 ## Options
@@ -27,7 +27,7 @@ Options
 | --- | --- |
 | `--profile` | <str>  Connection to forget; defaults to the active connection. |
 | `--output-format` | <str>  text or json. [default: text] |
-| `--help` | Show this message and exit. |
+| `--help` | -h  Show this message and exit. |
 
 ## Subcommands
 

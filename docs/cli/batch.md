@@ -8,7 +8,7 @@ Usage: npa workbench workflow batch [OPTIONS] COMMAND [ARGS]...
 Submit dataset episodes as independent durable workflow runs.
 
 Options
---help  Show this message and exit.
+--help  -h  Show this message and exit.
 Commands
 plan  Expand and validate a batch without submitting jobs.
 submit  Run a batch in the foreground through standard workflow submission.
@@ -19,7 +19,7 @@ status  Read local observations; use workflow status for live reconciliation.
 
 | Option | Description |
 | --- | --- |
-| `--help` | Show this message and exit. |
+| `--help` | -h  Show this message and exit. |
 
 ## Subcommands
 

@@ -8,7 +8,7 @@ Usage: npa storage service-account [OPTIONS] COMMAND [ARGS]...
 NPA-owned object-storage service accounts.
 
 Options
---help  Show this message and exit.
+--help  -h  Show this message and exit.
 Commands
 delete  Delete the storage service account only when NPA recorded creating it.
 reconcile  Reconcile a legacy NPA-created storage identity without weakening deletion guards.
@@ -18,7 +18,7 @@ reconcile  Reconcile a legacy NPA-created storage identity without weakening del
 
 | Option | Description |
 | --- | --- |
-| `--help` | Show this message and exit. |
+| `--help` | -h  Show this message and exit. |
 
 ## Subcommands
 

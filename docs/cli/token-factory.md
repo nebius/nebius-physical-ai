@@ -8,7 +8,7 @@ Usage: npa workbench token-factory [OPTIONS] COMMAND [ARGS]...
 Nebius Token Factory hosted inference (zero-GPU, OpenAI-compatible).
 
 Options
---help  Show this message and exit.
+--help  -h  Show this message and exit.
 Commands
 robot-sdg  Generate real simulated robot episodes with RGB and actions in LeRobot format.
 sdg  Generate a reviewed instruction dataset using automatic open-weight routing.
@@ -28,7 +28,7 @@ workflow  Show the checked-in Token Factory npa.workflow specs.
 
 | Option | Description |
 | --- | --- |
-| `--help` | Show this message and exit. |
+| `--help` | -h  Show this message and exit. |
 
 ## Subcommands
 

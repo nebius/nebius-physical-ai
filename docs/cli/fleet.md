@@ -8,7 +8,7 @@ Usage: npa fleet [OPTIONS] COMMAND [ARGS]...
 Deploy and manage fleets of Nebius Managed Kubernetes clusters across projects.
 
 Options
---help  Show this message and exit.
+--help  -h  Show this message and exit.
 Commands
 plan  Show the resolved deployment plan without touching infrastructure.
 deploy  Deploy the fleet: resolve/create projects and apply each cluster.
@@ -23,7 +23,7 @@ verify-graphics  Qualify CUDA, GLX, EGL, and Vulkan on every selected RTX worker
 
 | Option | Description |
 | --- | --- |
-| `--help` | Show this message and exit. |
+| `--help` | -h  Show this message and exit. |
 
 ## Subcommands
 

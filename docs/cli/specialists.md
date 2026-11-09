@@ -9,7 +9,7 @@ Self-hosted specialist agents and durable task monitoring.
 
 Options
 *  --config  <file>  [required]
-    --help  Show this message and exit.
+    --help  -h  Show this message and exit.
 Commands
 serve  Serve the browser monitor and optionally supervise independent workers.
 worker  Run one specialist independently of the monitor.

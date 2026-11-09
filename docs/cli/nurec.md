@@ -9,7 +9,7 @@ NVIDIA Omniverse NuRec / Neural Reconstruction Engine: sensor recordings -> 3DGU
 CPU. Proprietary NRE reconstruction/rendering requires an RT-core GPU (L40S or RTX PRO 6000 Blackwell); never route the render path at H100/H200.
 
 Options
---help  Show this message and exit.
+--help  -h  Show this message and exit.
 Commands
 check  Check NRE container access, dataset download rights, and GPU suitability.
 convert-colmap  Convert COLMAP using Apache-2.0 NVIDIA NCore; NRE is a separate downstream engine.
@@ -36,7 +36,7 @@ status  Summarize what a NuRec run prefix currently holds, stage by stage.
 
 | Option | Description |
 | --- | --- |
-| `--help` | Show this message and exit. |
+| `--help` | -h  Show this message and exit. |
 
 ## Subcommands
 

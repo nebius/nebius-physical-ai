@@ -32,7 +32,7 @@ Options
 --no-browser  Print the official sign-in link instead of opening a browser.
 --ssh-host  <str>  When logging in on a VM, print its loopback callback forward.
 --output-format  <str>  text or json; credentials are never printed. [default: text]
---help  Show this message and exit.
+--help  -h  Show this message and exit.
 ```
 
 ## Options
@@ -51,7 +51,7 @@ Options
 | `--no-browser` | Print the official sign-in link instead of opening a browser. |
 | `--ssh-host` | <str>  When logging in on a VM, print its loopback callback forward. |
 | `--output-format` | <str>  text or json; credentials are never printed. [default: text] |
-| `--help` | Show this message and exit. |
+| `--help` | -h  Show this message and exit. |
 
 ## Subcommands
 

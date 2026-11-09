@@ -10,7 +10,7 @@ LeRobot policy training, evaluation, serving, and inference.
 Options
 --project  -p  <str>  Project alias (as configured in ~/.npa/config.yaml).
 --name  -n  <str>  Workbench instance name within the project.
---help  Show this message and exit.
+--help  -h  Show this message and exit.
 Commands
 list  List configured LeRobot workbenches (excludes Genesis VMs).
 status  Check what's running on the VM.
@@ -32,7 +32,7 @@ train-student  Train a vision-only student policy via LeRobot imitation learning
 | --- | --- |
 | `--project` | -p  <str>  Project alias (as configured in ~/.npa/config.yaml). |
 | `--name` | -n  <str>  Workbench instance name within the project. |
-| `--help` | Show this message and exit. |
+| `--help` | -h  Show this message and exit. |
 
 ## Subcommands
 

@@ -8,7 +8,7 @@ Usage: npa workbench workflow challenge [OPTIONS] COMMAND [ARGS]...
 Prepare a BEHAVIOR DEV evaluation from one setup file.
 
 Options
---help  Show this message and exit.
+--help  -h  Show this message and exit.
 Commands
 init  Create an editable BEHAVIOR setup file without provisioning resources.
 check  Check local prerequisites; GPU readiness requires runtime preflight.
@@ -19,7 +19,7 @@ prepare  Freeze ten prescribed DEV cases and generate standard Workbench command
 
 | Option | Description |
 | --- | --- |
-| `--help` | Show this message and exit. |
+| `--help` | -h  Show this message and exit. |
 
 ## Subcommands
 

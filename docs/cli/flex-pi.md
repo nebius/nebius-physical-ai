@@ -8,7 +8,7 @@ Usage: npa workbench flex-pi [OPTIONS] COMMAND [ARGS]...
 Flex-Pi multi-stream policy inference and public training.
 
 Options
---help  Show this message and exit.
+--help  -h  Show this message and exit.
 Commands
 train  Train the pinned real public YAM workload on exactly four GPUs.
 infer  Run genuine action-only inference and publish verified artifacts.
@@ -19,7 +19,7 @@ terms  Print separately applicable source, model, and public-input terms.
 
 | Option | Description |
 | --- | --- |
-| `--help` | Show this message and exit. |
+| `--help` | -h  Show this message and exit. |
 
 ## Subcommands
 
