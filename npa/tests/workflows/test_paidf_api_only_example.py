@@ -1,5 +1,6 @@
 """Exercise durable fanout, media integrity and offline HTML for the hosted example."""
 
+import base64
 import copy
 import hashlib
 from html.parser import HTMLParser
@@ -11,6 +12,7 @@ import threading
 
 import pytest
 import yaml
+import numpy as np
 
 ROOT = Path(__file__).resolve().parents[3]
 EXAMPLE = ROOT / "npa/examples/paidf-cosmos3-api-only"
@@ -216,12 +218,18 @@ def test_invalid_campaign_refuses(campaign, private_work, mutation):
         runner._campaign(path)
 
 
-@pytest.fixture
-def media_campaign(campaign, private_work):
+@pytest.fixture(params=["full-frame", "padded"])
+def media_campaign(campaign, private_work, request):
     if not shutil.which("ffmpeg") or not shutil.which("ffprobe"):
         pytest.skip("FFmpeg and ffprobe are required for real media verification")
     module = runner._client_module()
     video = private_work / "fixture.mp4"
+    padded = request.param == "padded"
+    source_filter = (
+        "color=c=gray:s=64x48:r=24:d=0.5,pad=80:48:8:0:black"
+        if padded
+        else "color=c=blue:s=32x32:r=24:d=0.25"
+    )
     subprocess.run(
         [
             "ffmpeg",
@@ -230,7 +238,7 @@ def media_campaign(campaign, private_work):
             "-f",
             "lavfi",
             "-i",
-            "color=c=blue:s=32x32:r=24:d=0.25",
+            source_filter,
             "-c:v",
             "libx264",
             "-pix_fmt",
@@ -240,12 +248,34 @@ def media_campaign(campaign, private_work):
         check=True,
         capture_output=True,
     )
+    raw = private_work / "raw.mp4"
+    if padded:
+        subprocess.run(
+            [
+                "ffmpeg",
+                "-v",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                "color=c=red:s=80x48:r=24:d=0.5",
+                "-c:v",
+                "libx264",
+                "-pix_fmt",
+                "yuv420p",
+                str(raw),
+            ],
+            check=True,
+            capture_output=True,
+        )
+    else:
+        raw.write_bytes(video.read_bytes())
     reviews = []
     for index, variant in enumerate(campaign["variants"]):
         directory = private_work / "downloads" / variant["id"]
         module.private_directory(directory)
-        for name in ("source.mp4", "generated.mp4"):
-            module.save_private(directory / name, video.read_bytes())
+        module.save_private(directory / "source.mp4", video.read_bytes())
+        module.save_private(directory / "generated.mp4", raw.read_bytes())
         job = "job-" + str(index)
         module.save_private(
             private_work / "jobs" / (variant["id"] + ".json"), {"job_id": job}
@@ -314,6 +344,43 @@ def test_report_embeds_thirteen_verified_videos_and_escapes_notes(
     assert "&lt;script&gt;private note&lt;/script&gt;" in output.read_text()
     assert output.stat().st_mode & 0o077 == 0
     assert len(module.read_json(private_work / "technical.json")["variants"]) == 12
+    _assert_published_media(module, private_work, campaign, parser.videos)
+
+
+def _assert_published_media(module, work, campaign, videos):
+    from npa.workbench.cosmos_evaluator.appearance_fidelity import _iter_rgb_frames
+
+    records = module.read_json(work / "technical.json")["variants"]
+    for record, url in zip(records, videos[1:]):
+        embedded = base64.b64decode(url.split(",", 1)[1])
+        assert hashlib.sha256(embedded).hexdigest() == record["generated"]["sha256"]
+    record = records[0]
+    if not record["padding_preservation"]:
+        assert record["publication_path"].startswith("downloads/")
+        return
+    directory = work / "downloads" / campaign["variants"][0]["id"]
+    original = np.stack(list(_iter_rgb_frames(directory / "source.mp4", 48, 80)))
+    raw = np.stack(list(_iter_rgb_frames(directory / "generated.mp4", 48, 80)))
+    published = np.stack(
+        list(_iter_rgb_frames(work / record["publication_path"], 48, 80))
+    )
+    assert np.array_equal(published[:, :, :8], original[:, :, :8])
+    assert np.array_equal(published[:, :, 72:], original[:, :, 72:])
+    assert np.array_equal(published[:, :, 8:72], raw[:, :, 8:72])
+    assert not np.array_equal(raw[:, :, :8], original[:, :, :8])
+
+
+@pytest.mark.parametrize("media_campaign", ["padded"], indirect=True)
+def test_report_rejects_mutated_padding_publication(
+    campaign, private_work, media_campaign
+):
+    module, review_path = media_campaign
+    records = runner._collect(module, private_work, campaign)
+    publication = private_work / records[0]["publication_path"]
+    publication.write_bytes(b"changed after border verification")
+    with pytest.raises(ValueError, match="padding publication"):
+        runner._report(module, private_work, campaign, review_path)
+    assert not (private_work / "paidf-cosmos3-proof.html").exists()
 
 
 def test_report_rechecks_media_instead_of_trusting_old_technical_evidence(

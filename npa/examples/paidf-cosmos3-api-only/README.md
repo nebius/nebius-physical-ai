@@ -26,13 +26,14 @@ to the canonical PAIDF workflow or a native NPA CLI command.
 
 ## Setup
 
-Use Python 3.12+, PyYAML, Git, `ffmpeg` and `ffprobe` on PATH. The runner loads
+Use Python 3.12+, an installed NPA checkout, Git, `ffmpeg` and `ffprobe` on PATH.
+NPA supplies the CPU border-detection/preservation code and NumPy. The runner loads
 the repository's [portable HTTPS client](../../../skills/tools/nebius-world-factory/SKILL.md),
 so keep it in this checkout. It requires neither a private hosting repository
 nor model weights, Docker, Kubernetes, SkyPilot, FiftyOne or a local GPU.
-The existing contributor environment (`npa/.venv`) includes PyYAML; standalone
-users can instead create their own environment with `python3 -m venv .venv`
-and `.venv/bin/python -m pip install PyYAML`.
+Use the existing contributor environment (`npa/.venv`), or install this checkout
+with `python3 -m venv npa/.venv` and
+`npa/.venv/bin/python -m pip install -e npa` from the repository root.
 
 Obtain the service origin and scoped key privately. Follow the client guide to
 register existing input and server-verified Nebius output storage. Retain the
@@ -89,7 +90,21 @@ generation. Stop local polling without cancelling service work at any time.
 
 `collect` verifies canonical media against the service manifest, guarded
 configuration, prompt and seed receipts, complete local decode, frame count,
-frame rate and dimensions. It writes `technical.json`. These checks do not
+frame rate and dimensions. It also detects persistent paired source padding
+across every source frame and restores only those border pixels from the source,
+using NPA's existing lossless RGB H.264 preservation path. Every generated scene
+pixel remains unchanged; source borders and scene pixels are verified after
+encoding. Raw `downloads/<variant-id>/generated.mp4` files remain untouched.
+Corrected videos and hash-bound receipts are written to
+`publication/<variant-id>/{augmented.mp4,padding.json}`. Subsequent collection
+verifies that cached publications still match source, raw video and published
+hashes; changed publications fail rather than silently reusing old evidence.
+Full-frame sources are not reencoded. Ambiguous/one-sided/changing dark edges
+are not assumed to be padding. No YAML switch or additional API call is needed.
+
+Collection writes `technical.json`, including raw and published hashes, source
+content bounds and padding receipts. Lossless corrected videos and the resulting
+HTML are substantially larger than lossy model outputs. These checks do not
 establish task fidelity, semantic quality or training readiness.
 
 To keep local polling alive while your laptop is closed, run it on an **existing
@@ -106,7 +121,10 @@ does not create a VDI, install a controller service or run an agent loop.
 
 ## Review and standalone HTML
 
-Inspect the source and all twelve `downloads/<variant-id>/generated.mp4` files.
+Inspect the source and all twelve published videos identified by
+`technical.json`'s `publication_path`. For detected padding these are the corrected
+`publication/<variant-id>/augmented.mp4` files; raw model outputs remain separately
+available for provenance. The report always embeds the published videos.
 Write a mode-0600 `quality-review.json` in the private directory, with exactly
 one record for each YAML variant. Example record shape:
 

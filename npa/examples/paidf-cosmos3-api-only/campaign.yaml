@@ -15,6 +15,7 @@ execution:
     - existing-hosted-cosmos3-inference
     - existing-owner-scoped-storage
   local_stages:
+    # CPU collection also restores detected source borders, without altering scene pixels.
     - contract-and-storage-audit
     - durable-request-admission
     - artifact-recovery-and-checksums

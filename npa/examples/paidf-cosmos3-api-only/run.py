@@ -17,6 +17,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import tempfile
 
 import yaml
 
@@ -347,6 +348,7 @@ def _receipt(module, work, document, variant):
 
 def _collect(module, work, document):
     records = []
+    regions = {}
     for variant in document["variants"]:
         directory = _receipt(module, work, document, variant)
         source, generated = (
@@ -358,13 +360,75 @@ def _collect(module, work, document):
             for key in ("width", "height", "frames", "frame_rate")
         ):
             raise ValueError("generated geometry/timeline differs from the source")
+        if source["sha256"] not in regions:
+            from npa.workflows.video_padding_preservation import (
+                resolve_source_content_region,
+            )
+
+            regions[source["sha256"]] = resolve_source_content_region(
+                directory / "source.mp4"
+            )
+        region = regions[source["sha256"]]
+        published, preservation = _publish_padding(
+            module, work, variant["id"], directory, region
+        )
         records.append(
-            {"variant_id": variant["id"], "source": source, "generated": generated}
+            {
+                "variant_id": variant["id"],
+                "source": source,
+                "raw_generated": generated,
+                "generated": _media(published) if preservation else generated,
+                "publication_path": str(published.relative_to(work)),
+                "content_region": region,
+                "padding_preservation": preservation,
+            }
         )
     if len({record["source"]["sha256"] for record in records}) != 1:
         raise ValueError("variants must retain one identical source")
     module.save_private(work / "technical.json", {"variants": records})
     return records
+
+
+def _publish_padding(module, work, identifier, directory, region):
+    from npa.workflows.video_padding_preservation import preserve_source_padding
+
+    source, raw = directory / "source.mp4", directory / "generated.mp4"
+    width, height = region["canvas"]
+    if region["bounds"] == [0, 0, width, height]:
+        return raw, None
+    publication = work / "publication" / identifier
+    module.private_directory(publication)
+    target, receipt_path = publication / "augmented.mp4", publication / "padding.json"
+    if target.is_symlink():
+        raise ValueError("padding publication must not be a symlink")
+    if target.exists() and receipt_path.exists():
+        receipt = module.read_json(receipt_path)
+        _verify_padding_cache(source, raw, target, region, receipt)
+        return target, receipt
+    with tempfile.TemporaryDirectory(dir=publication) as temporary:
+        candidate = Path(temporary) / "augmented.mp4"
+        receipt = preserve_source_padding(source, raw, candidate, region)
+        candidate.chmod(0o600)
+        os.replace(candidate, target)
+    module.save_private(receipt_path, receipt)
+    return target, receipt
+
+
+def _verify_padding_cache(source, raw, published, region, receipt):
+    expected = {
+        "schema": "npa.video.padding-preservation.v1",
+        "status": "verified",
+        "policy": "restore-source-border-only",
+        "source_sha256": _sha256(source),
+        "raw_model_sha256": _sha256(raw),
+        "published_sha256": _sha256(published),
+        "bounds": region["bounds"],
+        "scene_pixels_unchanged": True,
+        "padding_matches_source": True,
+        "encoding": "lossless-h264-rgb",
+    }
+    if any(receipt.get(key) != value for key, value in expected.items()):
+        raise ValueError("padding publication no longer matches its verified lineage")
 
 
 def _review(module, path, document):
@@ -421,8 +485,15 @@ def _report(module, work, document, review_path):
                 + "</h2><p>"
                 + html.escape(variant["prompt"])
                 + "</p>",
-                _video(work / "downloads" / variant["id"] / "generated.mp4"),
+                _video(work / record["publication_path"]),
                 "<p>SHA-256: <code>" + facts["sha256"] + "</code></p>",
+                "<p>"
+                + (
+                    "Source borders restored exactly; generated scene pixels unchanged."
+                    if record["padding_preservation"]
+                    else "No verified source padding detected."
+                )
+                + "</p>",
                 "<p>"
                 + str(facts["frames"])
                 + " frames; full decode passed. Manual verdict: "
@@ -516,6 +587,7 @@ if __name__ == "__main__":
         OSError,
         StopIteration,
         subprocess.SubprocessError,
+        RuntimeError,
         yaml.YAMLError,
         _client_module().ClientError,
     ):
