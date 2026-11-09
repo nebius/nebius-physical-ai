@@ -282,7 +282,7 @@ CLUSTER_ARGS=(
   --project "$NPA_PROJECT" --cluster-name "$NPA_CLUSTER"
   --gpu-workload-profile rtx-rendering
   --gpu-graphics-smoke-image "$ISAAC_IMAGE"
-  --cpu-nodes 1 --cpu-platform cpu-e2 --cpu-preset 16vcpu-64gb
+  --cpu-nodes 1 --cpu-platform cpu-d3 --cpu-preset 16vcpu-64gb
 )
 npa/.venv/bin/npa provision-if-absent "${CLUSTER_ARGS[@]}" \
   --dry-run --output-format json

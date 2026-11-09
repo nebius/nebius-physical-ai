@@ -310,7 +310,7 @@ Kubernetes storage request.
 
 The Kubernetes controller requires an MK8s node that can fit a 4 vCPU, 16 GiB
 pod. The validated `npa-workbench-eu-north1` pattern uses a dedicated CPU node
-group such as `cpu-e2/8vcpu-32gb` so the controller does not compete with GPU
+group such as `cpu-d3/8vcpu-32gb` so the controller does not compete with GPU
 workloads.
 
 The previous Nebius VM controller remains available as a fallback from Python
