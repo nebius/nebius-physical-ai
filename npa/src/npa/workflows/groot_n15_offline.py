@@ -62,6 +62,10 @@ PUBLIC_DATA_LICENSE = LEGACY_PUBLIC_DATA_LICENSE
 # ``__name__ == "__main__"``.  Reusing ``__name__`` for the Python 3.10 child
 # would then incorrectly request ``python -m __main__``.
 RUNTIME_MODULE = "npa.workflows.groot_n15_offline"
+REFERENCE_INPUT_MODE = "reference"
+STANDARD_INPUT_MODE = "standard"
+CUSTOM_INPUT_MODE = "custom"
+LEGACY_INPUT_MODE = "legacy"
 
 
 class WorkflowArtifactError(RuntimeError):
@@ -1445,6 +1449,601 @@ def _prepare_custom_inputs(
     }
 
 
+def _resolve_standard_runtime_args(args: argparse.Namespace) -> None:
+    """Load one content-bound standard-input declaration for a native stage.
+
+    The declaration is ordinary operator data, never executable metadata.  It
+    is downloaded again by every independent stage and its digest is bound into
+    prepare provenance; that makes a changed declaration fail rather than
+    changing a resumed train/evaluate stage behind the operator's back.
+    """
+
+    if _option(args, "input_mode", LEGACY_INPUT_MODE) != STANDARD_INPUT_MODE:
+        return
+    if not args.standard_input_config_uri:
+        raise ValueError("standard input mode requires standard_input_config_uri")
+    from npa.workbench.groot.standard_inputs import (
+        STANDARD_PROFILE,
+        StandardSingleWristConfig,
+        load_standard_config,
+    )
+
+    stage_name = "standard-input-config-native" if args.native else "standard-input-config-bootstrap"
+    stage = _new_directory(Path(args.workspace).resolve() / stage_name)
+    path = stage / "config.json"
+    S3Store().get_file(args.standard_input_config_uri, path)
+    config = load_standard_config(path)
+    S3Uri.parse(config.dataset.uri)
+    S3Uri.parse(config.feedback.uri)
+    expected_profile = (
+        f"{StandardSingleWristConfig.__module__}:{StandardSingleWristConfig.__name__}"
+    )
+    if config.profile != STANDARD_PROFILE:
+        raise WorkflowArtifactError("standard input has an unsupported profile")
+    args.dataset_repository = config.dataset.source_identifier
+    args.dataset_revision = config.dataset.source_revision
+    args.model_repository = config.model.model_repository
+    args.model_revision = config.model.model_revision
+    args.groot_repository = config.model.groot_repository
+    args.groot_revision = config.model.groot_revision
+    args.data_config = expected_profile
+    args.action_target_keys = "action.robot"
+    args.evidence_video_key = "video.wrist"
+    args.feedback_mode = config.feedback.mode
+    args.grouping = config.split.grouping
+    args.split_strategy = config.split.strategy
+    args.train_episode_count = config.split.train_episode_count
+    args.eval_episode_count = config.split.eval_episode_count
+    args.evidence_episode_index = config.evidence.episode_index
+    args.evidence_start_frame = config.evidence.start_frame
+    args.evidence_frame_count = config.evidence.frame_count
+    args.evidence_video_fps = config.evidence.fps
+    args.feedback_uri = ""
+    args._standard_input_config = config
+    args._standard_input_config_sha256 = sha256_file(path)
+
+
+def _standard_gallery_reference(
+    dataset_root: Path,
+    config: Any,
+    feedback: list[dict[str, Any]],
+    destination: Path,
+) -> dict[str, Any]:
+    """Build recorded success/failure/recovery examples from declared labels."""
+
+    info = json.loads((dataset_root / "meta" / "info.json").read_text())
+    lengths = {
+        int(episode["episode_index"]): int(episode["length"])
+        for episode in _episode_records(dataset_root)
+    }
+    fps = float(info.get("fps") or 0)
+    if fps <= 0:
+        raise WorkflowArtifactError("standard dataset has no positive recorded fps")
+    destination.mkdir(parents=True)
+    selected: dict[str, dict[str, Any]] = {}
+    for record in feedback:
+        outcome = record.get("success")
+        kind = str(record.get("collection_kind", "unknown"))
+        label = "success" if outcome is True else "failure" if outcome is False else "unknown"
+        selected.setdefault(label, record)
+        if kind == "operator_recovery":
+            selected.setdefault("recovery", record)
+    if "success" not in selected or "failure" not in selected:
+        raise WorkflowArtifactError(
+            "standard gallery requires observed success and failure records"
+        )
+    items: list[dict[str, Any]] = []
+    for label in ("success", "failure", "recovery"):
+        record = selected.get(label)
+        if record is None:
+            continue
+        episode = int(record["episode_index"])
+        candidates = sorted(
+            path
+            for path in (dataset_root / "videos").rglob(f"episode_{episode:06d}.mp4")
+            if config.mapping.camera_key in path.as_posix()
+        )
+        if len(candidates) != 1:
+            raise WorkflowArtifactError(
+                "standard dataset must have one mapped camera video per gallery episode"
+            )
+        source = candidates[0]
+        media_name = f"{label}-episode-{episode:06d}.mp4"
+        media = destination / media_name
+        shutil.copyfile(source, media)
+        length = lengths[episode]
+        item = {
+            "id": f"standard-{label}-episode-{episode:06d}",
+            "media_path": media_name,
+            "media_sha256": sha256_file(media),
+            "source": {
+                "identifier": config.dataset.source_identifier,
+                "revision": config.dataset.source_revision,
+            },
+            "license": config.dataset.license,
+            "privacy_classification": config.dataset.privacy_classification,
+            "source_episode_index": episode,
+            "camera_key": config.mapping.camera_key,
+            "recorded_fps": fps,
+            "recorded_frame_count": length,
+            "frame_start": 0,
+            "frame_end": length - 1,
+            "outcome": "success" if record.get("success") is True else "failure" if record.get("success") is False else "unknown",
+            "collection_kind": str(record.get("collection_kind", "unknown")),
+            "tags": list(record.get("tags") or []),
+            "label_source": config.feedback.label_protocol,
+            "action_predictions_available": False,
+            "limitation": (
+                "Recorded source observation only. Outcome and collection kind come "
+                "from the declared feedback sidecar; this is not a rollout."
+            ),
+        }
+        items.append(item)
+    (destination / "gallery.json").write_text(
+        canonical_json(
+            {"schema_version": "npa.groot-recorded-gallery-reference/v1", "items": items}
+        )
+    )
+    return _validate_gallery_reference(destination)
+
+
+def _normalize_standard_feedback(
+    source_path: Path, config: Any, destination: Path
+) -> Path:
+    """Map declared sidecar fields into the canonical feedback document.
+
+    Values are copied only through explicit names in the standard declaration.
+    In particular, a string such as ``"failure"`` is never guessed to mean an
+    observed boolean outcome: standard mode accepts literal JSON ``true``,
+    ``false``, or ``null`` only.
+    """
+
+    try:
+        payload = json.loads(source_path.read_text())
+    except json.JSONDecodeError as error:
+        raise WorkflowArtifactError("standard feedback sidecar is not valid JSON") from error
+    raw_episodes = payload.get("episodes") if isinstance(payload, dict) else None
+    if not isinstance(raw_episodes, list) or not raw_episodes:
+        raise WorkflowArtifactError("standard feedback sidecar needs a nonempty episodes list")
+    mapping = config.feedback
+    episodes: list[dict[str, Any]] = []
+    for raw in raw_episodes:
+        if not isinstance(raw, dict):
+            raise WorkflowArtifactError("standard feedback episode must be an object")
+        try:
+            episode_index = raw[mapping.episode_index_field]
+            split = raw[mapping.split_field]
+            group = raw[mapping.group_field]
+            success = raw[mapping.outcome_field]
+            collection_kind = raw[mapping.collection_kind_field]
+        except KeyError as error:
+            raise WorkflowArtifactError(
+                f"standard feedback lacks declared field {error.args[0]!r}"
+            ) from error
+        if type(episode_index) is not int or episode_index < 0:
+            raise WorkflowArtifactError("standard feedback episode index must be a nonnegative integer")
+        if type(success) not in {bool, type(None)}:
+            raise WorkflowArtifactError(
+                "standard feedback outcome must be literal JSON true, false, or null"
+            )
+        if not isinstance(split, str) or not isinstance(group, str) or not group:
+            raise WorkflowArtifactError("standard feedback split/group fields are invalid")
+        if not isinstance(collection_kind, str):
+            raise WorkflowArtifactError("standard feedback collection kind is invalid")
+        record: dict[str, Any] = {
+            "episode_index": episode_index,
+            "split": split,
+            "success": success,
+            "group": group,
+            "collection_kind": collection_kind,
+            "label_source": mapping.label_protocol,
+        }
+        if mapping.tags_field:
+            tags = raw.get(mapping.tags_field, [])
+            if not isinstance(tags, list) or any(
+                not isinstance(tag, str) or not tag for tag in tags
+            ):
+                raise WorkflowArtifactError("standard feedback tags must be a string list")
+            record["tags"] = tags
+        if mapping.progress_field:
+            progress = raw.get(mapping.progress_field)
+            if not isinstance(progress, list):
+                raise WorkflowArtifactError("standard feedback progress must be a list")
+            record["progress"] = progress
+            record["progress_source"] = mapping.progress_source
+        episodes.append(record)
+    document: dict[str, Any] = {
+        "schema_version": "npa.groot-feedback/v2",
+        "label_protocol": mapping.label_protocol,
+        "label_provenance": config.dataset.label_provenance,
+        "privacy_classification": config.dataset.privacy_classification,
+        "episodes": episodes,
+    }
+    if mapping.progress_contract:
+        document["progress_contract"] = mapping.progress_contract
+    destination.write_text(canonical_json(document))
+    return destination
+
+
+def _prepare_standard_inputs(
+    args: argparse.Namespace, store: S3Store, stage: Path
+) -> dict[str, Any]:
+    """Adapt a declared LeRobot v2 tree without loading operator Python code."""
+
+    from npa.workbench.groot.custom_inputs import verify_minmax_roundtrip
+    from npa.workbench.groot.offline_feedback import (
+        dataset_digest,
+        file_digest,
+        prepare_feedback,
+    )
+
+    config = _option(args, "_standard_input_config")
+    if config is None:
+        raise WorkflowArtifactError("standard input config was not resolved")
+    raw = stage / "raw-standard-input"
+    store.get_directory(config.dataset.uri, raw)
+    source_tree = tree_digest(directory_inventory(raw))
+    if source_tree != config.dataset.tree_sha256:
+        raise WorkflowArtifactError("standard dataset tree differs from its declared digest")
+    if not (raw / "meta" / "info.json").is_file() or not (
+        raw / "meta" / "episodes.jsonl"
+    ).is_file():
+        raise WorkflowArtifactError("standard input must be a complete LeRobot v2 tree")
+    adapter_dataset = stage / "adapter-dataset"
+    shutil.copytree(raw, adapter_dataset, copy_function=os.link)
+    modality = {
+        "state": {
+            "robot": {
+                "start": 0,
+                "end": config.mapping.state_dimension,
+                "dtype": "float32",
+                "original_key": config.mapping.state_key,
+            }
+        },
+        "action": {
+            "robot": {
+                "start": 0,
+                "end": config.mapping.action_dimension,
+                "dtype": "float32",
+                "original_key": config.mapping.action_key,
+            }
+        },
+        "video": {"wrist": {"original_key": config.mapping.camera_key}},
+        "annotation": {
+            "human.task_description": {"original_key": config.mapping.instruction_key}
+        },
+    }
+    (adapter_dataset / "meta" / "modality.json").write_text(canonical_json(modality))
+    source_feedback_path = stage / "source-feedback.json"
+    store.get_file(config.feedback.uri, source_feedback_path)
+    source_feedback_sha256 = sha256_file(source_feedback_path)
+    if source_feedback_sha256 != config.feedback.sha256:
+        raise WorkflowArtifactError("standard feedback differs from its declared digest")
+    feedback_path = _normalize_standard_feedback(
+        source_feedback_path, config, stage / "feedback.json"
+    )
+    feedback, feedback_document = _load_feedback_records(
+        feedback_path, require_document=True
+    )
+    if feedback_document is None:
+        raise WorkflowArtifactError("standard feedback needs a structured document")
+    episodes = _episode_records(adapter_dataset)
+    _validate_custom_native_layout(adapter_dataset, modality, episodes)
+    train_indices = {
+        int(record["episode_index"])
+        for record in feedback
+        if isinstance(record, dict) and record.get("split") == "train"
+    }
+    eval_indices = {
+        int(record["episode_index"])
+        for record in feedback
+        if isinstance(record, dict) and record.get("split") == "eval"
+    }
+    identifiers = {int(record["episode_index"]) for record in episodes}
+    if not train_indices or not eval_indices or train_indices & eval_indices:
+        raise WorkflowArtifactError("standard feedback has no complete train/eval partition")
+    if train_indices | eval_indices != identifiers:
+        raise WorkflowArtifactError("standard feedback does not cover prepared episodes")
+    if (
+        len(train_indices) != args.train_episode_count
+        or len(eval_indices) != args.eval_episode_count
+    ):
+        raise WorkflowArtifactError("standard feedback split differs from its declaration")
+    derivative = stage / "h264-dataset"
+    conversion = _transcode_h264(
+        adapter_dataset, derivative, args.codec_workers, args.derivative_codec
+    )
+    stats = _statistics_from_train_parquet(derivative, train_indices)
+    stats_path = derivative / "meta" / "stats.json"
+    stats_path.write_text(canonical_json(stats))
+    action_roundtrip = _custom_action_roundtrip_evidence(
+        derivative,
+        episodes,
+        train_indices,
+        ("action.robot",),
+        args.action_horizon,
+        stats,
+        verify_minmax_roundtrip,
+        modality["action"],
+    )
+    manifest_path = stage / "feedback-manifest.json"
+    manifest = prepare_feedback(
+        derivative,
+        feedback_path,
+        manifest_path,
+        action_horizon=args.action_horizon,
+        mode=args.feedback_mode,
+        temperature=args.feedback_temperature,
+    )
+    gallery_root = stage / "recorded-gallery-reference"
+    gallery = _standard_gallery_reference(adapter_dataset, config, feedback, gallery_root)
+    label_counts = {
+        "success": sum(record.get("success") is True for record in feedback),
+        "failure": sum(record.get("success") is False for record in feedback),
+        "unknown": sum(record.get("success") is None for record in feedback),
+        "operator_recovery": sum(
+            record.get("collection_kind") == "operator_recovery" for record in feedback
+        ),
+    }
+    train_frames = sum(
+        int(record["length"]) for record in episodes if int(record["episode_index"]) in train_indices
+    )
+    eval_frames = sum(
+        int(record["length"]) for record in episodes if int(record["episode_index"]) in eval_indices
+    )
+    action_contract = {
+        "schema_version": "npa.groot-action-contract/v1",
+        "kind": config.action.kind,
+        "target_keys": ["action.robot"],
+        "frame": config.action.frame,
+        "translation_unit": config.action.translation_unit,
+        "rotation_representation": config.action.rotation_representation,
+        "rotation_unit": config.action.rotation_unit,
+        "gripper_fields": config.action.gripper_fields,
+        "transform_identity": config.action.transform_identity,
+    }
+    source = {
+        "source_kind": config.dataset.source_kind,
+        "source_identifier": config.dataset.source_identifier,
+        "source_revision": config.dataset.source_revision,
+        "source_tree_sha256": config.dataset.tree_sha256,
+        "license": config.dataset.license,
+        "privacy_classification": config.dataset.privacy_classification,
+        "redistributable_media": config.dataset.redistributable_media,
+        "label_provenance": config.dataset.label_provenance,
+        "repository": config.dataset.source_identifier,
+        "revision": config.dataset.source_revision,
+    }
+    provenance = {
+        "schema_version": SCHEMA_VERSION,
+        "kind": "standard-lerobot-prepare",
+        "standard_input_config_sha256": args._standard_input_config_sha256,
+        "source": source,
+        "action_contract": action_contract,
+        "dataset": {
+            "episodes": len(episodes),
+            "train_episodes": len(train_indices),
+            "eval_episodes": len(eval_indices),
+            "train_frames": train_frames,
+            "eval_frames": eval_frames,
+            "statistics_scope": "training split only",
+            "statistics_sha256": sha256_file(stats_path),
+            "modality_sha256": sha256_file(derivative / "meta" / "modality.json"),
+            "derivative_sha256": dataset_digest(derivative),
+            "action_roundtrip": action_roundtrip,
+        },
+        "feedback": {
+            "mode": args.feedback_mode,
+            "origin": "declared-standard-feedback-sidecar",
+            "source_feedback_sha256": source_feedback_sha256,
+            "feedback_sha256": file_digest(feedback_path),
+            "manifest_sha256": file_digest(manifest_path),
+            "label_counts": label_counts,
+            "feedback_document": feedback_document,
+        },
+        "recorded_gallery_reference": {
+            **gallery,
+            "tree_sha256": tree_digest(directory_inventory(gallery_root)),
+        },
+        "video_derivative": conversion,
+    }
+    dataset_inventory = store.put_directory(derivative, args.prepared_dataset_uri)
+    output_records = {
+        "prepared_dataset": dataset_inventory,
+        "feedback": store.put_file(feedback_path, args.feedback_output_uri),
+        "manifest": store.put_file(manifest_path, args.manifest_uri),
+        "recorded_gallery_reference": store.put_directory(gallery_root, args.gallery_reference_uri),
+        "provenance": store.put_json(provenance, args.prepare_receipt_uri),
+    }
+    if output_records["recorded_gallery_reference"]["tree_sha256"] != provenance[
+        "recorded_gallery_reference"
+    ]["tree_sha256"]:
+        raise WorkflowArtifactError("published standard gallery differs from prepared gallery")
+    store.put_json(
+        {
+            "schema_version": SCHEMA_VERSION,
+            "kind": "prepare-commit",
+            "manifest_sha256": output_records["manifest"]["sha256"],
+            "dataset_tree_sha256": dataset_inventory["tree_sha256"],
+            "outputs": output_records,
+        },
+        args.prepare_commit_uri,
+    )
+    return {
+        "status": "prepared",
+        "standard_input_config_sha256": args._standard_input_config_sha256,
+        "manifest_sha256": output_records["manifest"]["sha256"],
+        "dataset_tree_sha256": dataset_inventory["tree_sha256"],
+        "gallery_tree_sha256": output_records["recorded_gallery_reference"]["tree_sha256"],
+        "train_frames": train_frames,
+        "eval_frames": eval_frames,
+        "feedback_label_counts": label_counts,
+        "manifest_schema": manifest.schema_version,
+    }
+
+
+def _prepare_reference_inputs(
+    args: argparse.Namespace, store: S3Store, stage: Path
+) -> dict[str, Any]:
+    """Prepare the shipped public profile without a private extension archive.
+
+    The reference builder owns its public source selection, source digests,
+    feedback document, action contract, and recovery gallery.  It is therefore
+    intentionally separate from the explicit trusted-code boundary used for
+    arbitrary custom adapters.
+    """
+
+    from npa.workbench.groot.offline_feedback import (
+        dataset_digest,
+        file_digest,
+        prepare_feedback,
+    )
+    from npa.workbench.groot.custom_inputs import verify_minmax_roundtrip
+    from npa.workbench.groot.reference_inputs import REFERENCE_PROFILE, prepare_reference
+
+    reference = prepare_reference(stage / "public-reference")
+    derivative = stage / "h264-dataset"
+    conversion = _transcode_h264(
+        reference.dataset_root, derivative, args.codec_workers, args.derivative_codec
+    )
+    modality = derivative / "meta" / "modality.json"
+    modality_payload = json.loads(modality.read_text())
+    episodes = _episode_records(derivative)
+    _validate_custom_native_layout(derivative, modality_payload, episodes)
+    feedback_records, feedback_document = _load_feedback_records(
+        reference.feedback_path, require_document=True
+    )
+    if feedback_document is None:
+        raise WorkflowArtifactError("shipped reference feedback provenance is absent")
+    train_indices = {
+        int(record["episode_index"])
+        for record in feedback_records
+        if isinstance(record, dict) and record.get("split") == "train"
+    }
+    eval_indices = {
+        int(record["episode_index"])
+        for record in feedback_records
+        if isinstance(record, dict) and record.get("split") == "eval"
+    }
+    identifiers = {int(record["episode_index"]) for record in episodes}
+    if not train_indices or not eval_indices or train_indices & eval_indices:
+        raise WorkflowArtifactError("reference feedback has no complete train/eval partition")
+    if train_indices | eval_indices != identifiers:
+        raise WorkflowArtifactError("reference feedback does not cover prepared episodes")
+    if (
+        len(train_indices) != args.train_episode_count
+        or len(eval_indices) != args.eval_episode_count
+    ):
+        raise WorkflowArtifactError(
+            "reference feedback split differs from configured train/eval episode counts"
+        )
+    stats = _statistics_from_train_parquet(derivative, train_indices)
+    stats_path = derivative / "meta" / "stats.json"
+    stats_path.write_text(canonical_json(stats))
+    action_keys = _action_keys(args.action_target_keys)
+    declared_actions = tuple(f"action.{name}" for name in modality_payload["action"])
+    if action_keys != tuple(reference.action_contract["target_keys"]) or action_keys != declared_actions:
+        raise WorkflowArtifactError(
+            "reference action keys differ from its checked-in action contract"
+        )
+    action_roundtrip = _custom_action_roundtrip_evidence(
+        derivative,
+        episodes,
+        train_indices,
+        action_keys,
+        args.action_horizon,
+        stats,
+        verify_minmax_roundtrip,
+        modality_payload["action"],
+    )
+    manifest_path = stage / "feedback-manifest.json"
+    manifest = prepare_feedback(
+        derivative,
+        reference.feedback_path,
+        manifest_path,
+        action_horizon=args.action_horizon,
+        mode=args.feedback_mode,
+        temperature=args.feedback_temperature,
+    )
+    gallery = _validate_gallery_reference(reference.gallery_root)
+    label_counts = {
+        "success": sum(record.get("success") is True for record in feedback_records),
+        "failure": sum(record.get("success") is False for record in feedback_records),
+        "unknown": sum(record.get("success") is None for record in feedback_records),
+        "operator_recovery": 1,
+    }
+    train_frames = sum(
+        int(record["length"])
+        for record in episodes
+        if int(record["episode_index"]) in train_indices
+    )
+    eval_frames = sum(
+        int(record["length"])
+        for record in episodes
+        if int(record["episode_index"]) in eval_indices
+    )
+    provenance = {
+        "schema_version": SCHEMA_VERSION,
+        "kind": "reference-lerobot-prepare",
+        "reference_profile": REFERENCE_PROFILE,
+        "source": reference.provenance,
+        "action_contract": reference.action_contract,
+        "dataset": {
+            "episodes": len(episodes),
+            "train_episodes": len(train_indices),
+            "eval_episodes": len(eval_indices),
+            "train_frames": train_frames,
+            "eval_frames": eval_frames,
+            "statistics_scope": "training split only",
+            "statistics_sha256": sha256_file(stats_path),
+            "modality_sha256": sha256_file(modality),
+            "derivative_sha256": dataset_digest(derivative),
+            "action_roundtrip": action_roundtrip,
+        },
+        "feedback": {
+            "mode": args.feedback_mode,
+            "origin": "checked-in-public-reference-builder",
+            "feedback_sha256": file_digest(reference.feedback_path),
+            "manifest_sha256": file_digest(manifest_path),
+            "label_counts": label_counts,
+            "feedback_document": feedback_document,
+        },
+        "recorded_gallery_reference": gallery,
+        "video_derivative": conversion,
+    }
+    dataset_inventory = store.put_directory(derivative, args.prepared_dataset_uri)
+    output_records = {
+        "prepared_dataset": dataset_inventory,
+        "feedback": store.put_file(reference.feedback_path, args.feedback_output_uri),
+        "manifest": store.put_file(manifest_path, args.manifest_uri),
+        "recorded_gallery_reference": store.put_directory(
+            reference.gallery_root, args.gallery_reference_uri
+        ),
+        "provenance": store.put_json(provenance, args.prepare_receipt_uri),
+    }
+    store.put_json(
+        {
+            "schema_version": SCHEMA_VERSION,
+            "kind": "prepare-commit",
+            "manifest_sha256": output_records["manifest"]["sha256"],
+            "dataset_tree_sha256": dataset_inventory["tree_sha256"],
+            "outputs": output_records,
+        },
+        args.prepare_commit_uri,
+    )
+    return {
+        "status": "prepared",
+        "reference_profile": REFERENCE_PROFILE,
+        "manifest_sha256": output_records["manifest"]["sha256"],
+        "dataset_tree_sha256": dataset_inventory["tree_sha256"],
+        "gallery_tree_sha256": output_records["recorded_gallery_reference"]["tree_sha256"],
+        "train_frames": train_frames,
+        "eval_frames": eval_frames,
+        "feedback_label_counts": label_counts,
+        "manifest_schema": manifest.schema_version,
+    }
+
+
 def _install_external_runtime_code(
     args: argparse.Namespace, store: S3Store, stage: Path
 ) -> dict[str, Any] | None:
@@ -1489,10 +2088,100 @@ def _prepare_commit_outputs(
     return {name: outputs[name] for name in required}
 
 
+def _reuse_reference_prepared_inputs(
+    args: argparse.Namespace, store: S3Store, stage: Path
+) -> dict[str, Any] | None:
+    """Reuse only a complete, profile-matching reference preparation commit."""
+
+    from npa.workbench.groot.reference_inputs import REFERENCE_PROFILE
+
+    if not store.exists(args.prepare_commit_uri):
+        return None
+    commit = store.get_json(args.prepare_commit_uri)
+    outputs = _prepare_commit_outputs(commit)
+    _verify_directory(
+        store,
+        args.prepared_dataset_uri,
+        str(outputs["prepared_dataset"].get("tree_sha256", "")),
+        stage / "reused-reference-dataset",
+    )
+    _verify_object(
+        store,
+        args.feedback_output_uri,
+        str(outputs["feedback"].get("sha256", "")),
+        stage / "reused-reference-feedback.json",
+    )
+    _verify_object(
+        store,
+        args.manifest_uri,
+        str(outputs["manifest"].get("sha256", "")),
+        stage / "reused-reference-manifest.json",
+    )
+    _verify_object(
+        store,
+        args.prepare_receipt_uri,
+        str(outputs["provenance"].get("sha256", "")),
+        stage / "reused-reference-provenance.json",
+    )
+    provenance = json.loads((stage / "reused-reference-provenance.json").read_text())
+    manifest = json.loads((stage / "reused-reference-manifest.json").read_text())
+    if (
+        provenance.get("kind") != "reference-lerobot-prepare"
+        or provenance.get("reference_profile") != REFERENCE_PROFILE
+        or provenance.get("feedback", {}).get("mode") != args.feedback_mode
+        or manifest.get("mode") != args.feedback_mode
+        or manifest.get("action_horizon") != args.action_horizon
+    ):
+        raise WorkflowArtifactError(
+            "existing prepared input is not a matching checked-in reference profile"
+        )
+    gallery = commit.get("outputs", {}).get("recorded_gallery_reference")
+    if not isinstance(gallery, dict):
+        raise WorkflowArtifactError("reference prepare commit lacks recovery gallery inventory")
+    _verify_directory(
+        store,
+        args.gallery_reference_uri,
+        str(gallery.get("tree_sha256", "")),
+        stage / "reused-reference-gallery",
+    )
+    return {
+        "status": "prepared",
+        "reference_profile": REFERENCE_PROFILE,
+        "reused_prepared_inputs": True,
+        "manifest_sha256": str(outputs["manifest"].get("sha256", "")),
+        "dataset_tree_sha256": str(outputs["prepared_dataset"].get("tree_sha256", "")),
+    }
+
+
 def _validate_reused_prepare_inputs(
     args: argparse.Namespace, provenance: Mapping[str, Any], manifest: Mapping[str, Any]
 ) -> None:
     """Reject a complete prepare artifact that does not match this invocation."""
+
+    if _option(args, "input_mode", LEGACY_INPUT_MODE) == STANDARD_INPUT_MODE:
+        source = provenance.get("source")
+        feedback = provenance.get("feedback")
+        if (
+            provenance.get("kind") != "standard-lerobot-prepare"
+            or provenance.get("standard_input_config_sha256")
+            != _option(args, "_standard_input_config_sha256")
+            or not isinstance(source, dict)
+            or not isinstance(feedback, dict)
+        ):
+            raise WorkflowArtifactError(
+                "existing prepared input is not bound to this standard input declaration"
+            )
+        if (
+            source.get("source_identifier") != args.dataset_repository
+            or source.get("source_revision") != args.dataset_revision
+            or feedback.get("mode") != args.feedback_mode
+            or manifest.get("mode") != args.feedback_mode
+            or manifest.get("action_horizon") != args.action_horizon
+        ):
+            raise WorkflowArtifactError(
+                "existing standard prepared input differs from the current declaration"
+            )
+        return
 
     source = provenance.get("source")
     dataset = provenance.get("dataset")
@@ -1647,11 +2336,56 @@ def _has_external_prepared_prefix(args: argparse.Namespace) -> bool:
 
 
 def _prepare(args: argparse.Namespace) -> dict[str, Any]:
-    """Prepare either legacy public or explicit custom adapter inputs."""
+    """Prepare the shipped reference, an explicit custom adapter, or legacy input."""
 
     stage = _new_directory(Path(args.workspace).resolve() / "prepare")
     store = S3Store()
-    if _custom_adapter_requested(args):
+    input_mode = _option(args, "input_mode", LEGACY_INPUT_MODE)
+    if input_mode == REFERENCE_INPUT_MODE:
+        if _custom_adapter_requested(args):
+            raise WorkflowArtifactError(
+                "reference input mode cannot combine a checked-in profile with external code"
+            )
+        reused = _reuse_reference_prepared_inputs(args, store, stage)
+        if reused is not None:
+            return reused
+        if args.prepared_input_mode == "require-existing":
+            raise WorkflowArtifactError("required reference prepare commit is missing")
+        if _has_external_prepared_prefix(args):
+            raise WorkflowArtifactError(
+                "reference prepared inputs outside this run must be explicitly read back by a matching run"
+            )
+        return _prepare_reference_inputs(args, store, stage)
+    if input_mode == STANDARD_INPUT_MODE:
+        if _custom_adapter_requested(args):
+            raise WorkflowArtifactError(
+                "standard input mode cannot combine a declarative mapping with external code"
+            )
+        reused = _reuse_prepared_inputs(args, store, stage)
+        if reused is not None:
+            commit = store.get_json(args.prepare_commit_uri)
+            gallery = commit.get("outputs", {}).get("recorded_gallery_reference")
+            if not isinstance(gallery, dict):
+                raise WorkflowArtifactError(
+                    "standard prepare commit lacks recorded-gallery inventory"
+                )
+            _verify_directory(
+                store,
+                args.gallery_reference_uri,
+                str(gallery.get("tree_sha256", "")),
+                stage / "reused-standard-gallery",
+            )
+            return reused
+        if args.prepared_input_mode == "require-existing":
+            raise WorkflowArtifactError("required standard prepare commit is missing")
+        if _has_external_prepared_prefix(args):
+            raise WorkflowArtifactError(
+                "standard prepared inputs outside this run must be read back by a matching run"
+            )
+        return _prepare_standard_inputs(args, store, stage)
+    if input_mode == CUSTOM_INPUT_MODE or (
+        input_mode == LEGACY_INPUT_MODE and _custom_adapter_requested(args)
+    ):
         if args.prepared_input_mode == "require-existing" or store.exists(
             args.prepare_commit_uri
         ):
@@ -1663,6 +2397,8 @@ def _prepare(args: argparse.Namespace) -> dict[str, Any]:
                 "custom prepared inputs outside this run must be explicitly read back by a matching run"
             )
         return _prepare_custom_inputs(args, store, stage)
+    if input_mode != LEGACY_INPUT_MODE:
+        raise WorkflowArtifactError(f"unsupported input mode: {input_mode}")
     reused = _reuse_prepared_inputs(args, store, stage)
     if reused is not None:
         return reused
@@ -3603,6 +4339,16 @@ def _verify(args: argparse.Namespace) -> dict[str, Any]:
 
 def _add_common_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--workspace", type=Path, required=True)
+    parser.add_argument(
+        "--input-mode",
+        choices=(REFERENCE_INPUT_MODE, STANDARD_INPUT_MODE, CUSTOM_INPUT_MODE, LEGACY_INPUT_MODE),
+        default=LEGACY_INPUT_MODE,
+        help=(
+            "Input contract: shipped public reference, explicit trusted custom "
+            "adapter, declared standard LeRobot v2 tree, or retained legacy public recipe."
+        ),
+    )
+    parser.add_argument("--standard-input-config-uri", default="")
     parser.add_argument("--dataset-repository", default=DATASET_REPOSITORY_DEFAULT)
     parser.add_argument("--dataset-revision", default=DATASET_REVISION_DEFAULT)
     parser.add_argument("--dataset-archive-uri", default="")
@@ -3721,6 +4467,38 @@ def _validate_arguments(args: argparse.Namespace) -> None:
             "train/evaluate/verify require control_uri for matched ordinary BC"
         )
     custom = _custom_adapter_requested(args)
+    input_mode = _option(args, "input_mode", LEGACY_INPUT_MODE)
+    if input_mode == STANDARD_INPUT_MODE and not args.standard_input_config_uri:
+        raise ValueError("standard input mode requires standard_input_config_uri")
+    if input_mode == CUSTOM_INPUT_MODE and not custom:
+        raise ValueError("custom input mode requires the complete external-code contract")
+    if input_mode not in {CUSTOM_INPUT_MODE, LEGACY_INPUT_MODE} and custom:
+        raise ValueError("external-code fields require --input-mode custom")
+    if input_mode == REFERENCE_INPUT_MODE:
+        from npa.workbench.groot.reference_inputs import (
+            REFERENCE_PROFILE,
+            SingleWristAlohaConfig,
+        )
+
+        expected_profile = (
+            f"{SingleWristAlohaConfig.__module__}:{SingleWristAlohaConfig.__name__}"
+        )
+        if args.data_config != expected_profile:
+            raise ValueError(
+                f"reference input mode requires {expected_profile}, not {args.data_config}"
+            )
+        if args.feedback_mode != "hybrid":
+            raise ValueError("reference input mode requires hybrid feedback weighting")
+        if args.feedback_uri:
+            raise ValueError("reference input mode owns its source-bound feedback document")
+        if not args.gallery_reference_uri:
+            raise ValueError("reference input mode requires gallery_reference_uri")
+        if not args.dataset_repository or not args.dataset_revision:
+            raise ValueError("reference input mode requires immutable source identity")
+        if args.dataset_repository != "sii-rhos-ai/vifailback-dataset-lerobot":
+            raise ValueError(
+                f"reference input mode requires the {REFERENCE_PROFILE} source repository"
+            )
     if custom and args.feedback_uri:
         raise ValueError(
             "custom feedback must be produced by the declared feedback callable, not feedback_uri"
@@ -3732,6 +4510,8 @@ def _validate_arguments(args: argparse.Namespace) -> None:
             "custom adapter requires explicit dataset_repository and dataset_revision"
         )
     if (
+        input_mode not in {REFERENCE_INPUT_MODE, STANDARD_INPUT_MODE}
+        and
         not custom
         and args.feedback_mode in {"outcome", "progress", "hybrid"}
         and not args.feedback_uri
@@ -3771,6 +4551,16 @@ def _validate_arguments(args: argparse.Namespace) -> None:
             raise ValueError(
                 "custom data_config must be module:Class from the declared external_code_package"
             )
+    if input_mode == STANDARD_INPUT_MODE and hasattr(args, "_standard_input_config"):
+        from npa.workbench.groot.standard_inputs import StandardSingleWristConfig
+
+        expected_profile = (
+            f"{StandardSingleWristConfig.__module__}:{StandardSingleWristConfig.__name__}"
+        )
+        if args.data_config != expected_profile:
+            raise ValueError("standard input mode did not resolve its shipped profile")
+        if args.action_target_keys != "action.robot" or args.evidence_video_key != "video.wrist":
+            raise ValueError("standard input mode did not resolve its declared modality")
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -3782,8 +4572,12 @@ def main(argv: list[str] | None = None) -> None:
     try:
         _validate_arguments(args)
         if not args.native:
+            _resolve_standard_runtime_args(args)
+            _validate_arguments(args)
             _run_native(raw_argv, args)
             return
+        _resolve_standard_runtime_args(args)
+        _validate_arguments(args)
         operation = {
             "prepare": _prepare,
             "train": _train,

@@ -9,9 +9,71 @@ promotion decision.
 
 The companion [cookbook](../cookbooks/groot-n15-offline-policy-improvement.md)
 defines the method and historic evidence boundary. This guide defines the
-supported generic Workbench path for an operator's own code and data.
+supported generic Workbench path for a checked-in reference, standard input,
+or an operator's own code and data.
 
-## What an operator supplies
+## Turnkey public reference (the default)
+
+The checked-in YAML now defaults to `input_mode: reference`. It fetches a small,
+immutable selection from public ViFailback LeRobot v2.1 at
+`619791b94f61667333fe179d471051e0bca0e06f`, using one right-wrist camera and
+the source's documented per-episode success/failure plus avoidance/correction
+annotations. The runtime, not a task-private archive, writes the provenance,
+action contract, aligned hybrid-feedback document, and H.264 derivative. It
+also fetches one separately pinned CC-BY recovery reference whose outcome is
+explicitly **unknown**; recovery provenance never becomes a success label.
+
+After normal `npa configure` and project selection, the reference submission is
+one generic command (the bucket and project are normal account configuration,
+not hidden task values):
+
+```bash
+npa/.venv/bin/python -m npa workbench workflow submit \
+  workflows/testing/groot-n15-offline-rl.yaml \
+  --project "<configured-project>" --run-id "groot-n15-reference-<unique-id>" \
+  --var bucket="<operator-owned-bucket>" --runtime --output-format json
+```
+
+Before spending GPU time, run the commands below verbatim from the same checkout
+and configured project. They are supported generic operations, not a private
+controller bootstrap:
+
+```bash
+npa/.venv/bin/python -m npa workbench health preflight \
+  --project "<configured-project>" --checks nebius,s3 --json
+npa/.venv/bin/python -m npa workbench health access --capability groot --json
+npa/.venv/bin/python -m npa workbench workflow validate-spec \
+  workflows/testing/groot-n15-offline-rl.yaml --json
+npa/.venv/bin/python -m npa workbench workflow plan-spec \
+  workflows/testing/groot-n15-offline-rl.yaml --run-id groot-n15-reference-plan \
+  --var bucket="<operator-owned-bucket>" --check-render --json
+```
+
+Use a compatible task-owned RTX PRO 6000 context selected through normal
+provisioning and `workflow gpus`; the run itself verifies one visible sm_120 GPU,
+the pinned native dependency closure, decoded recorded video, checkpoint reload,
+and durable artifact readback. It does not claim a hardware rollout or policy
+promotion. The new turnkey receipt and fresh-checkout evidence will be recorded
+here after the current reference run completes; earlier private-extension
+rehearsal rows below are historical only.
+
+For a completed run, use a fresh shell and only the documented generic commands:
+
+```bash
+npa/.venv/bin/python -m npa workbench workflow status "<run-id>" \
+  --project "<configured-project>" --json
+npa/.venv/bin/python -m npa workbench workflow logs "<run-id>" train-native-n15 \
+  --project "<configured-project>" --json
+npa/.venv/bin/python -m npa workbench workflow artifacts "<run-id>" \
+  --project "<configured-project>" --json
+```
+
+`artifacts` intentionally has no SkyPilot `--isolated-config-dir` or
+`--config-path` flags. If a live status route needs isolated state, use only the
+saved submission receipt's documented isolation/config bindings; never recover
+them from a daemon process environment.
+
+## Input contracts
 
 Stage private inputs in an authorized object store before submission. Do not put
 credentials, endpoints, private bucket names, recordings, source archives, or
@@ -36,36 +98,63 @@ The adapter receives only a JSON request with controlled input/output paths and
 must return those exact paths; it cannot redirect output to an arbitrary
 location.
 
-### Reference rehearsal profile
+## Standard LeRobot data without custom code
 
-The independent reference rehearsal uses a separately maintained, task-private
-LeRobot extension archive at an immutable revision. It adapts a public,
-recorded real-robot source into a v2.1 dataset with exactly one wrist camera:
-`observation.images.cam_right_wrist`, emitted by the adapter as `video.wrist`.
-It maps two state and two action fields, retains source timestamps and source
-episode identifiers, and emits upstream per-episode observed
-success/failure annotations. Failed rollouts carry an annotation-derived,
-per-frame corrective phase; its non-monotonic decrease is retained. A separate
-public intervention recording is a gallery-only `operator_recovery` item with
-an **unknown** task outcome and is never mixed into the training or evaluation
-split.
+Use `input_mode=standard` when the source is already a LeRobot v2.0/v2.1 tree
+in an authorized S3 prefix. The only operator declaration is a JSON document;
+it binds the input-tree digest, observed-label sidecar digest, source/provenance,
+one-camera/state/action/instruction mapping, split membership, action semantics,
+evidence selection, and model revisions. The checked-in
+[`groot-n15-standard-input.example.json`](../../../workflows/testing/groot-n15-standard-input.example.json)
+is the exact schema. Copy it to private storage, replace the placeholder values,
+and do not commit the private copy.
 
-This profile is deliberately non-default. Its native N1.5 data configuration
-comes from the external archive and names only `video.wrist`; it does not add a
-front camera. Its recorded action contract is joint-coordinate data. A separate
-Cartesian-relative, millimetre/tool-frame contract fixture verifies raw →
-min/max model coordinates → raw numerical roundtrip and terminal action masks;
-it is a mechanical invariant, not a claim that the reference data have Cartesian
-physical semantics.
+The standard adapter does not execute code from the dataset or declaration. It
+downloads the declared tree and label sidecar, checks both content digests,
+writes `meta/modality.json` for a single logical `video.wrist`, `state.robot`,
+and `action.robot` profile, validates native fields and task indices, freezes
+training-only statistics, verifies raw/model/raw action roundtrip, transcodes a
+separate H.264 derivative, creates the feedback manifest, and derives recorded
+success/failure/recovery gallery examples only from supplied labels. It rejects
+missing labels, group leakage, dimensions, media, units, or digests rather than
+guessing them.
 
-### Public-safe extension shape
+The label sidecar is actual operator feedback, not generated setup boilerplate.
+It must be `npa.groot-feedback/v2` with one record per episode. It is normally
+the only companion object besides the existing LeRobot data tree and the one
+configuration file. A hybrid run needs observed successful and failed training
+episodes and one aligned progress value per recorded frame. Recovery is its own
+collection kind; an unknown task outcome remains unknown.
 
-The independently executed extension is private, but it uses the following
-public-safe, pinned interface shape. This is an interface example, not a
-substitute for staging a real archive: `adapt` must materialize a LeRobot v2
-tree and `extract_feedback` must write the declared feedback document before
-returning paths. An operator replaces the package and immutable archive digest
-without publishing either one.
+For example, after staging a private copy of the JSON declaration, submit the
+same workflow with only the input mode and declaration location changed:
+
+```bash
+npa/.venv/bin/python -m npa workbench workflow submit \
+  workflows/testing/groot-n15-offline-rl.yaml \
+  --project "<configured-project>" --run-id "groot-n15-standard-<unique-id>" \
+  --var bucket="<operator-owned-bucket>" --var input_mode=standard \
+  --var standard_input_config_uri="s3://<operator-inputs>/standard-input.json" \
+  --runtime --output-format json
+```
+
+The config's model pins override the checked-in reference values inside each
+native stage and are included in the prepare receipt. The run never treats a
+free-form dataset field as Python or a physical action contract as optional.
+For multiple cameras, noncontiguous logical fields, conversion from another
+layout, or a custom reward extractor, use the explicit custom-code contract
+below instead.
+
+### Optional trusted custom-code extension
+
+Custom code is not needed for the shipped reference or standard LeRobot v2
+input. When it is genuinely required, provide the existing explicit contract:
+an immutable dataset archive and source provenance/action documents, plus a
+separately pinned Python archive, package, adapter callable, feedback callable,
+and optional JSON configuration. The archive is an operator-authorized trusted
+input; no dataset metadata selects a module or callable. The workflow validates
+the archive digest, installs with no dependency resolution, limits adapter output
+paths, and rejects a mismatch before training.
 
 ```toml
 # pyproject.toml in the trusted external archive
@@ -78,21 +167,13 @@ requires-python = ">=3.10"
 ```python
 # my_lerobot_extension/adapter.py
 def adapt(request: dict) -> dict:
-    # Validate the configured source keys, write only under these request paths,
-    # preserve episode/frame identity and return a native LeRobot v2 tree.
     return {"dataset_root": request["output_dataset_root"],
             "gallery_root": request["output_gallery_root"]}
 
 
 def extract_feedback(request: dict) -> dict:
-    # Write npa.groot-feedback/v2 with labels, groups, kinds and aligned progress.
     return {"feedback_path": request["output_feedback_path"]}
 ```
-
-The actual rehearsal installed a separately archived extension through the
-workflow's digest-checked runtime install path; it was not an in-repository
-helper call. Unsupported return paths, missing callables, digest mismatches, or
-untrusted executable metadata fail before training.
 
 ## Feedback and split contract
 
@@ -110,8 +191,8 @@ Use these meanings literally:
 - `operator_recovery` is collection provenance, not a failure synonym. A
   successful recovery remains useful data; unknown stays unknown.
 - `progress_source: measured` is a calibrated recorded signal. `annotation_derived`
-  is an explicitly documented annotation transform. `arm` additionally requires
-  a reward-checkpoint digest; the workflow does not train or claim ARM.
+  is an explicitly documented annotation transform. The workflow does not train
+  or invoke ARM in this operator path.
 
 The `hybrid` feedback mode requires both observed training successes and failures
 and combines those labels with aligned progress while retaining regressions. It
@@ -120,95 +201,22 @@ split, base checkpoint, seed, schedule, and batch size are the same and only
 training weights become one. It is not a proof that downweighting failures
 learns explicit avoidance, improves unseen states, or improves robot success.
 
-## Write the private override
-
-Keep this file outside Git (for example, an operator's private run directory).
-The following is the complete schema for the reference profile; replace every
-`<...>` value with one worker-readable, immutable input. `DATASET_ID` and
-`DATASET_REVISION` must exactly equal `source_identifier` and `source_revision`
-in the provenance JSON. The actual independent rehearsal records those values
-and their hashes in a private receipt rather than publishing its storage paths.
-
-```bash
-export SPEC=workflows/testing/groot-n15-offline-rl.yaml
-export RUN_ID="<new-immutable-run-id>"
-export PROJECT_ALIAS="<configured-task-project>"
-export K8S_CONTEXT="<exact-task-owned-context>"
-export BUCKET="<operator-owned-bucket>"
-export WORKFLOW_ROOT="s3://${BUCKET}/workflow-ledger/${RUN_ID}"
-export OUTPUT_PREFIX="groot-n15-offline-rl/${RUN_ID}"
-export ISOLATED_CONFIG_DIR="<private-task-local-skypilot-state>"
-# A SkyPilot-only YAML, not ${NPA_CONFIG_DIR}/config.yaml. It contains the
-# selected context/placement policy but no credentials or API endpoint.
-export SKYPILOT_CONFIG="<private-skypilot-global-config.yaml>"
-export DATASET_ID="<stable-source-identifier>"
-export DATASET_REVISION="<immutable-source-revision>"
-export DATASET_ARCHIVE_URI="s3://${BUCKET}/inputs/<dataset-sha256>.tar.gz"
-export PROVENANCE_URI="s3://${BUCKET}/inputs/<provenance-sha256>.json"
-export ACTION_CONTRACT_URI="s3://${BUCKET}/inputs/<action-contract-sha256>.json"
-export EXTERNAL_CODE_URI="s3://${BUCKET}/inputs/<extension-sha256>.tar.gz"
-export EXTERNAL_CODE_SHA256="<64-lowercase-hex>"
-export ADAPTER_CONFIG_URI="s3://${BUCKET}/inputs/<adapter-config-sha256>.json"
-export DATA_CONFIG="<external_package.config:SingleCameraProfile>"
-export EVIDENCE_EPISODE="<held-out-episode-with-recorded-wrist-video>"
-```
-
-The reference profile then supplies these exact configuration overrides:
-
-```bash
-CUSTOM_VARS=(
-  "bucket=${BUCKET}" "prefix=${OUTPUT_PREFIX}" "prepared_prefix=${OUTPUT_PREFIX}"
-  "dataset_repository=${DATASET_ID}" "dataset_revision=${DATASET_REVISION}"
-  "dataset_archive_uri=${DATASET_ARCHIVE_URI}"
-  "input_provenance_uri=${PROVENANCE_URI}"
-  "action_contract_uri=${ACTION_CONTRACT_URI}"
-  "external_code_uri=${EXTERNAL_CODE_URI}"
-  "external_code_sha256=${EXTERNAL_CODE_SHA256}"
-  "external_code_package=<external_package>"
-  "adapter_callable=<external_package.adapter:adapt>"
-  "feedback_callable=<external_package.adapter:extract_feedback>"
-  "adapter_config_uri=${ADAPTER_CONFIG_URI}"
-  "feedback_mode=hybrid" "grouping=collection" "split_strategy=adapter"
-  "train_episode_count=<actual-train-groups>" "eval_episode_count=<actual-eval-groups>"
-  "data_config=${DATA_CONFIG}" "embodiment_tag=<native-embodiment>"
-  "action_horizon=16" "video_backend=decord" "derivative_codec=h264"
-  "complete_train_passes=1" "batch_size=4" "learning_rate=0.0001"
-  "training_seed=42" "inference_seed=1701"
-  "evidence_episode_index=${EVIDENCE_EPISODE}" "evidence_start_frame=0"
-  "evidence_frame_count=120" "evidence_video_fps=25"
-  "evidence_video_key=video.wrist" "accelerator=RTXPRO6000:1"
-  "action_target_keys=<action.key.one,action.key.two>"
-)
-VAR_ARGS=()
-for value in "${CUSTOM_VARS[@]}"; do
-  VAR_ARGS+=(--var "$value")
-done
-```
-
-These are shell values, not a shell job. Expand them into the generic CLI; do
-not place S3 credentials in `CUSTOM_VARS`. The native adapter supports exactly
-one visible GPU. It fails rather than silently using DataParallel or DDP.
-
-`--config-path` accepts a SkyPilot global configuration only. Keep this file
-separate from the NPA settings file selected through `NPA_CONFIG_DIR`: passing
-an NPA file (for example one with `default_project`, `projects`, or `skypilot`
-at the top level) is rejected before an API process or managed job is created.
-The SkyPilot file names the selected Kubernetes context and placement policy;
-the task-local API injects its own loopback endpoint.
-
 ## Validate, plan, preflight, and submit
 
-Start with a clean supported checkout and its editable `npa/.venv`. The generic
-commands below are the same for private data, an authenticated public archive,
-or the independent rehearsal.
+Start with a clean supported checkout and its own `npa/.venv`. The generic
+commands below are the same for the reference, standard, and trusted-custom
+modes; only normal project configuration and the selected input declaration
+vary.
 
 ```bash
-npa/.venv/bin/npa workbench health preflight --project "${PROJECT_ALIAS}" \
+npa/.venv/bin/python -m npa workbench health preflight --project "<configured-project>" \
   --checks s3,nebius --json
-npa/.venv/bin/npa workbench health access --capability groot --json
-npa/.venv/bin/npa workbench workflow validate-spec "${SPEC}" --json
-npa/.venv/bin/npa workbench workflow plan-spec "${SPEC}" --run-id "${RUN_ID}" \
-  "${VAR_ARGS[@]}" --check-render --json
+npa/.venv/bin/python -m npa workbench health access --capability groot --json
+npa/.venv/bin/python -m npa workbench workflow validate-spec \
+  workflows/testing/groot-n15-offline-rl.yaml --json
+npa/.venv/bin/python -m npa workbench workflow plan-spec \
+  workflows/testing/groot-n15-offline-rl.yaml --run-id groot-n15-plan \
+  --var bucket="<operator-owned-bucket>" --check-render --json
 ```
 
 Provision or select a task-owned compatible one-GPU RTX PRO 6000 cluster using
@@ -218,52 +226,34 @@ only after fresh capacity evidence shows that compatible reserved placement is
 unavailable; image, IAM, source, or application errors are not capacity evidence.
 Persist staged inputs and every checkpoint before a preemptible submission.
 
-With the exact selected Kubernetes context, prove the image can pull before a
-training job is created, then submit the workflow runtime. The named secret
-variables are resolved from the project credential store or environment and are
-not serialized into the YAML, rendered plan, archive, or receipts.
-
-```bash
-npa/.venv/bin/npa workbench workflow preflight-images "${SPEC}" \
-  --project "${PROJECT_ALIAS}" --infra "k8s/${K8S_CONTEXT}" \
-  --config-path "${SKYPILOT_CONFIG}" \
-  "${VAR_ARGS[@]}" --json
-npa/.venv/bin/npa workbench workflow submit "${SPEC}" --runtime \
-  --project "${PROJECT_ALIAS}" --run-id "${RUN_ID}" \
-  --workflow-s3-uri "${WORKFLOW_ROOT}" --infra "k8s/${K8S_CONTEXT}" \
-  --isolated-config-dir "${ISOLATED_CONFIG_DIR}" --config-path "${SKYPILOT_CONFIG}" \
-  "${VAR_ARGS[@]}" \
-  --secret-env AWS_ACCESS_KEY_ID --secret-env AWS_SECRET_ACCESS_KEY \
-  --output-format json
-```
-
+Use the normal project provisioning route to select a task-owned compatible RTX
+PRO 6000, then submit with the one command shown in the default reference
+section. Do not add undocumented controller flags or pass credentials on argv.
 The expected sequence is `prepare-custom-lerobot`, `train-native-n15`,
 `evaluate-recorded-observations`, then `verify-durable-publication`. Preparation
-verifies the external archive, source/provenance binding, native v2 layout,
-single-camera modality, group split, train-only statistics, raw/model/raw action
-roundtrip, feedback alignment, and recorded recovery reference. Training derives
-`ceil(train_frames / batch_size) * complete_train_passes` updates rather than
-using a time cap, saves and reloads both policies, and records GPU/CUDA evidence.
+validates the selected input contract, group split, train-only statistics,
+raw/model/raw action roundtrip, feedback alignment, and recorded gallery.
+Training derives `ceil(train_frames / batch_size) * complete_train_passes`
+updates, saves/reloads both policies, and records GPU/CUDA evidence.
 
 ## Observe and interpret the run
 
 Use only the generic lifecycle commands against the same immutable run identity:
 
 ```bash
-npa/.venv/bin/npa workbench workflow status "${RUN_ID}" --project "${PROJECT_ALIAS}" \
-  --isolated-config-dir "${ISOLATED_CONFIG_DIR}" --config-path "${SKYPILOT_CONFIG}" --json
-npa/.venv/bin/npa workbench workflow logs "${RUN_ID}" train-native-n15 \
-  --project "${PROJECT_ALIAS}" \
+npa/.venv/bin/python -m npa workbench workflow status "<run-id>" \
+  --project "<configured-project>" --json
+npa/.venv/bin/python -m npa workbench workflow logs "<run-id>" train-native-n15 \
+  --project "<configured-project>" \
   --cached
-npa/.venv/bin/npa workbench workflow artifacts "${RUN_ID}" --project "${PROJECT_ALIAS}" \
+npa/.venv/bin/python -m npa workbench workflow artifacts "<run-id>" --project "<configured-project>" \
   --json
 ```
 
-The rehearsed commands resolve the content-bound durable run root from the
-submission receipt. If an operator supplies `--workflow-s3-uri` explicitly,
-use the exact run root or its `npa-workflow` child; a root ending in
-`<RUN_ID>-<content-digest>` is accepted only when its durable manifest names
-the same `RUN_ID`.
+The submission receipt binds the content-addressed durable run root. If a
+supported recovery command needs task-local routing, use only receipt-provided
+bindings from that same submit; do not inspect another process environment or
+guess a controller identity.
 
 The durable provenance, training receipt, evaluation, actions, media validation,
 gallery, and readback receipt bind the source/configuration/checkpoint hashes.
@@ -282,114 +272,39 @@ action targets in the declared coordinates; lower error is not robot success.
 
 ## Recover safely and iterate feedback
 
-For an interruption, first inspect the durable ledger and exact job status. Resume
-only the same `RUN_ID` and `WORKFLOW_ROOT` after its checkpoint/output contract
-is reconciled; never create a second job for the same prefix. The runtime refuses
-incompatible source, output, or checkpoint identities. The default resume is
-deliberately non-relaunching:
+For an interruption, first inspect durable artifacts and exact job status. Resume
+only the same run ID after its checkpoint/output contract is reconciled; never
+create a second job for the same prefix. The runtime refuses incompatible source,
+output, or checkpoint identities.
 
 ```bash
-npa/.venv/bin/npa workbench workflow submit "${SPEC}" --runtime \
-  --resume-run "${RUN_ID}" --project "${PROJECT_ALIAS}" \
-  --workflow-s3-uri "${WORKFLOW_ROOT}" --infra "k8s/${K8S_CONTEXT}" \
-  --isolated-config-dir "${ISOLATED_CONFIG_DIR}" --config-path "${SKYPILOT_CONFIG}" \
-  "${VAR_ARGS[@]}" --output-format json
+npa/.venv/bin/python -m npa workbench workflow submit \
+  workflows/testing/groot-n15-offline-rl.yaml --runtime --resume \
+  --project "<configured-project>" --resume-run "<same-run-id>" \
+  --var bucket="<operator-owned-bucket>" --output-format json
 ```
 
-After a terminal status, the same generic cancellation command is a repeat-safe
-no-op and records the terminal teardown boundary. Pass the same pinned
-`--config-path` used for status so exact job verification cannot silently switch
-controllers:
+For a feedback revision, preserve the first run and create a new source or
+feedback sidecar identity under a new run ID. Keep all held-out collection groups
+isolated, submit the same spec again, and compare candidates through the two
+receipts. Report a regression as a regression. New recovery recordings retain
+their own collection kind and actual outcome; intervention does not imply
+failure.
 
-```bash
-npa/.venv/bin/npa workbench workflow cancel "${RUN_ID}" --project "${PROJECT_ALIAS}" \
-  --isolated-config-dir "${ISOLATED_CONFIG_DIR}" --config-path "${SKYPILOT_CONFIG}" --json
-```
+## Archived v4 rehearsal boundary
 
-It replays verified completed waves and reconciles the exact recorded managed
-job; it does not infer that an unavailable controller means the job is absent.
-Do **not** add `--retry-absent-in-flight` merely because a pod disappeared. That
-explicit recovery is permitted only after the generic status/ledger path proves
-the exact recorded managed-job identity absent *and* proves every unique
-declared output absent or incomplete while preserving any checkpoint fragments.
+An earlier two-iteration rehearsal used independently staged public recordings
+and a task-private external extension. It demonstrated the then-custom adapter
+contract, matched ordinary-BC versus hybrid weighting, held-out recorded-action
+inference, gallery generation, checkpoint reload, durable readback, and an
+honestly reported offline regression. It did not use customer code/data,
+customer hardware, a simulator, or a robot connection.
 
-`npa skypilot cleanup-controller` is normally a shared-controller command. That
-does **not** make every controller shared: an operator using
-`--isolated-config-dir` has a task-bound controller identity. If that exact
-controller is terminally failed, and the prior status evidence proves that no
-managed job is active, the only supported repair is the narrowly scoped form
-below. It verifies the project/context, isolated state, controller annotations,
-terminal failure, and absence of an owner reference before deleting exactly the
-recorded controller pod; it does not discover, bind, or delete another
-controller. Retain the command's JSON receipt with the workflow ledger.
-
-```bash
-npa/.venv/bin/npa skypilot cleanup-controller \
-  --project "${PROJECT_ALIAS}" --context "${K8S_CONTEXT}" \
-  --isolated-config-dir "${ISOLATED_CONFIG_DIR}" \
-  --config-path "${SKYPILOT_CONFIG}" \
-  --recover-failed-controller "${RECORDED_CONTROLLER_NAME}" \
-  --attest-no-active-jobs --yes --json
-```
-
-For a genuinely shared controller, or where the exact identity/terminal state
-cannot be proven, do not run that command: preserve the diagnostic and restore
-the supported observation route instead. After a task-bound controller cleanup,
-use the same `RUN_ID`, `WORKFLOW_ROOT`, immutable inputs, and explicit
-`--retry-absent-in-flight` only if its documented absent-output proof holds.
-
-To rehearse the next feedback iteration, preserve the first archive and output
-prefix. Create a new immutable dataset and/or feedback archive revision, update
-its provenance digest and source revision, choose a new `RUN_ID` and
-`OUTPUT_PREFIX`, and repeat the same commands. Keep the earlier evaluation
-collection groups held out; compare the two candidates through their recorded
-lineage and held-out diagnostics, reporting a regression as a regression. New
-operator recovery recordings may be added with their own collection kind and
-outcome; do not label them as failures merely because intervention occurred.
-
-## Completed independent reference rehearsal
-
-This workflow was exercised twice with independently staged public recorded
-data and a task-private external extension. It was not exercised with customer
-code, customer data, a private robot, a simulator, or a robot connection.
-Private storage locations, live infrastructure identifiers, and raw media stay
-outside this guide.
-
-The first immutable revision (`i1r3`) completed the 1,237-update matched
-ordinary-BC and hybrid-feedback passes, checkpoint reload, held-out inference,
-gallery, MP4/HTML generation, and durable readback. Its feedback manifest SHA-256
-is `28a5cf1714c354c963da246b322cbd161fb9b4cd9aa11cceef45b30c62f28d2f`; the
-held-out candidate action MAE was `0.07843011617660522`, compared with
-`0.08146637678146362` for the matched ordinary-BC control. These are offline
-recorded-action errors, not robot success rates.
-
-The second immutable revision (`i2r1`) changed only the declared feedback
-revision: it retained observed outcomes, frame/action bytes, collection groups,
-and the held-out split while revising the annotation-derived recovery/progress
-mapping. The staged data archive SHA-256 was
-`d867905a8674415f3120dd563d82c501fa6e68a617626e53e5554cb70ca2d82a`; external
-code SHA-256 was `0c197e551f31017d0f7449801bb04e4220d8c8377414ba97624459a16e60a88a`;
-the feedback manifest SHA-256 was
-`8021ee0d304ba4e5a7d76782209712ad643cd239c440c81ff3e608d155688e92`.
-It also completed 1,237 updates, checkpoint reload, all 2,084 held-out frames,
-gallery/media generation, and a 153-artifact durable readback. Candidate MAE
-was `0.07990594953298569`; ordinary-BC MAE was `0.0814637765288353`. The
-weighted candidate remained lower than the matched control by
-`0.0015578269958496094`, but regressed by `0.0014758333563804626` versus the
-first revision's candidate. That regression is retained rather than explained
-away.
-
-The second gallery contains 1,664 held-out failure-labelled observations and
-420 success-labelled observations. Its separate recovery reference has
-`collection_kind: operator_recovery` and `outcome: unknown`; it is displayed,
-not silently converted into a failure or a training example. The failure,
-success, and recovery MP4s decoded successfully; their selected gallery frame
-counts were respectively 120, 120, and 719. The standalone HTML referenced no
-remote media assets when read back, so it remains usable offline after an
-authorized download. The run records a joint-coordinate source action contract;
-its raw-to-model-to-raw numerical maximum absolute error was
-`1.4901161193847656e-08`. Cartesian-relative millimetre/tool-frame behavior is
-still evidenced only by the separate contract fixture.
+That archived result is not validation of the checked-in reference builder, the
+standard no-code input declaration, the commands above, or a fresh checkout.
+It remains private operational evidence with its original source, config, and
+receipt identities. The current turnkey run and fresh-checkout receipt replace
+the pending rows below only after the new workflow finishes.
 
 ## Fail-closed checks and promotion boundary
 
@@ -399,31 +314,28 @@ The rehearsal exercises these correction paths before GPU work:
 | --- | --- | --- |
 | Missing, non-finite, or misaligned progress | Feedback preparation rejects the document before a manifest is written. | Supply one calibrated value per recorded frame and state its source/units/direction/alignment. |
 | Success/failure group crosses train/eval | Feedback preparation rejects group leakage. | Move the complete collection/session/scene group to one split. |
-| Camera/action key or units disagree with the profile | Custom preparation rejects modality/action-contract mismatch. | Correct the explicit contract or adapter; never rename or rescale actions implicitly. |
-| Archive digest or provenance identifier/revision differs | Preparation rejects it before adapter code runs. | Stage the intended immutable bytes and update the matching provenance document. |
+| Camera/action key or units disagree with the profile | Standard or custom preparation rejects modality/action-contract mismatch. | Correct the explicit contract or adapter; never rename or rescale actions implicitly. |
+| Source-tree or feedback digest differs | Preparation rejects it before a derivative or manifest is written. | Stage the intended immutable bytes and update the one matching declaration. |
 
-The independent reference rehearsal also tests a Cartesian relative-action
-fixture numerically. That fixture does not substitute for real Cartesian
-calibration evidence. A future matched-trial comparison should record frozen
-baseline/candidate checkpoints, task/reset protocol, observation/action schema,
-and real outcomes under operator control. It is the promotion boundary: neither
-offline loss nor this gallery authorizes robot deployment.
+The archived custom rehearsal also used a Cartesian-relative fixture numerically.
+That fixture does not substitute for real Cartesian calibration evidence. A
+future matched-trial comparison should record frozen baseline/candidate
+checkpoints, task/reset protocol, observation/action schema, and real outcomes
+under operator control. It is the promotion boundary: neither offline loss nor
+this gallery authorizes robot deployment.
 
 ## Verification record
 
-This table records the completed independent reference rehearsal. Receipt
-details are retained in authorized private storage; the identities below are
-content hashes or run labels, not storage locations. It intentionally does not
-treat the historical uniform public proof as coverage for the labelled custom
-path.
+This table records the current shipped path. It intentionally does not treat the
+archived custom rehearsal or historical uniform public proof as coverage for the
+reference, standard, or fresh-checkout rows.
 
 | Step | Evidence type | Observed outcome and limit |
 | --- | --- | --- |
-| External code/archive staging | Live preparation receipts; archive SHA-256 `0c197e…e60a88a`, data SHA-256 `d86790…a2d82a` | The pinned external adapter was installed and executed through the workflow for both revisions. It is independent reference code/data, not customer input. |
-| Single-camera custom preparation | Live i1r3/i2r1 preparation receipts; adapter config SHA-256 `a3452b…1877ba` | One mapped wrist camera only; no fabricated front camera. The recorded source action kind is joint-coordinate. |
-| Mixed outcome/progress training and ordinary-BC control | Live i1r3/i2r1 training receipts; i2 feedback SHA-256 `8021ee…688e92` | Both runs completed 1,237 updates with matched controls. i2 weighted MAE was lower than control, but worse than i1 candidate by `0.0014758333563804626`; no convergence, robot-success, or avoidance claim. |
-| Held-out prediction and labelled positive/negative/recovery gallery | i2 evaluation/media/readback receipts; checkpoint SHA-256 `cbd673…2918ed1` | All 2,084 held-out frames evaluated; gallery reports 1,664 failures, 420 successes, and a separate unknown-outcome recovery reference. MP4 decode and offline HTML readback passed; frames remain recorded observations. |
-| Second immutable feedback revision | i1r3 and i2r1 lineage/readback receipts | i2 preserves data/actions/groups/holdout and changes the declared progress revision under a new immutable input/run prefix. Earlier outputs remain preserved. |
-| Cartesian action numerical contract | Hermetic fixture, SHA-256 `e37927…ceebff` | Verified mechanically only. The real reference recording does not supply Cartesian calibration evidence. |
-| Task-bound controller recovery | Private recovery receipt and exact-run status receipts | Rehearsed only after exact terminal ownership and no-active-job proof. No shared controller was removed; final i1r3 and i2r1 live status are `SUCCEEDED`. |
-| Missing/misaligned feedback, split leakage, contract mismatch, and resume binding | Hermetic contract fixtures plus supported same-run recovery | Inputs fail closed before training or relaunch. These verify operator-visible errors and recovery guards, not a physical rollout. |
+| Shipped public reference preparation | Source/unit/integration tests; fresh checkout/live run pending | The checked-in source pin, wrist mapping, outcomes, derived progress, and unknown-outcome recovery reference are code-covered. No fresh-run claim yet. |
+| Standard no-code LeRobot input | Strict declaration and staged-input prepare test | Tree/feedback digests, mapping, action contract, split, and model pins are exercised hermetically. A real operator-S3 rehearsal is pending. |
+| Optional trusted custom code | Archived v4 result and existing contract tests | Retained for arbitrary mappings/hooks; it is not required by the reference or standard path. |
+| Mixed outcome/progress training and ordinary-BC control | Fresh RTX reference run pending | No current turnkey metric or robot-success claim until the new immutable run completes. |
+| Held-out prediction, labelled gallery, MP4/HTML, and durable readback | Fresh RTX reference run pending | Recorded observations remain offline evidence only. |
+| Second feedback revision and supported resume | Fresh reference iteration pending | The new run must preserve earlier artifacts and group isolation before this row becomes demonstrated. |
+| Missing/misaligned feedback, split leakage, contract mismatch | Hermetic contract tests | Inputs fail closed before training; these are not physical-rollout evidence. |

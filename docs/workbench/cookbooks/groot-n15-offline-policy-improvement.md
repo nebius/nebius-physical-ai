@@ -16,10 +16,16 @@ that image or change `npa workbench groot finetune`.
 is the reproducible unit: generic Workbench `validate-spec`, `plan-spec`,
 `submit`, `status`, `logs`, and `artifacts` operations execute its four serial
 stages. It accepts a trusted, content-addressed external code archive plus an
-operator-staged LeRobot archive. The external adapter writes the native v2
-dataset, the explicit one-camera/state/action modality, structured feedback, and
-an optional recovery gallery. It does not execute code selected from dataset
-metadata, infer licenses, or publish private inputs.
+operator-staged LeRobot archive **only for optional arbitrary custom transforms**.
+The checked-in default is a pinned public one-wrist reference with observed
+outcomes and a separately labelled unknown-outcome recovery reference. A normal
+private LeRobot v2.0/v2.1 input instead uses one declarative S3 configuration
+that binds the source tree, feedback sidecar, mappings, action semantics, split,
+and model identities; it does not require custom Python. The custom adapter
+remains available when needed to write the native v2 dataset, explicit
+one-camera/state/action modality, structured feedback, and optional recovery
+gallery. No mode executes code selected from dataset metadata, infers licenses,
+or publishes private inputs.
 
 The workflow creates two matched policies from the same foundation checkpoint,
 split, seed, batch size, and schedule: an ordinary behavior-cloning control and
@@ -27,8 +33,8 @@ a feedback-weighted candidate. It evaluates foundation, control, and candidate
 on every declared held-out recorded observation, then reads each artifact back
 from durable storage. The accompanying
 [custom-LeRobot operator walkthrough](../guides/groot-n15-custom-lerobot-walkthrough.md)
-is the source of truth for the required override file, staged-input contract,
-feedback-iteration rehearsal, fail-closed examples, and factual gallery.
+is the source of truth for the one-command reference, standard declaration,
+optional custom-code contract, fail-closed examples, and factual gallery.
 
 No simulator or robot connection is required for ingestion, offline learning,
 or recorded-observation evidence. The gallery and MP4 are not rollouts: they
@@ -38,15 +44,12 @@ deployment claims.
 
 ### Independent operator-journey rehearsal
 
-The linked walkthrough records a completed two-revision independent rehearsal:
-trusted external adapter installation, one-wrist-camera preparation, observed
-success/failure labels plus an unknown-outcome recovery reference, aligned
-annotation-derived progress, matched ordinary-BC and weighted N1.5 training,
-held-out reload/inference, labelled offline HTML/MP4 evidence, and durable
-readback. The second revision retained the evaluation groups and reported its
-candidate regression versus the first revision. This is evidence of the generic
-offline workflow only; it was not run with customer inputs or hardware, and
-offline action error is not a deployment decision.
+The linked walkthrough preserves an archived two-revision custom-extension
+rehearsal as historical evidence only. The current checked-in reference and
+standard declaration have their own fresh-checkout/live-run verification table;
+they are not covered by that earlier private extension. Neither path was run
+with customer inputs or hardware, and offline action error is not a deployment
+decision.
 
 ### Historical public uniform proof
 

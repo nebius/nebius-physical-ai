@@ -5,13 +5,14 @@ metadata:
   name: groot-n15-offline-rl
   executionMode: runtime
   description: >-
-    Experimental custom LeRobot GR00T N1.5 offline policy-improvement workflow:
-    an explicit trusted code archive adapts an immutable operator dataset and
-    feedback sidecar, freezes training-only normalization, completes matched
-    ordinary-BC and feedback-weighted native single-GPU schedules, compares
-    held-out actions against the foundation checkpoint, renders
-    factual labeled recorded-observation media, and independently reads every
-    declared output back. It never performs a simulator, robot rollout, or
+    Experimental GR00T N1.5 offline policy-improvement workflow. Its default
+    is a checked-in public one-wrist reference profile with pinned observed
+    outcome/keyframe labels and a separate recovery reference; a standard
+    LeRobot input or explicit trusted custom adapter can replace it. Every mode
+    freezes training-only normalization, completes matched ordinary-BC and
+    feedback-weighted native single-GPU schedules, compares held-out recorded
+    actions, renders factual labelled recorded-observation media, and reads
+    declared outputs back. It never performs a simulator, robot rollout, or
     automatic deployment.
 
 config:
@@ -31,13 +32,16 @@ config:
   gpu_cpus: "16"
   gpu_memory: 180Gi
 
-  # Complete these source/code values through a run-specific override. They
-  # are worker-readable S3 URIs and content hashes, never credentials. The
-  # workflow refuses a partial custom-code contract and does not infer a
-  # license, privacy class, code module, labels, camera, or action schema from
-  # a dataset.
-  dataset_repository: ""
-  dataset_revision: ""
+  # The shipped reference needs no private archive, adapter, or manually built
+  # sidecar. It pulls these public source bytes at their immutable revision and
+  # writes the resulting provenance/action/feedback artifacts itself. Set
+  # input_mode=custom only for the explicit trusted-code contract below.
+  input_mode: reference
+  # Standard no-code mode reads one content-bound declaration from this
+  # worker-readable location. The shipped reference leaves it empty.
+  standard_input_config_uri: ""
+  dataset_repository: sii-rhos-ai/vifailback-dataset-lerobot
+  dataset_revision: 619791b94f61667333fe179d471051e0bca0e06f
   dataset_archive_uri: ""
   input_provenance_uri: ""
   action_contract_uri: ""
@@ -64,10 +68,10 @@ config:
   feedback_temperature: "1.0"
   grouping: collection
   split_strategy: adapter
-  train_episode_count: "1"
-  eval_episode_count: "1"
+  train_episode_count: "15"
+  eval_episode_count: "5"
   action_horizon: "16"
-  data_config: ""
+  data_config: npa.workbench.groot.reference_inputs:SingleWristAlohaConfig
   embodiment_tag: new_embodiment
   video_backend: decord
   derivative_codec: h264
@@ -144,6 +148,10 @@ states:
         - "{{config.operation}}"
         - --workspace
         - "{{config.runtime_workspace}}"
+        - --input-mode
+        - "{{config.input_mode}}"
+        - --standard-input-config-uri
+        - "{{config.standard_input_config_uri}}"
         - --dataset-repository
         - "{{config.dataset_repository}}"
         - --dataset-revision

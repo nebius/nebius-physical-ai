@@ -6,6 +6,7 @@ import builtins
 import hashlib
 import json
 from pathlib import Path
+import shutil
 from types import SimpleNamespace
 
 import numpy as np
@@ -1010,12 +1011,269 @@ def test_checked_in_workflow_dispatches_every_compositional_stage() -> None:
         "verify",
     ]
     for step in plan.steps:
+        assert "--standard-input-config-uri" in step.argv
         assert "--dataset-archive-uri" in step.argv
         assert "--external-code-uri" in step.argv
         assert "--feedback-callable" in step.argv
         assert "--action-contract-uri" in step.argv
         assert "--control-uri" in step.argv
         assert "--evidence-video-key" in step.argv
+
+
+def test_standard_reuse_rejects_a_changed_declaration() -> None:
+    args = SimpleNamespace(
+        input_mode=workflow.STANDARD_INPUT_MODE,
+        _standard_input_config_sha256="a" * 64,
+        dataset_repository="operator/recorded-rollouts",
+        dataset_revision="2026-11-10",
+        feedback_mode="hybrid",
+        action_horizon=16,
+    )
+
+    with pytest.raises(workflow.WorkflowArtifactError, match="standard input declaration"):
+        workflow._validate_reused_prepare_inputs(
+            args,
+            {
+                "kind": "standard-lerobot-prepare",
+                "standard_input_config_sha256": "b" * 64,
+                "source": {},
+                "feedback": {},
+            },
+            {},
+        )
+
+
+def test_standard_declaration_resolves_model_before_native_bootstrap(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    root = Path(__file__).resolve().parents[3]
+    declaration = root / "workflows/testing/groot-n15-standard-input.example.json"
+
+    class Store:
+        def get_file(self, uri: str, destination: Path) -> None:
+            assert uri == "s3://operator-inputs/standard.json"
+            shutil.copyfile(declaration, destination)
+
+    monkeypatch.setattr(workflow, "S3Store", Store)
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    args = SimpleNamespace(
+        workspace=workspace,
+        native=False,
+        input_mode=workflow.STANDARD_INPUT_MODE,
+        standard_input_config_uri="s3://operator-inputs/standard.json",
+    )
+
+    workflow._resolve_standard_runtime_args(args)
+
+    assert args.model_repository == workflow.MODEL_REPOSITORY_DEFAULT
+    assert args.groot_revision == workflow.GROOT_REVISION_DEFAULT
+    assert args.data_config == "npa.workbench.groot.standard_inputs:StandardSingleWristConfig"
+    assert args.action_target_keys == "action.robot"
+
+
+def test_standard_prepare_materializes_declared_tree_without_external_code(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The no-code adapter binds source/feedback bytes and native mappings."""
+
+    source = tmp_path / "source"
+    (source / "meta").mkdir(parents=True)
+    (source / "data/chunk-000").mkdir(parents=True)
+    video = source / "videos/chunk-000/observation.images.wrist"
+    video.mkdir(parents=True)
+    episodes = []
+    feedback_episodes = []
+    for index in range(4):
+        length = 2
+        pd.DataFrame(
+            {
+                "observation.state": [np.asarray([index, index + 1], dtype=np.float32)] * length,
+                "action": [np.asarray([index + 2, index + 3], dtype=np.float32)] * length,
+                "task_index": [0] * length,
+                "episode_index": [index] * length,
+                "frame_index": list(range(length)),
+            }
+        ).to_parquet(source / "data/chunk-000" / f"episode_{index:06d}.parquet")
+        (video / f"episode_{index:06d}.mp4").write_bytes(b"recorded-video")
+        episodes.append({"episode_index": index, "length": length})
+        feedback_episodes.append(
+            {
+                "source_id": index,
+                "partition": "eval" if index == 3 else "train",
+                "observed_outcome": bool(index % 2),
+                "session": f"collection-{index}",
+                "collection": "policy_rollout",
+                "source_tags": ["recorded"],
+                "measured_completion": [0.0, 1.0],
+            }
+        )
+    (source / "meta/info.json").write_text(
+        json.dumps(
+            {
+                "codebase_version": "v2.1",
+                "chunks_size": 10,
+                "fps": 15,
+                "data_path": "data/chunk-{episode_chunk:03d}/episode_{episode_index:06d}.parquet",
+                "video_path": "videos/chunk-{episode_chunk:03d}/{video_key}/episode_{episode_index:06d}.mp4",
+                "features": {
+                    "observation.images.wrist": {"dtype": "video"},
+                    "observation.state": {"dtype": "float32", "shape": [2]},
+                    "action": {"dtype": "float32", "shape": [2]},
+                },
+            }
+        )
+    )
+    (source / "meta/episodes.jsonl").write_text(
+        "\n".join(json.dumps(record) for record in episodes) + "\n"
+    )
+    (source / "meta/tasks.jsonl").write_text(
+        json.dumps({"task_index": 0, "task": "recorded task"}) + "\n"
+    )
+    feedback = {
+        "schema_version": "operator-label-sidecar/v1",
+        "episodes": feedback_episodes,
+    }
+    feedback_path = tmp_path / "feedback.json"
+    feedback_path.write_text(json.dumps(feedback))
+
+    from npa.workbench.groot.standard_inputs import StandardLeRobotConfig
+
+    config = StandardLeRobotConfig.model_validate(
+        {
+            "dataset": {
+                "uri": "s3://input/dataset",
+                "tree_sha256": workflow.tree_digest(workflow.directory_inventory(source)),
+                "source_kind": "private-object-store",
+                "source_identifier": "operator/recorded-rollouts",
+                "source_revision": "rev-1",
+                "license": "operator-declared-private",
+                "privacy_classification": "private",
+                "redistributable_media": False,
+                "label_provenance": "operator-observed outcomes",
+            },
+            "feedback": {
+                "uri": "s3://input/feedback.json",
+                "sha256": workflow.sha256_file(feedback_path),
+                "mode": "hybrid",
+                "label_protocol": "operator observed outcome",
+                "episode_index_field": "source_id",
+                "split_field": "partition",
+                "group_field": "session",
+                "outcome_field": "observed_outcome",
+                "collection_kind_field": "collection",
+                "tags_field": "source_tags",
+                "progress_field": "measured_completion",
+                "progress_source": "measured",
+                "progress_contract": {
+                    "units": "normalized measured progress",
+                    "direction": "higher is further along the recorded task",
+                    "alignment": "one value per recorded frame",
+                },
+            },
+            "mapping": {
+                "camera_key": "observation.images.wrist",
+                "state_key": "observation.state",
+                "action_key": "action",
+                "instruction_key": "task_index",
+                "state_dimension": 2,
+                "action_dimension": 2,
+            },
+            "action": {
+                "kind": "cartesian_relative",
+                "frame": "tool",
+                "translation_unit": "millimeter",
+                "rotation_representation": "axis_angle",
+                "rotation_unit": "radian",
+                "gripper_fields": ["gripper"],
+                "transform_identity": "operator-calibration",
+            },
+            "split": {
+                "train_episode_count": 3,
+                "eval_episode_count": 1,
+                "grouping": "collection",
+                "strategy": "adapter",
+            },
+            "evidence": {"episode_index": 3, "start_frame": 0, "frame_count": 2, "fps": 15},
+            "model": {
+                "model_repository": workflow.MODEL_REPOSITORY_DEFAULT,
+                "model_revision": workflow.MODEL_REVISION_DEFAULT,
+                "groot_repository": workflow.GROOT_REPOSITORY_DEFAULT,
+                "groot_revision": workflow.GROOT_REVISION_DEFAULT,
+            },
+        }
+    )
+
+    class Store:
+        def get_directory(self, uri: str, destination: Path) -> list[Path]:
+            assert uri == "s3://input/dataset"
+            shutil.copytree(source, destination)
+            return [path for path in destination.rglob("*") if path.is_file()]
+
+        def get_file(self, uri: str, destination: Path) -> None:
+            assert uri == "s3://input/feedback.json"
+            shutil.copyfile(feedback_path, destination)
+
+        def put_directory(self, root: Path, _uri: str) -> dict[str, object]:
+            return {
+                "tree_sha256": workflow.tree_digest(workflow.directory_inventory(root)),
+                "files": [],
+            }
+
+        def put_file(self, path: Path, _uri: str) -> dict[str, object]:
+            return {"sha256": workflow.sha256_file(path), "bytes": path.stat().st_size}
+
+        def put_json(self, value: object, _uri: str) -> dict[str, object]:
+            payload = json.dumps(value, sort_keys=True).encode()
+            return {"sha256": hashlib.sha256(payload).hexdigest(), "bytes": len(payload)}
+
+    def transcode(source_root: Path, derivative: Path, *_args: object) -> dict[str, object]:
+        shutil.copytree(source_root, derivative)
+        return {
+            "source_video_count": 4,
+            "derivative_video_count": 4,
+            "sample_derivative_probe": {"codec_name": "h264"},
+        }
+
+    def gallery(
+        _dataset: Path, _config: object, _feedback: object, root: Path
+    ) -> dict[str, object]:
+        root.mkdir()
+        (root / "gallery.json").write_text(
+            json.dumps({"schema_version": "npa.groot-recorded-gallery-reference/v1", "items": []})
+        )
+        return {"schema_version": "npa.groot-recorded-gallery-reference/v1", "item_count": 0, "items": []}
+
+    monkeypatch.setattr(workflow, "_transcode_h264", transcode)
+    monkeypatch.setattr(workflow, "_standard_gallery_reference", gallery)
+    args = SimpleNamespace(
+        _standard_input_config=config,
+        _standard_input_config_sha256="c" * 64,
+        codec_workers=1,
+        derivative_codec="h264",
+        action_horizon=2,
+        feedback_mode="hybrid",
+        feedback_temperature=1.0,
+        train_episode_count=3,
+        eval_episode_count=1,
+        prepared_dataset_uri="s3://output/prepared/dataset",
+        feedback_output_uri="s3://output/prepared/feedback.json",
+        manifest_uri="s3://output/prepared/manifest.json",
+        gallery_reference_uri="s3://output/prepared/gallery",
+        prepare_receipt_uri="s3://output/prepared/provenance.json",
+        prepare_commit_uri="s3://output/prepared/commit.json",
+    )
+
+    result = workflow._prepare_standard_inputs(args, Store(), tmp_path / "stage")
+
+    assert result["status"] == "prepared"
+    assert result["feedback_label_counts"] == {
+        "success": 2,
+        "failure": 2,
+        "unknown": 0,
+        "operator_recovery": 0,
+    }
+    assert result["standard_input_config_sha256"] == "c" * 64
 
 
 def test_readiness_record_is_bound_to_the_checked_in_workflow() -> None:

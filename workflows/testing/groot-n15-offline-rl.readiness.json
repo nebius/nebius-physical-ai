@@ -1,10 +1,10 @@
 {
   "schema_version": "workflow-readiness/v1",
-  "workflow_sha256": "8f641dfbc3e9316272e0345da1a5feffe0047afeeef68a1a832ea8b988f11232",
+  "workflow_sha256": "d44fbbc597ca5058ea1e956b45e6ae97b6d00d231e139ceb752deed156b19031",
   "planning": {
     "validation": {
       "status": "verified",
-      "reason": "The compositional specification validates, resolves one generic external-code/data contract through four serial runtime tasks, trains matched ordinary-BC and feedback-weighted policies from the same base, and production-renders the digest-pinned CUDA image without materializing credentials.",
+      "reason": "The compositional specification validates, resolves a checked-in public reference profile, one declared standard LeRobot v2 input, or an explicit trusted custom-data contract through four serial runtime tasks, trains matched ordinary-BC and feedback-weighted policies from the same base, and production-renders the digest-pinned CUDA image without materializing credentials.",
       "evidence": [
         "npa workbench workflow validate-spec workflows/testing/groot-n15-offline-rl.yaml --json",
         "npa workbench workflow plan-spec workflows/testing/groot-n15-offline-rl.yaml --run-id groot-n15-plan --var bucket=example-bucket --check-render --json",
@@ -13,12 +13,13 @@
     },
     "task_fidelity": {
       "status": "verified",
-      "reason": "Hermetic tests bind safe content-addressed extension installation, observed outcome/progress/recovery feedback, collection-group isolation, train-only statistics, terminal action masks, matched ordinary-BC/control identity, finite offline metric handling, native command contracts, reusable checkpoint identity, and an offline HTML/gallery artifact contract. They do not establish CUDA execution or policy improvement.",
+      "reason": "Hermetic tests bind a declarative no-code LeRobot input, safe content-addressed extension installation, observed outcome/progress/recovery feedback, collection-group isolation, train-only statistics, terminal action masks, matched ordinary-BC/control identity, finite offline metric handling, native command contracts, reusable checkpoint identity, and an offline HTML/gallery artifact contract. They do not establish CUDA execution or policy improvement.",
       "evidence": [
         "npa/tests/workflows/test_groot_n15_offline.py",
         "npa/tests/workbench/test_groot_offline_training.py",
         "npa/tests/workbench/test_groot_offline_feedback.py",
-        "npa/tests/workbench/test_groot_custom_inputs.py"
+        "npa/tests/workbench/test_groot_custom_inputs.py",
+        "npa/tests/workbench/test_groot_standard_inputs.py"
       ]
     }
   },
@@ -30,7 +31,7 @@
     },
     "worker_input": {
       "status": "verified",
-      "reason": "A run must explicitly provide a content-addressed worker-readable dataset archive, source/provenance document, action contract, trusted code archive/package/callables, structured feedback document, and recorded-gallery reference. The adapter must emit native LeRobot v2 bytes, decoded video, and a documented H.264 derivative before training.",
+      "reason": "The shipped reference profile downloads two pinned redistributable public sources and emits its own provenance/action/feedback/gallery contracts. The standard no-code mode reads one worker-readable declaration binding a LeRobot v2 source tree, feedback sidecar, field mapping, action semantics, split and model identities. Custom input still requires an explicit content-addressed worker-readable archive, provenance/action contract, and trusted code archive/package/callables; its adapter must emit native LeRobot v2 bytes, decoded video, and an H.264 derivative before training.",
       "evidence": [
         "workflows/testing/groot-n15-offline-rl.yaml",
         "docs/workbench/cookbooks/groot-n15-offline-policy-improvement.md"
