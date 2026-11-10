@@ -23,15 +23,22 @@ action contract, aligned hybrid-feedback document, and H.264 derivative. It
 also fetches one separately pinned CC-BY recovery reference whose outcome is
 explicitly **unknown**; recovery provenance never becomes a success label.
 
-After normal `npa configure` and project selection, the reference submission is
-one generic command (the bucket and project are normal account configuration,
-not hidden task values):
+After normal `npa configure` and project selection, load the saved non-secret
+project, bucket, and owned cluster context once in each new shell. This is a
+supported convenience export; it does not print or export credentials. The
+reference submission is then one generic command, with no hand-built sidecars
+or hidden task values:
+
+```bash
+eval "$(npa/.venv/bin/python -m npa configure --show --env)"
+```
 
 ```bash
 npa/.venv/bin/python -m npa workbench workflow submit \
   workflows/testing/groot-n15-offline-rl.yaml \
-  --project "<configured-project>" --run-id "groot-n15-reference-<unique-id>" \
-  --var bucket="<operator-owned-bucket>" --runtime --output-format json
+  --project "$NPA_PROJECT_ALIAS" --infra "k8s/$NPA_KUBE_CONTEXT" \
+  --run-id "groot-n15-reference-<unique-id>" --var bucket="$NPA_BUCKET" \
+  --runtime --output-format json
 ```
 
 Before spending GPU time, run the commands below verbatim from the same checkout
@@ -40,32 +47,41 @@ controller bootstrap:
 
 ```bash
 npa/.venv/bin/python -m npa workbench health preflight \
-  --project "<configured-project>" --checks nebius,s3 --json
+  --project "$NPA_PROJECT_ALIAS" --checks nebius,s3 --json
 npa/.venv/bin/python -m npa workbench health access --capability groot --json
 npa/.venv/bin/python -m npa workbench workflow validate-spec \
   workflows/testing/groot-n15-offline-rl.yaml --json
 npa/.venv/bin/python -m npa workbench workflow plan-spec \
   workflows/testing/groot-n15-offline-rl.yaml --run-id groot-n15-reference-plan \
-  --var bucket="<operator-owned-bucket>" --check-render --json
+  --var bucket="$NPA_BUCKET" --check-render --json
+npa/.venv/bin/python -m npa cluster list --project "$NPA_PROJECT_ALIAS" --format json
+npa/.venv/bin/python -m npa workbench workflow gpus \
+  --project "$NPA_PROJECT_ALIAS" --cluster "$NPA_KUBE_CONTEXT" \
+  --spec workflows/testing/groot-n15-offline-rl.yaml --json
+npa/.venv/bin/python -m npa workbench workflow preflight-images \
+  workflows/testing/groot-n15-offline-rl.yaml --project "$NPA_PROJECT_ALIAS" \
+  --infra "k8s/$NPA_KUBE_CONTEXT" --var bucket="$NPA_BUCKET" --json
 ```
 
 Use a compatible task-owned RTX PRO 6000 context selected through normal
-provisioning and `workflow gpus`; the run itself verifies one visible sm_120 GPU,
-the pinned native dependency closure, decoded recorded video, checkpoint reload,
-and durable artifact readback. It does not claim a hardware rollout or policy
-promotion. The new turnkey receipt and fresh-checkout evidence will be recorded
-here after the current reference run completes; earlier private-extension
-rehearsal rows below are historical only.
+provisioning and `workflow gpus`; `configure --show --env` emits the saved
+project-scoped context, and `preflight-images` proves the same target can pull
+the rendered image before submit. The run itself verifies one visible sm_120
+GPU, the pinned native dependency closure, decoded recorded video, checkpoint
+reload, and durable artifact readback. It does not claim a hardware rollout or
+policy promotion. The new turnkey receipt and fresh-checkout evidence will be
+recorded here after the current reference run completes; earlier
+private-extension rehearsal rows below are historical only.
 
 For a completed run, use a fresh shell and only the documented generic commands:
 
 ```bash
 npa/.venv/bin/python -m npa workbench workflow status "<run-id>" \
-  --project "<configured-project>" --json
+  --project "$NPA_PROJECT_ALIAS" --json
 npa/.venv/bin/python -m npa workbench workflow logs "<run-id>" train-native-n15 \
-  --project "<configured-project>" --json
+  --project "$NPA_PROJECT_ALIAS" --json
 npa/.venv/bin/python -m npa workbench workflow artifacts "<run-id>" \
-  --project "<configured-project>" --json
+  --project "$NPA_PROJECT_ALIAS" --json
 ```
 
 `artifacts` intentionally has no SkyPilot `--isolated-config-dir` or
@@ -132,8 +148,9 @@ same workflow with only the input mode and declaration location changed:
 ```bash
 npa/.venv/bin/python -m npa workbench workflow submit \
   workflows/testing/groot-n15-offline-rl.yaml \
-  --project "<configured-project>" --run-id "groot-n15-standard-<unique-id>" \
-  --var bucket="<operator-owned-bucket>" --var input_mode=standard \
+  --project "$NPA_PROJECT_ALIAS" --infra "k8s/$NPA_KUBE_CONTEXT" \
+  --run-id "groot-n15-standard-<unique-id>" --var bucket="$NPA_BUCKET" \
+  --var input_mode=standard \
   --var standard_input_config_uri="s3://<operator-inputs>/standard-input.json" \
   --runtime --output-format json
 ```
@@ -203,20 +220,24 @@ learns explicit avoidance, improves unseen states, or improves robot success.
 
 ## Validate, plan, preflight, and submit
 
-Start with a clean supported checkout and its own `npa/.venv`. The generic
-commands below are the same for the reference, standard, and trusted-custom
-modes; only normal project configuration and the selected input declaration
-vary.
+Start with a clean supported checkout and its own `npa/.venv`. Run the
+non-secret `configure --show --env` command in the default-reference section
+once in this shell. The generic commands below are the same for the reference,
+standard, and trusted-custom modes; only normal project configuration and the
+selected input declaration vary.
 
 ```bash
-npa/.venv/bin/python -m npa workbench health preflight --project "<configured-project>" \
+npa/.venv/bin/python -m npa workbench health preflight --project "$NPA_PROJECT_ALIAS" \
   --checks s3,nebius --json
 npa/.venv/bin/python -m npa workbench health access --capability groot --json
 npa/.venv/bin/python -m npa workbench workflow validate-spec \
   workflows/testing/groot-n15-offline-rl.yaml --json
 npa/.venv/bin/python -m npa workbench workflow plan-spec \
   workflows/testing/groot-n15-offline-rl.yaml --run-id groot-n15-plan \
-  --var bucket="<operator-owned-bucket>" --check-render --json
+  --var bucket="$NPA_BUCKET" --check-render --json
+npa/.venv/bin/python -m npa workbench workflow preflight-images \
+  workflows/testing/groot-n15-offline-rl.yaml --project "$NPA_PROJECT_ALIAS" \
+  --infra "k8s/$NPA_KUBE_CONTEXT" --var bucket="$NPA_BUCKET" --json
 ```
 
 Provision or select a task-owned compatible one-GPU RTX PRO 6000 cluster using
@@ -242,11 +263,11 @@ Use only the generic lifecycle commands against the same immutable run identity:
 
 ```bash
 npa/.venv/bin/python -m npa workbench workflow status "<run-id>" \
-  --project "<configured-project>" --json
+  --project "$NPA_PROJECT_ALIAS" --json
 npa/.venv/bin/python -m npa workbench workflow logs "<run-id>" train-native-n15 \
-  --project "<configured-project>" \
+  --project "$NPA_PROJECT_ALIAS" \
   --cached
-npa/.venv/bin/python -m npa workbench workflow artifacts "<run-id>" --project "<configured-project>" \
+npa/.venv/bin/python -m npa workbench workflow artifacts "<run-id>" --project "$NPA_PROJECT_ALIAS" \
   --json
 ```
 
@@ -280,8 +301,8 @@ output, or checkpoint identities.
 ```bash
 npa/.venv/bin/python -m npa workbench workflow submit \
   workflows/testing/groot-n15-offline-rl.yaml --runtime --resume \
-  --project "<configured-project>" --resume-run "<same-run-id>" \
-  --var bucket="<operator-owned-bucket>" --output-format json
+  --project "$NPA_PROJECT_ALIAS" --infra "k8s/$NPA_KUBE_CONTEXT" \
+  --resume-run "<same-run-id>" --var bucket="$NPA_BUCKET" --output-format json
 ```
 
 For a feedback revision, preserve the first run and create a new source or
