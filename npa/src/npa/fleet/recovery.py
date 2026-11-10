@@ -126,7 +126,12 @@ def _recovery_inputs(
         workdir, saved["project_id"], target.cluster.name
     )
     _assert_state_subnet(workdir, saved["subnet_id"])
-    _assert_unregistered(target.fleet_root, target.project.key(), target.cluster.name)
+    _assert_unregistered(
+        target.fleet_root,
+        target.project.key(),
+        target.cluster.name,
+        saved["region"],
+    )
     return _RecoveryInputs(sidecar, saved, release, desired, cluster_id)
 
 
@@ -533,19 +538,52 @@ def _is_root_cluster_resource(resource: object) -> bool:
     )
 
 
-def _assert_unregistered(fleet_root: Path, project_key: str, cluster_name: str) -> None:
+def _assert_unregistered(
+    fleet_root: Path, project_key: str, cluster_name: str, expected_region: str
+) -> None:
     from npa.fleet import lifecycle
 
     entries = lifecycle._load_fleet_state(fleet_root).get("clusters", [])
     if not isinstance(entries, list):
         raise FleetRecoveryError("persisted Fleet state is malformed")
-    if any(
-        isinstance(entry, dict)
+    matching = [
+        entry
+        for entry in entries
+        if isinstance(entry, dict)
         and entry.get("project_key") == project_key
         and entry.get("cluster_name") == cluster_name
-        for entry in entries
+    ]
+    if not matching:
+        return
+    if len(matching) == 1 and _is_identity_free_error_summary(
+        matching[0], expected_region
     ):
-        raise FleetRecoveryError("selected Fleet target is already registered")
+        return
+    raise FleetRecoveryError("selected Fleet target is already registered")
+
+
+def _is_identity_free_error_summary(
+    entry: dict[str, Any], expected_region: str
+) -> bool:
+    """Return whether an error record has no durable registration identity."""
+    allowed_keys = {
+        "backend",
+        "project_key",
+        "cluster_name",
+        "region",
+        "status",
+        "error",
+    }
+    status = entry.get("status")
+    return bool(
+        set(entry).issubset(allowed_keys)
+        and entry.get("backend") == "mk8s"
+        and isinstance(status, str)
+        and status in {"error", "incomplete"}
+        and isinstance(entry.get("error"), str)
+        and entry["error"]
+        and entry.get("region") == expected_region
+    )
 
 
 def _assert_context_adoptable(context: str, inputs: _RecoveryInputs) -> None:

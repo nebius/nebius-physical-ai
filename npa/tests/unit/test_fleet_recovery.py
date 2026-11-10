@@ -181,6 +181,23 @@ def _mixed_unmaterialized_resolver(monkeypatch, calls, malformed_part):
     return resolve
 
 
+def _error_summary(status: str = "error", **overrides: object) -> dict[str, object]:
+    return {
+        "backend": "mk8s",
+        "project_key": "team",
+        "cluster_name": "recover",
+        "region": "test-region",
+        "status": status,
+        "error": "historical pre-registration failure",
+        **overrides,
+    }
+
+
+def _write_summary(path: Path, entries: list[object]) -> bytes:
+    path.write_text(json.dumps({"clusters": entries}), encoding="utf-8")
+    return path.read_bytes()
+
+
 def test_recovers_one_verified_target_without_touching_terraform(tmp_path, monkeypatch):
     spec, install_dir = _install(tmp_path)
     workdir = install_dir / "k8s-training"
@@ -278,6 +295,171 @@ def test_recovery_resolves_exact_empty_instances_only_after_verified_provider(
     assert state_path.read_bytes() == state_before
     assert calls["verify"]["cluster"].name == "recover"
     assert calls["persist"]["cluster_id"] == "cluster-test"
+
+
+@pytest.mark.parametrize("status", ["error", "incomplete"])
+def test_recovery_supersedes_identity_free_error_summary_after_verification(
+    tmp_path, monkeypatch, status
+):
+    spec, install_dir = _install(tmp_path)
+    summary_path = tmp_path / spec.name / "fleet-state.json"
+    _write_summary(summary_path, [_error_summary(status)])
+    calls: dict[str, object] = {}
+    _prepare_provider(monkeypatch, calls)
+
+    result = recovery.recover_interrupted_fleet_apply(spec, work_root=tmp_path)
+
+    assert result["status"] == "recovered-pending-validation"
+    assert "verify" in calls
+    assert calls["persist"]["cluster_id"] == "cluster-test"
+    assert json.loads(summary_path.read_text())["clusters"] == [result]
+    assert (install_dir / "kubeconfig").exists()
+
+
+@pytest.mark.parametrize(
+    "entries",
+    [
+        [_error_summary(cluster_id="cluster-test")],
+        [_error_summary(kube_context="fleet-recovery-test-team-recover")],
+        [_error_summary(kubeconfig="/owner-private/kubeconfig")],
+        [_error_summary(mk8s_recipe_release={"id": "release-test"})],
+        [_error_summary(project_id="project-test")],
+        [_error_summary(backend="soperator")],
+        [_error_summary(region="other-region")],
+        [
+            {
+                "project_key": "team",
+                "cluster_name": "recover",
+                "region": "test-region",
+                "status": "error",
+                "error": "historical pre-registration failure",
+            }
+        ],
+        [_error_summary(region="")],
+        [_error_summary(status="provisioning")],
+        [_error_summary(status=[])],
+        [_error_summary(error=[])],
+        [_error_summary(), _error_summary()],
+    ],
+    ids=[
+        "cluster-id",
+        "context",
+        "kubeconfig",
+        "release",
+        "project-id",
+        "wrong-backend",
+        "wrong-region",
+        "missing-backend",
+        "missing-region",
+        "non-error-status",
+        "malformed-status",
+        "malformed-error",
+        "ambiguous-error-records",
+    ],
+)
+def test_recovery_rejects_identity_bearing_or_ambiguous_summary_without_mutation(
+    tmp_path, monkeypatch, entries
+):
+    spec, install_dir = _install(tmp_path)
+    workdir = install_dir / "k8s-training"
+    state_path = workdir / "terraform.tfstate"
+    state_before = state_path.read_bytes()
+    sidecar_path = install_dir / ".npa-fleet-env.json"
+    sidecar_before = sidecar_path.read_bytes()
+    lock_path = workdir / ".terraform.tfstate.lock.info"
+    lock_path.write_text("retained lock", encoding="utf-8")
+    lock_before = lock_path.read_bytes()
+    summary_path = tmp_path / spec.name / "fleet-state.json"
+    summary_before = _write_summary(summary_path, entries)
+    calls: dict[str, object] = {}
+    _prepare_provider(monkeypatch, calls)
+
+    with pytest.raises(recovery.FleetRecoveryError, match="already registered"):
+        recovery.recover_interrupted_fleet_apply(spec, work_root=tmp_path)
+
+    assert calls == {}
+    assert state_path.read_bytes() == state_before
+    assert sidecar_path.read_bytes() == sidecar_before
+    assert lock_path.read_bytes() == lock_before
+    assert not (install_dir / "kubeconfig").exists()
+    assert summary_path.read_bytes() == summary_before
+
+
+@pytest.mark.parametrize(
+    "entries",
+    [
+        [],
+        [{"project_key": "other", "cluster_name": "other", "status": "error"}],
+    ],
+    ids=["empty-summary", "unrelated-summary"],
+)
+def test_recovery_preserves_nonmatching_summary_when_provider_refuses(
+    tmp_path, monkeypatch, entries
+):
+    spec, install_dir = _install(tmp_path)
+    workdir = install_dir / "k8s-training"
+    state_path = workdir / "terraform.tfstate"
+    state_before = state_path.read_bytes()
+    sidecar_path = install_dir / ".npa-fleet-env.json"
+    sidecar_before = sidecar_path.read_bytes()
+    summary_path = tmp_path / spec.name / "fleet-state.json"
+    summary_before = _write_summary(summary_path, entries)
+    calls: dict[str, object] = {}
+    _prepare_provider(monkeypatch, calls)
+
+    def reject_provider(**kwargs):
+        calls["verify"] = kwargs
+        return ""
+
+    monkeypatch.setattr(
+        lifecycle, "_resolve_verified_unchanged_target", reject_provider
+    )
+
+    with pytest.raises(recovery.FleetRecoveryError, match="could not be verified"):
+        recovery.recover_interrupted_fleet_apply(spec, work_root=tmp_path)
+
+    assert set(calls) == {"verify"}
+    assert state_path.read_bytes() == state_before
+    assert sidecar_path.read_bytes() == sidecar_before
+    assert not (install_dir / "kubeconfig").exists()
+    assert summary_path.read_bytes() == summary_before
+
+
+@pytest.mark.parametrize("status", ["error", "incomplete"])
+def test_recovery_preserves_admitted_error_summary_when_provider_refuses(
+    tmp_path, monkeypatch, status
+):
+    spec, install_dir = _install(tmp_path)
+    workdir = install_dir / "k8s-training"
+    state_path = workdir / "terraform.tfstate"
+    state_before = state_path.read_bytes()
+    sidecar_path = install_dir / ".npa-fleet-env.json"
+    sidecar_before = sidecar_path.read_bytes()
+    lock_path = workdir / ".terraform.tfstate.lock.info"
+    lock_path.write_text("retained lock", encoding="utf-8")
+    lock_before = lock_path.read_bytes()
+    summary_path = tmp_path / spec.name / "fleet-state.json"
+    summary_before = _write_summary(summary_path, [_error_summary(status)])
+    calls: dict[str, object] = {}
+    _prepare_provider(monkeypatch, calls)
+
+    def reject_provider(**kwargs):
+        calls["verify"] = kwargs
+        return ""
+
+    monkeypatch.setattr(
+        lifecycle, "_resolve_verified_unchanged_target", reject_provider
+    )
+
+    with pytest.raises(recovery.FleetRecoveryError, match="could not be verified"):
+        recovery.recover_interrupted_fleet_apply(spec, work_root=tmp_path)
+
+    assert set(calls) == {"verify"}
+    assert state_path.read_bytes() == state_before
+    assert sidecar_path.read_bytes() == sidecar_before
+    assert lock_path.read_bytes() == lock_before
+    assert not (install_dir / "kubeconfig").exists()
+    assert summary_path.read_bytes() == summary_before
 
 
 @pytest.mark.parametrize("malformed_part", ["item", "metadata", "status"])
