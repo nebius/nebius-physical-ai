@@ -221,8 +221,10 @@ requires-python = ">=3.10"
 ```python
 # my_lerobot_extension/adapter.py
 def adapt(request: dict) -> dict:
-    return {"dataset_root": request["output_dataset_root"],
-            "gallery_root": request["output_gallery_root"]}
+    return {
+        "dataset_root": request["output_dataset_root"],
+        "gallery_root": request["output_gallery_root"],
+    }
 
 
 def extract_feedback(request: dict) -> dict:

@@ -1976,14 +1976,25 @@
       }
     },
     {
-      "sha256": "a44f9823797481a912e5daf03e594300eaee4133ff1ba16b22a9bb6acce07756",
-      "bytes": 447177,
+      "sha256": "bfe0a4ae8f2ba113971a499d2bd3daf2af8b6bbeb8e98d41748fc690d0fa8a97",
+      "bytes": 452573,
       "match_counts": {"credential_assignment": 13},
-      "reason": "The exact controller-routing changes preserve the existing operator-provided credential parameter flow. The detector's named assignments are references or placeholders, not operational credential literals.",
+      "reason": "The exact task-local controller-routing changes preserve the existing operator-provided credential parameter flow. The detector's named assignments are references or placeholders, not operational credential literals.",
       "source": {
-        "url": "https://github.com/nebius/nebius-physical-ai/blob/2d02d929ad4953024a6a483c238c616f71f55f34/npa/src/npa/cli/workbench/workflow/__init__.py",
-        "revision": "2d02d929ad4953024a6a483c238c616f71f55f34",
+        "url": "https://github.com/nebius/nebius-physical-ai/blob/abef80121b6bade27ba3754238e48536524832a0/npa/src/npa/cli/workbench/workflow/__init__.py",
+        "revision": "abef80121b6bade27ba3754238e48536524832a0",
         "member": "npa/src/npa/cli/workbench/workflow/__init__.py"
+      }
+    },
+    {
+      "sha256": "d44cc153914c57dd14e8f347006e66104045fd92741589d29218118c9200340a",
+      "bytes": 143566,
+      "match_counts": {"credential_assignment": 10},
+      "reason": "The configured Nebius CLI selection continues to reference only operator-provided inputs and documented placeholders. The detector's named assignments are not operational credential literals.",
+      "source": {
+        "url": "https://github.com/nebius/nebius-physical-ai/blob/713c12e4e0ca92f80870150c5298d62510e8518e/npa/src/npa/cli/main.py",
+        "revision": "713c12e4e0ca92f80870150c5298d62510e8518e",
+        "member": "npa/src/npa/cli/main.py"
       }
     },
     {

@@ -1007,7 +1007,7 @@ def test_runtime_automatically_uses_resolved_project_storage_credentials(
 
 
 @pytest.fixture()
-def configured_gpu_runtime(mocker, monkeypatch, satisfied_preflight):
+def configured_gpu_runtime(mocker, monkeypatch, satisfied_preflight, tmp_path):
     """Resolve private storage once and observe both actual discovery calls."""
     from npa.clients.config import StorageConfig
     from npa.orchestration.npa_workflow.submit_credentials import (
@@ -1025,6 +1025,26 @@ def configured_gpu_runtime(mocker, monkeypatch, satisfied_preflight):
     for key in expected:
         monkeypatch.delenv(key, raising=False)
     monkeypatch.delenv("NPA_WORKFLOW_GPU_ACCELERATOR", raising=False)
+    kubeconfig = tmp_path / "unit-context.kubeconfig"
+    kubeconfig.write_text(
+        """apiVersion: v1
+clusters:
+- name: unit-cluster
+  cluster:
+    server: https://cluster.example.invalid
+contexts:
+- name: unit-context
+  context:
+    cluster: unit-cluster
+    user: unit-user
+current-context: unit-context
+users:
+- name: unit-user
+  user:
+    token: synthetic-test-token
+"""
+    )
+    monkeypatch.setenv("KUBECONFIG", str(kubeconfig))
     monkeypatch.setenv("AWS_ENDPOINT_URL", "https://ambient.example.invalid")
     monkeypatch.setenv("NPA_SKYPILOT_PROJECT", "ambient-project")
     original_environment = {key: os.environ.get(key) for key in expected}
