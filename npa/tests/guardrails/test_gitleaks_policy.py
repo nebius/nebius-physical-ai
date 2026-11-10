@@ -82,10 +82,13 @@ def test_default_rule_exceptions_are_exact_lines() -> None:
     historical_short_fixture = (
         f'{{"type": "Opaque", "data": {{"auth_token": "dG9vL{fixture_suffix}"}}}},'
     )
-    assert sum(
-        bool(re.search(expression, historical_short_fixture))
-        for expression in expressions
-    ) == 1
+    assert (
+        sum(
+            bool(re.search(expression, historical_short_fixture))
+            for expression in expressions
+        )
+        == 1
+    )
     for allowlist in allowlists:
         assert allowlist["condition"] == "AND"
         assert allowlist["regexTarget"] == "line"
