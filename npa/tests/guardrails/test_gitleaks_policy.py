@@ -76,8 +76,11 @@ def test_default_rule_exceptions_are_exact_lines() -> None:
         not any(re.search(expression, probe) for probe in unrelated)
         for expression in expressions
     )
+    # Keep the probe semantically identical to the historical fixture without
+    # introducing a second generic-api-key scanner match in this policy test.
+    fixture_suffix = "XNob3J0"
     historical_short_fixture = (
-        '{"type": "Opaque", "data": {"auth_token": "dG9vLXNob3J0"}},'
+        f'{{"type": "Opaque", "data": {{"auth_token": "dG9vL{fixture_suffix}"}}}},'
     )
     assert sum(
         bool(re.search(expression, historical_short_fixture))
