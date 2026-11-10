@@ -442,11 +442,15 @@ def _persist_npa_cluster_identity(
 
     existing = load_cluster_state(context, base_dir=base_dir)
     if existing is not None and (
-        existing.cluster_id != cluster_id or existing.project_id != project_id
+        existing.cluster_id != cluster_id
+        or existing.project_id != project_id
+        or existing.region != region
+        or existing.subnet_id != subnet_id
     ):
         raise RuntimeError(
             f"NPA cluster context {context!r} already records a different immutable "
-            "project/cluster identity; refusing to overwrite it"
+            "project/cluster identity or Fleet region/subnet context; refusing to "
+            "overwrite it"
         )
     if not kubeconfig_path.is_file():
         raise RuntimeError(
@@ -2146,6 +2150,7 @@ def _is_verified_unchanged_target(
             "validating-gpu-health",
             "validating-mig",
             "validating-cluster-basics",
+            "recovered-pending-validation",
             "deployed-validation-failed",
             "deployed-credentials-failed",
         }

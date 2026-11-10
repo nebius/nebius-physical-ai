@@ -212,9 +212,9 @@ def _health_config(cluster, stabilization_seconds, timeout_minutes) -> GpuHealth
         )
     if cluster.gpu_count() <= 0 or not cluster.gpu_nodes:
         raise GraphicsVerificationError("RTX rendering target has no GPU workers")
-    if gpus_per_node(cluster.gpu_nodes.preset) != 8:
+    if gpus_per_node(cluster.gpu_nodes.preset) <= 0:
         raise GraphicsVerificationError(
-            "RTX rendering qualification requires 8-GPU workers"
+            "RTX rendering qualification requires a positive-GPU worker preset"
         )
     if cluster.resolved_gpu_driver_mode() != "operator":
         raise GraphicsVerificationError(
