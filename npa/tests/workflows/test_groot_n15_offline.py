@@ -14,6 +14,7 @@ import pandas as pd
 import pytest
 
 from npa.workbench.groot.custom_inputs import verify_minmax_roundtrip
+from npa.workbench.groot.reference_inputs import _reference_video_feature
 from npa.workflows import groot_n15_offline as workflow
 
 
@@ -73,6 +74,26 @@ def test_s3_uri_child_cannot_escape_prefix() -> None:
     assert root.child("receipt.json").as_uri() == "s3://bucket/run/output/receipt.json"
     with pytest.raises(ValueError, match="unsafe"):
         root.child("../receipt.json")
+
+
+def test_reference_video_feature_preserves_native_dimension_names() -> None:
+    source_info = {
+        "features": {
+            "observation.images.cam_right_wrist": {
+                "dtype": "video",
+                "shape": [3, 480, 640],
+                "names": ["channels", "height", "width"],
+            }
+        }
+    }
+
+    feature = _reference_video_feature(source_info)
+
+    assert feature == source_info["features"]["observation.images.cam_right_wrist"]
+    assert feature is not source_info["features"]["observation.images.cam_right_wrist"]
+    source_info["features"]["observation.images.cam_right_wrist"].pop("names")
+    with pytest.raises(ValueError, match="named height and width"):
+        _reference_video_feature(source_info)
 
 
 def test_custom_arguments_require_an_explicit_source_identity(tmp_path: Path) -> None:

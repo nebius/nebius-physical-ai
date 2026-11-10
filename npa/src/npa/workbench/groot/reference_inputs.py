@@ -15,7 +15,7 @@ import hashlib
 import json
 from pathlib import Path
 import shutil
-from typing import Any
+from typing import Any, Mapping
 
 
 REFERENCE_PROFILE = "vifailback-wrist-hybrid-v1"
@@ -205,6 +205,38 @@ class PreparedReference:
     gallery_item: dict[str, Any]
 
 
+def _reference_video_feature(source_info: Mapping[str, Any]) -> dict[str, Any]:
+    """Return the native-reader video schema from the pinned source metadata.
+
+    Args:
+        source_info: Parsed ``meta/info.json`` from the pinned public source.
+
+    Returns:
+        A detached camera feature schema with named height and width axes.
+
+    Raises:
+        ValueError: The source lacks a native-compatible wrist-camera schema.
+    """
+    features = source_info.get("features")
+    if not isinstance(features, Mapping):
+        raise ValueError("reference source metadata has no feature mapping")
+    feature = features.get("observation.images.cam_right_wrist")
+    if not isinstance(feature, Mapping) or feature.get("dtype") != "video":
+        raise ValueError("reference source wrist camera is not a video feature")
+    shape = feature.get("shape")
+    names = feature.get("names")
+    if (
+        not isinstance(shape, list)
+        or not isinstance(names, list)
+        or len(shape) != len(names)
+        or not {"height", "width"}.issubset(names)
+    ):
+        raise ValueError(
+            "reference source wrist video feature needs named height and width axes"
+        )
+    return dict(feature)
+
+
 def prepare_reference(stage: Path) -> PreparedReference:
     """Create the checked-in reference derivative and its source-bound labels."""
 
@@ -326,6 +358,7 @@ def prepare_reference(stage: Path) -> PreparedReference:
         episodes.append({"episode_index": output_episode, "length": length})
         index_offset += length
     source_info = json.loads((source / "meta/info.json").read_text())
+    video_feature = _reference_video_feature(source_info)
     source_info.update(
         {
             "codebase_version": "v2.1",
@@ -337,10 +370,7 @@ def prepare_reference(stage: Path) -> PreparedReference:
             "features": {
                 "observation.state": {"dtype": "float32", "shape": [14]},
                 "action": {"dtype": "float32", "shape": [14]},
-                "observation.images.cam_right_wrist": {
-                    "dtype": "video",
-                    "shape": [3, 480, 640],
-                },
+                "observation.images.cam_right_wrist": video_feature,
             },
         }
     )
