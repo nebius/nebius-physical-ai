@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import threading
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -30,6 +31,14 @@ from npa.fleet.spec import (
     spec_from_mapping,
 )
 from npa.soperator.spec import spec_from_mapping as soperator_spec_from_mapping
+
+
+def _with_compute_reservation(cluster, reservation_id="compute-reservation-test"):
+    assert cluster.gpu_nodes is not None
+    return replace(
+        cluster,
+        gpu_nodes=replace(cluster.gpu_nodes, compute_reservation_id=reservation_id),
+    )
 
 
 def test_tfvars_normalizer_preserves_equals_inside_quoted_values() -> None:
@@ -180,10 +189,10 @@ def test_standalone_and_one_target_fleet_share_complete_mig_contract(
     assert standalone_plan["gpu_health_timeout_minutes"] == 37
     assert standalone_plan["gpu_cuda_smoke"] is True
     standalone_render = backend.materialize(
-        standalone_desired, MK8sApplyRequest()
+        _with_compute_reservation(standalone_desired), MK8sApplyRequest()
     ).deployment_inputs
     fleet_render = backend.materialize(
-        fleet_desired, MK8sApplyRequest()
+        _with_compute_reservation(fleet_desired), MK8sApplyRequest()
     ).deployment_inputs
     assert standalone_render == fleet_render
 
@@ -1324,6 +1333,7 @@ def test_strict_reservation_proves_nonpreemptible_when_provider_omits_false() ->
         platform="gpu-rtx6000",
         preset="1gpu-24vcpu-218gb",
         capacity_block_group="capacity-test",
+        compute_reservation_id="compute-reservation-test",
     )
     payload = {
         "spec": {
@@ -1335,7 +1345,7 @@ def test_strict_reservation_proves_nonpreemptible_when_provider_omits_false() ->
                 },
                 "reservationPolicy": {
                     "policy": "STRICT",
-                    "reservationIds": ["capacity-test"],
+                    "reservationIds": ["compute-reservation-test"],
                 },
             },
         },

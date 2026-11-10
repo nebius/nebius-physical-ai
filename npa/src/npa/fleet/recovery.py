@@ -6,6 +6,7 @@ from dataclasses import dataclass, replace
 import json
 import os
 from pathlib import Path
+import time
 from typing import Any
 
 from npa.cluster_backends.mk8s_execution import _context_name
@@ -17,6 +18,10 @@ from npa.fleet.release import MK8sReleaseError, select_installation_release
 
 class FleetRecoveryError(RuntimeError):
     """An interrupted Fleet apply lacks the proof required for safe adoption."""
+
+
+class _RetainedPoolTopologyPending(FleetRecoveryError):
+    """Exact newly-created pools have not yet reached terminal provider state."""
 
 
 _ENV_SIDECAR = ".npa-fleet-env.json"
@@ -44,6 +49,7 @@ class _RecoveryInputs:
     release: Any
     desired: Any
     cluster_id: str
+    ssh_public_key: str
 
 
 @dataclass(frozen=True)
@@ -75,6 +81,154 @@ def recover_interrupted_fleet_apply(
             return _recover_locked(target, profile=profile)
     except FleetOperationLockError as exc:
         raise FleetRecoveryError(str(exc)) from exc
+
+
+def reconcile_retained_fleet_target(
+    spec,
+    *,
+    only_projects: list[str] | None = None,
+    only_clusters: list[str] | None = None,
+    project_prefix: str | None = None,
+    profile: str | None = None,
+    work_root: Path | None = None,
+) -> dict[str, Any]:
+    """Verify one retained target for normal lifecycle without adopting it.
+
+    This is intentionally narrower than :func:`recover_interrupted_fleet_apply`:
+    it performs the same exact owner, immutable-release, rendered-input,
+    Terraform-shape, live-owner, provider identity, and topology checks, but
+    it never creates a lock, kubeconfig, context, sidecar, or Fleet-summary
+    record.  The normal Fleet deploy path uses the returned ephemeral result to
+    avoid a second Terraform create of the already-retained target.
+    """
+
+    target = _target(
+        spec,
+        only_projects=only_projects,
+        only_clusters=only_clusters,
+        project_prefix=project_prefix,
+        work_root=work_root,
+    )
+    workdir = target.install_dir / "k8s-training"
+    _assert_no_live_apply_owner(workdir)
+    inputs = _recovery_inputs(target, workdir, profile=profile)
+    initial_cluster_id = inputs.cluster_id
+    _session, inputs = _verify_provider(target, inputs)
+    if not inputs.cluster_id:
+        raise FleetRecoveryError("provider verification returned no cluster identity")
+    if initial_cluster_id and inputs.cluster_id != initial_cluster_id:
+        raise FleetRecoveryError(
+            "provider verification returned a different immutable cluster identity"
+        )
+    # Provider verification is deliberately followed by the same owner check
+    # as recovery.  A late local apply must fail before lifecycle returns a
+    # reconciliation result that another owner could mistake for a handoff.
+    _assert_no_live_apply_owner(workdir)
+    return {
+        "backend": "mk8s",
+        "project_key": target.project.key(),
+        "project_id": inputs.saved["project_id"],
+        "cluster_name": target.cluster.name,
+        "cluster_id": inputs.cluster_id,
+        "region": inputs.saved["region"],
+        "status": "reconciled-pending-validation",
+        "mk8s_recipe_release": inputs.release.persistence(),
+        "nonpersistent_reconciliation": True,
+    }
+
+
+def verify_retained_fleet_pool_resume(
+    spec,
+    *,
+    only_projects: list[str] | None = None,
+    only_clusters: list[str] | None = None,
+    project_prefix: str | None = None,
+    profile: str | None = None,
+    work_root: Path | None = None,
+) -> dict[str, Any]:
+    """Read-only proof for the narrowly supported retained-pool resume.
+
+    This is deliberately not generic cluster adoption.  It supports one
+    exact retained MK8s target whose cluster is already terminal but whose
+    Terraform root cluster instance lacks materialized attributes.  Existing
+    node groups must be an exact subset of the declared pool layout; all
+    other shapes refuse before a normal lifecycle can create anything.
+    """
+
+    target = _target(
+        spec,
+        only_projects=only_projects,
+        only_clusters=only_clusters,
+        project_prefix=project_prefix,
+        work_root=work_root,
+    )
+    workdir = target.install_dir / "k8s-training"
+    _assert_no_live_apply_owner(workdir)
+    inputs = _recovery_inputs(target, workdir, profile=profile)
+    _session, inputs, missing = _verify_retained_pool_resume(target, inputs)
+    _assert_context_adoptable(inputs.saved["context"], inputs)
+    _assert_no_live_apply_owner(workdir)
+    return {
+        "backend": "mk8s",
+        "project_key": target.project.key(),
+        "project_id": inputs.saved["project_id"],
+        "cluster_name": target.cluster.name,
+        "cluster_id": inputs.cluster_id,
+        "region": inputs.saved["region"],
+        "missing_node_groups": [name for name, _pool in missing],
+        "status": "retained-pools-verified",
+        "mk8s_recipe_release": inputs.release.persistence(),
+        "nonpersistent_reconciliation": True,
+    }
+
+
+def resume_retained_fleet_pool_target(
+    spec,
+    *,
+    only_projects: list[str] | None = None,
+    only_clusters: list[str] | None = None,
+    project_prefix: str | None = None,
+    profile: str | None = None,
+    work_root: Path | None = None,
+    timeout_minutes: int = 120,
+) -> dict[str, Any]:
+    """Create only verified missing pools for one retained MK8s target.
+
+    All retained local evidence and live project/cluster/pool identity is
+    checked before the first provider mutation.  The ordinary Fleet context,
+    kubeconfig, sidecar, and summary are persisted only after every missing
+    pool command has returned an exact provider identity and a fresh complete
+    provider inventory proves the terminal requested topology.  Correct
+    asynchronous provider responses are re-listed only within the enclosing
+    Fleet lifecycle timeout. Terraform state and locks are never read-write
+    targets of this path.
+    """
+
+    target = _target(
+        spec,
+        only_projects=only_projects,
+        only_clusters=only_clusters,
+        project_prefix=project_prefix,
+        work_root=work_root,
+    )
+    workdir = target.install_dir / "k8s-training"
+    timeout_seconds = _retained_pool_resume_timeout_seconds(timeout_minutes)
+    _assert_no_live_apply_owner(workdir)
+    inputs = _recovery_inputs(target, workdir, profile=profile)
+    session, inputs, missing = _verify_retained_pool_resume(target, inputs)
+    _assert_context_adoptable(inputs.saved["context"], inputs)
+    _assert_no_live_apply_owner(workdir)
+    for name, pool in missing:
+        _create_retained_node_group(target, inputs, session, name, pool, workdir)
+    _wait_for_retained_pool_topology(
+        inputs,
+        session,
+        timeout_seconds=timeout_seconds,
+    )
+    # A local apply owner may appear while the provider receives the group
+    # commands.  Refuse before any ordinary local registration write.
+    _assert_no_live_apply_owner(workdir)
+    return _persist_recovery(target, inputs, session)
 
 
 def _target(spec, *, only_projects, only_clusters, project_prefix, work_root):
@@ -132,7 +286,7 @@ def _recovery_inputs(
         target.cluster.name,
         saved["region"],
     )
-    return _RecoveryInputs(sidecar, saved, release, desired, cluster_id)
+    return _RecoveryInputs(sidecar, saved, release, desired, cluster_id, ssh_public_key)
 
 
 def _verify_provider(
@@ -163,6 +317,451 @@ def _verify_provider(
             "provider verification returned a different immutable cluster identity"
         )
     return session, replace(inputs, cluster_id=cluster_id)
+
+
+def _verify_retained_pool_resume(
+    target: _RecoveryTarget, inputs: _RecoveryInputs
+) -> tuple[_ProviderSession, _RecoveryInputs, list[tuple[str, Any]]]:
+    """Verify the exact cluster and existing-pool subset for a pool-only resume."""
+
+    from npa.cluster_backends import mk8s_execution
+
+    if inputs.cluster_id:
+        raise FleetRecoveryError(
+            "retained pool resume requires an unmaterialized Terraform cluster identity"
+        )
+    _assert_pool_resume_supported(inputs.desired)
+    session = _provider_session(target, inputs.saved)
+    _assert_provider_project(target, inputs, session)
+    cluster_id = mk8s_execution._unmaterialized_state_provider_candidate(
+        project_id=inputs.saved["project_id"],
+        cluster_name=target.cluster.name,
+        nebius_bin=session.nebius_bin,
+        profile=inputs.saved["profile"],
+        env=session.environment,
+    )
+    if not cluster_id:
+        raise FleetRecoveryError(
+            "provider project or terminal retained cluster could not be verified"
+        )
+    verified_inputs = replace(inputs, cluster_id=cluster_id)
+    missing = _verify_retained_pool_topology(
+        verified_inputs, session, allow_missing=True
+    )
+    return session, verified_inputs, missing
+
+
+def _verify_retained_pool_topology(
+    inputs: _RecoveryInputs,
+    session: _ProviderSession,
+    *,
+    allow_missing: bool,
+) -> list[tuple[str, Any]]:
+    """Require a complete exact retained-pool inventory before persistence."""
+
+    from npa.cluster_backends import mk8s_execution
+
+    if not inputs.cluster_id:
+        raise FleetRecoveryError("retained provider cluster identity is missing")
+
+    groups_result = mk8s_execution._run_capture(
+        [
+            *mk8s_execution._nebius_argv(session.nebius_bin, inputs.saved["profile"]),
+            "mk8s",
+            "v1",
+            "node-group",
+            "list",
+            "--parent-id",
+            inputs.cluster_id,
+            "--all",
+            "--format",
+            "json",
+        ],
+        env=session.environment,
+        check=False,
+    )
+    if groups_result.returncode:
+        raise FleetRecoveryError("could not read retained provider node groups")
+    try:
+        groups_payload = json.loads(groups_result.stdout or "{}")
+    except json.JSONDecodeError as exc:
+        raise FleetRecoveryError(
+            "retained provider node-group inventory is malformed"
+        ) from exc
+    groups = groups_payload.get("items") if isinstance(groups_payload, dict) else None
+    if (
+        not isinstance(groups, list)
+        or groups_payload.get("next_page_token")
+        or not all(isinstance(group, dict) for group in groups)
+    ):
+        raise FleetRecoveryError("retained provider node-group inventory is incomplete")
+
+    expected = _retained_pool_layout(inputs.desired)
+    by_name: dict[str, Any] = {}
+    for group in groups:
+        metadata = group.get("metadata")
+        if not isinstance(metadata, dict):
+            raise FleetRecoveryError(
+                "retained provider node-group metadata is malformed"
+            )
+        name = metadata.get("name")
+        parent_id = mk8s_execution._provider_field(metadata, "parent_id", "parentId")
+        if (
+            not isinstance(name, str)
+            or not name
+            or parent_id != inputs.cluster_id
+            or name in by_name
+        ):
+            raise FleetRecoveryError(
+                "retained provider node-group identity is malformed"
+            )
+        by_name[name] = group
+    unexpected = set(by_name) - set(expected)
+    if unexpected:
+        raise FleetRecoveryError("retained provider has an undeclared node group")
+    missing: list[tuple[str, Any]] = []
+    for name, pool in expected.items():
+        group = by_name.get(name)
+        if group is None:
+            if not allow_missing:
+                raise _RetainedPoolTopologyPending(
+                    "retained provider is missing a required terminal node group"
+                )
+            missing.append((name, pool))
+            continue
+        decoded = mk8s_execution._decode_v1_node_group_preemptibility(group)
+        if mk8s_execution._provider_node_group_matches_pool(decoded, pool):
+            continue
+        status = decoded.get("status")
+        if (
+            not allow_missing
+            and isinstance(status, dict)
+            and status.get("state") == "PROVISIONING"
+            and mk8s_execution._provider_node_group_matches_pool(
+                decoded, pool, allocated_repair=True
+            )
+        ):
+            raise _RetainedPoolTopologyPending(
+                "retained provider node group has not reached terminal state"
+            )
+        raise FleetRecoveryError("retained provider node-group topology differs")
+    return missing
+
+
+def _wait_for_retained_pool_topology(
+    inputs: _RecoveryInputs,
+    session: _ProviderSession,
+    *,
+    timeout_seconds: int,
+) -> None:
+    """Boundedly relist only an otherwise exact asynchronous pool create."""
+
+    deadline = time.monotonic() + timeout_seconds
+    while True:
+        try:
+            _verify_retained_pool_topology(inputs, session, allow_missing=False)
+            return
+        except _RetainedPoolTopologyPending as exc:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise FleetRecoveryError(
+                    "retained provider node-group topology did not reach terminal state "
+                    "within the Fleet lifecycle timeout"
+                ) from exc
+            time.sleep(min(30.0, max(1.0, remaining)))
+
+
+def _retained_pool_resume_timeout_seconds(timeout_minutes: int) -> int:
+    """Validate the existing Fleet deploy timeout before a pool mutation."""
+
+    if (
+        isinstance(timeout_minutes, bool)
+        or not isinstance(timeout_minutes, int)
+        or timeout_minutes <= 0
+    ):
+        raise FleetRecoveryError(
+            "retained pool resume requires the positive Fleet lifecycle timeout"
+        )
+    return timeout_minutes * 60
+
+
+def _assert_provider_project(
+    target: _RecoveryTarget, inputs: _RecoveryInputs, session: _ProviderSession
+) -> None:
+    """Require one exact project identity before any retained-target action."""
+
+    from npa.cluster_backends import mk8s_execution
+    from npa.fleet import lifecycle
+
+    provider = lifecycle._get_project(
+        session.nebius_bin,
+        inputs.saved["project_id"],
+        session.environment,
+        inputs.saved["profile"],
+    )
+    if not isinstance(provider, dict):
+        raise FleetRecoveryError("provider project response is malformed")
+    metadata = provider.get("metadata")
+    spec = provider.get("spec")
+    status = provider.get("status")
+    if not isinstance(metadata, dict):
+        raise FleetRecoveryError("provider project identity is malformed")
+    parent_id = mk8s_execution._provider_field(metadata, "parent_id", "parentId")
+    provider_region = ""
+    for mapping in (spec, status, metadata):
+        if isinstance(mapping, dict) and mapping.get("region"):
+            provider_region = str(mapping["region"])
+            break
+    expected_name = (
+        target.project.display_name(target.prefix)
+        if target.project.name and not target.project.project_id
+        else ""
+    )
+    if (
+        metadata.get("id") != inputs.saved["project_id"]
+        or parent_id != inputs.saved["tenant_id"]
+        or provider_region != inputs.saved["region"]
+        or (expected_name and metadata.get("name") != expected_name)
+    ):
+        raise FleetRecoveryError(
+            "provider project identity differs from retained target"
+        )
+
+
+def _retained_pool_layout(cluster) -> dict[str, Any]:
+    """Return the only node-group names a retained resume may create."""
+
+    from dataclasses import replace as dataclass_replace
+    from npa.cluster_backends.mk8s_render import gpu_node_group_layout
+
+    layout: dict[str, Any] = {}
+    if cluster.cpu_nodes and cluster.cpu_nodes.count > 0:
+        layout[f"{cluster.name}-ng-cpu"] = cluster.cpu_nodes
+    gpu = cluster.gpu_nodes
+    if gpu and gpu.count > 0:
+        per_group, group_count = gpu_node_group_layout(cluster)
+        for index in range(group_count):
+            layout[f"{cluster.name}-ng-gpu-{index}"] = dataclass_replace(
+                gpu, count=per_group
+            )
+    if not layout:
+        raise FleetRecoveryError("retained target has no declared node pools")
+    return layout
+
+
+def _assert_pool_resume_supported(cluster) -> None:
+    """Fail closed for pool templates this exact resume cannot reproduce."""
+
+    if cluster.mig and cluster.mig.enabled:
+        raise FleetRecoveryError("retained pool resume does not support MIG templates")
+    if cluster.resolved_enable_gpu_cluster():
+        raise FleetRecoveryError(
+            "retained pool resume does not support GPU-cluster templates"
+        )
+    if cluster.kuberay is not None:
+        raise FleetRecoveryError(
+            "retained pool resume does not support KubeRay templates"
+        )
+    for pool in (cluster.cpu_nodes, cluster.gpu_nodes):
+        if pool and pool.count > 0 and pool.preemptible:
+            raise FleetRecoveryError(
+                "retained pool resume does not support preemptible pools"
+            )
+
+
+def _create_retained_node_group(
+    target: _RecoveryTarget,
+    inputs: _RecoveryInputs,
+    session: _ProviderSession,
+    name: str,
+    pool: Any,
+    workdir: Path,
+) -> None:
+    """Create one exact missing pool through the supported MK8s CLI surface."""
+
+    from npa.cluster.gpu_driver import resolve_gpu_driver_strategy
+    from npa.cluster_backends import mk8s_execution
+
+    cluster = inputs.desired
+    is_gpu = bool(cluster.gpu_nodes and pool is not cluster.cpu_nodes)
+    disk_size = (
+        cluster.resolved_gpu_disk_size_gib()
+        if is_gpu
+        else (pool.disk_size_gib if pool.disk_size_gib > 0 else 128)
+    )
+    command = [
+        *mk8s_execution._nebius_argv(session.nebius_bin, inputs.saved["profile"]),
+        "mk8s",
+        "node-group",
+        "create",
+        "--parent-id",
+        inputs.cluster_id,
+        "--name",
+        name,
+        "--fixed-node-count",
+        str(pool.count),
+        "--template-resources-platform",
+        pool.platform,
+        "--template-resources-preset",
+        pool.preset,
+        "--template-boot-disk-type",
+        "network_ssd",
+        "--template-boot-disk-size-gibibytes",
+        str(disk_size),
+        "--template-network-interfaces",
+        json.dumps([{"subnet_id": inputs.saved["subnet_id"]}], separators=(",", ":")),
+        "--template-cloud-init-user-data",
+        _retained_pool_cloud_init(inputs, workdir),
+        "--format",
+        "json",
+    ]
+    if cluster.resolved_k8s_version():
+        command.extend(["--version", cluster.resolved_k8s_version()])
+    filesystem_id = _retained_filesystem_id(workdir, cluster)
+    if filesystem_id:
+        command.extend(
+            [
+                "--template-filesystems",
+                json.dumps(
+                    [
+                        {
+                            "attach_mode": "read_write",
+                            "mount_tag": cluster.filestore_mount_tag,
+                            "existing_filesystem": {"id": filesystem_id},
+                        }
+                    ],
+                    separators=(",", ":"),
+                ),
+            ]
+        )
+    if is_gpu:
+        if not pool.capacity_block_group or not pool.compute_reservation_id:
+            raise FleetRecoveryError(
+                "retained strict GPU pool has no verified compute reservation identity"
+            )
+        command.extend(
+            [
+                "--template-reservation-policy-policy",
+                "strict",
+                "--template-reservation-policy-reservation-ids",
+                pool.compute_reservation_id,
+            ]
+        )
+        selection = resolve_gpu_driver_strategy(
+            gpu_nodes=cluster.gpu_count(),
+            platform=pool.platform,
+            preset=pool.preset,
+            mode=cluster.resolved_gpu_driver_mode(),
+            managed_driver_preset=cluster.managed_driver_preset,
+            enable_gpu_cluster=False,
+            allow_unsafe_nvswitch_operator=cluster.allow_unsafe_nvswitch_operator,
+        )
+        if selection.uses_managed_image:
+            command.extend(
+                [
+                    "--template-gpu-settings-drivers-preset",
+                    selection.managed_driver_preset,
+                ]
+            )
+    result = mk8s_execution._run_capture(command, env=session.environment, check=False)
+    if result.returncode:
+        raise FleetRecoveryError(f"could not create retained node group {name!r}")
+    try:
+        created = json.loads(result.stdout or "{}")
+    except json.JSONDecodeError as exc:
+        raise FleetRecoveryError(
+            "retained node-group create response is malformed"
+        ) from exc
+    metadata = created.get("metadata") if isinstance(created, dict) else None
+    parent_id = (
+        mk8s_execution._provider_field(metadata, "parent_id", "parentId")
+        if isinstance(metadata, dict)
+        else None
+    )
+    if (
+        not isinstance(metadata, dict)
+        or not isinstance(metadata.get("id"), str)
+        or not metadata["id"]
+        or metadata.get("name") != name
+        or parent_id != inputs.cluster_id
+    ):
+        raise FleetRecoveryError(
+            "retained node-group create response has wrong identity"
+        )
+
+
+def _retained_filesystem_id(workdir: Path, cluster) -> str:
+    """Read one exact retained filesystem identity without changing Terraform state."""
+
+    if not cluster.enable_filestore:
+        return ""
+    if cluster.existing_filestore:
+        return cluster.existing_filestore
+    state = _read_mapping(workdir / _STATE_FILE, "Terraform state")
+    resources = state.get("resources")
+    if not isinstance(resources, list):
+        raise FleetRecoveryError("Terraform state has no resource inventory")
+    candidates: list[str] = []
+    for resource in resources:
+        if not (
+            isinstance(resource, dict)
+            and resource.get("mode") == "managed"
+            and resource.get("type") == "nebius_compute_v1_filesystem"
+            and resource.get("name") == "shared-filesystem"
+            and isinstance(resource.get("instances"), list)
+        ):
+            continue
+        for instance in resource["instances"]:
+            if not isinstance(instance, dict) or instance.get("deposed"):
+                continue
+            attributes = instance.get("attributes")
+            filesystem_id = (
+                attributes.get("id") if isinstance(attributes, dict) else None
+            )
+            if isinstance(filesystem_id, str) and filesystem_id:
+                candidates.append(filesystem_id)
+    if len(candidates) != 1:
+        raise FleetRecoveryError("retained filesystem identity is not exact")
+    return candidates[0]
+
+
+def _retained_pool_cloud_init(inputs: _RecoveryInputs, workdir: Path) -> str:
+    """Render the supported non-NUMA recipe template for the exact retained pool."""
+
+    cluster = inputs.desired
+    # The Fleet renderer always uses the upstream default user.  Do not infer
+    # unsupported overrides from arbitrary retained Terraform input.
+    lines = ["package_update: true", "package_upgrade: false"]
+    if cluster.enable_filestore:
+        _retained_filesystem_id(workdir, cluster)
+        lines.extend(
+            [
+                "",
+                "mounts:",
+                "  - [ "
+                + json.dumps(cluster.filestore_mount_tag)
+                + ", "
+                + json.dumps(cluster.filestore_mount_path)
+                + ', virtiofs, "defaults,nofail", 0, 2 ]',
+                "",
+                "runcmd:",
+                "  - [ modprobe, fuse ]",
+                "  - [ mkdir, '-p', " + json.dumps(cluster.filestore_mount_path) + " ]",
+                "  - [ mount, '-a' ]",
+            ]
+        )
+    lines.extend(
+        [
+            "",
+            "users:",
+            " - name: ubuntu",
+            "   sudo: ALL=(ALL) NOPASSWD:ALL",
+            "   shell: /bin/bash",
+            "   ssh_authorized_keys:",
+            "    - " + json.dumps(inputs.ssh_public_key),
+        ]
+    )
+    return "\n".join(lines) + "\n"
 
 
 def _provider_session(
@@ -383,7 +982,15 @@ def _assert_materialized_spec(workdir: Path, cluster, ssh_public_key: str) -> No
         raise FleetRecoveryError(
             "materialized Fleet Terraform inputs are unavailable"
         ) from exc
-    if _normalize_tfvars(saved) != _normalize_tfvars(expected):
+    from npa.cluster_backends.mk8s_execution import retained_target_tfvars_match
+
+    if not retained_target_tfvars_match(
+        saved,
+        expected,
+        strict_capacity_block_group=(
+            cluster.gpu_nodes.capacity_block_group if cluster.gpu_nodes else ""
+        ),
+    ):
         raise FleetRecoveryError("materialized inputs differ from the selected spec")
 
 
