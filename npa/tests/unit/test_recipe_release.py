@@ -18,6 +18,7 @@ from npa.fleet.release import (
     LegacyMK8sReleaseRecoveryError,
     MK8sReleaseError,
     default_mk8s_release,
+    release_from_sidecar,
     recipe_bundle_sha256,
     select_installation_release,
     filesystem_csi_makes_default_storage_class,
@@ -46,7 +47,7 @@ def _recipe_root(path: Path) -> Path:
 def test_new_install_selects_current_date_release_once(tmp_path: Path) -> None:
     selected = select_installation_release(tmp_path / "new")
 
-    assert selected.release_id == "mk8s-v2026-10-22"
+    assert selected.release_id == "mk8s-v2026-11-10"
     assert selected.upstream_tag == "main-v2026-10-12"
     assert len(selected.upstream_commit) == 40
 
@@ -56,7 +57,7 @@ def test_selected_release_matches_shipped_vendored_source_before_materialization
 
     source = _find_vendored_recipe_root()
     assert source is not None
-    release = releases.resolve_mk8s_release("mk8s-v2026-10-22")
+    release = releases.resolve_mk8s_release("mk8s-v2026-11-10")
 
     validate_release_source(release, source)
     assert recipe_bundle_sha256(source) == release.bundle_sha256
@@ -68,6 +69,22 @@ def test_existing_install_keeps_exact_saved_release(tmp_path: Path) -> None:
     _write_mk8s_sidecar(install_dir, release.persistence())
 
     assert select_installation_release(install_dir) == release
+
+
+def test_superseded_release_record_remains_valid_for_lifecycle_and_status(
+    tmp_path: Path,
+) -> None:
+    """A successor must not rewrite either lifecycle boundary for prior records."""
+
+    prior = releases.resolve_mk8s_release("mk8s-v2026-10-22")
+    install_dir = tmp_path / "install"
+    _write_mk8s_sidecar(install_dir, prior.persistence())
+
+    assert select_installation_release(install_dir) == prior
+    assert (
+        release_from_sidecar({"mk8s_recipe_release": prior.persistence()})
+        == prior.persistence()
+    )
 
 
 def test_prior_qualified_contract_remains_reconcilable(tmp_path: Path) -> None:
