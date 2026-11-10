@@ -149,7 +149,7 @@ def _prepare_provider(monkeypatch, calls: dict[str, object]) -> None:
     monkeypatch.setattr(lifecycle, "_persist_npa_cluster_identity", persist)
 
 
-def _mixed_unmaterialized_resolver(monkeypatch, calls, malformed_field):
+def _mixed_unmaterialized_resolver(monkeypatch, calls, malformed_part):
     valid = {
         "metadata": {
             "id": "cluster-test",
@@ -158,8 +158,11 @@ def _mixed_unmaterialized_resolver(monkeypatch, calls, malformed_field):
         },
         "status": {"state": "RUNNING"},
     }
-    malformed = {"metadata": {}, "status": {}}
-    malformed[malformed_field] = []
+    if malformed_part == "item":
+        malformed = []
+    else:
+        malformed = {"metadata": {}, "status": {}}
+        malformed[malformed_part] = []
     result = CompletedProcess([], 0, json.dumps({"items": [valid, malformed]}), "")
     monkeypatch.setattr(
         mk8s_execution, "_run_capture", lambda *_args, **_kwargs: result
@@ -277,9 +280,17 @@ def test_recovery_resolves_exact_empty_instances_only_after_verified_provider(
     assert calls["persist"]["cluster_id"] == "cluster-test"
 
 
-@pytest.mark.parametrize("malformed_field", ["metadata", "status"])
+@pytest.mark.parametrize("malformed_part", ["item", "metadata", "status"])
+@pytest.mark.parametrize(
+    "fleet_summary",
+    [
+        b'{\n  "clusters": [],\n  "unresolved": 0\n}\n',
+        b'{"clusters":[{"project_key":"other","cluster_name":"other"}],"unresolved":0}\n',
+    ],
+    ids=["empty-summary", "unrelated-summary"],
+)
 def test_recovery_rejects_empty_state_mixed_malformed_inventory_before_persistence(
-    tmp_path, monkeypatch, malformed_field
+    tmp_path, monkeypatch, malformed_part, fleet_summary
 ):
     spec, install_dir = _install(tmp_path)
     workdir = install_dir / "k8s-training"
@@ -293,12 +304,15 @@ def test_recovery_rejects_empty_state_mixed_malformed_inventory_before_persisten
     lock_path = workdir / ".terraform.tfstate.lock.info"
     lock_path.write_text("retained lock", encoding="utf-8")
     lock_before = lock_path.read_bytes()
+    summary_path = tmp_path / spec.name / "fleet-state.json"
+    summary_path.write_bytes(fleet_summary)
+    summary_before = summary_path.read_bytes()
     calls: dict[str, object] = {}
     _prepare_provider(monkeypatch, calls)
     monkeypatch.setattr(
         lifecycle,
         "_resolve_verified_unchanged_target",
-        _mixed_unmaterialized_resolver(monkeypatch, calls, malformed_field),
+        _mixed_unmaterialized_resolver(monkeypatch, calls, malformed_part),
     )
 
     with pytest.raises(recovery.FleetRecoveryError, match="could not be verified"):
@@ -309,7 +323,7 @@ def test_recovery_rejects_empty_state_mixed_malformed_inventory_before_persisten
     assert sidecar_path.read_bytes() == sidecar_before
     assert lock_path.read_bytes() == lock_before
     assert not (install_dir / "kubeconfig").exists()
-    assert not (tmp_path / spec.name / "fleet-state.json").exists()
+    assert summary_path.read_bytes() == summary_before
 
 
 @pytest.mark.parametrize(
