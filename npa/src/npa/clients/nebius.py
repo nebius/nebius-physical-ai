@@ -228,6 +228,17 @@ def _require_nebius() -> str:
     # trust boundary: fail closed rather than silently falling back to PATH and
     # potentially changing the authenticated provider client for a workflow.
     configured = os.environ.get("NPA_NEBIUS_BIN", "").strip()
+    if not configured:
+        # A fresh process can read the same NPA-owned binary selection from its
+        # configured state directory even when the caller evaluated
+        # ``configure --show --env`` without exporting assignments.  This is
+        # intentionally limited to an executable under NPA_CONFIG_DIR; it never
+        # scans arbitrary PATH entries or invents a local install location.
+        from npa.clients.config import NPA_CONFIG_DIR
+
+        managed = NPA_CONFIG_DIR / "bin" / "nebius"
+        if managed.is_file() and os.access(managed, os.X_OK):
+            configured = str(managed)
     path = shutil.which(configured or "nebius")
     if path is None:
         configured_hint = (

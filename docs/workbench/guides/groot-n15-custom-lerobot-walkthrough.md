@@ -51,7 +51,9 @@ The reference submission is then one generic command, with no hand-built
 sidecars or hidden task values:
 
 ```bash
+set -a
 eval "$(npa/.venv/bin/python -m npa configure --show --env)"
+set +a
 ```
 
 ```bash
