@@ -99,7 +99,12 @@ def test_default_rule_exceptions_are_exact_lines() -> None:
 
 def test_global_allowlist_has_no_path_exceptions() -> None:
     """Prevent any global exception from suppressing a complete source path."""
-    assert all("paths" not in item for item in _config()["allowlists"])
+    allowlists = _config()["allowlists"]
+    assert all("paths" not in item for item in allowlists)
+    commits = {
+        commit for allowlist in allowlists for commit in allowlist.get("commits", [])
+    }
+    assert "eb0b27d9d5e1e3133781fc8152e8dd70bf8c3df1" in commits
 
 
 def test_bootstrap_does_not_execute_candidate_scanner_helpers() -> None:
