@@ -132,6 +132,7 @@ def test_v1_preemptible_marker_cannot_satisfy_strict_reserved_pool(existing):
     [
         "",
         "ambiguous",
+        "malformed-provider",
         "wrong-project",
         "wrong-name",
         "wrong-topology",
@@ -139,8 +140,11 @@ def test_v1_preemptible_marker_cannot_satisfy_strict_reserved_pool(existing):
         "incomplete-inventory",
     ],
 )
+@pytest.mark.parametrize(
+    "instances", [[{}], []], ids=["missing-attributes", "empty-list"]
+)
 def test_unmaterialized_recovery_derives_only_one_verified_terminal_identity(
-    existing, monkeypatch, failure
+    existing, monkeypatch, failure, instances
 ):
     kwargs, saved, groups, provider_cluster, workdir = existing
     saved.pop("cluster_id")
@@ -153,7 +157,7 @@ def test_unmaterialized_recovery_derives_only_one_verified_terminal_identity(
                     {
                         "mode": "managed",
                         "type": "nebius_mk8s_v1_cluster",
-                        "instances": [{}],
+                        "instances": instances,
                     }
                 ]
             }
@@ -174,6 +178,8 @@ def test_unmaterialized_recovery_derives_only_one_verified_terminal_identity(
         duplicate = deepcopy(provider_cluster)
         duplicate["metadata"]["id"] = "cluster-other"
         listed_items.append(duplicate)
+    elif failure == "malformed-provider":
+        listed_items = [{"metadata": [], "status": []}]
     commands = []
 
     def capture(command, **_kwargs):

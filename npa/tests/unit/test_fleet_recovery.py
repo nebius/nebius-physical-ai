@@ -225,14 +225,38 @@ def test_recovery_resolves_one_unmaterialized_state_identity(tmp_path, monkeypat
     assert sidecar["cluster_id"] == "cluster-test"
 
 
-def test_recovery_rejects_unmaterialized_state_without_verified_identity(
+def test_recovery_resolves_exact_empty_instances_only_after_verified_provider(
     tmp_path, monkeypatch
 ):
     spec, install_dir = _install(tmp_path)
     workdir = install_dir / "k8s-training"
     state_path = workdir / "terraform.tfstate"
     state = json.loads(state_path.read_text())
-    state["resources"][0]["instances"] = [{}]
+    state["resources"][0]["instances"] = []
+    _write_json(state_path, state)
+    state_before = state_path.read_bytes()
+    calls: dict[str, object] = {}
+    _prepare_provider(monkeypatch, calls)
+
+    result = recovery.recover_interrupted_fleet_apply(spec, work_root=tmp_path)
+
+    assert result["cluster_id"] == "cluster-test"
+    assert state_path.read_bytes() == state_before
+    assert calls["verify"]["cluster"].name == "recover"
+    assert calls["persist"]["cluster_id"] == "cluster-test"
+
+
+@pytest.mark.parametrize(
+    "instances", [[{}], []], ids=["missing-attributes", "empty-list"]
+)
+def test_recovery_rejects_unmaterialized_state_without_verified_identity(
+    tmp_path, monkeypatch, instances
+):
+    spec, install_dir = _install(tmp_path)
+    workdir = install_dir / "k8s-training"
+    state_path = workdir / "terraform.tfstate"
+    state = json.loads(state_path.read_text())
+    state["resources"][0]["instances"] = instances
     _write_json(state_path, state)
     state_before = state_path.read_bytes()
     calls: dict[str, object] = {}
@@ -247,14 +271,18 @@ def test_recovery_rejects_unmaterialized_state_without_verified_identity(
     assert "persist" not in calls
 
 
+@pytest.mark.parametrize(
+    "instances", [[{}], []], ids=["missing-attributes", "empty-list"]
+)
 def test_recovery_rejects_live_owner_before_unmaterialized_provider_resolution(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, instances
 ):
     spec, install_dir = _install(tmp_path)
     state_path = install_dir / "k8s-training" / "terraform.tfstate"
     state = json.loads(state_path.read_text())
-    state["resources"][0]["instances"] = [{}]
+    state["resources"][0]["instances"] = instances
     _write_json(state_path, state)
+    state_before = state_path.read_bytes()
     calls: dict[str, object] = {}
     _prepare_provider(monkeypatch, calls)
 
@@ -273,6 +301,7 @@ def test_recovery_rejects_live_owner_before_unmaterialized_provider_resolution(
         recovery.recover_interrupted_fleet_apply(spec, work_root=tmp_path)
 
     assert calls == {}
+    assert state_path.read_bytes() == state_before
     assert not (install_dir / "kubeconfig").exists()
 
 
