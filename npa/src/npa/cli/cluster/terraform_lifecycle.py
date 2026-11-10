@@ -580,11 +580,9 @@ def up_cmd(
         resolved_capacity = capacity_block_group.strip() or str(
             _tfvar_value(tfvars, env, "capacity_block_group", "") or ""
         )
-        # The user-facing capacity block remains the declarative selector.
-        # MK8s, however, requires the compatible compute-reservation identity
-        # in its STRICT node-group policy.  Bind that identity before either
-        # backend materialization or direct Terraform can render an invalid
-        # provider payload.
+        # The user-facing capacity block is also the supported MK8s STRICT
+        # policy selector. Verify its current provider record before backend
+        # materialization or direct Terraform can render an invalid payload.
         _preflight_gpu_capacity(nebius_bin, tfvars, env)
         compute_reservation_id = _resolve_compute_reservation_identity(
             nebius_bin,
@@ -891,9 +889,7 @@ def up_cmd(
             # -var beats terraform.tfvars, TF_VAR_* does not. Pass the flag value
             # explicitly so `--capacity-block-group` is not silently dropped by a
             # `capacity_block_group = ""` line in a checked-in tfvars file.
-            *_capacity_block_group_var_args(
-                compute_reservation_id or capacity_block_group
-            ),
+            *_capacity_block_group_var_args(compute_reservation_id),
             *_string_var_args("infiniband_fabric", infiniband_fabric),
             *_string_var_args(
                 "cluster_name", str(tfvars.get("cluster_name") or "npa-cluster")
@@ -3749,12 +3745,11 @@ def _preflight_project_reservation(nebius_bin, tfvars, env, reservation_id, requ
 def _resolve_compute_reservation_identity(
     nebius_bin: str, env: dict[str, str], capacity_block_group: str
 ) -> str:
-    """Return the provider reservation ID for one already-validated selector.
+    """Return one verified capacity-block STRICT policy selector.
 
-    The CLI's capacity-block group is intentionally not passed through as a
-    provider reservation ID.  A complete, unambiguous identity is required
-    even after the ordinary STRICT capacity preflight has established
-    entitlement and headroom.
+    The provider accepts a capacity-block-group ID in the managed-Kubernetes
+    STRICT reservation policy. Optional alternate catalog fields must repeat
+    that declared selector; a distinct value is not a compatible replacement.
     """
 
     selector = capacity_block_group.strip()
@@ -3776,8 +3771,7 @@ def _resolve_compute_reservation_identity(
     )
     if result.returncode:
         raise typer.BadParameter(
-            "could not read the compatible compute reservation for the selected "
-            "capacity block group"
+            "could not read the selected capacity block group for strict reservation"
         )
     try:
         payload = json.loads(result.stdout or "{}")
@@ -3797,28 +3791,29 @@ def _resolve_compute_reservation_identity(
         raise typer.BadParameter(
             "selected capacity block group returned a different reservation selector"
         )
+    raw_values = (
+        status.get("compute_reservation_id") if isinstance(status, dict) else None,
+        status.get("computeReservationId") if isinstance(status, dict) else None,
+        affinity.get("compute_reservation_id") if isinstance(affinity, dict) else None,
+        affinity.get("computeReservationId") if isinstance(affinity, dict) else None,
+        affinity.get("reservation_id") if isinstance(affinity, dict) else None,
+        affinity.get("reservationId") if isinstance(affinity, dict) else None,
+    )
+    if any(value is not None and not isinstance(value, str) for value in raw_values):
+        raise typer.BadParameter(
+            "selected capacity block group returned malformed reservation identity evidence"
+        )
     values = {
         value.strip()
-        for value in (
-            status.get("compute_reservation_id") if isinstance(status, dict) else None,
-            status.get("computeReservationId") if isinstance(status, dict) else None,
-            affinity.get("compute_reservation_id")
-            if isinstance(affinity, dict)
-            else None,
-            affinity.get("computeReservationId")
-            if isinstance(affinity, dict)
-            else None,
-            affinity.get("reservation_id") if isinstance(affinity, dict) else None,
-            affinity.get("reservationId") if isinstance(affinity, dict) else None,
-        )
+        for value in raw_values
         if isinstance(value, str) and value.strip()
     }
-    if len(values) != 1 or selector in values:
+    if values and values != {selector}:
         raise typer.BadParameter(
-            "selected capacity block group has no unambiguous compatible compute "
-            "reservation identity"
+            "selected capacity block group has conflicting unsupported reservation "
+            "identity evidence"
         )
-    return values.pop()
+    return selector
 
 
 def _preflight_gpu_capacity(

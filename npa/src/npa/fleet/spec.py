@@ -136,7 +136,8 @@ class NodePoolSpec:
     capacity_block_group: str = ""
     preemptible: bool = False
     # Internal runtime binding populated only after Fleet has read compatible
-    # reservation evidence.  It is deliberately not accepted by YAML parsing
+    # reservation evidence for the exact capacity-block policy ID. It is
+    # deliberately not accepted by YAML parsing
     # and is excluded from public plan/output surfaces.
     compute_reservation_id: str = field(default="", repr=False, compare=False)
 

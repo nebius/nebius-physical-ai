@@ -1814,14 +1814,13 @@ def _bind_strict_compute_reservations(
     region_by_target: dict[tuple[str, str], str],
     on_status: Callable[[str], None] | None,
 ) -> dict[tuple[str, str], Any]:
-    """Bind each selected STRICT group to a verified compute reservation.
+    """Bind each selected STRICT group to its verified policy selector.
 
-    A capacity-block group remains the declarative selector.  Rendering its ID
-    directly as a compute reservation is invalid, so this read-only step
-    obtains the exact compatible provider identity before any rendered input,
-    project/network setup, or Terraform action.  Missing tenant inventory is a
-    refusal: project allowance evidence alone cannot prove the identity that a
-    provider reservation policy needs.
+    A capacity-block group is both the declarative selector and the supported
+    managed-Kubernetes STRICT reservation ID. This read-only step verifies
+    complete compatible evidence before any rendered input, project/network
+    setup, or Terraform action. Missing tenant inventory is a refusal because
+    project allowance evidence alone cannot prove selector compatibility.
     """
 
     by_region: dict[str, list[Any]] = {}
@@ -1856,8 +1855,7 @@ def _bind_strict_compute_reservations(
             compute_reservation_id = bindings.get(gpu.capacity_block_group, "")
             if not compute_reservation_id:
                 raise ValueError(
-                    "STRICT capacity-block selection has no verified compute "
-                    "reservation identity"
+                    "STRICT capacity-block selection has no verified policy identity"
                 )
             if (
                 gpu.compute_reservation_id
@@ -1865,7 +1863,7 @@ def _bind_strict_compute_reservations(
             ):
                 raise ValueError(
                     "STRICT capacity-block selection conflicts with the verified "
-                    "compute reservation identity"
+                    "reservation policy identity"
                 )
             cluster = replace(
                 cluster,

@@ -635,16 +635,19 @@ def _create_retained_node_group(
             ]
         )
     if is_gpu:
-        if not pool.capacity_block_group or not pool.compute_reservation_id:
+        if (
+            not pool.capacity_block_group
+            or pool.compute_reservation_id != pool.capacity_block_group
+        ):
             raise FleetRecoveryError(
-                "retained strict GPU pool has no verified compute reservation identity"
+                "retained strict GPU pool has no verified matching reservation policy identity"
             )
         command.extend(
             [
                 "--template-reservation-policy-policy",
                 "strict",
                 "--template-reservation-policy-reservation-ids",
-                pool.compute_reservation_id,
+                pool.capacity_block_group,
             ]
         )
         selection = resolve_gpu_driver_strategy(

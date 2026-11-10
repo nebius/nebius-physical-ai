@@ -2100,42 +2100,26 @@ def _normalize_tfvars_assignments(text: str) -> str:
 def retained_target_tfvars_match(
     saved: str, expected: str, *, strict_capacity_block_group: str = ""
 ) -> bool:
-    """Compare retained inputs, allowing only a verified STRICT ID rebinding.
+    """Compare retained inputs with an exact verified STRICT policy selector.
 
-    Fleet's public spec selects a capacity-block group, while the provider's
-    node-group API requires the compatible compute-reservation identity found
-    during the current strict preflight.  A target created before that binding
-    was available may therefore retain the group ID in precisely one rendered
-    assignment.  This helper treats that one strict selector-to-runtime-ID
-    translation as compatible and rejects every other materialized-input
-    difference.
+    Managed Kubernetes uses the declared capacity-block-group ID directly in
+    the STRICT reservation policy. A retained input with any alternate policy
+    ID therefore has material drift and cannot proceed to provider mutation.
     """
 
     saved_assignments = _tfvars_assignment_map(saved)
     expected_assignments = _tfvars_assignment_map(expected)
     if saved_assignments is None or expected_assignments is None:
         return False
-    if saved_assignments == expected_assignments:
-        return True
-    changed = {
-        name
-        for name in set(saved_assignments) | set(expected_assignments)
-        if saved_assignments.get(name) != expected_assignments.get(name)
-    }
-    if changed != {"gpu_nodes_reservation_policy"}:
+    if saved_assignments != expected_assignments:
         return False
-    saved_policy = _strict_reservation_id(
-        saved_assignments["gpu_nodes_reservation_policy"]
-    )
-    expected_policy = _strict_reservation_id(
-        expected_assignments["gpu_nodes_reservation_policy"]
-    )
-    return bool(
-        saved_policy
-        and expected_policy
-        and strict_capacity_block_group
-        and saved_policy == strict_capacity_block_group
-        and saved_policy != expected_policy
+    if not strict_capacity_block_group:
+        return True
+    return (
+        _strict_reservation_id(
+            saved_assignments.get("gpu_nodes_reservation_policy", "")
+        )
+        == strict_capacity_block_group
     )
 
 
@@ -2780,10 +2764,10 @@ def _provider_node_group_matches_pool(
         return False
     strict_reserved = bool(
         pool.capacity_block_group
-        and pool.compute_reservation_id
+        and pool.compute_reservation_id == pool.capacity_block_group
         and isinstance(reservation, dict)
         and str(reservation.get("policy") or "") == "STRICT"
-        and reservation_ids == [pool.compute_reservation_id]
+        and reservation_ids == [pool.capacity_block_group]
     )
     effective_preemptible = (
         False

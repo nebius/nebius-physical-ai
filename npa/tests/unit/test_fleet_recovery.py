@@ -223,7 +223,7 @@ def _provider_pool(
         platform: Provider platform selector.
         preset: Provider compute preset.
         count: Required fixed node count.
-        reservation_id: Strict compute-reservation identity when required.
+        reservation_id: Strict capacity-block policy ID when required.
         state: Provider node-group lifecycle state.
 
     Returns:
@@ -1110,7 +1110,8 @@ def test_normal_lifecycle_resumes_zero_group_cpu_and_strict_gpu_target(
     bound_cluster = replace(
         cluster,
         gpu_nodes=replace(
-            cluster.gpu_nodes, compute_reservation_id="compute-reservation-test"
+            cluster.gpu_nodes,
+            compute_reservation_id="capacityblockgroup-test",
         ),
     )
     workdir = install_dir / "k8s-training"
@@ -1128,7 +1129,7 @@ def test_normal_lifecycle_resumes_zero_group_cpu_and_strict_gpu_target(
         as_mk8s_desired(bound_cluster), ssh_public_key="ssh-test", recipe_dir=workdir
     )
     (workdir / "terraform.tfvars").write_text(
-        tfvars.replace("compute-reservation-test", "capacityblockgroup-test"),
+        tfvars,
         encoding="utf-8",
     )
     before["state"] = (workdir / "terraform.tfstate").read_bytes()
@@ -1189,7 +1190,7 @@ def test_normal_lifecycle_resumes_zero_group_cpu_and_strict_gpu_target(
                             platform="gpu-rtx6000",
                             preset="1gpu-24vcpu-218gb",
                             count=1,
-                            reservation_id="compute-reservation-test",
+                            reservation_id="capacityblockgroup-test",
                         ),
                     ]
                 }
@@ -1235,7 +1236,7 @@ def test_normal_lifecycle_resumes_zero_group_cpu_and_strict_gpu_target(
         gpu_command[
             gpu_command.index("--template-reservation-policy-reservation-ids") + 1
         ]
-        == "compute-reservation-test"
+        == "capacityblockgroup-test"
     )
     filesystems = json.loads(
         gpu_command[gpu_command.index("--template-filesystems") + 1]
@@ -1247,7 +1248,7 @@ def test_normal_lifecycle_resumes_zero_group_cpu_and_strict_gpu_target(
             "existing_filesystem": {"id": "filesystem-test"},
         }
     ]
-    assert not any("capacityblockgroup-test" in value for value in gpu_command)
+    assert any("capacityblockgroup-test" in value for value in gpu_command)
     assert not any("cluster" in command and "create" in command for command in commands)
     assert not any("terraform" in command for command in commands)
     assert (workdir / "terraform.tfstate").read_bytes() == before["state"]
@@ -1268,7 +1269,8 @@ def test_retained_resume_rejects_nonmatching_saved_selector_before_provider(
     bound_cluster = replace(
         cluster,
         gpu_nodes=replace(
-            cluster.gpu_nodes, compute_reservation_id="compute-reservation-test"
+            cluster.gpu_nodes,
+            compute_reservation_id="capacityblockgroup-test",
         ),
     )
     workdir = install_dir / "k8s-training"
@@ -1277,7 +1279,7 @@ def test_retained_resume_rejects_nonmatching_saved_selector_before_provider(
             as_mk8s_desired(bound_cluster),
             ssh_public_key="ssh-test",
             recipe_dir=workdir,
-        ).replace("compute-reservation-test", "other-capacity-block"),
+        ).replace("capacityblockgroup-test", "other-capacity-block"),
         encoding="utf-8",
     )
     paths = {
@@ -1422,7 +1424,8 @@ def test_normal_lifecycle_refuses_registration_before_terminal_strict_pool_proof
     bound_cluster = replace(
         cluster,
         gpu_nodes=replace(
-            cluster.gpu_nodes, compute_reservation_id="compute-reservation-test"
+            cluster.gpu_nodes,
+            compute_reservation_id="capacityblockgroup-test",
         ),
     )
     workdir = install_dir / "k8s-training"
@@ -1430,7 +1433,7 @@ def test_normal_lifecycle_refuses_registration_before_terminal_strict_pool_proof
         as_mk8s_desired(bound_cluster), ssh_public_key="ssh-test", recipe_dir=workdir
     )
     (workdir / "terraform.tfvars").write_text(
-        tfvars.replace("compute-reservation-test", "capacityblockgroup-test"),
+        tfvars,
         encoding="utf-8",
     )
     before["state"] = (workdir / "terraform.tfstate").read_bytes()
