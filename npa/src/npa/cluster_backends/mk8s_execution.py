@@ -2568,7 +2568,7 @@ def _unmaterialized_state_provider_candidate(
         metadata = item.get("metadata")
         status = item.get("status")
         if not isinstance(metadata, dict) or not isinstance(status, dict):
-            continue
+            return ""
         parent_id = _provider_field(metadata, "parent_id", "parentId")
         candidate_id = metadata.get("id")
         if (

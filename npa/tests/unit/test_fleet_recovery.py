@@ -5,9 +5,11 @@ from __future__ import annotations
 import json
 from pathlib import Path
 import shutil
+from subprocess import CompletedProcess
 
 import pytest
 
+from npa.cluster_backends import mk8s_execution
 from npa.cluster_backends.mk8s_model import as_mk8s_desired
 from npa.cluster_backends.mk8s_render import render_tfvars
 from npa.fleet import lifecycle, recovery
@@ -147,6 +149,35 @@ def _prepare_provider(monkeypatch, calls: dict[str, object]) -> None:
     monkeypatch.setattr(lifecycle, "_persist_npa_cluster_identity", persist)
 
 
+def _mixed_unmaterialized_resolver(monkeypatch, calls, malformed_field):
+    valid = {
+        "metadata": {
+            "id": "cluster-test",
+            "parent_id": "project-test",
+            "name": "recover",
+        },
+        "status": {"state": "RUNNING"},
+    }
+    malformed = {"metadata": {}, "status": {}}
+    malformed[malformed_field] = []
+    result = CompletedProcess([], 0, json.dumps({"items": [valid, malformed]}), "")
+    monkeypatch.setattr(
+        mk8s_execution, "_run_capture", lambda *_args, **_kwargs: result
+    )
+
+    def resolve(**_kwargs):
+        calls["provider_resolution"] = True
+        return mk8s_execution._unmaterialized_state_provider_candidate(
+            project_id="project-test",
+            cluster_name="recover",
+            nebius_bin="nebius",
+            profile="operator-test",
+            env={},
+        )
+
+    return resolve
+
+
 def test_recovers_one_verified_target_without_touching_terraform(tmp_path, monkeypatch):
     spec, install_dir = _install(tmp_path)
     workdir = install_dir / "k8s-training"
@@ -244,6 +275,41 @@ def test_recovery_resolves_exact_empty_instances_only_after_verified_provider(
     assert state_path.read_bytes() == state_before
     assert calls["verify"]["cluster"].name == "recover"
     assert calls["persist"]["cluster_id"] == "cluster-test"
+
+
+@pytest.mark.parametrize("malformed_field", ["metadata", "status"])
+def test_recovery_rejects_empty_state_mixed_malformed_inventory_before_persistence(
+    tmp_path, monkeypatch, malformed_field
+):
+    spec, install_dir = _install(tmp_path)
+    workdir = install_dir / "k8s-training"
+    state_path = workdir / "terraform.tfstate"
+    state = json.loads(state_path.read_text())
+    state["resources"][0]["instances"] = []
+    _write_json(state_path, state)
+    state_before = state_path.read_bytes()
+    sidecar_path = install_dir / ".npa-fleet-env.json"
+    sidecar_before = sidecar_path.read_bytes()
+    lock_path = workdir / ".terraform.tfstate.lock.info"
+    lock_path.write_text("retained lock", encoding="utf-8")
+    lock_before = lock_path.read_bytes()
+    calls: dict[str, object] = {}
+    _prepare_provider(monkeypatch, calls)
+    monkeypatch.setattr(
+        lifecycle,
+        "_resolve_verified_unchanged_target",
+        _mixed_unmaterialized_resolver(monkeypatch, calls, malformed_field),
+    )
+
+    with pytest.raises(recovery.FleetRecoveryError, match="could not be verified"):
+        recovery.recover_interrupted_fleet_apply(spec, work_root=tmp_path)
+
+    assert calls == {"provider_resolution": True}
+    assert state_path.read_bytes() == state_before
+    assert sidecar_path.read_bytes() == sidecar_before
+    assert lock_path.read_bytes() == lock_before
+    assert not (install_dir / "kubeconfig").exists()
+    assert not (tmp_path / spec.name / "fleet-state.json").exists()
 
 
 @pytest.mark.parametrize(

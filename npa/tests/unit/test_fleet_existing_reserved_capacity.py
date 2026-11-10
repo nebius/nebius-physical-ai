@@ -179,7 +179,7 @@ def test_unmaterialized_recovery_derives_only_one_verified_terminal_identity(
         duplicate["metadata"]["id"] = "cluster-other"
         listed_items.append(duplicate)
     elif failure == "malformed-provider":
-        listed_items = [{"metadata": [], "status": []}]
+        listed_items.append({"metadata": [], "status": []})
     commands = []
 
     def capture(command, **_kwargs):
