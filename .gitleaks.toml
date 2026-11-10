@@ -94,6 +94,14 @@ regexes = [
     '''^\s*"path": "var/lib/dpkg/info/(?:libgssapi-krb5-2|libkeyutils1):amd64\.triggers", "source_scan_note": "gitleaks:allow=public-package-path-metadata",\s*$''',
 ]
 
+[[rules.allowlists]]
+description = "Historical Sim2Real test fixture encodes the literal too-short string too-short, not an API credential."
+condition = "AND"
+regexTarget = "line"
+regexes = [
+    '''^\s*\{"type": "Opaque", "data": \{"auth_token": "dG9vLXNob3J0"\}\},\s*$''',
+]
+
 [[rules]]
 id = "nebius-generic-id"
 description = "Nebius account/resource identifier (e00/u00 format)"

@@ -60,7 +60,7 @@ def test_default_rule_exceptions_are_exact_lines() -> None:
     """Bind every default-rule exception to one exact anchored fixture line."""
     rules = {rule["id"]: rule for rule in _config()["rules"]}
     allowlists = rules["generic-api-key"]["allowlists"]
-    assert len(allowlists) == 11
+    assert len(allowlists) == 12
     assert "private-key" not in rules
     expressions = [
         expression for allowlist in allowlists for expression in allowlist["regexes"]
@@ -76,6 +76,13 @@ def test_default_rule_exceptions_are_exact_lines() -> None:
         not any(re.search(expression, probe) for probe in unrelated)
         for expression in expressions
     )
+    historical_short_fixture = (
+        '{"type": "Opaque", "data": {"auth_token": "dG9vLXNob3J0"}},'
+    )
+    assert sum(
+        bool(re.search(expression, historical_short_fixture))
+        for expression in expressions
+    ) == 1
     for allowlist in allowlists:
         assert allowlist["condition"] == "AND"
         assert allowlist["regexTarget"] == "line"
