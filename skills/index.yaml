@@ -40,6 +40,15 @@ licenses:
     applies_to:
       - neural-reconstruction
 skills:
+  - name: nebius-stream-beta
+    category: tools
+    when_to_use: "Resolve an existing Nebius Stream beta skill link or invocation to the current Nebius World Factory skill and portable client."
+    path: skills/tools/nebius-stream-beta/SKILL.md
+    smoke:
+      - type: file_exists
+        path: skills/tools/nebius-world-factory/SKILL.md
+      - type: file_exists
+        path: skills/tools/nebius-world-factory/scripts/cosmos_client.py
   - name: nebius-world-factory
     category: tools
     when_to_use: "Use an operator-supplied Nebius World Factory HTTPS endpoint to discover Cosmos3 Nano/Super capabilities, register storage, transfer full-length videos with custom or multiple controls, individual weights and negative prompts, augment inventories, recover artifacts, and export customer-scoped usage."
