@@ -298,18 +298,18 @@ def render_tfvars(
         if gpu.capacity_block_group:
             # STRICT is deliberate: AUTO may silently fall back to ordinary
             # on-demand capacity when the named capacity block is exhausted.
-            # A capacity-block group is a selector, not a provider reservation
-            # identity.  Fleet must resolve it from current compatible capacity
-            # evidence before this renderer is used for an apply.
+            # Managed Kubernetes accepts the capacity-block group itself as a
+            # STRICT policy ID. Fleet must still bind that exact value from
+            # current compatible capacity evidence before this renderer applies.
             compute_reservation_id = getattr(gpu, "compute_reservation_id", "")
-            if not compute_reservation_id:
+            if compute_reservation_id != gpu.capacity_block_group:
                 raise ValueError(
-                    "strict capacity_block_group has no verified compute reservation "
-                    "identity; rerun Fleet capacity preflight"
+                    "strict capacity_block_group has no verified matching reservation "
+                    "policy identity; rerun Fleet capacity preflight"
                 )
             lines.append(
                 'gpu_nodes_reservation_policy = { policy = "STRICT", '
-                f"reservation_ids = [{_tfstr(compute_reservation_id)}] }}"
+                f"reservation_ids = [{_tfstr(gpu.capacity_block_group)}] }}"
             )
         lines.append(
             f"gpu_disk_size = {_tfstr(str(cluster.resolved_gpu_disk_size_gib()))}"

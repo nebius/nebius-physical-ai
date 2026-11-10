@@ -33,7 +33,7 @@ def existing(tmp_path, monkeypatch):
         desired,
         gpu_nodes=replace(
             desired.gpu_nodes,
-            compute_reservation_id="compute-reservation-test",
+            compute_reservation_id="capacityblockgroup-test",
         ),
     )
     project = ProjectSpec(
@@ -137,35 +137,32 @@ def test_v1_preemptible_marker_cannot_satisfy_strict_reserved_pool(existing):
     assert not E._is_verified_unchanged_target(**kwargs)
 
 
-def test_retained_tfvars_accepts_only_raw_selector_to_verified_compute_binding() -> (
-    None
-):
+def test_retained_tfvars_requires_the_verified_capacity_block_selector() -> None:
     raw = "\n".join(
         [
             'cluster_name = "render"',
             'gpu_nodes_reservation_policy = { policy = "STRICT", reservation_ids = ["capacityblockgroup-test"] }',
         ]
     )
-    bound = raw.replace("capacityblockgroup-test", "compute-reservation-test")
-
     assert E.retained_target_tfvars_match(
         raw,
-        bound,
+        raw,
         strict_capacity_block_group="capacityblockgroup-test",
     )
+    wrong = raw.replace("capacityblockgroup-test", "unsupported-id")
     assert not E.retained_target_tfvars_match(
-        raw,
-        bound,
+        wrong,
+        wrong,
         strict_capacity_block_group="capacityblockgroup-other",
     )
     assert not E.retained_target_tfvars_match(
         raw.replace('policy = "STRICT"', 'policy = "AUTO"'),
-        bound,
+        raw,
         strict_capacity_block_group="capacityblockgroup-test",
     )
     assert not E.retained_target_tfvars_match(
         raw,
-        bound + '\ngpu_nodes_preset = "different"',
+        raw + '\ngpu_nodes_preset = "different"',
         strict_capacity_block_group="capacityblockgroup-test",
     )
 

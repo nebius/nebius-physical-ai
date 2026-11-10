@@ -33,8 +33,9 @@ from npa.fleet.spec import (
 from npa.soperator.spec import spec_from_mapping as soperator_spec_from_mapping
 
 
-def _with_compute_reservation(cluster, reservation_id="compute-reservation-test"):
+def _with_compute_reservation(cluster, reservation_id=None):
     assert cluster.gpu_nodes is not None
+    reservation_id = reservation_id or cluster.gpu_nodes.capacity_block_group
     return replace(
         cluster,
         gpu_nodes=replace(cluster.gpu_nodes, compute_reservation_id=reservation_id),
@@ -1333,7 +1334,7 @@ def test_strict_reservation_proves_nonpreemptible_when_provider_omits_false() ->
         platform="gpu-rtx6000",
         preset="1gpu-24vcpu-218gb",
         capacity_block_group="capacity-test",
-        compute_reservation_id="compute-reservation-test",
+        compute_reservation_id="capacity-test",
     )
     payload = {
         "spec": {
@@ -1345,7 +1346,7 @@ def test_strict_reservation_proves_nonpreemptible_when_provider_omits_false() ->
                 },
                 "reservationPolicy": {
                     "policy": "STRICT",
-                    "reservationIds": ["compute-reservation-test"],
+                    "reservationIds": ["capacity-test"],
                 },
             },
         },

@@ -1370,7 +1370,6 @@ def test_up_runs_terraform_writes_kubeconfig_and_validates(
                             "resource_affinity": {
                                 "compute_v1": {
                                     "platform": "gpu-rtx6000",
-                                    "reservation_id": "compute-reservation-test",
                                 }
                             },
                         },
@@ -1433,8 +1432,7 @@ def test_up_runs_terraform_writes_kubeconfig_and_validates(
     # explicitly as well as exported.
     apply_call = _find_call(stream_calls, "terraform", "apply", "-auto-approve")
     assert apply_call is not None
-    assert "capacity_block_group=compute-reservation-test" in apply_call
-    assert "capacity_block_group=capacityblockgroup-test" not in apply_call
+    assert "capacity_block_group=capacityblockgroup-test" in apply_call
     assert (
         "filesystem_csi_make_default_storage_class=" + str(legacy_state).lower()
         in apply_call

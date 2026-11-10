@@ -47,7 +47,8 @@ def _with_compute_reservation(cluster):
     return replace(
         cluster,
         gpu_nodes=replace(
-            cluster.gpu_nodes, compute_reservation_id="compute-reservation-test"
+            cluster.gpu_nodes,
+            compute_reservation_id=cluster.gpu_nodes.capacity_block_group,
         ),
     )
 

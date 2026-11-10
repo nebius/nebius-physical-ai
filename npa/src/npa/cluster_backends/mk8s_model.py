@@ -40,9 +40,9 @@ class MK8sNodePool:
     capacity_block_group: str = ""
     preemptible: bool = False
     # This is runtime-only evidence selected from the exact capacity-block
-    # record during Fleet preflight.  Public specs select the block group; the
-    # provider reservation policy must receive its compatible compute
-    # reservation identity instead.  It is deliberately absent from the
+    # record during Fleet preflight. Public specs select the block group; the
+    # provider reservation policy receives that exact verified group ID. It is
+    # deliberately absent from the
     # surface spec and from equality so saved desired-state inputs remain
     # portable and never carry a private provider identity.
     compute_reservation_id: str = field(default="", repr=False, compare=False)
