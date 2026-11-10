@@ -24,7 +24,7 @@ profile; see the [resource preflight guide](../docs/workbench/npa-workflow-guide
 | Run a complete public sample with one command | [Four workflow demos](../docs/workbench/guides/public-workflow-demos.md) — automatic inputs, standard GPU execution, and offline HTML results |
 | Label videos in Encord and export an annotated MP4 | [Encord partner workflows](partners/encord/README.md) — real object tracks, exported-label verification, and media roundtrip |
 | Augment a video or LeRobot episode | [PAIDF + Cosmos 3](guides/paidf-cosmos3.md) — public starter, local MP4, and episode/camera inputs; [twelve variants with preserved padding](../docs/workbench/guides/paidf-appearance-12.md#apply-the-recipe) |
-| Generate twelve appearance variants through an existing hosted API | [Standalone Cosmos3 campaign](../npa/examples/paidf-cosmos3-api-only/README.md) — CPU client and offline HTML, no cluster provisioning; scoped PAIDF adaptation without Curator or FiftyOne |
+| Generate twelve appearance variants through an existing hosted API | [Managed-endpoint Cosmos3 campaign](../npa/examples/paidf-cosmos3-api-only/README.md) — HTTPS-only client; service-managed preparation, finishing and lossless previews; offline HTML; scoped PAIDF adaptation without Curator or FiftyOne |
 | Edit person-image attributes or generate annotated event videos | [Cosmos Data Factory](cosmos-data-factory/README.md) — separate IAA and EVG workflows, shared setup, and upstream YAML conversion decision |
 | Generate an image or video | [Cosmos 3](../docs/workbench/cosmos3-generate.md) |
 | Generate a rigid object from one image | [EmbodiedGen V2](../docs/workbench/embodiedgen.md) — qualified operator-private TRELLIS → URDF → PyBullet; each selected target still needs its own preflight |

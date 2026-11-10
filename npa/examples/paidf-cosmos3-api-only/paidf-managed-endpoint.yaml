@@ -1,43 +1,49 @@
-apiVersion: paidf.cosmos3-api-only/v1
-kind: HostedCosmos3PaidfCampaign
+apiVersion: paidf.cosmos3-managed-endpoint/v1
+kind: HostedCosmos3ManagedPaidfCampaign
 
 metadata:
-  name: paidf-cosmos3-api-only
-  campaign_id: paidf-cosmos3-api-only
+  name: paidf-managed-endpoint
+  campaign_id: paidf-managed-endpoint
   description: >-
     Twelve full-source Cosmos3-Super appearance variants through an existing
-    owner-scoped HTTPS endpoint, with local CPU validation and offline review.
+    managed HTTPS endpoint. The service owns source preparation, guarded
+    generation, border restoration, lossless RGB browser previews, checksums,
+    publication and finishing reports; the client only submits, polls and
+    downloads.
 
 execution:
-  executor: local-cpu-plus-https
+  executor: https-client-only
   no_new_infrastructure: true
-  external_services:
-    - existing-hosted-cosmos3-inference
-    - existing-owner-scoped-storage
-  local_stages:
-    # CPU collection also restores detected source borders, without altering scene pixels.
-    - contract-and-storage-audit
+  customer_compute: none
+  customer_media_processing: none
+  service_managed_stages:
+    - cpu-source-preparation
+    - guarded-gpu-inference
+    - cpu-border-restoration
+    - cpu-lossless-rgb-browser-preview
+    - cpu-finishing-report
+    - checksum-verified-publication
+  client_stages:
+    - contract-and-managed-capability-discovery
     - durable-request-admission
-    - artifact-recovery-and-checksums
-    - ffprobe-and-full-decode
-    - sampled-frame-review
-    - offline-html-report
+    - status-polling
+    - checksum-verified-download
+    - offline-html-assembly
 
 canonical_main_audit:
   workflow: workflows/main/paidf-cosmos3.yaml
   verdict: adapted-subset-only
   hosted_generation: >-
-    The canonical workflow has an opt-in hosted generation stage, but its
-    remaining prepare, evaluation, curation, visualization, and runtime stages
-    use Kubernetes/SkyPilot resources or other hosted services. This campaign
-    does not claim those stages execute infrastructure-free.
+    The canonical workflow's remaining prepare, evaluation, curation,
+    visualization and runtime stages use Kubernetes/SkyPilot resources or
+    other hosted services. This campaign does not claim to execute them.
   substitutions:
-    source_preparation: existing prepared owner-scoped video
+    source_preparation: existing prepared owner-scoped video; service validates and analyzes it
     captions: omitted; explicit appearance prompts are supplied below
-    cosmos_evaluator: service technical_report plus local media validation
-    cosmos_curator: omitted; manual visual disposition is retained separately
+    cosmos_evaluator: service technical_report and finishing report; no semantic evaluator
+    cosmos_curator: omitted; manual sampled review is retained separately
     fiftyone: omitted; offline HTML gallery replaces the viewer
-    rerun: offline HTML gallery; browser playback is checked separately
+    rerun: offline HTML gallery from service lossless RGB previews
 
 source:
   input_connection_id: ${PAIDF_INPUT_CONNECTION_ID}
@@ -60,10 +66,14 @@ generation:
     num_inference_steps: 35
     guidance_scale: 3.0
     control_guidance: 1.5
-  admission_parallelism: 12
-  service_concurrency_note: >-
-    Client admission is concurrent; actual service queueing and GPU-lane
-    concurrency remain service-controlled and are reported separately.
+  client_admission_parallelism: 12
+  service_scheduling_note: >-
+    Client admissions are concurrent HTTP requests. Queueing, GPU execution
+    and CPU finishing are scheduled by the service and reported separately.
+
+output_policy:
+  border_preservation: restore_detected_source_borders
+  browser_preview: lossless_rgb_webm
 
 output:
   connection_id: ${PAIDF_OUTPUT_CONNECTION_ID}
@@ -77,7 +87,7 @@ semantic_review:
     - contacts_are_not_visibly_impossible
     - requested_appearance_change_is_visible
   limitation: >-
-    Full technical decode and service technical_report are not semantic quality
+    Service technical and finishing reports are not semantic quality
     acceptance. This example executes no separate VLM semantic evaluator.
 
 variants:

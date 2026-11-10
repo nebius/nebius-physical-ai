@@ -1,40 +1,46 @@
-# Hosted Cosmos3: twelve variants without a cluster
+# Hosted Cosmos3: twelve variants from a managed endpoint
 
 This standalone Python example adapts the generation/review subset of
-[`workflows/main/paidf-cosmos3.yaml`](../../../workflows/main/paidf-cosmos3.yaml).
-It uses an **existing** Cosmos3 HTTPS API, existing registered S3 storage and
-CPU processing on a Mac or an existing VDI. It provisions no infrastructure.
-Hosted GPU inference still runs on the service provider's infrastructure and
-may incur charges. The service controls GPU concurrency; twelve concurrent
-client admissions do not imply twelve concurrent GPU executions.
+[`workflows/main/paidf-cosmos3.yaml`](../../../workflows/main/paidf-cosmos3.yaml)
+to an **existing managed** Cosmos3 HTTPS endpoint. The service owns every media
+stage: source validation and border analysis on its CPUs, guarded GPU
+generation, restoration of verified source borders, lossless RGB browser
+previews, checksums, publication and a finishing report. This client only
+discovers the contract, submits twelve logical tasks, polls durable status,
+downloads checksum-verified results and assembles an offline HTML gallery from
+the server's files. It runs **no FFmpeg, NumPy or other media decoding**, and it
+has no CPU/GPU, node, replica, container, placement or concurrency settings.
 
-[`campaign.yaml`](campaign.yaml) is a standalone campaign format interpreted by
-[`run.py`](run.py), **not** an `npa.workflow` spec. Do not pass it to
-`npa workbench workflow submit-spec`. This is a separate example, not a change
-to the canonical PAIDF workflow or a native NPA CLI command.
+[`paidf-managed-endpoint.yaml`](paidf-managed-endpoint.yaml) is a standalone
+campaign format interpreted by [`run.py`](run.py), **not** an `npa.workflow`
+spec. Do not pass it to `npa workbench workflow submit-spec`.
 
 | Canonical stage | This adaptation |
 | --- | --- |
-| Source preparation | Already prepared, authorized robot manipulation MP4 in registered S3 |
+| Source preparation | Existing authorized MP4 in registered S3; the service decodes and analyzes it |
 | Captioning | Omitted; explicit appearance prompts in YAML |
 | Generation | Twelve guarded Cosmos3-Super full-source edge augmentations |
-| Cosmos Evaluator | Service `technical_report`, SHA-256, ffprobe and full FFmpeg decode; no semantic evaluator |
+| Cosmos Evaluator | Service `technical_report` and finishing report; no semantic evaluator |
 | Cosmos Curator | Omitted; manual sampled review with explicit accepted/rejected results |
 | FiftyOne / Voxel51 | Omitted; self-contained HTML gallery |
-| Rerun | Replaced by the HTML gallery |
+| Rerun | Replaced by the gallery of service lossless RGB previews |
 | Automatic refinement | Omitted |
 
-## Setup
+This is a scoped adaptation, not the full canonical Curator/evaluator/refinement
+graph.
 
-Use Python 3.12+, an installed NPA checkout, Git, `ffmpeg` and `ffprobe` on PATH.
-The FFmpeg build must include `libx264rgb` and `libvpx-vp9` encoders.
-NPA supplies the CPU border-detection/preservation code and NumPy. The runner loads
-the repository's [portable HTTPS client](../../../skills/tools/nebius-world-factory/SKILL.md),
-so keep it in this checkout. It requires neither a private hosting repository
-nor model weights, Docker, Kubernetes, SkyPilot, FiftyOne or a local GPU.
-Use the existing contributor environment (`npa/.venv`), or install this checkout
-with `python3 -m venv npa/.venv` and
-`npa/.venv/bin/python -m pip install -e npa` from the repository root.
+## Requirements
+
+The endpoint must advertise managed finishing: authenticated `GET /v1/models`
+must report `managed_finishing.status: "available"` for `nvidia/Cosmos3-Super`
+with `request_field: "output_policy"`. Otherwise `admit` stops **before** any
+generation request. There is no client-side media fallback.
+
+Use Python 3.12+, Git and this checkout (`npa/.venv`, or `python3 -m venv
+npa/.venv` and `npa/.venv/bin/python -m pip install -e npa`). The runner loads
+the repository's [portable HTTPS client](../../../skills/tools/nebius-world-factory/SKILL.md).
+It needs no private hosting repository, model weights, Docker, Kubernetes,
+SkyPilot, FiftyOne, local GPU, FFmpeg or NumPy.
 
 Obtain the service origin and scoped key privately. Follow the client guide to
 register existing input and server-verified Nebius output storage. Retain the
@@ -63,10 +69,27 @@ regular mode-0600 file containing the key; never put key bytes in this JSON.
 The YAML's four `${PAIDF_...}` placeholders resolve from this file, not ambient
 environment variables. `--private-config` is required for `admit` and `resume`.
 `--work-dir` is required for every phase except offline `validate`; it holds
-private requests, durable job states, downloaded media and the final HTML.
-`--workflow` optionally selects another YAML (default: adjacent `campaign.yaml`).
-Keep that YAML and all bindings unchanged after admission. The key file can be
-rotated to another key for the same owner; the portable client checks ownership.
+private requests, durable job states, downloaded results and the final HTML.
+`--workflow` optionally selects another YAML (default: adjacent
+`paidf-managed-endpoint.yaml`). Keep that YAML and all bindings unchanged after
+admission. The key file can be rotated to another key for the same owner.
+
+## Output policy
+
+```yaml
+output_policy:
+  border_preservation: restore_detected_source_borders
+  browser_preview: lossless_rgb_webm
+```
+
+These are data/quality choices only. With `restore_detected_source_borders`
+the service restores persistent paired black source bands exactly while keeping
+every generated scene pixel, and verifies both after lossless encoding. It
+abstains on one-sided, changing or dark scene edges and then publishes the raw
+model output unchanged. `lossless_rgb_webm` adds VP9 lossless RGB previews whose
+every frame the service decodes and compares with the finished RGB frames; the
+RGB H.264 file is not used for browser playback because Chrome renders it with
+wrong colors.
 
 ## Execute and recover
 
@@ -79,60 +102,33 @@ npa/.venv/bin/python npa/examples/paidf-cosmos3-api-only/run.py resume --work-di
 npa/.venv/bin/python npa/examples/paidf-cosmos3-api-only/run.py collect --work-dir "$PAIDF_WORK_DIR"
 ```
 
-`admit` performs discovery/preflight for every request, then submits twelve
-distinct requests concurrently. It persists each idempotency key before its
-generation POST. If admission is interrupted or ambiguous, repeat **the same
-`admit` command with the same directory and YAML** to reconcile those identities.
+`admit` checks the managed capability and qualifies every request, then submits
+twelve distinct requests concurrently (`client_admission_parallelism`). It
+persists each idempotency key before its POST. If admission is interrupted or
+ambiguous, repeat **the same `admit` command with the same directory and YAML**.
 Do not create a replacement work directory to retry. `resume` only polls and
-downloads retained jobs; it never submits generation. It waits for active jobs
-without an overall deadline. After a transport error, rerun the same command.
-Terminal job failures require inspection of private job records, not replacement
-generation. Stop local polling without cancelling service work at any time.
+downloads retained jobs, verifying every artifact's SHA-256; it never submits
+generation and waits without an overall deadline. A job in stage `finishing`
+is service CPU work after its GPU result was saved. A `publication_retryable`
+job needs the service's publication-only retry, never a new generation.
 
-`collect` verifies canonical media against the service manifest, guarded
-configuration, prompt and seed receipts, complete local decode, frame count,
-frame rate and dimensions. It also detects persistent paired source padding
-across every source frame and restores only those border pixels from the source,
-using NPA's existing lossless RGB H.264 preservation path, followed by lossless
-VP9 RGB WebM for correct browser color rendering. Every generated scene
-pixel remains unchanged; source borders and scene pixels are verified after
-encoding. Raw `downloads/<variant-id>/generated.mp4` files remain untouched.
-Corrected browser videos and hash-bound receipts are written to
-`publication/<variant-id>/{augmented.webm,padding-webm.json}`. The intermediate
-RGB H.264 MP4 and its original padding receipt remain alongside them. The WebM
-export is checked against the same complete scene/border RGB hashes and source
-timeline before publication; this is a lossless conversion, not a lossy preview.
-Subsequent collection
-verifies that cached publications still match source, raw video and published
-hashes; changed publications fail rather than silently reusing old evidence.
-Full-frame sources are not reencoded. Ambiguous/one-sided/changing dark edges
-are not assumed to be padding. No YAML switch or additional API call is needed.
+`collect` performs receipt checks only: guarded configuration, prompt and seed
+receipts, the applied output policy, one generation dispatch per job, artifact
+hashes against the manifest, and finishing-report lineage (`source`,
+`model-raw`, `generated`, previews), timeline and border outcome. It writes
+`technical.json` with client admission parallelism and, separately, the
+observed service model-request concurrency computed from service-reported
+generation windows. These checks do not establish task fidelity, semantic
+quality or training readiness.
 
-Collection writes `technical.json`, including raw and published hashes, source
-content bounds and padding receipts. Lossless corrected videos and the resulting
-HTML are substantially larger than lossy model outputs. These checks do not
-establish task fidelity, semantic quality or training readiness.
-
-To keep local polling alive while your laptop is closed, run it on an **existing
-VDI** inside `tmux` (start the session on that VDI, not on the laptop):
-
-```bash
-tmux new-session -s paidf-api-only
-# Run the commands above in this session; detach with Ctrl-b then d.
-```
-
-The hosted jobs continue independently after admission even if the client
-disconnects. Reattach with `tmux attach-session -t paidf-api-only`. This example
-does not create a VDI, install a controller service or run an agent loop.
+Run on an existing VDI inside `tmux` if polling should survive a closed laptop.
+Hosted jobs continue independently after admission.
 
 ## Review and standalone HTML
 
-Inspect the source and all twelve published videos identified by
-`technical.json`'s `publication_path`. For detected padding these are the corrected
-`publication/<variant-id>/augmented.webm` files; raw model outputs remain separately
-available for provenance. The report always embeds the published videos.
-Write a mode-0600 `quality-review.json` in the private directory, with exactly
-one record for each YAML variant. Example record shape:
+Inspect the downloaded `generated-preview.webm` files (or `generated.mp4`) with
+any player. Write a mode-0600 `quality-review.json` with exactly one record for
+each YAML variant:
 
 ```json
 {
@@ -151,37 +147,24 @@ one record for each YAML variant. Example record shape:
 ```
 
 Use `rejected` and the observed false criteria for failed variants. Acceptance
-requires all four booleans to be true. Review notes are a manual sampled
-assessment; they do not represent automatic evaluator scores. Keep rejections
-in the gallery.
+requires all four booleans to be true. Keep rejections in the gallery.
 
 ```bash
 npa/.venv/bin/python npa/examples/paidf-cosmos3-api-only/run.py report --work-dir "$PAIDF_WORK_DIR" --quality-review "$PAIDF_WORK_DIR/quality-review.json"
 ```
 
-`report` rechecks the current media and receipts, then writes
-`$PAIDF_WORK_DIR/paidf-cosmos3-proof.html`. Open that file directly in a browser.
-It embeds the source and twelve outputs as MP4/WebM data URLs, requires no server or
-external assets, and escapes prompts/notes. Treat this file as private media;
-do not commit it or the work directory. Browser playback is a separate manual
-check, not inferred from HTML generation.
+`report` re-verifies receipts and hashes, then writes
+`$PAIDF_WORK_DIR/paidf-managed-endpoint-proof.html`, embedding the service's
+source preview and twelve generated previews as WebM data URLs with each
+preview's service-recorded frame-zero RGB reference samples. It needs no server
+or external assets and escapes prompts/notes. Treat it as private media. Browser
+playback and color checks are separate from HTML generation.
 
-## Evidence and tests
-
-A privately retained execution of the predecessor runner delivered twelve
-distinct 832×480, 336-frame videos, all checksum-verified and fully decoded.
-Sampled review accepted eleven and rejected one for a spurious object.
-Observed service running concurrency was one. Its offline HTML played all
-thirteen embedded videos in an isolated local browser. The packaged `report`
-command was also run against those original media bytes and service receipts:
-all thirteen embedded videos played at 832×480 in an isolated local browser
-with zero HTTP requests. No new generation was submitted for that report check.
-This evidence applies to that campaign; it is not a fresh live admission through
-this packaged entrypoint or a claim that the complete canonical PAIDF graph ran
-without infrastructure.
-
-Run the portable client and example's offline regression tests with:
+## Tests
 
 ```bash
-npa/.venv/bin/python -m pytest npa/tests/clients/test_nebius_stream_client.py npa/tests/workflows/test_paidf_api_only_example.py -q
+npa/.venv/bin/python -m pytest npa/tests/clients/test_nebius_stream_client.py npa/tests/workflows/test_paidf_managed_endpoint_example.py -q
 ```
+
+The offline tests use a fake endpoint and fail if the client starts FFmpeg or
+ffprobe.
