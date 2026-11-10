@@ -2492,7 +2492,7 @@ def _materialized_state_cluster_id(
 
 
 def _has_one_unmaterialized_root_cluster(install_dir: Path) -> bool:
-    """Accept only one non-deposed root instance with no attributes key."""
+    """Accept only one root cluster with an exact unmaterialized state shape."""
 
     try:
         state = json.loads(
@@ -2503,18 +2503,26 @@ def _has_one_unmaterialized_root_cluster(install_dir: Path) -> bool:
     resources = state.get("resources") if isinstance(state, dict) else None
     if not isinstance(resources, list):
         return False
-    instances = [
-        instance
+    root_resources = [
+        resource
         for resource in resources
         if isinstance(resource, dict)
         and resource.get("mode") == "managed"
         and resource.get("type") == "nebius_mk8s_v1_cluster"
         and not resource.get("module")
         and isinstance(resource.get("instances"), list)
-        for instance in resource["instances"]
+    ]
+    if len(root_resources) != 1:
+        return False
+    instances = root_resources[0]["instances"]
+    if not instances:
+        return True
+    active_instances = [
+        instance
+        for instance in instances
         if isinstance(instance, dict) and not instance.get("deposed")
     ]
-    return len(instances) == 1 and "attributes" not in instances[0]
+    return len(active_instances) == 1 and "attributes" not in active_instances[0]
 
 
 def _unmaterialized_state_provider_candidate(
@@ -2557,10 +2565,12 @@ def _unmaterialized_state_provider_candidate(
         return ""
     candidates = []
     for item in items:
-        metadata = item.get("metadata") or {}
-        status = item.get("status") or {}
+        metadata = item.get("metadata")
+        status = item.get("status")
+        if not isinstance(metadata, dict) or not isinstance(status, dict):
+            continue
         parent_id = _provider_field(metadata, "parent_id", "parentId")
-        candidate_id = metadata.get("id") if isinstance(metadata, dict) else None
+        candidate_id = metadata.get("id")
         if (
             isinstance(candidate_id, str)
             and candidate_id

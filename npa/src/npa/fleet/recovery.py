@@ -401,16 +401,28 @@ def _terraform_cluster_id(workdir: Path, project_id: str, cluster_name: str) -> 
 def _terraform_cluster_id_or_unmaterialized(
     workdir: Path, project_id: str, cluster_name: str
 ) -> str:
-    """Allow only one root instance with no attributes for verified recovery."""
+    """Allow only the recorded unmaterialized root shapes for verified recovery."""
 
     state = _read_mapping(workdir / _STATE_FILE, "Terraform state")
-    instances = _root_cluster_instances(state.get("resources"))
-    if len(instances) != 1:
+    resources = _root_cluster_resources(state.get("resources"))
+    if len(resources) != 1:
         raise FleetRecoveryError(
             "Terraform state does not contain one exact mk8s cluster"
         )
-    attributes = instances[0].get("attributes")
-    if attributes is None and "attributes" not in instances[0]:
+    instances = resources[0]["instances"]
+    if not instances:
+        return ""
+    active_instances = [
+        instance
+        for instance in instances
+        if isinstance(instance, dict) and not instance.get("deposed")
+    ]
+    if len(active_instances) != 1:
+        raise FleetRecoveryError(
+            "Terraform state does not contain one exact mk8s cluster"
+        )
+    attributes = active_instances[0].get("attributes")
+    if attributes is None and "attributes" not in active_instances[0]:
         return ""
     if not isinstance(attributes, dict):
         raise FleetRecoveryError(
@@ -445,16 +457,18 @@ def _root_cluster_attributes(resources: object) -> list[dict[str, Any]]:
 
 
 def _root_cluster_instances(resources: object) -> list[dict[str, Any]]:
-    if not isinstance(resources, list):
-        raise FleetRecoveryError("Terraform state has no resource inventory")
     instances = []
-    for resource in resources:
-        if not _is_root_cluster_resource(resource):
-            continue
+    for resource in _root_cluster_resources(resources):
         for instance in resource["instances"]:
             if isinstance(instance, dict) and not instance.get("deposed"):
                 instances.append(instance)
     return instances
+
+
+def _root_cluster_resources(resources: object) -> list[dict[str, Any]]:
+    if not isinstance(resources, list):
+        raise FleetRecoveryError("Terraform state has no resource inventory")
+    return [resource for resource in resources if _is_root_cluster_resource(resource)]
 
 
 def _assert_state_subnet(workdir: Path, sidecar_subnet: str) -> None:
