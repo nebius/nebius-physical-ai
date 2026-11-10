@@ -15,6 +15,7 @@ from pathlib import Path
 import typer
 
 from npa.cli.fleet.graphics import verify_graphics_cmd
+from npa.cli.fleet.recovery import recover_fleet_cmd
 from npa.cli.fleet.storage import verify_storage_cmd
 
 
@@ -631,3 +632,4 @@ app.command("status")(status_cmd)
 app.command("verify-mig")(verify_mig_cmd)
 app.command("verify-storage")(verify_storage_cmd)
 app.command("verify-graphics")(verify_graphics_cmd)
+app.command("recover")(recover_fleet_cmd)

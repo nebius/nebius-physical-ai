@@ -2240,6 +2240,9 @@ def test_fleet_cluster_identity_roundtrip_and_collision_guard(tmp_path) -> None:
     with pytest.raises(RuntimeError, match="different immutable"):
         L._persist_npa_cluster_identity(**{**kwargs, "cluster_id": "cluster-2"})
 
+    with pytest.raises(RuntimeError, match="region/subnet context"):
+        L._persist_npa_cluster_identity(**{**kwargs, "region": "other-region"})
+
     L._remove_npa_cluster_identity(
         context="fleet-f-a-gpu",
         cluster_id="cluster-1",

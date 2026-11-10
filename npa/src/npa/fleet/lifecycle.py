@@ -2315,7 +2315,11 @@ def _load_fleet_state(fleet_root: Path) -> dict[str, Any]:
 
 
 _DEPLOYED_CLUSTER_STATUSES = {"deployed", "running"}
-_UNRESOLVED_CLUSTER_STATUSES = {"provisioning", "reconciling"}
+_UNRESOLVED_CLUSTER_STATUSES = {
+    "provisioning",
+    "reconciling",
+    "recovered-pending-validation",
+}
 _IGNORED_CLUSTER_STATUSES = {"destroyed", "absent"}
 
 
