@@ -2380,7 +2380,7 @@ def _configured_env_lines() -> str:
     included; workflow submit resolves requested ``--secret-env`` names directly
     from credentials.yaml without printing them.
     """
-    from npa.clients.config import default_project_name, list_projects
+    from npa.clients.config import NPA_CONFIG_DIR, default_project_name, list_projects
     from npa.clients.credentials import load_credentials
 
     try:
@@ -2420,6 +2420,14 @@ def _configured_env_lines() -> str:
     context = _saved_kube_context()
     if context:
         lines.append(f"NPA_KUBE_CONTEXT={shlex.quote(context)}")
+    # NPA's local bootstrap can install a tested Nebius CLI beside the saved
+    # project configuration.  Prefer that explicit non-secret binary in a
+    # fresh shell over an arbitrary older system ``nebius`` on PATH.  Do not
+    # fabricate an install location when the normal system CLI is the only one
+    # available; the version gate will remain explicit in that case.
+    managed_nebius = NPA_CONFIG_DIR / "bin" / "nebius"
+    if managed_nebius.is_file() and os.access(managed_nebius, os.X_OK):
+        lines.append(f"NPA_NEBIUS_BIN={shlex.quote(str(managed_nebius))}")
     return "\n".join(lines)
 
 

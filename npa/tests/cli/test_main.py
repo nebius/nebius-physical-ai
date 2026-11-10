@@ -737,6 +737,42 @@ def test_configure_show_env_scopes_kube_context_to_configured_project(
     assert "someone-elses" not in result.output
 
 
+def test_configure_show_env_exports_executable_managed_nebius_binary(
+    monkeypatch, tmp_path
+) -> None:
+    """A fresh shell may select NPA's tested local CLI without exposing secrets."""
+    import yaml
+
+    from npa.clients import config as config_module
+
+    config_root = tmp_path / "npa"
+    config_root.mkdir()
+    config_path = config_root / "config.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "default_project": "mine",
+                "projects": {"mine": {"project_id": "project-1"}},
+            }
+        )
+    )
+    managed = config_root / "bin" / "nebius"
+    managed.parent.mkdir()
+    managed.write_text("#!/bin/sh\n")
+    managed.chmod(0o700)
+    monkeypatch.setattr(config_module, "CONFIG_PATH", config_path)
+    monkeypatch.setattr(config_module, "NPA_CONFIG_DIR", config_root)
+
+    result = runner.invoke(app, ["configure", "--show", "--env"])
+
+    assert result.exit_code == 0, result.output
+    values = dict(
+        line.split("=", 1) for line in result.output.strip().splitlines() if "=" in line
+    )
+    assert values["NPA_NEBIUS_BIN"] == str(managed)
+    assert "secret" not in result.output.lower()
+
+
 def test_configure_stores_hf_and_ngc_tokens_without_prompting(
     monkeypatch, tmp_path
 ) -> None:

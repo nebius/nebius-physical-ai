@@ -223,10 +223,20 @@ def _warn_if_nebius_version_mismatch(nebius_path: str) -> None:
 
 
 def _require_nebius() -> str:
-    path = shutil.which("nebius")
+    # ``configure --show --env`` may select an NPA-managed, project-local CLI
+    # that is newer than an ambient system binary.  An explicit selection is a
+    # trust boundary: fail closed rather than silently falling back to PATH and
+    # potentially changing the authenticated provider client for a workflow.
+    configured = os.environ.get("NPA_NEBIUS_BIN", "").strip()
+    path = shutil.which(configured or "nebius")
     if path is None:
+        configured_hint = (
+            " configured by NPA_NEBIUS_BIN"
+            if configured
+            else " on PATH"
+        )
         raise NebiusError(
-            "nebius CLI not found on PATH. "
+            f"nebius CLI{configured_hint} not found. "
             "Install it: https://docs.nebius.com/cli/install"
         )
     _warn_if_nebius_version_mismatch(path)

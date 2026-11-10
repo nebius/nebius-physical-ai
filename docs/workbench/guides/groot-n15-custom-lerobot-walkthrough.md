@@ -12,6 +12,25 @@ defines the method and historic evidence boundary. This guide defines the
 supported generic Workbench path for a checked-in reference, standard input,
 or an operator's own code and data.
 
+## One-time supported environment setup
+
+From a clean checkout, create the repository-local environment used by every
+command in this guide:
+
+```bash
+python3.12 -m venv npa/.venv
+npa/.venv/bin/python -m pip install --upgrade pip
+npa/.venv/bin/python -m pip install -e "npa[dev,adapter]"
+```
+
+Install and authenticate the tested Nebius CLI (`0.12.298`) as described in
+the repository [installation guide](../../install.md). `npa configure` records
+the normal project and storage setup. If it has already bootstrapped a tested
+NPA-local CLI, the shell setup below selects that executable; otherwise the
+tested CLI must be on `PATH`. Provider calls fail closed on an untested version.
+The GPU worker independently records its CUDA, Python, SM120, and native
+dependency closure before it trains.
+
 ## Turnkey public reference (the default)
 
 The checked-in YAML now defaults to `input_mode: reference`. It fetches a small,
@@ -25,9 +44,11 @@ explicitly **unknown**; recovery provenance never becomes a success label.
 
 After normal `npa configure` and project selection, load the saved non-secret
 project, bucket, and owned cluster context once in each new shell. This is a
-supported convenience export; it does not print or export credentials. The
-reference submission is then one generic command, with no hand-built sidecars
-or hidden task values:
+supported convenience export; it does not print or export credentials. Where a
+tested NPA-local Nebius CLI exists it also exports that non-secret executable
+path, so an older ambient binary cannot silently change the provider client.
+The reference submission is then one generic command, with no hand-built
+sidecars or hidden task values:
 
 ```bash
 eval "$(npa/.venv/bin/python -m npa configure --show --env)"
