@@ -2225,11 +2225,13 @@ def test_pinned_b300_without_effective_overlay_needs_no_staged_source(baked) -> 
     )
 
 
-def test_preflight_images_accepts_the_same_config_vars_as_submit(mocker) -> None:
+def test_preflight_images_accepts_the_same_config_vars_as_submit(mocker, tmp_path) -> None:
     """An empty canonical image input must be overridable before pull probes."""
     from npa.orchestration.skypilot.registry_preflight import KubernetesPullTarget
 
     digest_image = f"cr.example.invalid/npa@sha256:{'a' * 64}"
+    owned_kubeconfig = tmp_path / "owned-kubeconfig"
+    owned_kubeconfig.write_text("apiVersion: v1\n")
     checks = mocker.patch(
         "npa.orchestration.skypilot.registry_preflight.check_image_pulls_with_credentials",
         return_value=[],
@@ -2238,9 +2240,19 @@ def test_preflight_images_accepts_the_same_config_vars_as_submit(mocker) -> None
         "npa.cli.workbench.workflow._preflight_image_bootstrap_contracts",
         return_value=[],
     )
-    mocker.patch(
+    target = mocker.patch(
         "npa.orchestration.skypilot.registry_preflight.resolve_kubernetes_pull_target",
         return_value=KubernetesPullTarget(namespace="target-namespace"),
+    )
+    mocker.patch(
+        "npa.cluster.state.existing_kubeconfig", return_value=owned_kubeconfig
+    )
+    mocker.patch(
+        "npa.orchestration.skypilot.cluster_validation.resolve_validation_target",
+        return_value=(owned_kubeconfig, "target-context"),
+    )
+    validate_project = mocker.patch(
+        "npa.orchestration.skypilot.cluster_validation.resolve_validation_project"
     )
     args = [
         "workbench",
@@ -2268,6 +2280,8 @@ def test_preflight_images_accepts_the_same_config_vars_as_submit(mocker) -> None
     checked_images = checks.call_args.args[0]
     assert checked_images
     assert set(checked_images) == {digest_image}
+    assert target.call_args.kwargs["kubeconfig_path"] == owned_kubeconfig
+    validate_project.assert_called_once_with("", "target-context")
 
 
 def test_image_pull_execution_paths_preserve_each_rendered_target() -> None:

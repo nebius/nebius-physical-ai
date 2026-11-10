@@ -10903,10 +10903,38 @@ def preflight_images_cmd(
     target_kubeconfig = ""
     target_pod_placement_json = "{}"
     if kubernetes_images:
+        owned_kubeconfig = None
+        if target_context:
+            # An NPA-provisioned cluster deliberately keeps its kubeconfig out of
+            # the ambient ~/.kube/config.  Reuse that exact, project-bound file
+            # when it is available so this generic preflight probes the same
+            # target as submit rather than silently falling back to an unrelated
+            # shell context.
+            from npa.cluster.state import existing_kubeconfig
+
+            saved_kubeconfig = existing_kubeconfig(target_context)
+            if saved_kubeconfig is not None:
+                try:
+                    from npa.orchestration.skypilot.cluster_validation import (
+                        resolve_validation_project,
+                        resolve_validation_target,
+                    )
+
+                    owned_kubeconfig, exact_context = resolve_validation_target(
+                        saved_kubeconfig, target_context
+                    )
+                    resolve_validation_project(project, exact_context)
+                except (OSError, RuntimeError, ValueError) as exc:
+                    _fail(
+                        "image-preflight owned target resolution failed: "
+                        f"{type(exc).__name__}"
+                    )
+                    return
         try:
             target = resolve_kubernetes_pull_target(
                 context=target_context,
                 global_config_path=resolve_global_config_path(config_path),
+                kubeconfig_path=owned_kubeconfig,
             )
         except RegistryPreflightError as exc:
             _fail(f"image-preflight target resolution failed: {exc}")
