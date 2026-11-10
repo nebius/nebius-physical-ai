@@ -27,8 +27,12 @@ RECOVERY_TASK = "plug_charger_into_power_strip"
 RECOVERY_EPISODE = 0
 REFERENCE_EPISODES = tuple(range(20))
 REFERENCE_EVAL_EPISODES = frozenset({14, 15, 16, 17, 19})
-RECOVERY_VIDEO_SHA256 = "47b58da6f45e2c055eec6ab8f0f6345f65022fc9679dc5c4623fb9e0cb03d879"
-RECOVERY_PARQUET_SHA256 = "a739f55e8ceb1874d0bbe560062527c012e174aa6d75b316497e69f647e7a2ca"
+RECOVERY_VIDEO_SHA256 = (
+    "47b58da6f45e2c055eec6ab8f0f6345f65022fc9679dc5c4623fb9e0cb03d879"
+)
+RECOVERY_PARQUET_SHA256 = (
+    "a739f55e8ceb1874d0bbe560062527c012e174aa6d75b316497e69f647e7a2ca"
+)
 RECOVERY_FRAME_COUNT = 719
 RECOVERY_FPS = 15
 RECOVERY_RANGE = (454, 574)
@@ -134,8 +138,13 @@ def _write_recovery_gallery(source: Path, gallery: Path) -> dict[str, Any]:
         / f"episode_{RECOVERY_EPISODE:06d}.mp4"
     )
     parquet = source / "data/chunk-000" / f"episode_{RECOVERY_EPISODE:06d}.parquet"
-    if _sha256(video) != RECOVERY_VIDEO_SHA256 or _sha256(parquet) != RECOVERY_PARQUET_SHA256:
-        raise ValueError("pinned recovery source bytes differ from the reference profile")
+    if (
+        _sha256(video) != RECOVERY_VIDEO_SHA256
+        or _sha256(parquet) != RECOVERY_PARQUET_SHA256
+    ):
+        raise ValueError(
+            "pinned recovery source bytes differ from the reference profile"
+        )
     table = pd.read_parquet(parquet)
     intervention = table["intervention"].astype(bool).to_numpy()
     start, end = RECOVERY_RANGE
@@ -242,24 +251,43 @@ def prepare_reference(stage: Path) -> PreparedReference:
                 "signal.corrective_phase": pa.array(
                     _phase(
                         length,
-                        [int(value) for value in annotation.get("avoid_keyframe_indices", [])],
-                        [int(value) for value in annotation.get("correct_keyframe_indices", [])],
+                        [
+                            int(value)
+                            for value in annotation.get("avoid_keyframe_indices", [])
+                        ],
+                        [
+                            int(value)
+                            for value in annotation.get("correct_keyframe_indices", [])
+                        ],
                     ),
                     type=pa.float32(),
                 ),
-                "feedback.failure_flag": pa.array(flags[:, 0].tolist(), type=pa.bool_()),
-                "feedback.avoid_keyframe": pa.array(flags[:, 1].tolist(), type=pa.bool_()),
-                "feedback.correct_keyframe": pa.array(flags[:, 2].tolist(), type=pa.bool_()),
-                "source.episode_index": pa.array([source_episode] * length, type=pa.int64()),
+                "feedback.failure_flag": pa.array(
+                    flags[:, 0].tolist(), type=pa.bool_()
+                ),
+                "feedback.avoid_keyframe": pa.array(
+                    flags[:, 1].tolist(), type=pa.bool_()
+                ),
+                "feedback.correct_keyframe": pa.array(
+                    flags[:, 2].tolist(), type=pa.bool_()
+                ),
+                "source.episode_index": pa.array(
+                    [source_episode] * length, type=pa.int64()
+                ),
                 "source.timestamp": pa.array(timestamps, type=pa.float32()),
                 "timestamp": pa.array(timestamps, type=pa.float32()),
                 "frame_index": pa.array(list(range(length)), type=pa.int64()),
                 "episode_index": pa.array([output_episode] * length, type=pa.int64()),
-                "index": pa.array(list(range(index_offset, index_offset + length)), type=pa.int64()),
+                "index": pa.array(
+                    list(range(index_offset, index_offset + length)), type=pa.int64()
+                ),
                 "task_index": pa.array(task_index, type=pa.int64()),
             }
         )
-        pq.write_table(converted, output / "data/chunk-000" / f"episode_{output_episode:06d}.parquet")
+        pq.write_table(
+            converted,
+            output / "data/chunk-000" / f"episode_{output_episode:06d}.parquet",
+        )
         shutil.copyfile(
             source
             / "videos/chunk-000/observation.images.cam_right_wrist"
@@ -280,8 +308,14 @@ def prepare_reference(stage: Path) -> PreparedReference:
                 "progress": (
                     _phase(
                         length,
-                        [int(value) for value in annotation.get("avoid_keyframe_indices", [])],
-                        [int(value) for value in annotation.get("correct_keyframe_indices", [])],
+                        [
+                            int(value)
+                            for value in annotation.get("avoid_keyframe_indices", [])
+                        ],
+                        [
+                            int(value)
+                            for value in annotation.get("correct_keyframe_indices", [])
+                        ],
                     )
                     if not success
                     else None
@@ -319,12 +353,32 @@ def prepare_reference(stage: Path) -> PreparedReference:
         output / "meta/modality.json",
         {
             "state": {
-                "left_arm": {"start": 0, "end": 7, "dtype": "float32", "original_key": "observation.state"},
-                "right_arm": {"start": 7, "end": 14, "dtype": "float32", "original_key": "observation.state"},
+                "left_arm": {
+                    "start": 0,
+                    "end": 7,
+                    "dtype": "float32",
+                    "original_key": "observation.state",
+                },
+                "right_arm": {
+                    "start": 7,
+                    "end": 14,
+                    "dtype": "float32",
+                    "original_key": "observation.state",
+                },
             },
             "action": {
-                "left_arm": {"start": 0, "end": 7, "dtype": "float32", "original_key": "action"},
-                "right_arm": {"start": 7, "end": 14, "dtype": "float32", "original_key": "action"},
+                "left_arm": {
+                    "start": 0,
+                    "end": 7,
+                    "dtype": "float32",
+                    "original_key": "action",
+                },
+                "right_arm": {
+                    "start": 7,
+                    "end": 14,
+                    "dtype": "float32",
+                    "original_key": "action",
+                },
             },
             "video": {"wrist": {"original_key": "observation.images.cam_right_wrist"}},
             "annotation": {"human.task_description": {"original_key": "task_index"}},
@@ -376,7 +430,9 @@ def prepare_reference(stage: Path) -> PreparedReference:
         "gripper_fields": ["left_arm[6]", "right_arm[6]"],
         "transform_identity": "native-min-max-training-split-only-v1",
     }
-    return PreparedReference(output, feedback_path, gallery, provenance, action_contract, item)
+    return PreparedReference(
+        output, feedback_path, gallery, provenance, action_contract, item
+    )
 
 
 class SingleWristAlohaConfig:
@@ -393,29 +449,60 @@ class SingleWristAlohaConfig:
         from gr00t.data.dataset import ModalityConfig
 
         return {
-            "video": ModalityConfig(delta_indices=self.observation_indices, modality_keys=self.video_keys),
-            "state": ModalityConfig(delta_indices=self.observation_indices, modality_keys=self.state_keys),
-            "action": ModalityConfig(delta_indices=self.action_indices, modality_keys=self.action_keys),
-            "language": ModalityConfig(delta_indices=self.observation_indices, modality_keys=self.language_keys),
+            "video": ModalityConfig(
+                delta_indices=self.observation_indices, modality_keys=self.video_keys
+            ),
+            "state": ModalityConfig(
+                delta_indices=self.observation_indices, modality_keys=self.state_keys
+            ),
+            "action": ModalityConfig(
+                delta_indices=self.action_indices, modality_keys=self.action_keys
+            ),
+            "language": ModalityConfig(
+                delta_indices=self.observation_indices, modality_keys=self.language_keys
+            ),
         }
 
     def transform(self):
         from gr00t.data.transform.base import ComposedModalityTransform
         from gr00t.data.transform.concat import ConcatTransform
-        from gr00t.data.transform.state_action import StateActionToTensor, StateActionTransform
+        from gr00t.data.transform.state_action import (
+            StateActionToTensor,
+            StateActionTransform,
+        )
         from gr00t.data.transform.video import VideoResize, VideoToNumpy, VideoToTensor
         from gr00t.model.transforms import GR00TTransform
 
         return ComposedModalityTransform(
             transforms=[
                 VideoToTensor(apply_to=self.video_keys),
-                VideoResize(apply_to=self.video_keys, height=224, width=224, interpolation="linear"),
+                VideoResize(
+                    apply_to=self.video_keys,
+                    height=224,
+                    width=224,
+                    interpolation="linear",
+                ),
                 VideoToNumpy(apply_to=self.video_keys),
                 StateActionToTensor(apply_to=self.state_keys),
-                StateActionTransform(apply_to=self.state_keys, normalization_modes={key: "min_max" for key in self.state_keys}),
+                StateActionTransform(
+                    apply_to=self.state_keys,
+                    normalization_modes={key: "min_max" for key in self.state_keys},
+                ),
                 StateActionToTensor(apply_to=self.action_keys),
-                StateActionTransform(apply_to=self.action_keys, normalization_modes={key: "min_max" for key in self.action_keys}),
-                ConcatTransform(video_concat_order=self.video_keys, state_concat_order=self.state_keys, action_concat_order=self.action_keys),
-                GR00TTransform(state_horizon=len(self.observation_indices), action_horizon=len(self.action_indices), max_state_dim=64, max_action_dim=32),
+                StateActionTransform(
+                    apply_to=self.action_keys,
+                    normalization_modes={key: "min_max" for key in self.action_keys},
+                ),
+                ConcatTransform(
+                    video_concat_order=self.video_keys,
+                    state_concat_order=self.state_keys,
+                    action_concat_order=self.action_keys,
+                ),
+                GR00TTransform(
+                    state_horizon=len(self.observation_indices),
+                    action_horizon=len(self.action_indices),
+                    max_state_dim=64,
+                    max_action_dim=32,
+                ),
             ]
         )

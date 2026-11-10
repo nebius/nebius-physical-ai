@@ -1468,7 +1468,11 @@ def _resolve_standard_runtime_args(args: argparse.Namespace) -> None:
         load_standard_config,
     )
 
-    stage_name = "standard-input-config-native" if args.native else "standard-input-config-bootstrap"
+    stage_name = (
+        "standard-input-config-native"
+        if args.native
+        else "standard-input-config-bootstrap"
+    )
     stage = _new_directory(Path(args.workspace).resolve() / stage_name)
     path = stage / "config.json"
     S3Store().get_file(args.standard_input_config_uri, path)
@@ -1524,7 +1528,13 @@ def _standard_gallery_reference(
     for record in feedback:
         outcome = record.get("success")
         kind = str(record.get("collection_kind", "unknown"))
-        label = "success" if outcome is True else "failure" if outcome is False else "unknown"
+        label = (
+            "success"
+            if outcome is True
+            else "failure"
+            if outcome is False
+            else "unknown"
+        )
         selected.setdefault(label, record)
         if kind == "operator_recovery":
             selected.setdefault("recovery", record)
@@ -1568,7 +1578,11 @@ def _standard_gallery_reference(
             "recorded_frame_count": length,
             "frame_start": 0,
             "frame_end": length - 1,
-            "outcome": "success" if record.get("success") is True else "failure" if record.get("success") is False else "unknown",
+            "outcome": "success"
+            if record.get("success") is True
+            else "failure"
+            if record.get("success") is False
+            else "unknown",
             "collection_kind": str(record.get("collection_kind", "unknown")),
             "tags": list(record.get("tags") or []),
             "label_source": config.feedback.label_protocol,
@@ -1581,7 +1595,10 @@ def _standard_gallery_reference(
         items.append(item)
     (destination / "gallery.json").write_text(
         canonical_json(
-            {"schema_version": "npa.groot-recorded-gallery-reference/v1", "items": items}
+            {
+                "schema_version": "npa.groot-recorded-gallery-reference/v1",
+                "items": items,
+            }
         )
     )
     return _validate_gallery_reference(destination)
@@ -1601,10 +1618,14 @@ def _normalize_standard_feedback(
     try:
         payload = json.loads(source_path.read_text())
     except json.JSONDecodeError as error:
-        raise WorkflowArtifactError("standard feedback sidecar is not valid JSON") from error
+        raise WorkflowArtifactError(
+            "standard feedback sidecar is not valid JSON"
+        ) from error
     raw_episodes = payload.get("episodes") if isinstance(payload, dict) else None
     if not isinstance(raw_episodes, list) or not raw_episodes:
-        raise WorkflowArtifactError("standard feedback sidecar needs a nonempty episodes list")
+        raise WorkflowArtifactError(
+            "standard feedback sidecar needs a nonempty episodes list"
+        )
     mapping = config.feedback
     episodes: list[dict[str, Any]] = []
     for raw in raw_episodes:
@@ -1621,13 +1642,17 @@ def _normalize_standard_feedback(
                 f"standard feedback lacks declared field {error.args[0]!r}"
             ) from error
         if type(episode_index) is not int or episode_index < 0:
-            raise WorkflowArtifactError("standard feedback episode index must be a nonnegative integer")
+            raise WorkflowArtifactError(
+                "standard feedback episode index must be a nonnegative integer"
+            )
         if type(success) not in {bool, type(None)}:
             raise WorkflowArtifactError(
                 "standard feedback outcome must be literal JSON true, false, or null"
             )
         if not isinstance(split, str) or not isinstance(group, str) or not group:
-            raise WorkflowArtifactError("standard feedback split/group fields are invalid")
+            raise WorkflowArtifactError(
+                "standard feedback split/group fields are invalid"
+            )
         if not isinstance(collection_kind, str):
             raise WorkflowArtifactError("standard feedback collection kind is invalid")
         record: dict[str, Any] = {
@@ -1643,7 +1668,9 @@ def _normalize_standard_feedback(
             if not isinstance(tags, list) or any(
                 not isinstance(tag, str) or not tag for tag in tags
             ):
-                raise WorkflowArtifactError("standard feedback tags must be a string list")
+                raise WorkflowArtifactError(
+                    "standard feedback tags must be a string list"
+                )
             record["tags"] = tags
         if mapping.progress_field:
             progress = raw.get(mapping.progress_field)
@@ -1684,10 +1711,13 @@ def _prepare_standard_inputs(
     store.get_directory(config.dataset.uri, raw)
     source_tree = tree_digest(directory_inventory(raw))
     if source_tree != config.dataset.tree_sha256:
-        raise WorkflowArtifactError("standard dataset tree differs from its declared digest")
-    if not (raw / "meta" / "info.json").is_file() or not (
-        raw / "meta" / "episodes.jsonl"
-    ).is_file():
+        raise WorkflowArtifactError(
+            "standard dataset tree differs from its declared digest"
+        )
+    if (
+        not (raw / "meta" / "info.json").is_file()
+        or not (raw / "meta" / "episodes.jsonl").is_file()
+    ):
         raise WorkflowArtifactError("standard input must be a complete LeRobot v2 tree")
     adapter_dataset = stage / "adapter-dataset"
     shutil.copytree(raw, adapter_dataset, copy_function=os.link)
@@ -1718,7 +1748,9 @@ def _prepare_standard_inputs(
     store.get_file(config.feedback.uri, source_feedback_path)
     source_feedback_sha256 = sha256_file(source_feedback_path)
     if source_feedback_sha256 != config.feedback.sha256:
-        raise WorkflowArtifactError("standard feedback differs from its declared digest")
+        raise WorkflowArtifactError(
+            "standard feedback differs from its declared digest"
+        )
     feedback_path = _normalize_standard_feedback(
         source_feedback_path, config, stage / "feedback.json"
     )
@@ -1741,14 +1773,20 @@ def _prepare_standard_inputs(
     }
     identifiers = {int(record["episode_index"]) for record in episodes}
     if not train_indices or not eval_indices or train_indices & eval_indices:
-        raise WorkflowArtifactError("standard feedback has no complete train/eval partition")
+        raise WorkflowArtifactError(
+            "standard feedback has no complete train/eval partition"
+        )
     if train_indices | eval_indices != identifiers:
-        raise WorkflowArtifactError("standard feedback does not cover prepared episodes")
+        raise WorkflowArtifactError(
+            "standard feedback does not cover prepared episodes"
+        )
     if (
         len(train_indices) != args.train_episode_count
         or len(eval_indices) != args.eval_episode_count
     ):
-        raise WorkflowArtifactError("standard feedback split differs from its declaration")
+        raise WorkflowArtifactError(
+            "standard feedback split differs from its declaration"
+        )
     derivative = stage / "h264-dataset"
     conversion = _transcode_h264(
         adapter_dataset, derivative, args.codec_workers, args.derivative_codec
@@ -1776,7 +1814,9 @@ def _prepare_standard_inputs(
         temperature=args.feedback_temperature,
     )
     gallery_root = stage / "recorded-gallery-reference"
-    gallery = _standard_gallery_reference(adapter_dataset, config, feedback, gallery_root)
+    gallery = _standard_gallery_reference(
+        adapter_dataset, config, feedback, gallery_root
+    )
     label_counts = {
         "success": sum(record.get("success") is True for record in feedback),
         "failure": sum(record.get("success") is False for record in feedback),
@@ -1786,10 +1826,14 @@ def _prepare_standard_inputs(
         ),
     }
     train_frames = sum(
-        int(record["length"]) for record in episodes if int(record["episode_index"]) in train_indices
+        int(record["length"])
+        for record in episodes
+        if int(record["episode_index"]) in train_indices
     )
     eval_frames = sum(
-        int(record["length"]) for record in episodes if int(record["episode_index"]) in eval_indices
+        int(record["length"])
+        for record in episodes
+        if int(record["episode_index"]) in eval_indices
     )
     action_contract = {
         "schema_version": "npa.groot-action-contract/v1",
@@ -1852,13 +1896,18 @@ def _prepare_standard_inputs(
         "prepared_dataset": dataset_inventory,
         "feedback": store.put_file(feedback_path, args.feedback_output_uri),
         "manifest": store.put_file(manifest_path, args.manifest_uri),
-        "recorded_gallery_reference": store.put_directory(gallery_root, args.gallery_reference_uri),
+        "recorded_gallery_reference": store.put_directory(
+            gallery_root, args.gallery_reference_uri
+        ),
         "provenance": store.put_json(provenance, args.prepare_receipt_uri),
     }
-    if output_records["recorded_gallery_reference"]["tree_sha256"] != provenance[
-        "recorded_gallery_reference"
-    ]["tree_sha256"]:
-        raise WorkflowArtifactError("published standard gallery differs from prepared gallery")
+    if (
+        output_records["recorded_gallery_reference"]["tree_sha256"]
+        != provenance["recorded_gallery_reference"]["tree_sha256"]
+    ):
+        raise WorkflowArtifactError(
+            "published standard gallery differs from prepared gallery"
+        )
     store.put_json(
         {
             "schema_version": SCHEMA_VERSION,
@@ -1874,7 +1923,9 @@ def _prepare_standard_inputs(
         "standard_input_config_sha256": args._standard_input_config_sha256,
         "manifest_sha256": output_records["manifest"]["sha256"],
         "dataset_tree_sha256": dataset_inventory["tree_sha256"],
-        "gallery_tree_sha256": output_records["recorded_gallery_reference"]["tree_sha256"],
+        "gallery_tree_sha256": output_records["recorded_gallery_reference"][
+            "tree_sha256"
+        ],
         "train_frames": train_frames,
         "eval_frames": eval_frames,
         "feedback_label_counts": label_counts,
@@ -1899,7 +1950,10 @@ def _prepare_reference_inputs(
         prepare_feedback,
     )
     from npa.workbench.groot.custom_inputs import verify_minmax_roundtrip
-    from npa.workbench.groot.reference_inputs import REFERENCE_PROFILE, prepare_reference
+    from npa.workbench.groot.reference_inputs import (
+        REFERENCE_PROFILE,
+        prepare_reference,
+    )
 
     reference = prepare_reference(stage / "public-reference")
     derivative = stage / "h264-dataset"
@@ -1927,9 +1981,13 @@ def _prepare_reference_inputs(
     }
     identifiers = {int(record["episode_index"]) for record in episodes}
     if not train_indices or not eval_indices or train_indices & eval_indices:
-        raise WorkflowArtifactError("reference feedback has no complete train/eval partition")
+        raise WorkflowArtifactError(
+            "reference feedback has no complete train/eval partition"
+        )
     if train_indices | eval_indices != identifiers:
-        raise WorkflowArtifactError("reference feedback does not cover prepared episodes")
+        raise WorkflowArtifactError(
+            "reference feedback does not cover prepared episodes"
+        )
     if (
         len(train_indices) != args.train_episode_count
         or len(eval_indices) != args.eval_episode_count
@@ -1942,7 +2000,10 @@ def _prepare_reference_inputs(
     stats_path.write_text(canonical_json(stats))
     action_keys = _action_keys(args.action_target_keys)
     declared_actions = tuple(f"action.{name}" for name in modality_payload["action"])
-    if action_keys != tuple(reference.action_contract["target_keys"]) or action_keys != declared_actions:
+    if (
+        action_keys != tuple(reference.action_contract["target_keys"])
+        or action_keys != declared_actions
+    ):
         raise WorkflowArtifactError(
             "reference action keys differ from its checked-in action contract"
         )
@@ -2036,7 +2097,9 @@ def _prepare_reference_inputs(
         "reference_profile": REFERENCE_PROFILE,
         "manifest_sha256": output_records["manifest"]["sha256"],
         "dataset_tree_sha256": dataset_inventory["tree_sha256"],
-        "gallery_tree_sha256": output_records["recorded_gallery_reference"]["tree_sha256"],
+        "gallery_tree_sha256": output_records["recorded_gallery_reference"][
+            "tree_sha256"
+        ],
         "train_frames": train_frames,
         "eval_frames": eval_frames,
         "feedback_label_counts": label_counts,
@@ -2137,7 +2200,9 @@ def _reuse_reference_prepared_inputs(
         )
     gallery = commit.get("outputs", {}).get("recorded_gallery_reference")
     if not isinstance(gallery, dict):
-        raise WorkflowArtifactError("reference prepare commit lacks recovery gallery inventory")
+        raise WorkflowArtifactError(
+            "reference prepare commit lacks recovery gallery inventory"
+        )
     _verify_directory(
         store,
         args.gallery_reference_uri,
@@ -4341,7 +4406,12 @@ def _add_common_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--workspace", type=Path, required=True)
     parser.add_argument(
         "--input-mode",
-        choices=(REFERENCE_INPUT_MODE, STANDARD_INPUT_MODE, CUSTOM_INPUT_MODE, LEGACY_INPUT_MODE),
+        choices=(
+            REFERENCE_INPUT_MODE,
+            STANDARD_INPUT_MODE,
+            CUSTOM_INPUT_MODE,
+            LEGACY_INPUT_MODE,
+        ),
         default=LEGACY_INPUT_MODE,
         help=(
             "Input contract: shipped public reference, explicit trusted custom "
@@ -4471,7 +4541,9 @@ def _validate_arguments(args: argparse.Namespace) -> None:
     if input_mode == STANDARD_INPUT_MODE and not args.standard_input_config_uri:
         raise ValueError("standard input mode requires standard_input_config_uri")
     if input_mode == CUSTOM_INPUT_MODE and not custom:
-        raise ValueError("custom input mode requires the complete external-code contract")
+        raise ValueError(
+            "custom input mode requires the complete external-code contract"
+        )
     if input_mode not in {CUSTOM_INPUT_MODE, LEGACY_INPUT_MODE} and custom:
         raise ValueError("external-code fields require --input-mode custom")
     if input_mode == REFERENCE_INPUT_MODE:
@@ -4490,7 +4562,9 @@ def _validate_arguments(args: argparse.Namespace) -> None:
         if args.feedback_mode != "hybrid":
             raise ValueError("reference input mode requires hybrid feedback weighting")
         if args.feedback_uri:
-            raise ValueError("reference input mode owns its source-bound feedback document")
+            raise ValueError(
+                "reference input mode owns its source-bound feedback document"
+            )
         if not args.gallery_reference_uri:
             raise ValueError("reference input mode requires gallery_reference_uri")
         if not args.dataset_repository or not args.dataset_revision:
@@ -4511,8 +4585,7 @@ def _validate_arguments(args: argparse.Namespace) -> None:
         )
     if (
         input_mode not in {REFERENCE_INPUT_MODE, STANDARD_INPUT_MODE}
-        and
-        not custom
+        and not custom
         and args.feedback_mode in {"outcome", "progress", "hybrid"}
         and not args.feedback_uri
     ):
@@ -4554,13 +4627,16 @@ def _validate_arguments(args: argparse.Namespace) -> None:
     if input_mode == STANDARD_INPUT_MODE and hasattr(args, "_standard_input_config"):
         from npa.workbench.groot.standard_inputs import StandardSingleWristConfig
 
-        expected_profile = (
-            f"{StandardSingleWristConfig.__module__}:{StandardSingleWristConfig.__name__}"
-        )
+        expected_profile = f"{StandardSingleWristConfig.__module__}:{StandardSingleWristConfig.__name__}"
         if args.data_config != expected_profile:
             raise ValueError("standard input mode did not resolve its shipped profile")
-        if args.action_target_keys != "action.robot" or args.evidence_video_key != "video.wrist":
-            raise ValueError("standard input mode did not resolve its declared modality")
+        if (
+            args.action_target_keys != "action.robot"
+            or args.evidence_video_key != "video.wrist"
+        ):
+            raise ValueError(
+                "standard input mode did not resolve its declared modality"
+            )
 
 
 def main(argv: list[str] | None = None) -> None:

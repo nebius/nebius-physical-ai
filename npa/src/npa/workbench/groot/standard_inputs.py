@@ -111,7 +111,9 @@ class StandardLeRobotConfig(_Strict):
                 raise ValueError("progress feedback requires field and source")
             contract = self.feedback.progress_contract or {}
             if not {"units", "direction", "alignment"}.issubset(contract):
-                raise ValueError("progress feedback requires units, direction, and alignment")
+                raise ValueError(
+                    "progress feedback requires units, direction, and alignment"
+                )
         return self
 
 
@@ -121,7 +123,9 @@ def load_standard_config(path: Path) -> StandardLeRobotConfig:
     try:
         payload = json.loads(path.read_text())
     except (OSError, json.JSONDecodeError) as error:
-        raise ValueError("standard_input_config_uri must contain one JSON object") from error
+        raise ValueError(
+            "standard_input_config_uri must contain one JSON object"
+        ) from error
     if not isinstance(payload, dict):
         raise ValueError("standard_input_config_uri must contain one JSON object")
     return StandardLeRobotConfig.model_validate(payload)
@@ -141,29 +145,60 @@ class StandardSingleWristConfig:
         from gr00t.data.dataset import ModalityConfig
 
         return {
-            "video": ModalityConfig(delta_indices=self.observation_indices, modality_keys=self.video_keys),
-            "state": ModalityConfig(delta_indices=self.observation_indices, modality_keys=self.state_keys),
-            "action": ModalityConfig(delta_indices=self.action_indices, modality_keys=self.action_keys),
-            "language": ModalityConfig(delta_indices=self.observation_indices, modality_keys=self.language_keys),
+            "video": ModalityConfig(
+                delta_indices=self.observation_indices, modality_keys=self.video_keys
+            ),
+            "state": ModalityConfig(
+                delta_indices=self.observation_indices, modality_keys=self.state_keys
+            ),
+            "action": ModalityConfig(
+                delta_indices=self.action_indices, modality_keys=self.action_keys
+            ),
+            "language": ModalityConfig(
+                delta_indices=self.observation_indices, modality_keys=self.language_keys
+            ),
         }
 
     def transform(self):
         from gr00t.data.transform.base import ComposedModalityTransform
         from gr00t.data.transform.concat import ConcatTransform
-        from gr00t.data.transform.state_action import StateActionToTensor, StateActionTransform
+        from gr00t.data.transform.state_action import (
+            StateActionToTensor,
+            StateActionTransform,
+        )
         from gr00t.data.transform.video import VideoResize, VideoToNumpy, VideoToTensor
         from gr00t.model.transforms import GR00TTransform
 
         return ComposedModalityTransform(
             transforms=[
                 VideoToTensor(apply_to=self.video_keys),
-                VideoResize(apply_to=self.video_keys, height=224, width=224, interpolation="linear"),
+                VideoResize(
+                    apply_to=self.video_keys,
+                    height=224,
+                    width=224,
+                    interpolation="linear",
+                ),
                 VideoToNumpy(apply_to=self.video_keys),
                 StateActionToTensor(apply_to=self.state_keys),
-                StateActionTransform(apply_to=self.state_keys, normalization_modes={key: "min_max" for key in self.state_keys}),
+                StateActionTransform(
+                    apply_to=self.state_keys,
+                    normalization_modes={key: "min_max" for key in self.state_keys},
+                ),
                 StateActionToTensor(apply_to=self.action_keys),
-                StateActionTransform(apply_to=self.action_keys, normalization_modes={key: "min_max" for key in self.action_keys}),
-                ConcatTransform(video_concat_order=self.video_keys, state_concat_order=self.state_keys, action_concat_order=self.action_keys),
-                GR00TTransform(state_horizon=len(self.observation_indices), action_horizon=len(self.action_indices), max_state_dim=64, max_action_dim=32),
+                StateActionTransform(
+                    apply_to=self.action_keys,
+                    normalization_modes={key: "min_max" for key in self.action_keys},
+                ),
+                ConcatTransform(
+                    video_concat_order=self.video_keys,
+                    state_concat_order=self.state_keys,
+                    action_concat_order=self.action_keys,
+                ),
+                GR00TTransform(
+                    state_horizon=len(self.observation_indices),
+                    action_horizon=len(self.action_indices),
+                    max_state_dim=64,
+                    max_action_dim=32,
+                ),
             ]
         )

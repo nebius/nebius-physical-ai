@@ -2225,7 +2225,9 @@ def test_pinned_b300_without_effective_overlay_needs_no_staged_source(baked) -> 
     )
 
 
-def test_preflight_images_accepts_the_same_config_vars_as_submit(mocker, tmp_path) -> None:
+def test_preflight_images_accepts_the_same_config_vars_as_submit(
+    mocker, tmp_path
+) -> None:
     """An empty canonical image input must be overridable before pull probes."""
     from npa.orchestration.skypilot.registry_preflight import KubernetesPullTarget
 
@@ -2244,9 +2246,7 @@ def test_preflight_images_accepts_the_same_config_vars_as_submit(mocker, tmp_pat
         "npa.orchestration.skypilot.registry_preflight.resolve_kubernetes_pull_target",
         return_value=KubernetesPullTarget(namespace="target-namespace"),
     )
-    mocker.patch(
-        "npa.cluster.state.existing_kubeconfig", return_value=owned_kubeconfig
-    )
+    mocker.patch("npa.cluster.state.existing_kubeconfig", return_value=owned_kubeconfig)
     mocker.patch(
         "npa.orchestration.skypilot.cluster_validation.resolve_validation_target",
         return_value=(owned_kubeconfig, "target-context"),

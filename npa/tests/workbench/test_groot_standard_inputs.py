@@ -87,7 +87,9 @@ def _payload() -> dict[str, object]:
     }
 
 
-def test_standard_config_binds_data_labels_mapping_action_and_models(tmp_path: Path) -> None:
+def test_standard_config_binds_data_labels_mapping_action_and_models(
+    tmp_path: Path,
+) -> None:
     path = tmp_path / "standard.json"
     path.write_text(json.dumps(_payload()))
 

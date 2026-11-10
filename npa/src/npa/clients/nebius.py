@@ -241,11 +241,7 @@ def _require_nebius() -> str:
             configured = str(managed)
     path = shutil.which(configured or "nebius")
     if path is None:
-        configured_hint = (
-            " configured by NPA_NEBIUS_BIN"
-            if configured
-            else " on PATH"
-        )
+        configured_hint = " configured by NPA_NEBIUS_BIN" if configured else " on PATH"
         raise NebiusError(
             f"nebius CLI{configured_hint} not found. "
             "Install it: https://docs.nebius.com/cli/install"

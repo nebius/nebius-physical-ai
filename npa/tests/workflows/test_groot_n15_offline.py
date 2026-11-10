@@ -1030,7 +1030,9 @@ def test_standard_reuse_rejects_a_changed_declaration() -> None:
         action_horizon=16,
     )
 
-    with pytest.raises(workflow.WorkflowArtifactError, match="standard input declaration"):
+    with pytest.raises(
+        workflow.WorkflowArtifactError, match="standard input declaration"
+    ):
         workflow._validate_reused_prepare_inputs(
             args,
             {
@@ -1068,7 +1070,10 @@ def test_standard_declaration_resolves_model_before_native_bootstrap(
 
     assert args.model_repository == workflow.MODEL_REPOSITORY_DEFAULT
     assert args.groot_revision == workflow.GROOT_REVISION_DEFAULT
-    assert args.data_config == "npa.workbench.groot.standard_inputs:StandardSingleWristConfig"
+    assert (
+        args.data_config
+        == "npa.workbench.groot.standard_inputs:StandardSingleWristConfig"
+    )
     assert args.action_target_keys == "action.robot"
 
 
@@ -1088,8 +1093,10 @@ def test_standard_prepare_materializes_declared_tree_without_external_code(
         length = 2
         pd.DataFrame(
             {
-                "observation.state": [np.asarray([index, index + 1], dtype=np.float32)] * length,
-                "action": [np.asarray([index + 2, index + 3], dtype=np.float32)] * length,
+                "observation.state": [np.asarray([index, index + 1], dtype=np.float32)]
+                * length,
+                "action": [np.asarray([index + 2, index + 3], dtype=np.float32)]
+                * length,
                 "task_index": [0] * length,
                 "episode_index": [index] * length,
                 "frame_index": list(range(length)),
@@ -1143,7 +1150,9 @@ def test_standard_prepare_materializes_declared_tree_without_external_code(
         {
             "dataset": {
                 "uri": "s3://input/dataset",
-                "tree_sha256": workflow.tree_digest(workflow.directory_inventory(source)),
+                "tree_sha256": workflow.tree_digest(
+                    workflow.directory_inventory(source)
+                ),
                 "source_kind": "private-object-store",
                 "source_identifier": "operator/recorded-rollouts",
                 "source_revision": "rev-1",
@@ -1194,7 +1203,12 @@ def test_standard_prepare_materializes_declared_tree_without_external_code(
                 "grouping": "collection",
                 "strategy": "adapter",
             },
-            "evidence": {"episode_index": 3, "start_frame": 0, "frame_count": 2, "fps": 15},
+            "evidence": {
+                "episode_index": 3,
+                "start_frame": 0,
+                "frame_count": 2,
+                "fps": 15,
+            },
             "model": {
                 "model_repository": workflow.MODEL_REPOSITORY_DEFAULT,
                 "model_revision": workflow.MODEL_REVISION_DEFAULT,
@@ -1225,9 +1239,14 @@ def test_standard_prepare_materializes_declared_tree_without_external_code(
 
         def put_json(self, value: object, _uri: str) -> dict[str, object]:
             payload = json.dumps(value, sort_keys=True).encode()
-            return {"sha256": hashlib.sha256(payload).hexdigest(), "bytes": len(payload)}
+            return {
+                "sha256": hashlib.sha256(payload).hexdigest(),
+                "bytes": len(payload),
+            }
 
-    def transcode(source_root: Path, derivative: Path, *_args: object) -> dict[str, object]:
+    def transcode(
+        source_root: Path, derivative: Path, *_args: object
+    ) -> dict[str, object]:
         shutil.copytree(source_root, derivative)
         return {
             "source_video_count": 4,
@@ -1240,9 +1259,18 @@ def test_standard_prepare_materializes_declared_tree_without_external_code(
     ) -> dict[str, object]:
         root.mkdir()
         (root / "gallery.json").write_text(
-            json.dumps({"schema_version": "npa.groot-recorded-gallery-reference/v1", "items": []})
+            json.dumps(
+                {
+                    "schema_version": "npa.groot-recorded-gallery-reference/v1",
+                    "items": [],
+                }
+            )
         )
-        return {"schema_version": "npa.groot-recorded-gallery-reference/v1", "item_count": 0, "items": []}
+        return {
+            "schema_version": "npa.groot-recorded-gallery-reference/v1",
+            "item_count": 0,
+            "items": [],
+        }
 
     monkeypatch.setattr(workflow, "_transcode_h264", transcode)
     monkeypatch.setattr(workflow, "_standard_gallery_reference", gallery)
