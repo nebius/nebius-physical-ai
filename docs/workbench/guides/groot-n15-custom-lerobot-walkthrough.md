@@ -335,14 +335,25 @@ action targets in the declared coordinates; lower error is not robot success.
 For an interruption, first inspect durable artifacts and exact job status. Resume
 only the same run ID after its checkpoint/output contract is reconciled; never
 create a second job for the same prefix. The runtime refuses incompatible source,
-output, or checkpoint identities.
+output, or checkpoint identities. A plain resume preserves a terminal workload
+failure without launching another payload. Add the explicit single terminal-wave
+retry below only after the exact prior attempt is authoritatively terminal and
+the failure is appropriate to retry (for example, a transient authenticated
+download transport error). Do not use it for ambiguous scheduler evidence,
+input-contract failures, or changed source, image, data, or configuration
+identities.
 
 ```bash
 npa/.venv/bin/python -m npa workbench workflow submit \
   workflows/testing/groot-n15-offline-rl.yaml --runtime --resume \
   --project "$NPA_PROJECT_ALIAS" --infra "k8s/$NPA_KUBE_CONTEXT" \
-  --resume-run "<same-run-id>" --var bucket="$NPA_BUCKET" --output-format json
+  --resume-run "<same-run-id>" --retries 1 \
+  --var bucket="$NPA_BUCKET" --output-format json
 ```
+
+The retry creates a new immutable attempt under the existing run ID and retains
+the failed attempt and its artifacts. It reuses validated completed waves; an
+incomplete training wave without a compatible checkpoint restarts that wave.
 
 For a feedback revision, preserve the first run and create a new source or
 feedback sidecar identity under a new run ID. Keep all held-out collection groups
