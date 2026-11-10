@@ -98,15 +98,17 @@ provisioning and `workflow gpus`; `configure --show --env` emits the saved
 project-scoped context, and `preflight-images` proves the same target can pull
 the rendered image before submit. For this explicit target, generic runtime
 submit selects a stable private SkyPilot state root when normal configuration
-does not already select one. Before a receipt exists, the documented status
-command derives that same route from the configured project and context; after
-submit, the receipt binds the exact route for fresh-shell observation. Do not
-add a private controller path or daemon flag to any command. The run itself
-verifies one visible sm_120 GPU, the pinned native dependency closure, decoded
-recorded video, checkpoint reload, and durable artifact readback. It does not
-claim a hardware rollout or policy promotion. The new turnkey receipt and
-fresh-checkout evidence will be recorded here after the current reference run
-completes; earlier private-extension rehearsal rows below are historical only.
+does not already select one. Before a receipt exists, a status query uses only
+that task-local route and fails closed rather than treating an unavailable local
+API or a shared controller as absence. Submit performs its own exact launch
+reconciliation; after submit, the receipt binds the exact route for fresh-shell
+observation. Do not add a private controller path or daemon flag to any command.
+The run itself verifies one visible sm_120 GPU, the pinned native dependency
+closure, decoded recorded video, checkpoint reload, and durable artifact
+readback. It does not claim a hardware rollout or policy promotion. The new
+turnkey receipt and fresh-checkout evidence will be recorded here after the
+current reference run completes; earlier private-extension rehearsal rows below
+are historical only.
 
 For a completed run, use a fresh shell and only the documented generic commands:
 
