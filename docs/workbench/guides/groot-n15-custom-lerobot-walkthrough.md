@@ -25,11 +25,18 @@ npa/.venv/bin/python -m pip install -e "npa[dev,adapter]"
 
 Install and authenticate the tested Nebius CLI (`0.12.298`) as described in
 the repository [installation guide](../../install.md). `npa configure` records
-the normal project and storage setup. If it has already bootstrapped a tested
-NPA-local CLI, the shell setup below selects that executable; otherwise the
-tested CLI must be on `PATH`. Provider calls fail closed on an untested version.
-The GPU worker independently records its CUDA, Python, SM120, and native
-dependency closure before it trains.
+the normal project and storage setup. Bootstrap the pinned SkyPilot runtime once
+in that same normal NPA configuration; it is idempotent and persists the
+selected executable for later shells:
+
+```bash
+npa/.venv/bin/python -m npa skypilot bootstrap
+```
+
+If the NPA configuration also contains a tested local Nebius CLI, the shell
+setup below selects it; otherwise the tested CLI must be on `PATH`. Provider
+calls fail closed on an untested version. The GPU worker independently records
+its CUDA, Python, SM120, and native dependency closure before it trains.
 
 ## Turnkey public reference (the default)
 
@@ -91,14 +98,15 @@ provisioning and `workflow gpus`; `configure --show --env` emits the saved
 project-scoped context, and `preflight-images` proves the same target can pull
 the rendered image before submit. For this explicit target, generic runtime
 submit selects a stable private SkyPilot state root when normal configuration
-does not already select one; its receipt binds that route for fresh-shell
-observation. Do not add a private controller path or daemon flag to the command.
-The run itself verifies one visible sm_120 GPU, the pinned native dependency
-closure, decoded recorded video, checkpoint reload, and durable artifact
-readback. It does not claim a hardware rollout or policy promotion. The new
-turnkey receipt and fresh-checkout evidence will be recorded here after the
-current reference run completes; earlier private-extension rehearsal rows below
-are historical only.
+does not already select one. Before a receipt exists, the documented status
+command derives that same route from the configured project and context; after
+submit, the receipt binds the exact route for fresh-shell observation. Do not
+add a private controller path or daemon flag to any command. The run itself
+verifies one visible sm_120 GPU, the pinned native dependency closure, decoded
+recorded video, checkpoint reload, and durable artifact readback. It does not
+claim a hardware rollout or policy promotion. The new turnkey receipt and
+fresh-checkout evidence will be recorded here after the current reference run
+completes; earlier private-extension rehearsal rows below are historical only.
 
 For a completed run, use a fresh shell and only the documented generic commands:
 

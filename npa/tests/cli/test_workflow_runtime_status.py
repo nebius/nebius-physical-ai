@@ -149,6 +149,76 @@ def test_status_binds_exact_live_queries_to_explicit_skypilot_config(
     )
 
 
+def test_receipt_free_observation_route_uses_configured_task_local_state(
+    mocker, monkeypatch, tmp_path
+):
+    """A fresh documented shell never falls back to a shared API daemon."""
+    from npa.clients import config as config_module
+    from npa.cli.workbench.workflow import _new_runtime_observation_route
+    from npa.orchestration.skypilot._bin import SkyPilotConfig
+
+    monkeypatch.setattr(config_module, "NPA_CONFIG_DIR", tmp_path / "npa")
+    monkeypatch.setenv("NPA_KUBE_CONTEXT", "operator-cluster")
+    sky = tmp_path / "sky"
+    mocker.patch(
+        "npa.orchestration.npa_workflow.submission_state.inspect_submission_state",
+        return_value=SimpleNamespace(outcome="absent"),
+    )
+    mocker.patch(
+        "npa.orchestration.skypilot._bin.resolve_config",
+        return_value=SkyPilotConfig(sky_bin=sky),
+    )
+
+    selected_sky, selected_root = _new_runtime_observation_route(
+        run_id="new-run", project="operator-project"
+    )
+
+    assert selected_sky == str(sky)
+    assert selected_root == tmp_path / "npa" / "workflow-runtime" / selected_root.name
+    assert "operator-project" not in str(selected_root)
+    assert "operator-cluster" not in str(selected_root)
+
+
+def test_receipt_free_observation_route_defers_to_existing_receipt(mocker):
+    """A receipt, not fresh-shell configuration, owns an existing route."""
+    from npa.cli.workbench.workflow import _new_runtime_observation_route
+
+    mocker.patch(
+        "npa.orchestration.npa_workflow.submission_state.inspect_submission_state",
+        return_value=SimpleNamespace(outcome="found"),
+    )
+    configured = mocker.patch("npa.orchestration.skypilot._bin.resolve_config")
+
+    assert _new_runtime_observation_route(
+        run_id="existing-run", project="operator-project"
+    ) == ("", None)
+    configured.assert_not_called()
+
+
+def test_status_uses_derived_route_without_echoing_private_path(mocker, tmp_path):
+    """The documented retry remains portable even when routing is automatic."""
+    from npa.cli.workbench import workflow as workflow_module
+
+    selected_root = tmp_path / "private" / "workflow-runtime" / "digest"
+    mocker.patch.object(
+        workflow_module,
+        "_new_runtime_observation_route",
+        return_value=("/opt/npa/sky", selected_root),
+    )
+    resolver = mocker.patch(
+        "npa.orchestration.npa_workflow.run_resolution.resolve_run",
+        return_value=RunResolution(
+            run_id="new-run", project="operator-project", conclusively_absent=True
+        ),
+    )
+
+    payload = _durable_workflow_status("new-run", project="operator-project")
+
+    assert resolver.call_args.kwargs["sky_bin"] == "/opt/npa/sky"
+    assert resolver.call_args.kwargs["isolated_config_dir"] == selected_root
+    assert str(selected_root) not in json.dumps(payload)
+
+
 def test_status_cli_forwards_explicit_skypilot_config(observed_status, mocker):
     resolution, jobs = observed_status
     resolution.job_id = "12"

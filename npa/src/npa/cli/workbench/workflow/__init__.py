@@ -6141,6 +6141,49 @@ def _implicit_runtime_isolated_config_dir(*, project: str, context: str) -> Path
     return NPA_CONFIG_DIR / "workflow-runtime" / digest
 
 
+def _new_runtime_observation_route(
+    *, run_id: str, project: str
+) -> tuple[str, Path | None]:
+    """Resolve the route for a receipt-free runtime observation.
+
+    The route is available only after normal shell setup exported an explicit
+    project-scoped Kubernetes context. A durable receipt owns the route as soon
+    as one exists; before that, use the same deterministic local state root as
+    runtime submit. Missing bootstrap/configuration remains fail-closed instead
+    of selecting PATH or a process-wide SkyPilot API daemon.
+    """
+
+    from npa.orchestration.npa_workflow.submission_state import (
+        inspect_submission_state,
+    )
+
+    receipt = inspect_submission_state(project, run_id)
+    if receipt.outcome != "absent":
+        return "", None
+
+    from npa.orchestration.skypilot._bin import (
+        SkyPilotConfigError,
+        SkyPilotNotInstalledError,
+        resolve_config,
+    )
+
+    try:
+        configured = resolve_config()
+    except (SkyPilotConfigError, SkyPilotNotInstalledError):
+        return "", None
+
+    isolated = configured.isolated_config_dir
+    if isolated is not None:
+        return str(configured.sky_bin), isolated
+    context = os.environ.get("NPA_KUBE_CONTEXT", "").strip()
+    if not context:
+        return "", None
+    return str(configured.sky_bin), _implicit_runtime_isolated_config_dir(
+        project=project,
+        context=context,
+    )
+
+
 def _paidf_kubernetes_prerequisites_for_submit(
     context: str,
 ) -> list[tuple[str, str]]:
@@ -6828,6 +6871,19 @@ def _durable_workflow_status(
         read_stage_status,
     )
 
+    # A first status check for a just-named runtime run has no submission
+    # receipt from which to recover a controller route. In that narrow case,
+    # select the same configured SkyPilot binary and task-local state root that
+    # ``submit --runtime --infra k8s/$NPA_KUBE_CONTEXT`` selects. A receipt,
+    # explicit option, or saved isolation setting always wins; this must never
+    # turn a status check into an attachment to a process-wide foreign daemon.
+    requested_isolated_config_dir = isolated_config_dir
+    if not cached and project and not (sky_bin or isolated_config_dir):
+        sky_bin, isolated_config_dir = _new_runtime_observation_route(
+            run_id=run_id,
+            project=project,
+        )
+
     resolution = resolve_run(
         run_id,
         project=project,
@@ -6840,7 +6896,7 @@ def _durable_workflow_status(
         allow_local_not_submitted=True,
     )
     sky_bin = resolution.sky_bin or sky_bin
-    isolated_config_dir = resolution.isolated_config_dir
+    isolated_config_dir = resolution.isolated_config_dir or isolated_config_dir
     from npa.verification import (
         CACHED,
         VERIFIED,
@@ -6856,7 +6912,11 @@ def _durable_workflow_status(
     retry_command = (
         f"npa workbench workflow status {_display_run_id(run_id)}"
         + (f" --project {project}" if project else "")
-        + _isolated_controller_option(isolated_config_dir)
+        # Generated or receipt-resolved local paths are implementation details,
+        # not replay requirements. Fresh shells select them through the normal
+        # config/receipt contract. Only echo a route the operator explicitly
+        # supplied on this invocation.
+        + _isolated_controller_option(requested_isolated_config_dir)
         + _skypilot_config_option(config_path)
     )
     if resolution.not_submitted:
