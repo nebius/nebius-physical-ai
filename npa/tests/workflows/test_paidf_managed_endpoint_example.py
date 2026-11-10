@@ -282,7 +282,9 @@ def _write(path, payload):
 
 def _published_variant(module, work, campaign, variant, index):
     directory = work / "downloads" / variant["id"]
-    directory.mkdir(parents=True)
+    # Create each level privately, independent of the caller's umask.
+    module.private_directory(work / "downloads")
+    module.private_directory(directory)
     job_id = f"job-{index}"
     module.save_private(work / "jobs" / (variant["id"] + ".json"), {"job_id": job_id})
     hashes = {
