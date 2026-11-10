@@ -3,7 +3,7 @@
     "config_sha256": "a3f008d5da1d9fcefd8507119cfd419804164adc811c42da00f2f0c44724be6e",
     "helper_sha256": "12e8d3fcfc033729cc99a769c329b60e8851ac3f6a1dd7ac00ea411df6f306dd"
   },
-  "detector_inputs_sha256": "7b386baa057333f8187c556b0e9d72f9cdd81bbb63115c6af2ba26de772eeccb",
+  "detector_inputs_sha256": "873a578bafe0e991ce066a1063db42573b7a97bff8b5a18f2f58874a9513702d",
   "entries": [
     {
       "native_findings": [
