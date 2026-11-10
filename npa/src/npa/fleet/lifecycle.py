@@ -2013,6 +2013,7 @@ def _resume_retained_pool_target(
     cluster_name: str,
     profile: str,
     work_root: Path,
+    timeout_minutes: int,
 ) -> dict[str, Any]:
     """Perform the verified pool-only mutation; never run Terraform apply."""
 
@@ -2028,6 +2029,7 @@ def _resume_retained_pool_target(
             only_clusters=[cluster_name],
             profile=profile,
             work_root=work_root,
+            timeout_minutes=timeout_minutes,
         )
     except FleetRecoveryError as exc:
         raise RuntimeError(
@@ -2203,6 +2205,13 @@ def _deploy_mk8s_fleet(
         on_status=on_status,
     )
     reconciliation_spec = _spec_with_selected_clusters(spec, cluster_by_target)
+    retained_target_keys = {
+        target_key
+        for target_key in cluster_by_target
+        if _requires_retained_target_reconciliation(
+            fleet_root, target_key[0], target_key[1]
+        )
+    }
     for project_key, cluster_name in cluster_by_target:
         _persist_target_backend_owner(
             fleet_root,
@@ -2210,6 +2219,10 @@ def _deploy_mk8s_fleet(
             project_key=project_key,
             cluster_name=cluster_name,
             expected_backend="mk8s",
+            # A provisioning sidecar without a materialized cluster is a
+            # retained target.  Its marker is evidence for recovery, never a
+            # normal-lifecycle write before provider verification succeeds.
+            persist=(project_key, cluster_name) not in retained_target_keys,
         )
     results: list[dict[str, Any]] = list(release_errors.values())
 
@@ -2220,17 +2233,14 @@ def _deploy_mk8s_fleet(
     # must never enter Terraform, recreate the cluster, or write local state
     # before all provider identity checks have succeeded.
     retained_targets: dict[tuple[str, str], dict[str, Any]] = {}
-    for target_key in cluster_by_target:
-        if _requires_retained_target_reconciliation(
-            fleet_root, target_key[0], target_key[1]
-        ):
-            retained_targets[target_key] = _verify_retained_pool_target(
-                reconciliation_spec,
-                project_key=target_key[0],
-                cluster_name=target_key[1],
-                profile=nebius_profile,
-                work_root=work_root,
-            )
+    for target_key in retained_target_keys:
+        retained_targets[target_key] = _verify_retained_pool_target(
+            reconciliation_spec,
+            project_key=target_key[0],
+            cluster_name=target_key[1],
+            profile=nebius_profile,
+            work_root=work_root,
+        )
 
     base_meta = {
         "name": spec.name,
@@ -2377,6 +2387,7 @@ def _deploy_mk8s_fleet(
                 cluster_name=cluster_name,
                 profile=nebius_profile,
                 work_root=work_root,
+                timeout_minutes=timeout_minutes,
             )
         )
 

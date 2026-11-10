@@ -6,6 +6,7 @@ from dataclasses import dataclass, replace
 import json
 import os
 from pathlib import Path
+import time
 from typing import Any
 
 from npa.cluster_backends.mk8s_execution import _context_name
@@ -17,6 +18,10 @@ from npa.fleet.release import MK8sReleaseError, select_installation_release
 
 class FleetRecoveryError(RuntimeError):
     """An interrupted Fleet apply lacks the proof required for safe adoption."""
+
+
+class _RetainedPoolTopologyPending(FleetRecoveryError):
+    """Exact newly-created pools have not yet reached terminal provider state."""
 
 
 _ENV_SIDECAR = ".npa-fleet-env.json"
@@ -185,14 +190,18 @@ def resume_retained_fleet_pool_target(
     project_prefix: str | None = None,
     profile: str | None = None,
     work_root: Path | None = None,
+    timeout_minutes: int = 120,
 ) -> dict[str, Any]:
     """Create only verified missing pools for one retained MK8s target.
 
     All retained local evidence and live project/cluster/pool identity is
     checked before the first provider mutation.  The ordinary Fleet context,
     kubeconfig, sidecar, and summary are persisted only after every missing
-    pool command has returned an exact provider identity.  Terraform state and
-    locks are never read-write targets of this path.
+    pool command has returned an exact provider identity and a fresh complete
+    provider inventory proves the terminal requested topology.  Correct
+    asynchronous provider responses are re-listed only within the enclosing
+    Fleet lifecycle timeout. Terraform state and locks are never read-write
+    targets of this path.
     """
 
     target = _target(
@@ -203,6 +212,7 @@ def resume_retained_fleet_pool_target(
         work_root=work_root,
     )
     workdir = target.install_dir / "k8s-training"
+    timeout_seconds = _retained_pool_resume_timeout_seconds(timeout_minutes)
     _assert_no_live_apply_owner(workdir)
     inputs = _recovery_inputs(target, workdir, profile=profile)
     session, inputs, missing = _verify_retained_pool_resume(target, inputs)
@@ -210,6 +220,11 @@ def resume_retained_fleet_pool_target(
     _assert_no_live_apply_owner(workdir)
     for name, pool in missing:
         _create_retained_node_group(target, inputs, session, name, pool, workdir)
+    _wait_for_retained_pool_topology(
+        inputs,
+        session,
+        timeout_seconds=timeout_seconds,
+    )
     # A local apply owner may appear while the provider receives the group
     # commands.  Refuse before any ordinary local registration write.
     _assert_no_live_apply_owner(workdir)
@@ -329,6 +344,26 @@ def _verify_retained_pool_resume(
         raise FleetRecoveryError(
             "provider project or terminal retained cluster could not be verified"
         )
+    verified_inputs = replace(inputs, cluster_id=cluster_id)
+    missing = _verify_retained_pool_topology(
+        verified_inputs, session, allow_missing=True
+    )
+    return session, verified_inputs, missing
+
+
+def _verify_retained_pool_topology(
+    inputs: _RecoveryInputs,
+    session: _ProviderSession,
+    *,
+    allow_missing: bool,
+) -> list[tuple[str, Any]]:
+    """Require a complete exact retained-pool inventory before persistence."""
+
+    from npa.cluster_backends import mk8s_execution
+
+    if not inputs.cluster_id:
+        raise FleetRecoveryError("retained provider cluster identity is missing")
+
     groups_result = mk8s_execution._run_capture(
         [
             *mk8s_execution._nebius_argv(session.nebius_bin, inputs.saved["profile"]),
@@ -337,7 +372,7 @@ def _verify_retained_pool_resume(
             "node-group",
             "list",
             "--parent-id",
-            cluster_id,
+            inputs.cluster_id,
             "--all",
             "--format",
             "json",
@@ -374,7 +409,7 @@ def _verify_retained_pool_resume(
         if (
             not isinstance(name, str)
             or not name
-            or parent_id != cluster_id
+            or parent_id != inputs.cluster_id
             or name in by_name
         ):
             raise FleetRecoveryError(
@@ -388,12 +423,66 @@ def _verify_retained_pool_resume(
     for name, pool in expected.items():
         group = by_name.get(name)
         if group is None:
+            if not allow_missing:
+                raise _RetainedPoolTopologyPending(
+                    "retained provider is missing a required terminal node group"
+                )
             missing.append((name, pool))
             continue
         decoded = mk8s_execution._decode_v1_node_group_preemptibility(group)
-        if not mk8s_execution._provider_node_group_matches_pool(decoded, pool):
-            raise FleetRecoveryError("retained provider node-group topology differs")
-    return session, replace(inputs, cluster_id=cluster_id), missing
+        if mk8s_execution._provider_node_group_matches_pool(decoded, pool):
+            continue
+        status = decoded.get("status")
+        if (
+            not allow_missing
+            and isinstance(status, dict)
+            and status.get("state") == "PROVISIONING"
+            and mk8s_execution._provider_node_group_matches_pool(
+                decoded, pool, allocated_repair=True
+            )
+        ):
+            raise _RetainedPoolTopologyPending(
+                "retained provider node group has not reached terminal state"
+            )
+        raise FleetRecoveryError("retained provider node-group topology differs")
+    return missing
+
+
+def _wait_for_retained_pool_topology(
+    inputs: _RecoveryInputs,
+    session: _ProviderSession,
+    *,
+    timeout_seconds: int,
+) -> None:
+    """Boundedly relist only an otherwise exact asynchronous pool create."""
+
+    deadline = time.monotonic() + timeout_seconds
+    while True:
+        try:
+            _verify_retained_pool_topology(inputs, session, allow_missing=False)
+            return
+        except _RetainedPoolTopologyPending as exc:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise FleetRecoveryError(
+                    "retained provider node-group topology did not reach terminal state "
+                    "within the Fleet lifecycle timeout"
+                ) from exc
+            time.sleep(min(30.0, max(1.0, remaining)))
+
+
+def _retained_pool_resume_timeout_seconds(timeout_minutes: int) -> int:
+    """Validate the existing Fleet deploy timeout before a pool mutation."""
+
+    if (
+        isinstance(timeout_minutes, bool)
+        or not isinstance(timeout_minutes, int)
+        or timeout_minutes <= 0
+    ):
+        raise FleetRecoveryError(
+            "retained pool resume requires the positive Fleet lifecycle timeout"
+        )
+    return timeout_minutes * 60
 
 
 def _assert_provider_project(
