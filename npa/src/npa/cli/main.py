@@ -2389,9 +2389,12 @@ def _configured_env_lines() -> str:
     except Exception:  # noqa: BLE001 - emit whatever is readable
         projects, alias = {}, ""
     lines: list[str] = []
+    resolved = ""
+    stanza: dict[str, object] = {}
     if projects:
         resolved = alias if alias in projects else next(iter(projects))
-        stanza = projects.get(resolved) or {}
+        candidate = projects.get(resolved) or {}
+        stanza = candidate if isinstance(candidate, dict) else {}
         lines.append(f"NPA_PROJECT_ALIAS={shlex.quote(resolved)}")
         for name, key in (
             ("NPA_PROJECT_ID", "project_id"),
@@ -2405,18 +2408,42 @@ def _configured_env_lines() -> str:
         credentials = load_credentials(environ={})
     except Exception:  # noqa: BLE001
         credentials = None
-    if credentials is not None:
-        bucket_uri = str(credentials.s3_bucket or "")
-        if bucket_uri:
-            lines.append(f"NPA_BUCKET_URI={shlex.quote(bucket_uri)}")
-            lines.append(
-                "NPA_BUCKET="
-                + shlex.quote(
-                    bucket_uri.removeprefix("s3://").strip("/").split("/", 1)[0]
-                )
-            )
-        if credentials.s3_endpoint:
-            lines.append(f"NPA_S3_ENDPOINT={shlex.quote(credentials.s3_endpoint)}")
+    bucket_uri = str(credentials.s3_bucket or "") if credentials is not None else ""
+    endpoint = str(credentials.s3_endpoint or "") if credentials is not None else ""
+    # A configured project can keep its non-secret storage route in
+    # ``config.yaml`` while its credentials live in the project credential
+    # store.  ``configure --show --env`` is the documented fresh-shell
+    # bootstrap, so it must still provide the bucket used by ``--var bucket``
+    # without requiring an operator to recreate that routing value by hand.
+    # Only routing fields are read here; keys and tokens never reach stdout.
+    project_storage = (
+        stanza.get("object-storage")
+        or stanza.get("object_storage")
+        or stanza.get("storage")
+        or {}
+    )
+    if not isinstance(project_storage, dict):
+        project_storage = {}
+    if not bucket_uri:
+        for key in ("checkpoint_bucket", "bucket", "s3_bucket"):
+            value = project_storage.get(key)
+            if value:
+                bucket_uri = str(value)
+                break
+    if not endpoint:
+        for key in ("endpoint_url", "endpoint", "s3_endpoint"):
+            value = project_storage.get(key)
+            if value:
+                endpoint = str(value)
+                break
+    if bucket_uri:
+        lines.append(f"NPA_BUCKET_URI={shlex.quote(bucket_uri)}")
+        lines.append(
+            "NPA_BUCKET="
+            + shlex.quote(bucket_uri.removeprefix("s3://").strip("/").split("/", 1)[0])
+        )
+    if endpoint:
+        lines.append(f"NPA_S3_ENDPOINT={shlex.quote(endpoint)}")
     context = _saved_kube_context()
     if context:
         lines.append(f"NPA_KUBE_CONTEXT={shlex.quote(context)}")

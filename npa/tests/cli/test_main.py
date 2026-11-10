@@ -622,6 +622,53 @@ def test_configure_show_env_emits_shell_assignments(monkeypatch, tmp_path) -> No
     assert "Credential setup" not in result.output
 
 
+def test_configure_show_env_uses_project_scoped_storage_without_shared_credentials(
+    monkeypatch, tmp_path
+) -> None:
+    """A fresh shell gets non-secret routing from its selected project config."""
+    import yaml
+
+    from npa.clients import config as config_module
+    from npa.clients import credentials as credentials_module
+    from npa.cluster import state as state_module
+
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "default_project": "operator-project",
+                "projects": {
+                    "operator-project": {
+                        "project_id": "project-1",
+                        "tenant_id": "tenant-1",
+                        "region": "us-central1",
+                        "storage": {
+                            "bucket": "s3://operator-bucket/reference/",
+                            "endpoint_url": "https://storage.example.invalid",
+                        },
+                    }
+                },
+            }
+        )
+    )
+    monkeypatch.setattr(config_module, "CONFIG_PATH", config_path)
+    monkeypatch.setattr(credentials_module, "CREDENTIALS_PATH", tmp_path / "missing")
+    monkeypatch.setattr(state_module, "list_local_clusters", lambda: [])
+
+    result = runner.invoke(app, ["configure", "--show", "--env"])
+
+    assert result.exit_code == 0, result.output
+    values = dict(
+        line.split("=", 1) for line in result.output.strip().splitlines() if "=" in line
+    )
+    assert values["NPA_PROJECT_ALIAS"] == "operator-project"
+    assert values["NPA_BUCKET"] == "operator-bucket"
+    assert values["NPA_BUCKET_URI"] == "s3://operator-bucket/reference/"
+    assert values["NPA_S3_ENDPOINT"] == "https://storage.example.invalid"
+    assert "access_key" not in result.output.lower()
+    assert "secret" not in result.output.lower()
+
+
 def test_configure_show_env_is_eval_safe_in_clean_subprocess(tmp_path) -> None:
     """Machine stdout stays shell-only even when credential diagnostics exist."""
 
