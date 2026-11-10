@@ -101,6 +101,7 @@ _cluster_tf_env = _mk8s_execution._cluster_tf_env
 _BACKEND_DEPLOY_CLUSTER = _mk8s_execution.deploy_cluster
 _BACKEND_DESTROY_CLUSTER = _mk8s_execution.destroy_cluster
 _BACKEND_IS_VERIFIED_UNCHANGED = _mk8s_execution.is_verified_unchanged_target
+_BACKEND_RESOLVE_VERIFIED_UNCHANGED = _mk8s_execution.resolve_verified_unchanged_target
 _persist_npa_cluster_identity = _mk8s_execution._persist_npa_cluster_identity
 _remove_npa_cluster_identity = _mk8s_execution._remove_npa_cluster_identity
 _provider_node_group_matches_pool = _mk8s_execution._provider_node_group_matches_pool
@@ -147,7 +148,7 @@ _LEGACY_HELPER_DEFAULTS = {
 }
 
 
-def _call_legacy_execution(function: Callable[..., dict[str, Any]], **kwargs: Any):
+def _call_legacy_execution(function: Callable[..., Any], **kwargs: Any):
     """Compatibility seam for callers that patched former fleet-private helpers."""
 
     names = (
@@ -188,6 +189,11 @@ def _destroy_one_cluster(**kwargs: Any) -> dict[str, Any]:
 
 def _is_verified_unchanged_target(**kwargs: Any) -> bool:
     return bool(_call_legacy_execution(_BACKEND_IS_VERIFIED_UNCHANGED, **kwargs))
+
+
+def _resolve_verified_unchanged_target(**kwargs: Any) -> str:
+    resolved = _call_legacy_execution(_BACKEND_RESOLVE_VERIFIED_UNCHANGED, **kwargs)
+    return resolved if isinstance(resolved, str) else ""
 
 
 _LEGACY_DEPLOY_COMPAT = _deploy_one_cluster

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import json
 import os
 from pathlib import Path
@@ -96,8 +96,14 @@ def _recover_locked(target: _RecoveryTarget, *, profile: str | None) -> dict[str
     workdir = target.install_dir / "k8s-training"
     _assert_no_live_apply_owner(workdir)
     inputs = _recovery_inputs(target, workdir, profile=profile)
-    _assert_context_adoptable(inputs.saved["context"], inputs)
-    session = _verify_provider(target, inputs)
+    had_materialized_cluster_id = bool(inputs.cluster_id)
+    if had_materialized_cluster_id:
+        _assert_context_adoptable(inputs.saved["context"], inputs)
+    session, inputs = _verify_provider(target, inputs)
+    if not inputs.cluster_id:
+        raise FleetRecoveryError("provider verification returned no cluster identity")
+    if not had_materialized_cluster_id:
+        _assert_context_adoptable(inputs.saved["context"], inputs)
     # Provider verification can take long enough for a concurrent apply to begin.
     # Recheck immediately before writing ordinary Fleet registration state.
     _assert_no_live_apply_owner(workdir)
@@ -116,7 +122,7 @@ def _recovery_inputs(
     desired = as_mk8s_desired(target.cluster)
     ssh_public_key = lifecycle._resolve_ssh_public_key(target.spec.ssh_public_key)
     _assert_materialized_spec(workdir, desired, ssh_public_key)
-    cluster_id = _terraform_cluster_id(
+    cluster_id = _terraform_cluster_id_or_unmaterialized(
         workdir, saved["project_id"], target.cluster.name
     )
     _assert_state_subnet(workdir, saved["subnet_id"])
@@ -126,12 +132,12 @@ def _recovery_inputs(
 
 def _verify_provider(
     target: _RecoveryTarget, inputs: _RecoveryInputs
-) -> _ProviderSession:
+) -> tuple[_ProviderSession, _RecoveryInputs]:
     from npa.fleet import lifecycle
 
     session = _provider_session(target, inputs.saved)
     ssh_public_key = lifecycle._resolve_ssh_public_key(target.spec.ssh_public_key)
-    verified = lifecycle._is_verified_unchanged_target(
+    cluster_id = lifecycle._resolve_verified_unchanged_target(
         project=session.project,
         cluster=inputs.desired,
         prefix=target.prefix,
@@ -143,11 +149,15 @@ def _verify_provider(
         profile=inputs.saved["profile"],
         env=session.environment,
     )
-    if not verified:
+    if not cluster_id:
         raise FleetRecoveryError(
             "provider project, terminal cluster, or exact topology could not be verified"
         )
-    return session
+    if inputs.cluster_id and cluster_id != inputs.cluster_id:
+        raise FleetRecoveryError(
+            "provider verification returned a different immutable cluster identity"
+        )
+    return session, replace(inputs, cluster_id=cluster_id)
 
 
 def _provider_session(
@@ -380,12 +390,38 @@ def _normalize_tfvars(text: str) -> str:
 
 def _terraform_cluster_id(workdir: Path, project_id: str, cluster_name: str) -> str:
     state = _read_mapping(workdir / _STATE_FILE, "Terraform state")
-    candidates = _root_cluster_attributes(state.get("resources"))
-    if len(candidates) != 1:
+    candidate = _root_cluster_attributes(state.get("resources"))
+    if len(candidate) != 1:
         raise FleetRecoveryError(
             "Terraform state does not contain one exact mk8s cluster"
         )
-    candidate = candidates[0]
+    return _materialized_cluster_id(candidate[0], project_id, cluster_name)
+
+
+def _terraform_cluster_id_or_unmaterialized(
+    workdir: Path, project_id: str, cluster_name: str
+) -> str:
+    """Allow only one root instance with no attributes for verified recovery."""
+
+    state = _read_mapping(workdir / _STATE_FILE, "Terraform state")
+    instances = _root_cluster_instances(state.get("resources"))
+    if len(instances) != 1:
+        raise FleetRecoveryError(
+            "Terraform state does not contain one exact mk8s cluster"
+        )
+    attributes = instances[0].get("attributes")
+    if attributes is None and "attributes" not in instances[0]:
+        return ""
+    if not isinstance(attributes, dict):
+        raise FleetRecoveryError(
+            "Terraform state does not contain one exact mk8s cluster"
+        )
+    return _materialized_cluster_id(attributes, project_id, cluster_name)
+
+
+def _materialized_cluster_id(
+    candidate: dict[str, Any], project_id: str, cluster_name: str
+) -> str:
     if (
         candidate.get("parent_id") != project_id
         or candidate.get("name") != cluster_name
@@ -400,19 +436,25 @@ def _terraform_cluster_id(workdir: Path, project_id: str, cluster_name: str) -> 
 
 
 def _root_cluster_attributes(resources: object) -> list[dict[str, Any]]:
+    attributes = []
+    for instance in _root_cluster_instances(resources):
+        candidate = instance.get("attributes")
+        if isinstance(candidate, dict):
+            attributes.append(candidate)
+    return attributes
+
+
+def _root_cluster_instances(resources: object) -> list[dict[str, Any]]:
     if not isinstance(resources, list):
         raise FleetRecoveryError("Terraform state has no resource inventory")
-    candidates = []
+    instances = []
     for resource in resources:
         if not _is_root_cluster_resource(resource):
             continue
         for instance in resource["instances"]:
-            attributes = (
-                instance.get("attributes") if isinstance(instance, dict) else None
-            )
-            if isinstance(attributes, dict) and not instance.get("deposed"):
-                candidates.append(attributes)
-    return candidates
+            if isinstance(instance, dict) and not instance.get("deposed"):
+                instances.append(instance)
+    return instances
 
 
 def _assert_state_subnet(workdir: Path, sidecar_subnet: str) -> None:
