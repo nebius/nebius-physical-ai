@@ -29,6 +29,7 @@ import yaml
 
 _ENDPOINT = "SKYPILOT_API_SERVER_ENDPOINT"
 _MARKER = "NPA_OWNED_SKYPILOT_API_ID"
+_CODE_IDENTITY = "NPA_SKYPILOT_API_CODE_IDENTITY"
 _METADATA_TOKEN_ROOT = Path("/mnt/cloud-metadata")
 _METADATA_CREDENTIAL_SOURCE = "instance_metadata"
 _NATIVE_METADATA_TOKEN_ENDPOINT = "http://metadata.nebius.internal/v1/iam/sa/token"
@@ -46,6 +47,38 @@ _RUNTIME_SETTINGS = {
 
 class IsolatedApiError(ValueError):
     """Secret-safe failure; no fallback to a shared daemon is permitted."""
+
+
+def _isolated_api_code_identity() -> str:
+    """Return a path-independent identity for the code loaded by this API.
+
+    The isolated server imports ``local_api_plugin`` through ``PYTHONPATH``.
+    A fresh checkout of the same revision necessarily has a different path, but
+    should be able to adopt the same task-owned server.  Bind the small import
+    closure by bytes instead of treating the checkout location as a principal.
+    """
+
+    source_root = Path(__file__).resolve().parents[3]
+    files = (
+        source_root / "npa" / "__init__.py",
+        source_root / "npa" / "orchestration" / "skypilot" / "__init__.py",
+        Path(__file__).resolve(),
+        Path(__file__).with_name("local_api_plugin.py").resolve(),
+    )
+    digest = hashlib.sha256()
+    for path in files:
+        try:
+            relative = path.relative_to(source_root)
+            contents = path.read_bytes()
+        except (OSError, ValueError) as exc:
+            raise IsolatedApiError(
+                "isolated SkyPilot API code identity could not be verified"
+            ) from exc
+        digest.update(str(relative).encode())
+        digest.update(b"\0")
+        digest.update(contents)
+        digest.update(b"\0")
+    return digest.hexdigest()
 
 
 def _require_linux_host() -> None:
@@ -1461,6 +1494,7 @@ def ensure_isolated_api(
                 _MARKER: record["marker"],
                 "IS_SKYPILOT_SERVER": "true",
                 "SKYPILOT_GLOBAL_CONFIG": str(config_path),
+                _CODE_IDENTITY: _isolated_api_code_identity(),
             }
         )
         plugins_path = root / "server-plugins.yaml"
@@ -1502,7 +1536,7 @@ def ensure_isolated_api(
             "NPA_NEBIUS_IAM_TOKEN_FILE",
             "SKYPILOT_GLOBAL_CONFIG",
             "SKYPILOT_SERVER_PLUGINS_CONFIG",
-            "PYTHONPATH",
+            _CODE_IDENTITY,
             _ENDPOINT,
             _MARKER,
         )

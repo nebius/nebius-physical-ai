@@ -748,6 +748,35 @@ def test_run_scoped_storage_does_not_change_control_plane_identity(local_runtime
     assert current["runtime_settings"]["storage_prefix"] == "second/task-prefix"
 
 
+def test_checkout_path_does_not_change_api_identity(local_runtime, tmp_path):
+    api.ensure_isolated_api(**local_runtime)
+    original = _record(local_runtime)
+    local_runtime["environment"]["PYTHONPATH"] = str(tmp_path / "fresh-checkout")
+
+    assert api.ensure_isolated_api(**local_runtime)["healthy"]
+
+    current = _record(local_runtime)
+    assert current["pid"] == original["pid"]
+    assert "PYTHONPATH" not in current["environment_binding"]
+    assert (
+        current["environment_binding"][api._CODE_IDENTITY]
+        == hashlib.sha256(api._isolated_api_code_identity().encode()).hexdigest()
+    )
+
+
+def test_changed_api_code_identity_refuses_adoption(local_runtime, monkeypatch):
+    monkeypatch.setattr(api, "_isolated_api_code_identity", lambda: "first-code")
+    api.ensure_isolated_api(**local_runtime)
+    original = _record(local_runtime)
+    monkeypatch.setattr(api, "_isolated_api_code_identity", lambda: "second-code")
+
+    with pytest.raises(api.IsolatedApiError, match="different executing identity"):
+        api.ensure_isolated_api(**local_runtime)
+
+    assert _record(local_runtime) == original
+    assert api._process(original)["pid"] == original["pid"]
+
+
 def test_surviving_queue_child_blocks_duplicate_server_then_owned_cleanup(
     local_runtime,
 ):
