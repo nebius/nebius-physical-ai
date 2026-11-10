@@ -2109,6 +2109,7 @@ def _is_verified_unchanged_target(
     nebius_bin: str,
     profile: str,
     env: dict[str, str],
+    _cluster_id_override: str = "",
 ) -> bool:
     """Prove that a target consumes no *additional* quota on this deploy."""
 
@@ -2116,7 +2117,15 @@ def _is_verified_unchanged_target(
     saved = _load_env_sidecar(install_dir) or {}
     project_id = str(saved.get("project_id") or "")
     cluster_id = str(saved.get("cluster_id") or "")
-    if not cluster_id and saved.get("status") == "provisioning":
+    if _cluster_id_override:
+        # Only the recovery resolver below may provide this value.  It first
+        # proves a complete provider inventory has exactly one terminal match,
+        # then this ordinary verifier proves the project's and every pool's
+        # identity.  A persisted ID must never be silently replaced.
+        if cluster_id or saved.get("status") != "provisioning":
+            return False
+        cluster_id = _cluster_id_override
+    elif not cluster_id and saved.get("status") == "provisioning":
         # A later application failure must not count existing workers twice.
         # Recover only this target's exact local resource identity, then
         # independently verify every requested cloud pool below.
@@ -2366,6 +2375,201 @@ def _is_verified_unchanged_target(
             return False
         unmatched_with_allocation.pop(match_index)
     return not unmatched_with_allocation
+
+
+def _resolve_verified_unchanged_target(
+    *,
+    project: MK8sProjectIdentity,
+    cluster: MK8sDesired,
+    prefix: str,
+    tenant_id: str,
+    region: str,
+    ssh_public_key: str,
+    fleet_root: Path,
+    nebius_bin: str,
+    profile: str,
+    env: dict[str, str],
+) -> str:
+    """Return one verified target ID, including the narrow missing-state case.
+
+    A provisioning sidecar normally obtains its ID from Terraform state.  An
+    interrupted apply can leave one root cluster instance without attributes,
+    however.  This resolver deliberately supports only that exact state shape:
+    it reads a complete project inventory, requires one terminal candidate with
+    the saved name and parent, and then delegates all project, cluster, and
+    node-group topology checks to the ordinary unchanged-target verifier.
+    """
+
+    install_dir = fleet_root / project.key() / cluster.name
+    saved = _load_env_sidecar(install_dir) or {}
+    project_id = str(saved.get("project_id") or "")
+    if str(saved.get("cluster_id") or ""):
+        return ""
+    cluster_id = _materialized_state_cluster_id(install_dir, project_id, cluster.name)
+    if cluster_id:
+        if _is_verified_unchanged_target(
+            project=project,
+            cluster=cluster,
+            prefix=prefix,
+            tenant_id=tenant_id,
+            region=region,
+            ssh_public_key=ssh_public_key,
+            fleet_root=fleet_root,
+            nebius_bin=nebius_bin,
+            profile=profile,
+            env=env,
+        ):
+            return cluster_id
+        return ""
+
+    if (
+        str(saved.get("status") or "") != "provisioning"
+        or str(saved.get("cluster_id") or "")
+        or not project_id
+        or not _has_one_unmaterialized_root_cluster(install_dir)
+    ):
+        return ""
+    candidate = _unmaterialized_state_provider_candidate(
+        project_id=project_id,
+        cluster_name=cluster.name,
+        nebius_bin=nebius_bin,
+        profile=profile,
+        env=env,
+    )
+    if not candidate:
+        return ""
+    if _is_verified_unchanged_target(
+        project=project,
+        cluster=cluster,
+        prefix=prefix,
+        tenant_id=tenant_id,
+        region=region,
+        ssh_public_key=ssh_public_key,
+        fleet_root=fleet_root,
+        nebius_bin=nebius_bin,
+        profile=profile,
+        env=env,
+        _cluster_id_override=candidate,
+    ):
+        return candidate
+    return ""
+
+
+def _materialized_state_cluster_id(
+    install_dir: Path, project_id: str, cluster_name: str
+) -> str:
+    """Read one exact materialized root cluster ID without accepting ambiguity."""
+
+    try:
+        state = json.loads(
+            (install_dir / _K8S_TRAINING_SUBDIR / "terraform.tfstate").read_text()
+        )
+    except (OSError, ValueError, TypeError, AttributeError):
+        return ""
+    candidates = [
+        instance.get("attributes")
+        for resource in state.get("resources", [])
+        if isinstance(resource, dict)
+        and resource.get("mode") == "managed"
+        and resource.get("type") == "nebius_mk8s_v1_cluster"
+        and not resource.get("module")
+        and isinstance(resource.get("instances"), list)
+        for instance in resource["instances"]
+        if isinstance(instance, dict)
+        and not instance.get("deposed")
+        and isinstance(instance.get("attributes"), dict)
+    ]
+    if len(candidates) != 1:
+        return ""
+    candidate = candidates[0]
+    if (
+        candidate.get("parent_id") != project_id
+        or candidate.get("name") != cluster_name
+    ):
+        return ""
+    cluster_id = candidate.get("id")
+    return cluster_id if isinstance(cluster_id, str) else ""
+
+
+def _has_one_unmaterialized_root_cluster(install_dir: Path) -> bool:
+    """Accept only one non-deposed root instance with no attributes key."""
+
+    try:
+        state = json.loads(
+            (install_dir / _K8S_TRAINING_SUBDIR / "terraform.tfstate").read_text()
+        )
+    except (OSError, ValueError, TypeError, AttributeError):
+        return False
+    resources = state.get("resources") if isinstance(state, dict) else None
+    if not isinstance(resources, list):
+        return False
+    instances = [
+        instance
+        for resource in resources
+        if isinstance(resource, dict)
+        and resource.get("mode") == "managed"
+        and resource.get("type") == "nebius_mk8s_v1_cluster"
+        and not resource.get("module")
+        and isinstance(resource.get("instances"), list)
+        for instance in resource["instances"]
+        if isinstance(instance, dict) and not instance.get("deposed")
+    ]
+    return len(instances) == 1 and "attributes" not in instances[0]
+
+
+def _unmaterialized_state_provider_candidate(
+    *,
+    project_id: str,
+    cluster_name: str,
+    nebius_bin: str,
+    profile: str,
+    env: dict[str, str],
+) -> str:
+    """Find one exact terminal cluster candidate from a complete inventory."""
+
+    result = _run_capture(
+        [
+            *_nebius_argv(nebius_bin, profile),
+            "mk8s",
+            "cluster",
+            "list",
+            "--parent-id",
+            project_id,
+            "--all",
+            "--format",
+            "json",
+        ],
+        env=env,
+        check=False,
+    )
+    if result.returncode != 0:
+        return ""
+    try:
+        payload = json.loads(result.stdout or "{}")
+    except json.JSONDecodeError:
+        return ""
+    items = payload.get("items") if isinstance(payload, dict) else None
+    if (
+        not isinstance(items, list)
+        or payload.get("next_page_token")
+        or not all(isinstance(item, dict) for item in items)
+    ):
+        return ""
+    candidates = []
+    for item in items:
+        metadata = item.get("metadata") or {}
+        status = item.get("status") or {}
+        parent_id = _provider_field(metadata, "parent_id", "parentId")
+        candidate_id = metadata.get("id") if isinstance(metadata, dict) else None
+        if (
+            isinstance(candidate_id, str)
+            and candidate_id
+            and parent_id == project_id
+            and metadata.get("name") == cluster_name
+            and status.get("state") == "RUNNING"
+        ):
+            candidates.append(candidate_id)
+    return candidates[0] if len(candidates) == 1 else ""
 
 
 def _node_group_has_allocated_workers(
@@ -3202,3 +3406,4 @@ def _is_not_found_result(result: Any) -> bool:
 deploy_cluster = _deploy_one_cluster
 destroy_cluster = _destroy_one_cluster
 is_verified_unchanged_target = _is_verified_unchanged_target
+resolve_verified_unchanged_target = _resolve_verified_unchanged_target

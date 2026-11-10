@@ -131,9 +131,9 @@ def _prepare_provider(monkeypatch, calls: dict[str, object]) -> None:
     monkeypatch.setattr(lifecycle, "_require_bin", lambda value: value)
     monkeypatch.setattr(lifecycle, "_nebius_cli_env", lambda: {"PATH": ""})
 
-    def verify(**kwargs):
+    def resolve(**kwargs):
         calls["verify"] = kwargs
-        return True
+        return "cluster-test"
 
     def kubeconfig(_bin, _cluster_id, path, *_args):
         calls["kubeconfig"] = path
@@ -142,7 +142,7 @@ def _prepare_provider(monkeypatch, calls: dict[str, object]) -> None:
     def persist(**kwargs):
         calls["persist"] = kwargs
 
-    monkeypatch.setattr(lifecycle, "_is_verified_unchanged_target", verify)
+    monkeypatch.setattr(lifecycle, "_resolve_verified_unchanged_target", resolve)
     monkeypatch.setattr(lifecycle, "_write_kubeconfig", kubeconfig)
     monkeypatch.setattr(lifecycle, "_persist_npa_cluster_identity", persist)
 
@@ -196,12 +196,83 @@ def test_recovery_rejects_terminal_provider_mismatch_before_registration(
     spec, install_dir = _install(tmp_path)
     calls: dict[str, object] = {}
     _prepare_provider(monkeypatch, calls)
-    monkeypatch.setattr(lifecycle, "_is_verified_unchanged_target", lambda **_: False)
+    monkeypatch.setattr(lifecycle, "_resolve_verified_unchanged_target", lambda **_: "")
 
     with pytest.raises(recovery.FleetRecoveryError, match="could not be verified"):
         recovery.recover_interrupted_fleet_apply(spec, work_root=tmp_path)
 
     assert "kubeconfig" not in calls
+    assert not (install_dir / "kubeconfig").exists()
+
+
+def test_recovery_resolves_one_unmaterialized_state_identity(tmp_path, monkeypatch):
+    spec, install_dir = _install(tmp_path)
+    workdir = install_dir / "k8s-training"
+    state_path = workdir / "terraform.tfstate"
+    state = json.loads(state_path.read_text())
+    state["resources"][0]["instances"] = [{}]
+    _write_json(state_path, state)
+    state_before = state_path.read_bytes()
+    calls: dict[str, object] = {}
+    _prepare_provider(monkeypatch, calls)
+
+    result = recovery.recover_interrupted_fleet_apply(spec, work_root=tmp_path)
+
+    assert result["cluster_id"] == "cluster-test"
+    assert state_path.read_bytes() == state_before
+    assert calls["verify"]["cluster"].name == "recover"
+    sidecar = json.loads((install_dir / ".npa-fleet-env.json").read_text())
+    assert sidecar["cluster_id"] == "cluster-test"
+
+
+def test_recovery_rejects_unmaterialized_state_without_verified_identity(
+    tmp_path, monkeypatch
+):
+    spec, install_dir = _install(tmp_path)
+    workdir = install_dir / "k8s-training"
+    state_path = workdir / "terraform.tfstate"
+    state = json.loads(state_path.read_text())
+    state["resources"][0]["instances"] = [{}]
+    _write_json(state_path, state)
+    state_before = state_path.read_bytes()
+    calls: dict[str, object] = {}
+    _prepare_provider(monkeypatch, calls)
+    monkeypatch.setattr(lifecycle, "_resolve_verified_unchanged_target", lambda **_: "")
+
+    with pytest.raises(recovery.FleetRecoveryError, match="could not be verified"):
+        recovery.recover_interrupted_fleet_apply(spec, work_root=tmp_path)
+
+    assert state_path.read_bytes() == state_before
+    assert "kubeconfig" not in calls
+    assert "persist" not in calls
+
+
+def test_recovery_rejects_live_owner_before_unmaterialized_provider_resolution(
+    tmp_path, monkeypatch
+):
+    spec, install_dir = _install(tmp_path)
+    state_path = install_dir / "k8s-training" / "terraform.tfstate"
+    state = json.loads(state_path.read_text())
+    state["resources"][0]["instances"] = [{}]
+    _write_json(state_path, state)
+    calls: dict[str, object] = {}
+    _prepare_provider(monkeypatch, calls)
+
+    def live_owner(_workdir: Path) -> None:
+        raise recovery.FleetRecoveryError(
+            "a live Terraform apply still owns this Fleet target"
+        )
+
+    monkeypatch.setattr(
+        recovery,
+        "_assert_no_live_apply_owner",
+        live_owner,
+    )
+
+    with pytest.raises(recovery.FleetRecoveryError, match="live Terraform apply"):
+        recovery.recover_interrupted_fleet_apply(spec, work_root=tmp_path)
+
+    assert calls == {}
     assert not (install_dir / "kubeconfig").exists()
 
 
