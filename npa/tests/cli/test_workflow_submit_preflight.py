@@ -3509,6 +3509,29 @@ def test_infra_kube_context_extracts_only_a_pinned_k8s_context() -> None:
     assert _infra_kube_context("") == ""
 
 
+def test_implicit_runtime_isolation_is_stable_and_does_not_expose_target_names(
+    monkeypatch, tmp_path
+) -> None:
+    """Runtime submissions isolate a generic target without CLI-only setup."""
+    from npa.clients import config as config_module
+    from npa.cli.workbench.workflow import _implicit_runtime_isolated_config_dir
+
+    monkeypatch.setattr(config_module, "NPA_CONFIG_DIR", tmp_path / "npa")
+    selected = _implicit_runtime_isolated_config_dir(
+        project="operator-project", context="operator-cluster"
+    )
+
+    assert selected == _implicit_runtime_isolated_config_dir(
+        project="operator-project", context="operator-cluster"
+    )
+    assert selected != _implicit_runtime_isolated_config_dir(
+        project="operator-project", context="other-cluster"
+    )
+    assert selected.parent == tmp_path / "npa" / "workflow-runtime"
+    assert "operator-project" not in str(selected)
+    assert "operator-cluster" not in str(selected)
+
+
 def test_available_kube_contexts_none_when_unreadable(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("KUBECONFIG", str(tmp_path / "does-not-exist"))
     assert _available_kube_contexts() is None

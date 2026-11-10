@@ -89,12 +89,16 @@ npa/.venv/bin/python -m npa workbench workflow preflight-images \
 Use a compatible task-owned RTX PRO 6000 context selected through normal
 provisioning and `workflow gpus`; `configure --show --env` emits the saved
 project-scoped context, and `preflight-images` proves the same target can pull
-the rendered image before submit. The run itself verifies one visible sm_120
-GPU, the pinned native dependency closure, decoded recorded video, checkpoint
-reload, and durable artifact readback. It does not claim a hardware rollout or
-policy promotion. The new turnkey receipt and fresh-checkout evidence will be
-recorded here after the current reference run completes; earlier
-private-extension rehearsal rows below are historical only.
+the rendered image before submit. For this explicit target, generic runtime
+submit selects a stable private SkyPilot state root when normal configuration
+does not already select one; its receipt binds that route for fresh-shell
+observation. Do not add a private controller path or daemon flag to the command.
+The run itself verifies one visible sm_120 GPU, the pinned native dependency
+closure, decoded recorded video, checkpoint reload, and durable artifact
+readback. It does not claim a hardware rollout or policy promotion. The new
+turnkey receipt and fresh-checkout evidence will be recorded here after the
+current reference run completes; earlier private-extension rehearsal rows below
+are historical only.
 
 For a completed run, use a fresh shell and only the documented generic commands:
 

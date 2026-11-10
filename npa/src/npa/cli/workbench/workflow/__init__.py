@@ -2101,6 +2101,21 @@ def submit_cmd(
         # its cluster kubeconfigs outside ~/.kube/config, so a context it
         # provisioned looks missing until KUBECONFIG points at it.
         infra_context = _infra_kube_context(infra)
+        if runtime and infra_context and not plan_only and isolated_config_dir is None:
+            from npa.orchestration.skypilot._bin import resolve_isolated_config_dir
+
+            # A generic runtime workflow must never attach a fresh operator
+            # shell to a foreign process-wide SkyPilot API daemon merely because
+            # this config has not persisted an optional isolation setting.
+            # Retain every explicit/env/saved selection, but otherwise create a
+            # deterministic owner-local state root bound to this project alias
+            # and exact Kubernetes context.  The route is persisted in the
+            # normal submission receipt for fresh-shell status/log/artifact use.
+            if resolve_isolated_config_dir() is None:
+                isolated_config_dir = _implicit_runtime_isolated_config_dir(
+                    project=project,
+                    context=infra_context,
+                )
         from npa.orchestration.npa_workflow.deploy import (
             bind_deploy_targets_to_submit,
             parse_deploy_targets,
@@ -6109,6 +6124,21 @@ def _infra_kube_context(infra: str) -> str:
     if kind.strip().lower() not in {"k8s", "kubernetes"}:
         return ""
     return context.strip()
+
+
+def _implicit_runtime_isolated_config_dir(*, project: str, context: str) -> Path:
+    """Return a stable private SkyPilot state root for one runtime target.
+
+    The configured NPA directory scopes this to the operator. Hashing rather
+    than embedding the alias/context avoids turning a local controller path into
+    an additional public identifier when a submission receipt is summarized.
+    """
+
+    from npa.clients.config import NPA_CONFIG_DIR
+
+    binding = f"{project or '<default>'}\0{context}".encode("utf-8")
+    digest = hashlib.sha256(binding).hexdigest()[:20]
+    return NPA_CONFIG_DIR / "workflow-runtime" / digest
 
 
 def _paidf_kubernetes_prerequisites_for_submit(
