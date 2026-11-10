@@ -9,6 +9,7 @@ from unittest.mock import Mock
 import pytest
 
 from npa.cluster_backends import mk8s_execution as E
+from npa.cluster_backends.mk8s_model import as_mk8s_desired
 from npa.cluster_backends.mk8s_render import render_tfvars
 from npa.fleet.spec import ClusterSpec, NodePoolSpec, ProjectSpec
 
@@ -26,6 +27,15 @@ def existing(tmp_path, monkeypatch):
             capacity_block_group="capacityblockgroup-test",
         ),
     )
+    desired = as_mk8s_desired(cluster)
+    assert desired.gpu_nodes is not None
+    desired = replace(
+        desired,
+        gpu_nodes=replace(
+            desired.gpu_nodes,
+            compute_reservation_id="compute-reservation-test",
+        ),
+    )
     project = ProjectSpec(
         name="public-alias", project_id="project-test", clusters=[cluster]
     )
@@ -35,7 +45,7 @@ def existing(tmp_path, monkeypatch):
     (workdir / "terraform.tfvars").write_text(
         "\n".join(
             line
-            for line in render_tfvars(cluster).splitlines()
+            for line in render_tfvars(desired).splitlines()
             if not line.startswith("gpu_operator_rtx_driver_profile")
         )
     )
@@ -49,9 +59,9 @@ def existing(tmp_path, monkeypatch):
     }
     groups = []
     for pool, count in [
-        (cluster.cpu_nodes, 3),
-        (cluster.gpu_nodes, 1),
-        (cluster.gpu_nodes, 1),
+        (desired.cpu_nodes, 3),
+        (desired.gpu_nodes, 1),
+        (desired.gpu_nodes, 1),
     ]:
         template = {
             "resources": {"platform": pool.platform, "preset": pool.preset},
@@ -60,7 +70,7 @@ def existing(tmp_path, monkeypatch):
         if pool.capacity_block_group:
             template["reservation_policy"] = {
                 "policy": "STRICT",
-                "reservation_ids": [pool.capacity_block_group],
+                "reservation_ids": [pool.compute_reservation_id],
             }
         groups.append(
             {
@@ -101,7 +111,7 @@ def existing(tmp_path, monkeypatch):
     )
     kwargs = dict(
         project=project,
-        cluster=cluster,
+        cluster=desired,
         prefix="example-",
         tenant_id="tenant-test",
         region="uk-south2",
@@ -125,6 +135,39 @@ def test_v1_preemptible_marker_cannot_satisfy_strict_reserved_pool(existing):
     kwargs, _, groups, *_ = existing
     groups[-1]["spec"]["template"]["preemptible"] = {}
     assert not E._is_verified_unchanged_target(**kwargs)
+
+
+def test_retained_tfvars_accepts_only_raw_selector_to_verified_compute_binding() -> (
+    None
+):
+    raw = "\n".join(
+        [
+            'cluster_name = "render"',
+            'gpu_nodes_reservation_policy = { policy = "STRICT", reservation_ids = ["capacityblockgroup-test"] }',
+        ]
+    )
+    bound = raw.replace("capacityblockgroup-test", "compute-reservation-test")
+
+    assert E.retained_target_tfvars_match(
+        raw,
+        bound,
+        strict_capacity_block_group="capacityblockgroup-test",
+    )
+    assert not E.retained_target_tfvars_match(
+        raw,
+        bound,
+        strict_capacity_block_group="capacityblockgroup-other",
+    )
+    assert not E.retained_target_tfvars_match(
+        raw.replace('policy = "STRICT"', 'policy = "AUTO"'),
+        bound,
+        strict_capacity_block_group="capacityblockgroup-test",
+    )
+    assert not E.retained_target_tfvars_match(
+        raw,
+        bound + '\ngpu_nodes_preset = "different"',
+        strict_capacity_block_group="capacityblockgroup-test",
+    )
 
 
 @pytest.mark.parametrize(

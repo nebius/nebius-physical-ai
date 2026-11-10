@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import json
 import subprocess
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -41,6 +42,16 @@ from npa.fleet.spec import ClusterSpec, FleetSpecError, NodePoolSpec
 from npa.fleet.tfvars import render_tfvars
 
 
+def _with_compute_reservation(cluster):
+    assert cluster.gpu_nodes is not None
+    return replace(
+        cluster,
+        gpu_nodes=replace(
+            cluster.gpu_nodes, compute_reservation_id="compute-reservation-test"
+        ),
+    )
+
+
 def _mapping(*, mig: object = None) -> dict:
     defaults: dict = {
         "gpu_nodes": {
@@ -65,7 +76,7 @@ def _mapping(*, mig: object = None) -> dict:
 def test_omitted_mig_preserves_whole_gpu_tfvars() -> None:
     cluster = spec_from_mapping(_mapping()).projects[0].clusters[0]
     cluster.validate()
-    tfvars = render_tfvars(cluster)
+    tfvars = render_tfvars(_with_compute_reservation(cluster))
     assert cluster.mig is None
     assert 'mig_strategy                 = "none"' in tfvars
     assert "mig_parted_config" not in tfvars
@@ -79,7 +90,9 @@ def test_disabled_mig_is_backward_compatible() -> None:
     )
     cluster.validate()
     assert cluster.mig == MigSpec(enabled=False, strategy="none", config="")
-    assert 'mig_strategy                 = "none"' in render_tfvars(cluster)
+    assert 'mig_strategy                 = "none"' in render_tfvars(
+        _with_compute_reservation(cluster)
+    )
 
 
 def test_cluster_can_atomically_disable_inherited_mig_default() -> None:
@@ -101,7 +114,7 @@ def test_enabled_mig_renders_pinned_compatibility_tuple() -> None:
         .clusters[0]
     )
     cluster.validate()
-    tfvars = render_tfvars(cluster)
+    tfvars = render_tfvars(_with_compute_reservation(cluster))
     assert cluster.resolved_k8s_version() == "1.34"
     assert 'k8s_version = "1.34"' in tfvars
     assert 'mig_strategy                 = "mixed"' in tfvars

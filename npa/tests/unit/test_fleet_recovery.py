@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 import shutil
 from subprocess import CompletedProcess
@@ -147,6 +148,14 @@ def _prepare_provider(monkeypatch, calls: dict[str, object]) -> None:
     monkeypatch.setattr(lifecycle, "_resolve_verified_unchanged_target", resolve)
     monkeypatch.setattr(lifecycle, "_write_kubeconfig", kubeconfig)
     monkeypatch.setattr(lifecycle, "_persist_npa_cluster_identity", persist)
+    monkeypatch.setattr(
+        lifecycle,
+        "_get_project",
+        lambda *_args: {
+            "metadata": {"id": "project-test", "parent_id": "tenant-test"},
+            "spec": {"region": "test-region"},
+        },
+    )
 
 
 def _mixed_unmaterialized_resolver(monkeypatch, calls, malformed_part):
@@ -689,3 +698,380 @@ def test_live_terraform_state_lock_holder_is_rejected_from_hermetic_proc_view(
 
     with pytest.raises(recovery.FleetRecoveryError, match="Terraform state lock"):
         recovery._assert_no_live_apply_owner(workdir, proc_root=tmp_path / "proc")
+
+
+def _unmaterialized_retained_target(tmp_path: Path) -> tuple[FleetSpec, Path, dict]:
+    spec, install_dir = _install(tmp_path)
+    workdir = install_dir / "k8s-training"
+    state_path = workdir / "terraform.tfstate"
+    state = json.loads(state_path.read_text())
+    state["resources"][0]["instances"] = []
+    _write_json(state_path, state)
+    (workdir / ".terraform.tfstate.lock.info").write_text(
+        "retained lock", encoding="utf-8"
+    )
+    summary_path = tmp_path / spec.name / "fleet-state.json"
+    _write_summary(summary_path, [_error_summary()])
+    paths = {
+        "owner": install_dir / ".npa-backend-owner.json",
+        "sidecar": install_dir / ".npa-fleet-env.json",
+        "state": state_path,
+        "lock": workdir / ".terraform.tfstate.lock.info",
+        "summary": summary_path,
+    }
+    return spec, install_dir, {name: path.read_bytes() for name, path in paths.items()}
+
+
+def test_normal_lifecycle_resumes_only_missing_retained_cpu_pool(tmp_path, monkeypatch):
+    spec, install_dir, before = _unmaterialized_retained_target(tmp_path)
+    calls: dict[str, object] = {}
+    _prepare_provider(monkeypatch, calls)
+    monkeypatch.setattr(lifecycle, "_assert_terraform_version", lambda _: None)
+    monkeypatch.setattr(lifecycle, "_resolve_tenant_id", lambda *_: "tenant-test")
+    monkeypatch.setattr(lifecycle, "_resolve_region", lambda _: "test-region")
+    monkeypatch.setattr(
+        lifecycle,
+        "_deploy_one_cluster",
+        lambda **_: pytest.fail("retained target must not enter Terraform apply"),
+    )
+    monkeypatch.setattr(recovery, "_assert_no_live_apply_owner", lambda _workdir: None)
+    commands: list[list[str]] = []
+
+    def provider(command, **_kwargs):
+        commands.append(command)
+        if "cluster" in command and "list" in command:
+            payload = {
+                "items": [
+                    {
+                        "metadata": {
+                            "id": "cluster-test",
+                            "parent_id": "project-test",
+                            "name": "recover",
+                        },
+                        "status": {"state": "RUNNING"},
+                    }
+                ]
+            }
+        elif "node-group" in command and "list" in command:
+            payload = {"items": []}
+        elif "node-group" in command and "create" in command:
+            payload = {
+                "metadata": {
+                    "id": "nodegroup-test",
+                    "parent_id": "cluster-test",
+                    "name": command[command.index("--name") + 1],
+                }
+            }
+        else:
+            pytest.fail(f"unexpected provider command: {command}")
+        return CompletedProcess(command, 0, json.dumps(payload), "")
+
+    monkeypatch.setattr(mk8s_execution, "_run_capture", provider)
+
+    result = lifecycle.deploy_fleet(
+        spec,
+        work_root=tmp_path,
+        k8s_training_dir=install_dir,
+        preflight=False,
+    )
+
+    assert result["clusters"][0]["status"] == "recovered-pending-validation"
+    assert result["clusters"][0]["cluster_id"] == "cluster-test"
+    assert result["unresolved"] == 1
+    assert "kubeconfig" in calls
+    assert "persist" in calls
+    creates = [
+        command
+        for command in commands
+        if "node-group" in command and "create" in command
+    ]
+    assert len(creates) == 1
+    assert creates[0][creates[0].index("--name") + 1] == "recover-ng-cpu"
+    assert not any("terraform" in command for command in commands)
+    for name, expected in before.items():
+        path = {
+            "owner": install_dir / ".npa-backend-owner.json",
+            "sidecar": install_dir / ".npa-fleet-env.json",
+            "state": install_dir / "k8s-training" / "terraform.tfstate",
+            "lock": install_dir / "k8s-training" / ".terraform.tfstate.lock.info",
+            "summary": tmp_path / spec.name / "fleet-state.json",
+        }[name]
+        if name in {"sidecar", "summary"}:
+            assert path.read_bytes() != expected
+        else:
+            assert path.read_bytes() == expected
+
+
+def test_retained_pool_quota_demand_counts_only_verified_missing_pools() -> None:
+    from npa.cluster_backends.quotas import required_quotas, required_reservations
+
+    cluster = ClusterSpec(
+        name="recover",
+        cpu_nodes=NodePoolSpec(
+            count=2,
+            platform="cpu-d3",
+            preset="48vcpu-192gb",
+        ),
+        gpu_nodes=NodePoolSpec(
+            count=2,
+            platform="gpu-rtx6000",
+            preset="1gpu-24vcpu-218gb",
+            capacity_block_group="capacityblockgroup-test",
+        ),
+    )
+
+    demand = lifecycle._RetainedPoolQuotaDemand(cluster, ["recover-ng-gpu-1"])
+
+    assert demand.cpu_count() == 0
+    assert demand.gpu_count() == 1
+    assert required_quotas([demand])["compute.instance.count"] == 1
+    requirements = required_reservations([demand], "test-region")
+    assert requirements["capacityblockgroup-test"].required_gpus == 1
+
+    with pytest.raises(ValueError, match="undeclared missing node group"):
+        lifecycle._RetainedPoolQuotaDemand(cluster, ["unexpected-node-group"])
+
+
+def test_normal_lifecycle_resumes_zero_group_cpu_and_strict_gpu_target(
+    tmp_path, monkeypatch
+):
+    spec, install_dir, before = _unmaterialized_retained_target(tmp_path)
+    cluster = spec.projects[0].clusters[0]
+    cluster.enable_filestore = True
+    cluster.filesystem_csi_chart_repository = "oci://charts.example.invalid/nebius"
+    cluster.gpu_nodes = NodePoolSpec(
+        count=1,
+        platform="gpu-rtx6000",
+        preset="1gpu-24vcpu-218gb",
+        capacity_block_group="capacityblockgroup-test",
+    )
+    bound_cluster = replace(
+        cluster,
+        gpu_nodes=replace(
+            cluster.gpu_nodes, compute_reservation_id="compute-reservation-test"
+        ),
+    )
+    workdir = install_dir / "k8s-training"
+    state = json.loads((workdir / "terraform.tfstate").read_text())
+    state["resources"].append(
+        {
+            "mode": "managed",
+            "type": "nebius_compute_v1_filesystem",
+            "name": "shared-filesystem",
+            "instances": [{"attributes": {"id": "filesystem-test"}}],
+        }
+    )
+    _write_json(workdir / "terraform.tfstate", state)
+    tfvars = render_tfvars(
+        as_mk8s_desired(bound_cluster), ssh_public_key="ssh-test", recipe_dir=workdir
+    )
+    (workdir / "terraform.tfvars").write_text(
+        tfvars.replace("compute-reservation-test", "capacityblockgroup-test"),
+        encoding="utf-8",
+    )
+    before["state"] = (workdir / "terraform.tfstate").read_bytes()
+    before["lock"] = (workdir / ".terraform.tfstate.lock.info").read_bytes()
+    calls: dict[str, object] = {}
+    _prepare_provider(monkeypatch, calls)
+    monkeypatch.setattr(lifecycle, "_assert_terraform_version", lambda _: None)
+    monkeypatch.setattr(lifecycle, "_resolve_tenant_id", lambda *_: "tenant-test")
+    monkeypatch.setattr(lifecycle, "_resolve_region", lambda _: "test-region")
+    monkeypatch.setattr(recovery, "_assert_no_live_apply_owner", lambda _workdir: None)
+    monkeypatch.setattr(
+        lifecycle,
+        "_bind_strict_compute_reservations",
+        lambda clusters, **_kwargs: {
+            key: (bound_cluster if key == ("team", "recover") else value)
+            for key, value in clusters.items()
+        },
+    )
+    monkeypatch.setattr(
+        lifecycle,
+        "_deploy_one_cluster",
+        lambda **_: pytest.fail("retained target must not enter Terraform apply"),
+    )
+    commands: list[list[str]] = []
+
+    def provider(command, **_kwargs):
+        commands.append(command)
+        if "cluster" in command and "list" in command:
+            payload = {
+                "items": [
+                    {
+                        "metadata": {
+                            "id": "cluster-test",
+                            "parent_id": "project-test",
+                            "name": "recover",
+                        },
+                        "status": {"state": "RUNNING"},
+                    }
+                ]
+            }
+        elif "node-group" in command and "list" in command:
+            payload = {"items": []}
+        elif "node-group" in command and "create" in command:
+            payload = {
+                "metadata": {
+                    "id": "nodegroup-" + command[command.index("--name") + 1],
+                    "parent_id": "cluster-test",
+                    "name": command[command.index("--name") + 1],
+                }
+            }
+        else:
+            pytest.fail(f"unexpected provider command: {command}")
+        return CompletedProcess(command, 0, json.dumps(payload), "")
+
+    monkeypatch.setattr(mk8s_execution, "_run_capture", provider)
+
+    result = lifecycle.deploy_fleet(
+        spec,
+        work_root=tmp_path,
+        k8s_training_dir=install_dir,
+        preflight=False,
+    )
+
+    assert result["clusters"][0]["status"] == "recovered-pending-validation"
+    creates = [
+        command
+        for command in commands
+        if "node-group" in command and "create" in command
+    ]
+    assert [command[command.index("--name") + 1] for command in creates] == [
+        "recover-ng-cpu",
+        "recover-ng-gpu-0",
+    ]
+    gpu_command = creates[1]
+    assert (
+        gpu_command[gpu_command.index("--template-reservation-policy-policy") + 1]
+        == "strict"
+    )
+    assert (
+        gpu_command[
+            gpu_command.index("--template-reservation-policy-reservation-ids") + 1
+        ]
+        == "compute-reservation-test"
+    )
+    filesystems = json.loads(
+        gpu_command[gpu_command.index("--template-filesystems") + 1]
+    )
+    assert filesystems == [
+        {
+            "attach_mode": "read_write",
+            "mount_tag": "data",
+            "existing_filesystem": {"id": "filesystem-test"},
+        }
+    ]
+    assert not any("capacityblockgroup-test" in value for value in gpu_command)
+    assert not any("cluster" in command and "create" in command for command in commands)
+    assert not any("terraform" in command for command in commands)
+    assert (workdir / "terraform.tfstate").read_bytes() == before["state"]
+    assert (workdir / ".terraform.tfstate.lock.info").read_bytes() == before["lock"]
+
+
+def test_retained_resume_rejects_nonmatching_saved_selector_before_provider(
+    tmp_path, monkeypatch
+):
+    spec, install_dir, before = _unmaterialized_retained_target(tmp_path)
+    cluster = spec.projects[0].clusters[0]
+    cluster.gpu_nodes = NodePoolSpec(
+        count=1,
+        platform="gpu-rtx6000",
+        preset="1gpu-24vcpu-218gb",
+        capacity_block_group="capacityblockgroup-test",
+    )
+    bound_cluster = replace(
+        cluster,
+        gpu_nodes=replace(
+            cluster.gpu_nodes, compute_reservation_id="compute-reservation-test"
+        ),
+    )
+    workdir = install_dir / "k8s-training"
+    (workdir / "terraform.tfvars").write_text(
+        render_tfvars(
+            as_mk8s_desired(bound_cluster),
+            ssh_public_key="ssh-test",
+            recipe_dir=workdir,
+        ).replace("compute-reservation-test", "other-capacity-block"),
+        encoding="utf-8",
+    )
+    paths = {
+        "owner": install_dir / ".npa-backend-owner.json",
+        "sidecar": install_dir / ".npa-fleet-env.json",
+        "state": workdir / "terraform.tfstate",
+        "lock": workdir / ".terraform.tfstate.lock.info",
+        "summary": tmp_path / spec.name / "fleet-state.json",
+    }
+    bytes_before = {name: path.read_bytes() for name, path in paths.items()}
+    _prepare_provider(monkeypatch, {})
+    monkeypatch.setattr(lifecycle, "_assert_terraform_version", lambda _: None)
+    monkeypatch.setattr(lifecycle, "_resolve_tenant_id", lambda *_: "tenant-test")
+    monkeypatch.setattr(lifecycle, "_resolve_region", lambda _: "test-region")
+    monkeypatch.setattr(recovery, "_assert_no_live_apply_owner", lambda _workdir: None)
+    monkeypatch.setattr(
+        lifecycle,
+        "_bind_strict_compute_reservations",
+        lambda clusters, **_kwargs: {
+            key: (bound_cluster if key == ("team", "recover") else value)
+            for key, value in clusters.items()
+        },
+    )
+    monkeypatch.setattr(
+        mk8s_execution,
+        "_run_capture",
+        lambda *_args, **_kwargs: pytest.fail("material-input refusal called provider"),
+    )
+
+    with pytest.raises(RuntimeError, match="materialized inputs differ"):
+        lifecycle.deploy_fleet(
+            spec,
+            work_root=tmp_path,
+            k8s_training_dir=install_dir,
+            preflight=False,
+        )
+
+    for name, path in paths.items():
+        assert path.read_bytes() == bytes_before[name]
+
+
+def test_normal_lifecycle_refuses_retained_target_when_provider_verification_fails(
+    tmp_path, monkeypatch
+):
+    spec, install_dir, before = _unmaterialized_retained_target(tmp_path)
+    calls: dict[str, object] = {}
+    _prepare_provider(monkeypatch, calls)
+    monkeypatch.setattr(lifecycle, "_assert_terraform_version", lambda _: None)
+    monkeypatch.setattr(lifecycle, "_resolve_tenant_id", lambda *_: "tenant-test")
+    monkeypatch.setattr(lifecycle, "_resolve_region", lambda _: "test-region")
+    monkeypatch.setattr(
+        recovery,
+        "_verify_retained_pool_resume",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            recovery.FleetRecoveryError("provider topology differs")
+        ),
+    )
+    monkeypatch.setattr(
+        lifecycle,
+        "_deploy_one_cluster",
+        lambda **_: pytest.fail("provider refusal must not enter Terraform apply"),
+    )
+    monkeypatch.setattr(recovery, "_assert_no_live_apply_owner", lambda _workdir: None)
+
+    with pytest.raises(RuntimeError, match="failed exact normal-lifecycle"):
+        lifecycle.deploy_fleet(
+            spec,
+            work_root=tmp_path,
+            k8s_training_dir=install_dir,
+            preflight=False,
+        )
+
+    assert "kubeconfig" not in calls
+    assert "persist" not in calls
+    for name, expected in before.items():
+        path = {
+            "owner": install_dir / ".npa-backend-owner.json",
+            "sidecar": install_dir / ".npa-fleet-env.json",
+            "state": install_dir / "k8s-training" / "terraform.tfstate",
+            "lock": install_dir / "k8s-training" / ".terraform.tfstate.lock.info",
+            "summary": tmp_path / spec.name / "fleet-state.json",
+        }[name]
+        assert path.read_bytes() == expected

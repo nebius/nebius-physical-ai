@@ -39,12 +39,25 @@ class MK8sNodePool:
     disk_size_gib: int = 0
     capacity_block_group: str = ""
     preemptible: bool = False
+    # This is runtime-only evidence selected from the exact capacity-block
+    # record during Fleet preflight.  Public specs select the block group; the
+    # provider reservation policy must receive its compatible compute
+    # reservation identity instead.  It is deliberately absent from the
+    # surface spec and from equality so saved desired-state inputs remain
+    # portable and never carry a private provider identity.
+    compute_reservation_id: str = field(default="", repr=False, compare=False)
 
     @classmethod
     def from_surface(cls, pool: Any | None) -> "MK8sNodePool | None":
         if pool is None or isinstance(pool, cls):
             return pool
-        return cls(**{name: getattr(pool, name) for name in cls.__dataclass_fields__})
+        return cls(
+            **{
+                name: getattr(pool, name)
+                for name in cls.__dataclass_fields__
+                if hasattr(pool, name)
+            }
+        )
 
     def is_gpu(self) -> bool:
         return self.platform.startswith("gpu-")
@@ -139,6 +152,7 @@ class MK8sDesired:
                 disk_size_gib=gpu.disk_size_gib if gpu else 0,
                 capacity_block_group=gpu.capacity_block_group if gpu else "",
                 preemptible=gpu.preemptible if gpu else False,
+                compute_reservation_id=(gpu.compute_reservation_id if gpu else ""),
             ),
         )
         object.__setattr__(self, "gpu_workload_profile", selection.profile)

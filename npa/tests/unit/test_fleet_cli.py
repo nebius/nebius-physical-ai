@@ -45,6 +45,19 @@ from npa.fleet.tfvars import (
 runner = CliRunner()
 
 
+def _with_compute_reservation(cluster, reservation_id="compute-reservation-test"):
+    """Bind a public strict selector to test-only provider evidence."""
+
+    from npa.cluster_backends.mk8s_model import as_mk8s_desired
+
+    desired = as_mk8s_desired(cluster)
+    assert desired.gpu_nodes is not None
+    return replace(
+        desired,
+        gpu_nodes=replace(desired.gpu_nodes, compute_reservation_id=reservation_id),
+    )
+
+
 def _rtx_profile() -> dict:
     return {
         "cpu_nodes": {"count": 1, "platform": "cpu-d3", "preset": "48vcpu-192gb"},
@@ -764,7 +777,7 @@ def test_render_tfvars_8gpu_cluster_emits_fabric() -> None:
         enable_gpu_cluster=True,
         infiniband_fabric="us-central1-a",
     )
-    tf = render_tfvars(cluster)
+    tf = render_tfvars(_with_compute_reservation(cluster))
     assert "enable_gpu_cluster = true" in tf
     assert 'infiniband_fabric = "us-central1-a"' in tf
     assert "gpu_nodes_fixed_count_per_group = 2" in tf
@@ -844,10 +857,13 @@ def test_render_tfvars_capacity_block_is_strict() -> None:
         ),
         enable_gpu_cluster=False,
     )
-    tf = render_tfvars(cluster)
+    with pytest.raises(ValueError, match="no verified compute reservation"):
+        render_tfvars(cluster)
+
+    tf = render_tfvars(_with_compute_reservation(cluster))
     assert (
         'gpu_nodes_reservation_policy = { policy = "STRICT", '
-        'reservation_ids = ["capacityblockgroup-test"] }' in tf
+        'reservation_ids = ["compute-reservation-test"] }' in tf
     )
 
 
@@ -862,7 +878,7 @@ def test_render_tfvars_splits_independent_strict_reserved_workers() -> None:
         ),
         enable_gpu_cluster=False,
     )
-    tf = render_tfvars(cluster)
+    tf = render_tfvars(_with_compute_reservation(cluster))
     assert "gpu_nodes_fixed_count_per_group = 1" in tf
     assert "gpu_node_groups = 2" in tf
 
@@ -879,7 +895,7 @@ def test_render_tfvars_keeps_fabric_gpu_cluster_in_one_group() -> None:
         enable_gpu_cluster=True,
         infiniband_fabric="us-central1-a",
     )
-    tf = render_tfvars(cluster)
+    tf = render_tfvars(_with_compute_reservation(cluster))
     assert "gpu_nodes_fixed_count_per_group = 2" in tf
     assert "gpu_node_groups = 1" in tf
 
@@ -1504,7 +1520,9 @@ def test_mig_recipe_variable_preflight_accepts_supported_root(tmp_path) -> None:
     root = _fake_recipe(tmp_path, 'provider "nebius" {}\n')
     _declare_mig_recipe_variables(root)
 
-    tfvars = render_tfvars(_mig_cluster(), recipe_dir=root / "k8s-training")
+    tfvars = render_tfvars(
+        _with_compute_reservation(_mig_cluster()), recipe_dir=root / "k8s-training"
+    )
 
     assert 'gpu_operator_version         = "v26.3.3"' in tfvars
 
@@ -2288,7 +2306,7 @@ def test_unchanged_provider_verified_target_has_zero_incremental_demand(
     )
     ssh_key = "ssh-ed25519 test"
     (workdir / "terraform.tfvars").write_text(
-        render_tfvars(cluster, ssh_public_key=ssh_key)
+        render_tfvars(_with_compute_reservation(cluster), ssh_public_key=ssh_key)
     )
     monkeypatch.setattr(
         L,
@@ -2334,7 +2352,7 @@ def test_unchanged_provider_verified_target_has_zero_incremental_demand(
                                         "reservationPolicy": {
                                             "policy": "STRICT",
                                             "reservationIds": [
-                                                "capacityblockgroup-exact"
+                                                "compute-reservation-test"
                                             ],
                                         },
                                     },
@@ -2363,7 +2381,7 @@ def test_unchanged_provider_verified_target_has_zero_incremental_demand(
     monkeypatch.setattr(L, "_run_capture", provider)
     kwargs = {
         "project": project,
-        "cluster": cluster,
+        "cluster": _with_compute_reservation(cluster),
         "prefix": "",
         "tenant_id": "tenant-x",
         "region": "us-central1",
@@ -2386,7 +2404,12 @@ def test_unchanged_provider_verified_target_has_zero_incremental_demand(
             capacity_block_group="capacityblockgroup-exact",
         ),
     )
-    assert L._is_verified_unchanged_target(**{**kwargs, "cluster": changed}) is False
+    assert (
+        L._is_verified_unchanged_target(
+            **{**kwargs, "cluster": _with_compute_reservation(changed)}
+        )
+        is False
+    )
 
 
 @pytest.mark.parametrize(
@@ -4644,7 +4667,10 @@ def _capacity_block(
     usage_percentage: str = "0.00",
     state: str = "STATE_ACTIVE",
 ) -> dict:
-    compute_v1 = {"platform": platform}
+    compute_v1 = {
+        "platform": platform,
+        "reservation_id": "compute-reservation-test",
+    }
     if fabric:
         compute_v1["fabric"] = fabric
     status = {
@@ -4879,6 +4905,72 @@ def test_reservation_capacity_parser_treats_live_usage_percentage_as_fraction() 
         )
     )
     assert exact["capacityblockgroup-test"]["available_gpus"] == 40
+
+
+def test_reservation_capacity_parser_rejects_conflicting_duplicate_group_records() -> (
+    None
+):
+    from npa.cluster_backends.quotas import (
+        ReservationRequirement,
+        compute_reservation_bindings,
+        parse_capacity_blocks,
+    )
+
+    first = _capacity_block(reservation_id="capacityblockgroup-test")
+    second = _capacity_block(reservation_id="capacityblockgroup-test")
+    second["status"]["resource_affinity"]["compute_v1"]["reservation_id"] = (
+        "compute-reservation-conflict"
+    )
+    blocks = parse_capacity_blocks(json.dumps({"items": [first, second]}))
+    requirement = ReservationRequirement(
+        reservation_id="capacityblockgroup-test",
+        region="us-central1",
+        platform="gpu-rtx6000",
+        fabric="",
+        required_gpus=1,
+    )
+
+    with pytest.raises(ValueError, match="conflicting capacity-block catalog records"):
+        compute_reservation_bindings(
+            {requirement.reservation_id: requirement}, blocks, "t"
+        )
+
+
+def test_strict_reservation_binding_rejects_unverified_runtime_identity(
+    monkeypatch,
+) -> None:
+    from npa.fleet import lifecycle
+
+    cluster = ClusterSpec(
+        name="strict",
+        gpu_nodes=NodePoolSpec(
+            count=1,
+            platform="gpu-rtx6000",
+            preset="1gpu-24vcpu-218gb",
+            capacity_block_group="capacityblockgroup-test",
+            compute_reservation_id="unverified-compute-reservation",
+        ),
+    )
+
+    class Reader:
+        def __init__(self, *_args, **_kwargs) -> None:
+            pass
+
+        def resolve_compute_reservations(self, _requirements, _on_status):
+            return {"capacityblockgroup-test": "verified-compute-reservation"}
+
+    monkeypatch.setattr(lifecycle, "ProjectCapacityReader", Reader)
+
+    with pytest.raises(ValueError, match="conflicts with the verified"):
+        lifecycle._bind_strict_compute_reservations(
+            {("project", "strict"): cluster},
+            tenant_id="tenant-test",
+            nebius_bin="nebius",
+            profile="",
+            env={},
+            region_by_target={("project", "strict"): "test-region"},
+            on_status=None,
+        )
 
 
 def test_parse_allowances_filters_region_and_preserves_unlimited() -> None:
@@ -5559,6 +5651,50 @@ def test_reserved_preflight_fails_closed_when_block_unreadable_or_too_small(
     with pytest.raises(ValueError, match="only 8 reserved GPUs remain"):
         L.deploy_fleet(_reserved_rtx_cluster_spec(), work_root=tmp_path)
     assert deployed == []
+
+
+def test_reserved_deploy_refuses_missing_compute_identity_before_persistence(
+    tmp_path, monkeypatch
+) -> None:
+    payload = _capacity_block()
+    payload["status"]["resource_affinity"]["compute_v1"].pop("reservation_id")
+    L, deployed, _calls = _reserved_preflight_boundary(
+        monkeypatch, tmp_path, json.dumps({"items": [payload]})
+    )
+    marker = tmp_path / "f" / "a" / "c" / L._TARGET_BACKEND_OWNER
+
+    with pytest.raises(ValueError, match="compute reservation identity"):
+        L.deploy_fleet(_reserved_rtx_cluster_spec(), work_root=tmp_path)
+
+    assert deployed == []
+    assert not marker.exists()
+
+
+def test_reserved_deploy_renders_verified_compute_reservation_only(
+    tmp_path, monkeypatch
+) -> None:
+    payload = json.dumps({"items": [_capacity_block()]})
+    L, _deployed, _calls = _reserved_preflight_boundary(monkeypatch, tmp_path, payload)
+    captured = []
+    monkeypatch.setattr(
+        L,
+        "_deploy_one_cluster",
+        lambda **kwargs: (
+            captured.append(kwargs["cluster"]),
+            {
+                "project_key": "a",
+                "cluster_name": "c",
+                "status": "deployed",
+            },
+        )[1],
+    )
+
+    L.deploy_fleet(_reserved_rtx_cluster_spec(), work_root=tmp_path)
+
+    assert len(captured) == 1
+    rendered = render_tfvars(captured[0])
+    assert 'reservation_ids = ["compute-reservation-test"]' in rendered
+    assert "capacityblockgroup-test" not in rendered
 
 
 def test_deploy_preflight_blocks_on_zero_gpu_quota(tmp_path, monkeypatch) -> None:

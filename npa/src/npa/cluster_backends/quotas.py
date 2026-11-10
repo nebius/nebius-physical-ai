@@ -216,7 +216,13 @@ def _available_reserved_gpus(status: dict[str, Any]) -> int | None:
 
 
 def parse_capacity_blocks(payload: str) -> dict[str, dict[str, Any]]:
-    """Index capacity block group list JSON by ID, retaining validation fields."""
+    """Index capacity blocks with the one compatible compute reservation ID.
+
+    The capacity-block-group ID remains Fleet's stable selection key.  It is
+    not interchangeable with the provider compute-reservation ID required in a
+    managed-Kubernetes STRICT reservation policy.  Keep both values explicit
+    and fail closed when the catalog cannot establish one unambiguous binding.
+    """
 
     try:
         items = json.loads(payload or "{}").get("items", [])
@@ -224,23 +230,62 @@ def parse_capacity_blocks(payload: str) -> dict[str, dict[str, Any]]:
         return {}
     indexed: dict[str, dict[str, Any]] = {}
     for item in items if isinstance(items, list) else []:
+        if not isinstance(item, dict):
+            continue
         metadata = item.get("metadata", {}) or {}
         status = item.get("status", {}) or {}
+        if not isinstance(metadata, dict) or not isinstance(status, dict):
+            continue
         affinity = (status.get("resource_affinity", {}) or {}).get(
             "compute_v1", {}
         ) or {}
+        if not isinstance(affinity, dict):
+            continue
         reservation_id = str(metadata.get("id") or "")
         if not reservation_id:
             continue
-        indexed[reservation_id] = {
+        compute_reservation_id = _compute_reservation_id(status, affinity)
+        record = {
             "parent_id": str(metadata.get("parent_id") or ""),
             "region": str(status.get("region") or ""),
             "platform": str(affinity.get("platform") or ""),
             "fabric": str(affinity.get("fabric") or ""),
             "state": str(status.get("state") or ""),
             "available_gpus": _available_reserved_gpus(status),
+            "compute_reservation_id": compute_reservation_id,
         }
+        # A group ID is Fleet's stable selector.  Two non-identical catalog
+        # records for one selector cannot safely establish one provider
+        # reservation identity, even if a later item looks compatible.
+        previous = indexed.get(reservation_id)
+        if previous is not None and previous != record:
+            indexed[reservation_id] = {"ambiguous": True}
+        elif previous is None:
+            indexed[reservation_id] = record
     return indexed
+
+
+def _compute_reservation_id(status: dict[str, Any], affinity: dict[str, Any]) -> str:
+    """Return one exact compute-reservation identity or an empty refusal value.
+
+    Current provider responses may use either protobuf JSON spelling at the
+    status or compute-affinity boundary.  Accept only one nonempty string, or
+    repeated spellings of the same string; conflicting or malformed evidence
+    is not a safe reservation binding.
+    """
+
+    values = [
+        status.get("compute_reservation_id"),
+        status.get("computeReservationId"),
+        affinity.get("compute_reservation_id"),
+        affinity.get("computeReservationId"),
+        affinity.get("reservation_id"),
+        affinity.get("reservationId"),
+    ]
+    present = {
+        value.strip() for value in values if isinstance(value, str) and value.strip()
+    }
+    return present.pop() if len(present) == 1 else ""
 
 
 def find_reservation_shortfalls(
@@ -258,7 +303,14 @@ def find_reservation_shortfalls(
                 ReservationShortfall(reservation_id, "not found in tenant")
             )
             continue
-        if block["parent_id"] != tenant_id:
+        if block.get("ambiguous"):
+            shortfalls.append(
+                ReservationShortfall(
+                    reservation_id,
+                    "has conflicting capacity-block catalog records",
+                )
+            )
+        elif block["parent_id"] != tenant_id:
             shortfalls.append(
                 ReservationShortfall(reservation_id, "belongs to another tenant")
             )
@@ -309,6 +361,39 @@ def find_reservation_shortfalls(
                 )
             )
     return shortfalls
+
+
+def compute_reservation_bindings(
+    requirements: dict[str, ReservationRequirement],
+    blocks: dict[str, dict[str, Any]],
+    tenant_id: str,
+) -> dict[str, str]:
+    """Return verified group-to-compute reservation bindings for STRICT pools.
+
+    Reuse every capacity compatibility and headroom check before accepting the
+    provider identity.  The mapping is intentionally keyed by the declarative
+    capacity-block group so it can never replace or obscure that selection.
+    """
+
+    shortfalls = find_reservation_shortfalls(requirements, blocks, tenant_id)
+    if shortfalls:
+        raise ValueError(reservation_shortfall_message(shortfalls))
+    bindings: dict[str, str] = {}
+    missing: list[ReservationShortfall] = []
+    for group_id in requirements:
+        compute_id = str(blocks[group_id].get("compute_reservation_id") or "")
+        if not compute_id or compute_id == group_id:
+            missing.append(
+                ReservationShortfall(
+                    group_id,
+                    "has no distinct compatible compute reservation identity",
+                )
+            )
+            continue
+        bindings[group_id] = compute_id
+    if missing:
+        raise ValueError(reservation_shortfall_message(missing))
+    return bindings
 
 
 def reservation_shortfall_message(shortfalls: list[ReservationShortfall]) -> str:
@@ -364,7 +449,10 @@ def required_quotas(
     for cluster in clusters:
         cpu, gpu = cluster.cpu_nodes, cluster.gpu_nodes
         nodes = cluster.cpu_count() + cluster.gpu_count()
-        add("mk8s.cluster.count", 1)
+        # A verified retained-target pool resume creates no control plane.  It
+        # must still budget every new worker, disk, and network allocation.
+        if not getattr(cluster, "retained_control_plane", False):
+            add("mk8s.cluster.count", 1)
         # Every private worker consumes two tenant VPC allocations: its /32
         # address plus the delegated pod alias range. The managed control plane
         # endpoint is service-owned and consumes neither a tenant allocation nor
