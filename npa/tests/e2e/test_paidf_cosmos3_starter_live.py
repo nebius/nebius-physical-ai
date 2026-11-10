@@ -24,17 +24,22 @@ def test_completed_fresh_default_starter_pipeline() -> None:
     )
 
 
-def audit_starter_pipeline(uri_variable, freshness_variable, *, variant_count):
-    """Audit a fresh starter run with only the requested variant-count override.
+def audit_starter_pipeline(
+    uri_variable, freshness_variable, *, variant_count, recipe=None
+):
+    """Audit a fresh starter run with the default or a checked-in recipe overlay.
 
     Args:
         uri_variable: Environment variable selecting the completed run URI.
         freshness_variable: Environment variable holding its pre-submit timestamp.
         variant_count: Exact requested number of variants.
+        recipe: Optional overlay ``config`` mapping. When set, the run must use its
+            exact appearance profiles and first-window conditioning; all other
+            sampling and quality settings must remain the workflow defaults.
     Returns:
         None.
     Raises:
-        AssertionError: Freshness, default settings or complete execution is unproven.
+        AssertionError: Freshness, settings or complete execution is unproven.
     """
     uri = os.environ.get(uri_variable, "")
     if os.environ.get("NPA_INTEGRATION_E2E") != "1" or not uri:
@@ -52,7 +57,7 @@ def audit_starter_pipeline(uri_variable, freshness_variable, *, variant_count):
     assert runtime["status"] == "succeeded" and runtime["run_id"] == run_id
     assert_completed_fresh_runtime(client, selected.netloc, prefix, runtime)
     _assert_starter_input(client, selected.netloc, run_id)
-    _assert_starter_batch(client, selected.netloc, prefix, variant_count)
+    _assert_starter_batch(client, selected.netloc, prefix, variant_count, recipe)
     _assert_fresh_objects(
         client, selected.netloc, run_id, os.environ[freshness_variable]
     )
@@ -95,7 +100,7 @@ def _assert_starter_input(client, bucket, run_id) -> None:
         assert hashlib.sha256(contents).hexdigest() == contract["integrity"]["sha256"]
 
 
-def _assert_starter_batch(client, bucket, prefix, variant_count) -> None:
+def _assert_starter_batch(client, bucket, prefix, variant_count, recipe=None) -> None:
     manifest = _read(client, bucket, prefix + "cosmos_augmented/manifest.json")
     assert len(manifest["variants"]) == manifest["variant_count"] == variant_count
     expected = {f"variant-{index:04d}" for index in range(variant_count)}
@@ -105,7 +110,10 @@ def _assert_starter_batch(client, bucket, prefix, variant_count) -> None:
     configs = _read(client, bucket, prefix + "configs/manifest.json")
     assert configs["n_augmentations"] == len(configs["augmentations"]) == variant_count
     assert str(configs["augmentation_seed"]) == "30"
-    assert configs["appearance_profile_source"] == "default"
+    if recipe is None:
+        assert configs["appearance_profile_source"] == "default"
+    else:
+        _assert_recipe_generation(client, bucket, manifest, configs, recipe)
     _assert_default_generation(manifest)
     evaluator = _read(client, bucket, prefix + "grade/cosmos_evaluator.json")
     assert evaluator["threshold"] == 0.2
@@ -114,6 +122,25 @@ def _assert_starter_batch(client, bucket, prefix, variant_count) -> None:
     assert {clip["clip_id"] for clip in evaluator["clips"]} == expected
     final = _read(client, bucket, prefix + "reports/final.json")
     assert final["variant_count"] == final["annotated_variant_count"] == variant_count
+
+
+def _assert_recipe_generation(client, bucket, manifest, configs, recipe) -> None:
+    profiles = json.loads(recipe["appearance_profiles_json"])
+    assert configs["appearance_profile_source"] == "custom"
+    assert configs["appearance_profiles"] == profiles
+    requested = {
+        tuple((key, item[key]) for key in profiles[0])
+        for item in configs["augmentations"]
+    }
+    assert len(requested) == len(configs["augmentations"]), "duplicate profile request"
+    first_window = int(recipe["transfer_first_chunk_conditional_frames"])
+    for variant in manifest["variants"]:
+        video = urlparse(variant["augmented_video_uri"])
+        assert video.netloc == bucket
+        receipt_key = video.path.lstrip("/").rsplit("/", 1)[0] + "/transfer.json"
+        receipt = _read(client, bucket, receipt_key)
+        assert receipt["first_chunk_conditional_frames"] == first_window
+        assert receipt["text_guardrail_passed"] and receipt["video_guardrail_passed"]
 
 
 def _assert_default_generation(manifest) -> None:

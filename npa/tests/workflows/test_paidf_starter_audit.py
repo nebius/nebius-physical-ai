@@ -103,3 +103,84 @@ def test_starter_audit_rejects_recipe_tuning(starter_audit):
     documents["cosmos_augmented/manifest.json"]["variants"][0]["steps"] = 35
     with pytest.raises(AssertionError):
         starter_audit(ArtifactClient(documents), "example-bucket", "", 12)
+
+
+RECIPE_PROFILES = [
+    {
+        "lighting": f"lighting {index}",
+        "background": f"tabletop {index}",
+        "color_grade": f"palette {index}",
+        "surface_finish": f"finish {index}",
+    }
+    for index in range(12)
+]
+RECIPE = {
+    "variant_count": "12",
+    "transfer_first_chunk_conditional_frames": "0",
+    "appearance_profiles_json": json.dumps(RECIPE_PROFILES),
+}
+
+
+def _recipe_documents():
+    documents = _documents(12)
+    configs = documents["configs/manifest.json"]
+    configs["appearance_profile_source"] = "custom"
+    configs["appearance_profiles"] = json.loads(json.dumps(RECIPE_PROFILES))
+    configs["augmentations"] = [dict(profile) for profile in RECIPE_PROFILES]
+    for variant in documents["cosmos_augmented/manifest.json"]["variants"]:
+        published = f"{variant['clip']}/_native/batch/video"
+        variant["augmented_video_uri"] = (
+            f"s3://example-bucket/{published}/augmented_video.mp4"
+        )
+        documents[f"{published}/transfer.json"] = {
+            "first_chunk_conditional_frames": 0,
+            "text_guardrail_passed": True,
+            "video_guardrail_passed": True,
+        }
+    return documents
+
+
+def _audit_recipe(starter_audit, documents):
+    starter_audit(ArtifactClient(documents), "example-bucket", "", 12, RECIPE)
+
+
+def _first_receipt(documents):
+    return next(
+        value for key, value in documents.items() if key.endswith("transfer.json")
+    )
+
+
+def test_starter_audit_accepts_matching_recipe_run(starter_audit):
+    _audit_recipe(starter_audit, _recipe_documents())
+
+
+def test_recipe_audit_rejects_default_profile_run(starter_audit):
+    with pytest.raises(AssertionError):
+        _audit_recipe(starter_audit, _documents(12))
+
+
+def test_recipe_audit_rejects_changed_or_duplicate_profiles(starter_audit):
+    changed = _recipe_documents()
+    changed["configs/manifest.json"]["appearance_profiles"][0]["background"] = "other"
+    with pytest.raises(AssertionError):
+        _audit_recipe(starter_audit, changed)
+    duplicated = _recipe_documents()
+    augmentations = duplicated["configs/manifest.json"]["augmentations"]
+    augmentations[-1] = dict(augmentations[0])
+    with pytest.raises(AssertionError):
+        _audit_recipe(starter_audit, duplicated)
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("first_chunk_conditional_frames", 1),
+        ("text_guardrail_passed", False),
+        ("video_guardrail_passed", False),
+    ],
+)
+def test_recipe_audit_rejects_anchor_or_guardrail_receipt(starter_audit, field, value):
+    documents = _recipe_documents()
+    _first_receipt(documents)[field] = value
+    with pytest.raises(AssertionError):
+        _audit_recipe(starter_audit, documents)

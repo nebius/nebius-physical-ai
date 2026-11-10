@@ -962,6 +962,67 @@ def test_captions_carry_self_identifying_header(tmp_path: Path) -> None:
     assert "a robot arm folds cloth" in caps["labeled_original"]
 
 
+def _caption_panel(tmp_path: Path, name: str, images: list[str]) -> str:
+    import json
+
+    from npa.workflows.data_factory_viz import _load_captions
+
+    run = tmp_path / "run"
+    (run / name).mkdir(parents=True)
+    captions = [{"image": image, "caption": f"caption for {image}"} for image in images]
+    (run / name / "captions.json").write_text(json.dumps({"captions": captions}))
+    return _load_captions(run)[name]
+
+
+def _caption_lines(panel: str) -> list[str]:
+    return [line for line in panel.splitlines() if line.startswith("- ")]
+
+
+def _clip_frames(clips: int, frames: int = 8) -> list[str]:
+    return [
+        f"variant-{clip:04d}/frame-{frame:05d}.png"
+        for clip in range(clips)
+        for frame in range(1, frames + 1)
+    ]
+
+
+def test_augmented_caption_panel_covers_every_clip_of_twelve(tmp_path: Path) -> None:
+    lines = _caption_lines(
+        _caption_panel(tmp_path, "labeled_augmented", _clip_frames(12))
+    )
+    assert len(lines) == 12
+    for clip in range(12):
+        assert sum(f"variant-{clip:04d}/" in line for line in lines) == 1
+
+
+def test_augmented_caption_panel_balances_two_clips_in_source_order(
+    tmp_path: Path,
+) -> None:
+    images = _clip_frames(2)
+    lines = _caption_lines(_caption_panel(tmp_path, "labeled_augmented", images))
+    assert len(lines) == 12
+    assert sum("variant-0000/" in line for line in lines) == 6
+    assert sum("variant-0001/" in line for line in lines) == 6
+    shown = [line.split(":", 1)[0].removeprefix("- ") for line in lines]
+    assert shown == sorted(shown, key=images.index)
+
+
+def test_augmented_caption_panel_grows_to_one_line_per_clip(tmp_path: Path) -> None:
+    lines = _caption_lines(
+        _caption_panel(tmp_path, "labeled_augmented", _clip_frames(30))
+    )
+    assert len(lines) == 30
+    assert all(
+        f"variant-{clip:04d}/frame-00001.png" in "\n".join(lines) for clip in range(30)
+    )
+
+
+def test_source_caption_panel_keeps_first_twelve_frames(tmp_path: Path) -> None:
+    images = [f"frame_{index:02d}.png" for index in range(20)]
+    lines = _caption_lines(_caption_panel(tmp_path, "labeled_original", images))
+    assert [line.split(":", 1)[0].removeprefix("- ") for line in lines] == images[:12]
+
+
 def test_build_run_rrd_requires_rrd_output(tmp_path: Path) -> None:
     with pytest.raises(DataFactoryVizError):
         build_run_rrd(str(tmp_path), str(tmp_path / "out.json"))

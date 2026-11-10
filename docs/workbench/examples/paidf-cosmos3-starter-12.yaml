@@ -1,0 +1,26 @@
+# Opt-in config overlay for workflows/main/paidf-cosmos3.yaml with the pinned starter video.
+# Pass every key as a --var override; this file is not a standalone workflow.
+# Run instructions, measured results and limits: ../guides/paidf-cosmos3.md#twelve-accepted-starter-variants
+# Only these keys differ from the canonical defaults. Sampling, guardrails, alignment and the
+# 0.2 / 0.25 exploratory quality thresholds keep their workflow values.
+config:
+  variant_count: '12'
+  # Release the original first RGB frame so the requested appearance applies from frame 0.
+  transfer_first_chunk_conditional_frames: '0'
+  # Twelve unique, clearly chromatic looks for the visible tabletop. Neutral-gray starter
+  # profiles stay off-white on this camera, and some wording is blocked by the guardrails.
+  appearance_profiles_json: |-
+    [
+      {"lighting": "cool overhead industrial illumination", "background": "dark slate-gray stone tabletop work surface", "color_grade": "cool charcoal color palette", "surface_finish": "honed stone tabletop finish"},
+      {"lighting": "warm golden late-afternoon sunlight", "background": "natural light-oak wood tabletop work surface", "color_grade": "golden honey color palette", "surface_finish": "natural wood-grain tabletop finish"},
+      {"lighting": "warm diffuse studio illumination", "background": "solid terracotta-orange tabletop work surface", "color_grade": "warm earth-tone color palette", "surface_finish": "matte fine-textured tabletop finish"},
+      {"lighting": "cool overhead industrial illumination", "background": "solid blue-gray tabletop work surface", "color_grade": "cool blue color palette", "surface_finish": "polished reflective tabletop finish"},
+      {"lighting": "cool bluish daylight illumination", "background": "solid navy-blue tabletop work surface", "color_grade": "deep blue color palette", "surface_finish": "glossy lacquered tabletop finish"},
+      {"lighting": "soft neutral studio illumination", "background": "solid olive-green tabletop work surface", "color_grade": "muted olive color palette", "surface_finish": "matte smooth tabletop finish"},
+      {"lighting": "cool fluorescent overhead illumination", "background": "solid teal tabletop work surface", "color_grade": "teal-cyan color palette", "surface_finish": "satin soft-sheen tabletop finish"},
+      {"lighting": "warm tungsten lamp illumination", "background": "solid burgundy-red tabletop work surface", "color_grade": "rich red color palette", "surface_finish": "satin soft-sheen tabletop finish"},
+      {"lighting": "bright warm daylight", "background": "solid mustard-yellow tabletop work surface", "color_grade": "golden yellow color palette", "surface_finish": "matte fine-textured tabletop finish"},
+      {"lighting": "soft neutral studio illumination", "background": "solid lavender-purple tabletop work surface", "color_grade": "soft violet color palette", "surface_finish": "matte smooth tabletop finish"},
+      {"lighting": "warm diffuse studio illumination", "background": "dark walnut wood tabletop work surface", "color_grade": "rich brown color palette", "surface_finish": "natural wood-grain tabletop finish"},
+      {"lighting": "bright neutral daylight", "background": "solid fuchsia-magenta tabletop work surface", "color_grade": "vivid magenta color palette", "surface_finish": "glossy lacquered tabletop finish"}
+    ]

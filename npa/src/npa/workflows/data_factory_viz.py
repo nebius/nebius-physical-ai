@@ -2408,6 +2408,44 @@ _CAPTION_HEADERS = {
 }
 
 
+CAPTION_PANEL_MINIMUM_LINES = 12
+
+
+def _representative_captions(items: list[Any]) -> list[dict[str, Any]]:
+    """Select a bounded caption sample that still covers every captioned clip.
+
+    Augmented captions are keyed ``<clip>/<frame>``. Taking the first lines in file
+    order showed only the first two clips of a twelve-variant batch, so the panel
+    takes captions round-robin across clips. It keeps at least one line per clip
+    and retains source order for display.
+
+    Args:
+        items: Caption records from a ``captions.json`` artifact.
+    Returns:
+        Up to ``max(CAPTION_PANEL_MINIMUM_LINES, clip count)`` caption records.
+    Raises:
+        None.
+    """
+    by_clip: dict[str, list[tuple[int, dict[str, Any]]]] = {}
+    for index, item in enumerate(items):
+        if isinstance(item, dict):
+            image = str(item.get("image") or "")
+            # Unprefixed source-frame captions share one group: first lines, as before.
+            clip = image.split("/", 1)[0] if "/" in image else ""
+            by_clip.setdefault(clip, []).append((index, item))
+    limit = max(CAPTION_PANEL_MINIMUM_LINES, len(by_clip))
+    selected: list[tuple[int, dict[str, Any]]] = []
+    depth = 0
+    while len(selected) < limit and any(
+        len(group) > depth for group in by_clip.values()
+    ):
+        for group in by_clip.values():
+            if depth < len(group) and len(selected) < limit:
+                selected.append(group[depth])
+        depth += 1
+    return [item for _, item in sorted(selected, key=lambda pair: pair[0])]
+
+
 def _load_captions(
     local: Path, *, review: _PaidfReview | None = None
 ) -> dict[str, str]:
@@ -2421,8 +2459,7 @@ def _load_captions(
         items = payload.get("captions", []) if isinstance(payload, dict) else []
         body = "\n\n".join(
             f"- {c.get('image')}: {c.get('caption')}"
-            for c in items[:12]
-            if isinstance(c, dict)
+            for c in _representative_captions(items)
         )
         if body:
             # Prefix a self-identifying header so a caption panel is never confused

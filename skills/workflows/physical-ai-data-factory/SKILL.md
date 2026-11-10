@@ -202,9 +202,13 @@ The independent `paidf-cosmos3.yaml` variant is documented at
 Cosmos 3 `video2video` generation and does not replace or silently change this
 skill's Cosmos Transfer 2.5 blueprint.
 
+For twelve accepted starter variants, apply every key of
+`docs/workbench/examples/paidf-cosmos3-starter-12.yaml` as a `--var` override and
+follow `docs/workbench/guides/paidf-cosmos3.md#twelve-accepted-starter-variants`.
 For twelve Cosmos3 candidates with shipped settings, use only the
 `variant_count=12` override and follow
-`docs/workbench/guides/paidf-cosmos3.md#twelve-variants-with-the-current-defaults`.
+`docs/workbench/guides/paidf-cosmos3.md#twelve-variants-with-the-current-defaults`;
+that count-only path has been rejected by its quality gate.
 Keep the two-variant default and one-GPU sequential generation unchanged.
 The separate twelve-profile appearance recipe changes sampling and quality
 settings. Preserve actual evaluator decisions: refinement or rejection is a
