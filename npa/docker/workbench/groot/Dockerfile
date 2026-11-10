@@ -21,8 +21,8 @@ ARG GROOT_REPO_REF=3df8b3825d67f755e69141446f4315f281b9b7e6
 ARG ISAAC_LAB_VERSION=2.3.2.post1
 ARG ISAAC_SIM_VERSION=5.1.0.0
 ARG ISAAC_LAB_SRC_COMMIT=37ddf626871758333d6ed89cf64ad702aef127d0
-ARG GROOT_UBUNTU_SNAPSHOT=20261018T000000Z
-ARG GROOT_LINUX_LIBC_DEV_VERSION=5.15.0-198.208
+ARG GROOT_UBUNTU_SNAPSHOT=20261103T000000Z
+ARG GROOT_LINUX_LIBC_DEV_VERSION=5.15.0-202.212
 ARG COSMOS_REASON_MODEL=nvidia/Cosmos-Reason2-2B
 ARG COSMOS_REASON_REVISION=9ce19a195e423419c349abfc86fd07178b230561
 
@@ -112,13 +112,18 @@ RUN useradd -m -s /bin/bash -u 1000 ubuntu \
       /opt/npa/src/npa \
       /opt/npa/docker/workbench/groot
 
+COPY --chown=ubuntu:ubuntu docker/workbench/curobo/remove_scikit_image_recipe.py \
+    /opt/groot/remove-scikit-image-recipe.py
+
 USER ubuntu
 WORKDIR /opt/groot
 
 ENV PATH=/home/ubuntu/.local/bin:/opt/groot/Isaac-GR00T/.venv/bin:$PATH \
+    PIP_NO_CACHE_DIR=1 \
     PYTHONPATH=/opt/npa/src \
     NPA_SKIP_EAGER_IMPORTS=1 \
-    NPA_LIGHT_WORKBENCH_TOOL=groot
+    NPA_LIGHT_WORKBENCH_TOOL=groot \
+    UV_NO_CACHE=1
 
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh \
     && git lfs install \
@@ -219,6 +224,16 @@ replace_once(
     f"        processor_kwargs.setdefault(\"model_revision\", \"{cosmos_revision}\")\n",
 )
 replace_once("pyproject.toml", 'requires-python = "==3.10.*"', 'requires-python = "==3.12.*"')
+replace_once(
+    "pyproject.toml",
+    "required-environments = [\n"
+    "    \"sys_platform == 'linux' and platform_machine == 'x86_64'\",\n"
+    "    \"sys_platform == 'linux' and platform_machine == 'aarch64'\",\n"
+    "]",
+    "environments = [\n"
+    "    \"sys_platform == 'linux' and platform_machine == 'x86_64'\",\n"
+    "]",
+)
 (repo / ".python-version").write_text("3.12\n")
 print("GROOT_RUNTIME_PIN_PATCH_OK " + cosmos_revision)
 PY
@@ -242,19 +257,27 @@ RUN cd "${GROOT_REPO}" \
       "aiohttp>=3.13.3" \
       "aiomysql>=0.3.0" \
       "azure-core>=1.38.0" \
+      "certifi==2026.10.19" \
+      "cffi>=2.0.0" \
       "cryptography>=48.0.1" \
       "diffusers>=0.38.0" \
       "jaraco.context>=6.1.0" \
       "msgpack>=1.2.1" \
       "onnx>=1.21.0" \
-      "pillow>=13.0.0,<14.0" \
+      "pillow==13.0.0" \
       "python-multipart>=0.0.30" \
       "starlette>=1.3.1" \
       "tornado>=6.5.6" \
       "transformers>=5.3.0" \
       "urllib3>=2.7.0" \
       "wheel>=0.46.2" \
-    && (uv pip uninstall --python "${GROOT_VENV}/bin/python" -y wandb lxml || true)
+    && (uv pip uninstall --python "${GROOT_VENV}/bin/python" -y wandb lxml || true) \
+    && "${GROOT_VENV}/bin/python" -c \
+      'from cryptography.hazmat.bindings._rust import exceptions' \
+    && "${GROOT_VENV}/bin/python" /opt/groot/remove-scikit-image-recipe.py \
+      --site-packages "${GROOT_VENV}/lib/python3.12/site-packages" \
+      --capability groot \
+      > /opt/groot/dependency-source-correction.json
 
 # The Isaac side of the image: python3.11 + PyTorch + the OSS dependency closure Isaac
 # needs, the runtime-fetch bootstrap, and the /isaac-sim/python.sh shim. What used to be
@@ -262,7 +285,10 @@ RUN cd "${GROOT_REPO}" \
 # layers. The venv path is unchanged so the e2e shell harnesses keep working.
 USER root
 COPY docker/workbench/common /opt/npa/docker/workbench/common
-RUN chmod +x /opt/npa/docker/workbench/common/*.sh \
+# Docker preserves this checkout's restrictive source modes.  The trusted
+# helpers remain root-owned, but the non-root build/runtime user must be able
+# to traverse the public directory and read its Python/lock inputs.
+RUN chmod -R a+rX /opt/npa/docker/workbench/common \
     && NPA_RUNTIME_USER=ubuntu \
        NPA_ISAAC_VENV=/opt/isaac-lab/venv \
        NPA_ISAAC_SKIP_TORCH=0 \
@@ -289,20 +315,34 @@ RUN /opt/isaac-lab/venv/bin/python -m pip install --no-deps --upgrade \
       "aiohttp>=3.13.3" \
       "aiomysql>=0.3.0" \
       "azure-core>=1.38.0" \
+      "annotated-types==0.8.0" \
+      "bcrypt==5.0.0" \
+      "cffi>=2.0.0" \
       "cryptography>=48.0.1" \
       "diffusers>=0.38.0" \
+      "invoke==3.0.3" \
       "jaraco.context>=6.1.0" \
       "mcap==1.5.0" \
       "msgpack>=1.2.1" \
       "onnx>=1.21.0" \
-      "pillow>=13.0.0,<14.0" \
+      "paramiko==5.0.0" \
+      "pydantic==2.13.5" \
+      "pydantic-core==2.46.5" \
+      "pyarrow==25.0.1" \
+      "PyNaCl==1.6.2" \
       "python-multipart>=0.0.30" \
       "starlette>=1.3.1" \
       "tornado>=6.5.6" \
+      "typing-inspection==0.4.4" \
       "transformers>=5.3.0" \
       "urllib3>=2.7.0" \
       "wheel>=0.46.2" \
-    && (/opt/isaac-lab/venv/bin/python -m pip uninstall -y wandb lxml || true)
+      "zstandard==0.25.0" \
+    && (/opt/isaac-lab/venv/bin/python -m pip uninstall -y wandb lxml || true) \
+    && /opt/isaac-lab/venv/bin/python -c \
+      'from cryptography.hazmat.bindings._rust import exceptions' \
+    && /opt/isaac-lab/venv/bin/python \
+      /opt/npa/docker/workbench/common/moviepy_pillow_compat.py
 
 COPY --chown=ubuntu:ubuntu pyproject.toml /opt/npa/pyproject.toml
 COPY --chown=ubuntu:ubuntu src/npa /opt/npa/src/npa

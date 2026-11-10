@@ -4,6 +4,8 @@ FROM nvidia/cuda:12.8.1-cudnn-devel-ubuntu24.04@sha256:24c8e3581ea6330038b0d3749
 
 ARG OPENPI_SOURCE_URL=https://github.com/Physical-Intelligence/openpi.git
 ARG OPENPI_SOURCE_REF=15a9616a00943ada6c20a0f158e3adb39df2ccac
+ARG OPENPI_PIP_WHEEL_URL=https://files.pythonhosted.org/packages/07/25/ee8c38ae72d66b844ce8eb9711ba905dba21ca1a8a0c960057c41cd23337/pip-26.3-py3-none-any.whl
+ARG OPENPI_PIP_WHEEL_SHA256=f3b60b20ffaadd4415ed7957212a38ac63fa4c5fa375bd0f4a797777940fad13
 ARG NPA_SOURCE_SHA=unknown
 
 LABEL npa.tool="openpi" \
@@ -66,9 +68,25 @@ RUN git clone --filter=blob:none --no-checkout "${OPENPI_SOURCE_URL}" /opt/byof 
 # compatibility overlay below. The upstream JAX 0.5.3 / NCCL 2.26.2 pair faults
 # on the first cross-node collective; the replacement wheels were qualified on
 # eight one-GPU RTX PRO 6000 nodes. Keep the public GCS reader isolated from this environment.
+# The retained uv bootstrap venv is scanned alongside the application venvs.
+# Replace Ubuntu's seeded pip with the hash-pinned current wheel so its bundled
+# CA set meets the same security floor as the role closures.
+# uv also retains its managed CPython bootstrap under the runtime user's home.
+# Complete-byte scanning reaches its seeded pip and bundled CA set, so update
+# that exact interpreter through the already hash-pinned wheel.
 RUN python3 -m venv /opt/uv \
+    && /opt/uv/bin/pip install --no-cache-dir --no-deps --upgrade \
+      "${OPENPI_PIP_WHEEL_URL}#sha256=${OPENPI_PIP_WHEEL_SHA256}" \
+    && /opt/uv/bin/python -c \
+      'import pip; from pip._vendor import certifi; assert pip.__version__ == "26.3"; assert certifi.__version__ == "2026.10.23"' \
     && /opt/uv/bin/pip install --no-cache-dir 'uv==0.13.4' \
     && /opt/uv/bin/uv python install 3.11 \
+    && for interpreter in /home/ubuntu/.local/share/uv/python/*/bin/python3; do \
+      test -x "$interpreter"; \
+      /opt/uv/bin/pip --python "$interpreter" install --no-cache-dir --no-deps --upgrade --break-system-packages \
+        "${OPENPI_PIP_WHEEL_URL}#sha256=${OPENPI_PIP_WHEEL_SHA256}"; \
+      "$interpreter" -c 'import pip; from pip._vendor import certifi; assert pip.__version__ == "26.3"; assert certifi.__version__ == "2026.10.23"'; \
+    done \
     && /opt/uv/bin/uv venv --python 3.11 /opt/venv \
     && cd /opt/byof \
     && VIRTUAL_ENV=/opt/venv /opt/uv/bin/uv sync --active --frozen --group rlds --no-dev \
@@ -111,14 +129,16 @@ RUN python3 -m venv /opt/uv \
       --no-deps --require-hashes -r /tmp/openpi-security-upgrades.txt \
     && rm -f /opt/venv/lib/python3.11/site-packages/wandb/bin/wandb-core \
     && /opt/venv/bin/python -c \
-      'import boto3, importlib.metadata as m, numpy, os, tensorflow, torch, transformers, wandb; from transformers import GemmaForCausalLM; expected={"boto3":"1.42.91","botocore":"1.42.91","jmespath":"1.1.0","python-dateutil":"2.9.0.post0","s3transfer":"0.16.0","six":"1.17.0","urllib3":"2.8.0"}; assert all(m.version(k)==v for k,v in expected.items()), {k:m.version(k) for k in expected}; assert boto3.session.Session() is not None and m.version("deepdiff") == "8.6.2" and m.version("numpy") == "1.26.4" and m.version("tensorflow") == "2.15.0" and m.version("transformers") == "4.53.2"; assert os.environ["WANDB_MODE"] == "disabled" and GemmaForCausalLM and numpy is not None and tensorflow is not None and torch is not None and wandb is not None' \
+      'import boto3, importlib.metadata as m, numpy, os, tensorflow, torch, transformers, wandb; from transformers import GemmaForCausalLM; expected={"boto3":"1.42.91","botocore":"1.42.91","certifi":"2026.10.19","jmespath":"1.1.0","python-dateutil":"2.9.0.post0","s3transfer":"0.16.0","six":"1.17.0","urllib3":"2.8.0"}; assert all(m.version(k)==v for k,v in expected.items()), {k:m.version(k) for k in expected}; assert boto3.session.Session() is not None and m.version("deepdiff") == "8.6.2" and m.version("numpy") == "1.26.4" and m.version("tensorflow") == "2.15.0" and m.version("transformers") == "4.53.2"; assert os.environ["WANDB_MODE"] == "disabled" and GemmaForCausalLM and numpy is not None and tensorflow is not None and torch is not None and wandb is not None' \
     && /opt/venv/bin/python -c \
       'import subprocess; expected={"The package `tensorflow-cpu` requires `ml-dtypes~=0.2.0`, but `0.5.1` is installed","The package `torch` requires `nvidia-cudnn-cu12==9.5.1.17 ; platform_machine == x86_64 and sys_platform == linux`, but `9.10.2.21` is installed","The package `torch` requires `nvidia-nccl-cu12==2.26.2 ; platform_machine == x86_64 and sys_platform == linux`, but `2.27.5` is installed","The package `tensorflow` requires `ml-dtypes~=0.2.0`, but `0.5.1` is installed","The package `openpi` requires `jax[cuda12]==0.5.3`, but `0.6.2` is installed"}; result=subprocess.run(["/opt/uv/bin/uv","pip","check","--python","/opt/venv/bin/python"],capture_output=True,text=True); actual={line.replace(chr(39),"") for line in (result.stdout+result.stderr).splitlines() if line.startswith("The package `")}; assert result.returncode == 1 and actual == expected, {"returncode":result.returncode,"unexpected":sorted(actual-expected),"missing":sorted(expected-actual)}' \
     && /opt/uv/bin/uv venv --python 3.11 /opt/rerun-venv \
     && /opt/uv/bin/uv pip install --python /opt/rerun-venv/bin/python --no-cache \
       'pyyaml==6.0.3' 'rerun-sdk==0.38.1' \
+    && /opt/uv/bin/uv pip install --python /opt/rerun-venv/bin/python --no-cache --no-deps \
+      'certifi==2026.10.19' \
     && /opt/rerun-venv/bin/python -c \
-      'import importlib.metadata as m, numpy, rerun, yaml; assert m.version("pyyaml") == "6.0.3" and m.version("rerun-sdk") == "0.38.1" and int(m.version("numpy").split(".")[0]) >= 2 and rerun is not None and numpy is not None and yaml is not None' \
+      'import importlib.metadata as m, numpy, rerun, yaml; assert m.version("certifi") == "2026.10.19" and m.version("pyyaml") == "6.0.3" and m.version("rerun-sdk") == "0.38.1" and int(m.version("numpy").split(".")[0]) >= 2 and rerun is not None and numpy is not None and yaml is not None' \
     && /opt/uv/bin/uv pip check --python /opt/rerun-venv/bin/python \
     && /opt/rerun-venv/bin/rerun rrd --help >/dev/null \
     && test ! -e /opt/venv/lib/python3.11/site-packages/wandb/bin/wandb-core \

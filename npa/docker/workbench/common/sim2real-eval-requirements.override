@@ -1,0 +1,7 @@
+# Resolution-only replacement for MoviePy 2.2.1's stale Pillow ceiling.
+#
+# Compile the complete graph with this published compatible Pillow release,
+# then retain only the reviewed Pillow 13 wheel hashes in the committed lock.
+# The Dockerfile applies moviepy_pillow_compat.py before pip check, which
+# rejects any MoviePy or Pillow bytes other than the reviewed exact releases.
+pillow==11.3.0

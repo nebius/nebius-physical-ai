@@ -18,7 +18,7 @@ For a single cluster, prefer `npa cluster up`. For Slurm-on-Kubernetes, use
 `npa soperator`.
 
 Three-tier contract:
-- **CLI**: `npa fleet plan|deploy|destroy|status|verify-storage|verify-graphics
+- **CLI**: `npa fleet plan|deploy|destroy|status|recover|verify-storage|verify-graphics
   --spec <fleet.yaml>`.
 - **SDK**: `npa.sdk.fleet.deploy(spec)` / `destroy` / `plan` / `status` with
   `FleetSpec` / `ProjectSpec` / `ClusterSpec` / `NodePoolSpec`.
@@ -87,13 +87,34 @@ resize, change IAM, or alter customer workloads. See
 Run `npa fleet verify-graphics --spec <private-fleet.yaml> --output json` after
 an RTX driver, node, or runtime change. It uses the registered Fleet identity,
 waits for the declared health stability interval, and runs CUDA vectorAdd plus
-GLX, EGL, and Vulkan qualification on every selected 8-GPU RTX worker. All
+GLX, EGL, and Vulkan qualification on every selected positive-GPU RTX worker.
+The documented default one-GPU and explicit eight-GPU PCIe shapes are both
+supported, while NVSwitch restrictions remain topology-specific. All
 targets must declare `gpu_workload_profile: rtx-rendering`; a partial target or
 partial per-node result fails closed. Use `--concurrency` for independent
 clusters and the standard Fleet selectors to narrow scope. Exact provider and
 node evidence goes only to the owner-private `--evidence-dir` outside Git; CLI
 output remains safe to publish. The shared SDK entry point is
 `npa.sdk.fleet.verify_graphics`.
+
+### Recover one interrupted apply without changing Terraform state
+
+Use `npa fleet recover --spec <private-fleet.yaml> --only-projects <project>
+--only-clusters <cluster> --yes --output json` only after an interrupted MK8s
+apply has left its exact target running. The operation accepts exactly one
+declared target. Before it writes an ordinary Fleet/context registration, it
+requires the persisted backend owner marker, provisioning sidecar, immutable
+recipe-release record, rendered Terraform inputs, and local state identity to
+agree with the selected spec. It also refuses a live local Terraform apply and
+provider/plugin child or target state-lock holder, then freshly verifies the
+exact provider project, terminal cluster, and requested node topology.
+
+Recovery never runs Terraform, force-unlocks it, edits its state, creates a
+replacement target, or deletes any resource. A stale Terraform lock is retained
+unchanged. A successful result is `recovered-pending-validation`: run the
+ordinary ownership-controlled storage, graphics, and workload gates before
+calling the target ready. Programmatic callers can use
+`npa.sdk.fleet.recover_interrupted_apply` with the same exact selectors.
 
 The all-worker live regression is
 `npa/tests/e2e/test_fleet_storage_verification_live.py`. Supply

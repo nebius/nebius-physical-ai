@@ -21,10 +21,10 @@ from typing import BinaryIO
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from image_payload_credentials import (  # noqa: E402
-    content_credential,
     normalise_member_name,
     path_credential,
 )
+from image_payload_reviews import load_reviews, reviewed_content_credential  # noqa: E402
 
 FORBIDDEN_PATHS = (
     re.compile(r"(?i)(^|/)(?:\.cache/)?huggingface/hub/models--nvidia--"),
@@ -64,6 +64,7 @@ class _PayloadFindings:
     history: list[str] = field(default_factory=list)
     credentials: list[str] = field(default_factory=list)
     members: list[dict[str, object]] = field(default_factory=list)
+    reviewed_content: list[dict[str, object]] = field(default_factory=list)
 
     def report(self, archive_sha256: str, config_sha256: str) -> dict[str, object]:
         """Add byte identities without accepting or exposing credential values."""
@@ -78,6 +79,7 @@ class _PayloadFindings:
             "history_hits": sorted(set(self.history)),
             "credential_hits": sorted(set(self.credentials)),
             "credential_members": self.members,
+            "reviewed_nonoperational_content": self.reviewed_content,
             "verdict": "restricted-payload-detected"
             if self.payload or self.history or self.credentials
             else "clean",
@@ -109,20 +111,23 @@ def _history_findings(config: dict) -> list[str]:
 
 
 def _credential_kind(
-    layer: tarfile.TarFile, member: tarfile.TarInfo, name: str
-) -> tuple[str, str] | None:
-    """Preserve the path-first and existing member-content credential verdict."""
+    layer: tarfile.TarFile,
+    member: tarfile.TarInfo,
+    name: str,
+    reviews: dict[str, dict],
+) -> tuple[tuple[str, str] | None, dict | None]:
+    """Apply path checks before exact-content dispositions for member bytes."""
     kind = path_credential(name)
     if kind is not None:
-        return kind, "path"
+        return (kind, "path"), None
     payload = layer.extractfile(member)
     if payload is None:
-        return None
+        return None, None
     with payload:
-        kind = content_credential(payload)
+        kind, review = reviewed_content_credential(payload, reviews)
     if kind is None:
-        return None
-    return kind, "member-content"
+        return None, review
+    return (kind, "member-content"), None
 
 
 def _credential_member(
@@ -165,6 +170,7 @@ def _scan_member(
     layer_index: int,
     layer_sha256: str,
     findings: _PayloadFindings,
+    reviews: dict[str, dict],
 ) -> None:
     """Preserve each existing finding while attaching physical member metadata."""
     findings.entries += 1
@@ -179,7 +185,17 @@ def _scan_member(
         findings.payload.append(name)
     if not member.isfile():
         return
-    credential = _credential_kind(layer, member, name)
+    credential, review = _credential_kind(layer, member, name, reviews)
+    if review is not None:
+        findings.reviewed_content.append(
+            {
+                "path": name,
+                "layer_index": layer_index,
+                "layer_sha256": layer_sha256,
+                "member_index": member_index,
+                **review,
+            }
+        )
     if credential is not None:
         kind, detection_source = credential
         findings.credentials.append(f"{kind}:{name}")
@@ -202,6 +218,7 @@ def _scan_layer(
     layer_name: str,
     layer_index: int,
     findings: _PayloadFindings,
+    reviews: dict[str, dict],
 ) -> None:
     """Scan every stored entry, retaining deleted or overwritten member evidence."""
     try:
@@ -222,6 +239,7 @@ def _scan_layer(
                     layer_index=layer_index,
                     layer_sha256=layer_sha256,
                     findings=findings,
+                    reviews=reviews,
                 )
 
 
@@ -283,8 +301,10 @@ def scan_tarball(path: Path) -> dict[str, object]:
         OSError: Archive bytes cannot be read.
         RuntimeError: Docker-save metadata is malformed or required image data is absent.
         tarfile.TarError: An archive is malformed.
+        ValueError: The reviewed-content catalog is malformed.
     """
     findings = _PayloadFindings()
+    reviews = load_reviews()
     with path.open("rb") as archive:
         archive_sha256 = _stream_sha256(archive)
         archive.seek(0)
@@ -293,7 +313,7 @@ def scan_tarball(path: Path) -> dict[str, object]:
             config_bytes, config = _read_config(outer, config_name)
             findings.history = _history_findings(config)
             for layer_index, layer_name in enumerate(layer_names):
-                _scan_layer(outer, layer_name, layer_index, findings)
+                _scan_layer(outer, layer_name, layer_index, findings, reviews)
     config_sha256 = hashlib.sha256(config_bytes).hexdigest()
     return findings.report(archive_sha256, config_sha256)
 
@@ -392,6 +412,7 @@ def main() -> int:
         RuntimeError,
         subprocess.CalledProcessError,
         tarfile.TarError,
+        ValueError,
     ) as error:
         return _emit_scan_failure(error)
     return _emit_report(

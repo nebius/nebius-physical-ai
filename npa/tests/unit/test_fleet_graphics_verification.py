@@ -92,6 +92,25 @@ def test_all_rtx_workers_pass_cuda_glx_egl_and_vulkan(tmp_path, monkeypatch):
     assert observed[0].driver_mode == "operator"
 
 
+def test_one_gpu_rtx_workers_preserve_exact_gpu_and_graphics_requirements(
+    tmp_path, monkeypatch
+):
+    cluster = _cluster(count=1)
+    cluster.gpu_nodes.preset = "1gpu-24vcpu-218gb"
+    observed = _prepare(monkeypatch)
+    report = verification.verify_graphics(_spec([cluster]), evidence_dir=tmp_path)
+    assert report["passed"] is True
+    assert report["gpu_workers"] == 1
+    assert report["gpus"] == 1
+    assert report["cuda_workers"] == 1
+    assert report["glx_workers"] == 1
+    assert report["egl_workers"] == 1
+    assert report["vulkan_workers"] == 1
+    assert observed[0].expected_gpus == 1
+    assert observed[0].driver_mode == "operator"
+    assert observed[0].graphics_smoke is True
+
+
 def test_public_report_omits_private_identity_and_receipts_are_owner_only(
     tmp_path, monkeypatch
 ):

@@ -372,12 +372,30 @@ def test_clean_root_accepts_only_exact_measured_empty_metadata_tail(tmp_path, pa
     )
 
 
+def test_clean_root_accepts_exact_classic_empty_metadata_tail(tmp_path, payload):
+    use_clean_root_contract(payload)
+    raw = b"\x00" * 1024
+    report = verify(
+        tmp_path,
+        payload,
+        [payload[1], []],
+        config_update=clean_root_config,
+        layer_overrides={1: (raw, raw)},
+    )
+    assert report["valid"] is True
+    expected = json.loads((IMAGE / "clean-root-config.json").read_text())
+    assert (
+        report["verified_layer_identities"][-1]
+        == expected["optional_empty_metadata_layer_classic"]
+    )
+
+
 @pytest.mark.parametrize(
     "kind",
     [
         "alternate_gzip",
-        "raw_tar",
         "padding",
+        "raw_padding",
         "file",
         "whiteout",
         "symlink",
@@ -393,11 +411,12 @@ def test_clean_root_rejects_other_metadata_layer_forms(tmp_path, payload, kind):
     layers = [payload[1], []]
     if kind == "alternate_gzip":
         packed = gzip.compress(raw, mtime=0)
-    elif kind == "raw_tar":
-        packed = raw
     elif kind == "padding":
         raw = b"\x00" * 10240
         packed = gzip.compress(raw, mtime=0)
+    elif kind == "raw_padding":
+        raw = b"\x00" * 10240
+        packed = raw
     elif kind in {"file", "whiteout", "symlink"}:
         entries = {
             "file": [entry("unexpected", b"payload")],
@@ -999,9 +1018,9 @@ def test_production_contract_matches_locked_artifacts_and_notice():
     notice = contract["nvshmem_notice"]
     assert (
         notice["sha256"]
-        == "43a87c0ff94ce3196011ff75e17fbee96933c9e1d511557659ece8a326f95e8f"
+        == "1f5b7ada702926bc73327e6eb02dc2d41facc844cc4512ac900451bda06a459e"
     )
-    assert notice["size"] == 26566
+    assert notice["size"] == 28205
     docker = (IMAGE / "Dockerfile").read_text()
     assert (
         notice["sha256"] in docker
@@ -1064,7 +1083,10 @@ def test_trusted_workflow_checks_local_bytes_before_push_and_exact_pushed_bytes(
         in commands[push:]
     )
     assert '--docker-save "$RUNNER_TEMP/${TOOL}-pushed.tar"' in commands[second:]
-    assert commands.count("npa/scripts/scan_image_omniverse_payload.py") == 2
+    # Curobo retains its archive-bound local and pushed-byte scans. GR00T has
+    # two additional full streaming scans because its image cannot coexist
+    # with a second image-sized archive on hosted runners.
+    assert commands.count("npa/scripts/scan_image_omniverse_payload.py") == 4
     assert commands.count("--verification-report") >= 4
     assert (
         '--verification-report "$RUNNER_TEMP/${TOOL}-curobo-payload.json"'

@@ -113,6 +113,13 @@ def test_dockerfile_is_a_non_root_service_with_a_probe() -> None:
         assert "@sha256:" in ref, f"base image is not digest-pinned: {ref}"
 
 
+def test_caddy_runtime_uses_the_reviewed_brotli_security_fix() -> None:
+    assert (
+        "caddy:2.11-alpine@sha256:70b3180738b46cd88e49b300d790ae448a0aca3f58edef0f000bb57d619a9ab3"
+        in _dockerfile()
+    )
+
+
 def test_caddyfile_supports_range_and_cors_for_mcap() -> None:
     text = CADDYFILE.read_text(encoding="utf-8")
     assert f":{FOXGLOVE_SERVICE_PORT}" in text

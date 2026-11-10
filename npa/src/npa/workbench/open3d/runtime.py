@@ -24,7 +24,7 @@ from urllib.parse import urlparse
 
 from npa.cli.path_contract import validate_read_path, validate_write_path
 from npa.workbench.dataset.storage import read_bytes_uri, uri_join, write_bytes_uri
-from npa.workbench.storage_scope import authorize_uri
+from npa.workbench.storage_scope import StorageAuthorizationError, authorize_uri
 
 from .artifacts import (
     PAIRS_JOURNAL,
@@ -37,7 +37,9 @@ from .artifacts import (
     validate_pose_graph,
     validate_result,
     validate_overlay_matches_crop,
+    validate_density_crop_contribution,
     validate_support,
+    validate_up_axis_inference,
     verify_rerun_recording,
 )
 from .schemas import (
@@ -274,9 +276,10 @@ def _publish_manifest(
         fragments=fragments,
         voxel_size=request.voxel_size,
         icp_estimation=request.icp_estimation,
+        agreement_seeds=request.agreement_seeds,
         demo_data_release=demo_release,
     )
-    body = canonical(manifest.model_dump(mode="json"))
+    body = canonical(manifest.canonical_document())
     _publish(uri_join(request.output_path, MANIFEST_FILENAME), body)
     return {
         "schema_version": "npa.open3d.prepared.v1",
@@ -286,6 +289,7 @@ def _publish_manifest(
         "fragment_ids": [fragment.id for fragment in fragments],
         "voxel_size": manifest.voxel_size,
         "icp_estimation": manifest.icp_estimation,
+        "agreement_seeds": manifest.agreement_seeds,
         "demo_data_release": demo_release,
     }
 
@@ -299,23 +303,60 @@ def _load_manifest(input_path: str) -> RegistrationManifest:
     """Read the manifest, retrying a read that arrives unparseable.
 
     Unlike the fragments, the manifest has no digest recorded ahead of it — it is
-    where the fragments' digests come from — so a retry here is guarded only by
-    JSON well-formedness and schema validation. That is weaker than a digest and
+    where the fragments' digests come from — so a retry here is guarded only by the
+    bytes decoding and the JSON parsing. Schema validation does not gate a retry: it
+    is what stops one. That is weaker than a digest and
     is the honest limit of this guard: it catches a stream that ended early,
     because truncated JSON does not close, and it cannot detect a complete
     document that is the wrong one. It is still worth doing, since without it a
     single short read on a small file ends a registration that has not started.
+
+    The two failures are separated rather than both retried. A document that parsed
+    and then failed schema validation is complete -- that is the same reasoning as
+    above, read the other way round -- so it will fail identically on the next
+    attempt; retrying it spends two more requests and then reports a bounded-attempt
+    exhaustion for a transport that was working. A document that did not parse, or a
+    read that raised, is retried.
     """
 
     uri = uri_join(input_path, MANIFEST_FILENAME)
     failures: list[str] = []
     for attempt in range(1, FRAGMENT_READ_ATTEMPTS + 1):
         try:
-            return RegistrationManifest.model_validate(json.loads(read_bytes_uri(uri)))
-        except ValueError as exc:  # unparseable JSON, or schema rejection
-            failures.append(f"attempt {attempt}: {type(exc).__name__}")
+            document = json.loads(read_bytes_uri(uri))
+        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+            # The bytes did not decode or did not parse, either of which a stream that
+            # ended early produces. Caught specifically rather than as ValueError:
+            # StorageAuthorizationError is also a ValueError, and retrying a refused
+            # read three times and then naming `prepare` as the remedy describes
+            # neither the cause nor an action that can help.
+            failures.append(f"attempt {attempt}: {type(exc).__name__}: {exc}")
+            continue
+        except StorageAuthorizationError:
+            # Neither transient nor a parse failure: the read was refused because the
+            # URI falls outside the active scope. Retrying cannot change that, and the
+            # bounded-attempts message would offer `prepare` as the remedy for a
+            # permission boundary. Surfaced as itself -- it is a ValueError, which the
+            # CLI already renders -- so the operator sees the refusal and its reason.
+            raise
         except Exception as exc:  # transport-level: truncation, reset, timeout
             failures.append(f"attempt {attempt}: {type(exc).__name__}: {exc}")
+            continue
+        try:
+            return RegistrationManifest.model_validate(document)
+        except ValueError as exc:
+            # The document parsed, so by this function's own reasoning the stream did
+            # not end early -- truncated JSON does not close. A complete document of
+            # the wrong shape will be the wrong shape on the next read too, so this
+            # is where retrying stops: two more requests would buy nothing and the
+            # bounded-attempts message would describe a transport that was fine.
+            earlier = f" Earlier attempts: {'; '.join(failures)}." if failures else ""
+            raise Open3dError(
+                f"{uri} parsed as JSON but is not a registration manifest, so it will "
+                "not read differently on another attempt; run "
+                "`npa workbench open3d prepare` against this prefix to write one. "
+                f"{exc}{earlier}"
+            ) from exc
     raise Open3dError(
         f"{uri} could not be read as a valid registration manifest after "
         f"{FRAGMENT_READ_ATTEMPTS} attempts; run `npa workbench open3d prepare` "
@@ -336,9 +377,20 @@ def _read_fragment(fragment, attempts: int = FRAGMENT_READ_ATTEMPTS) -> bytes:
     held to `fragment.sha256`, and bytes that do not match are discarded whether
     they arrived truncated or intact. A store that has genuinely diverged from the
     manifest still fails, after a bounded number of attempts rather than forever.
+
+    Every attempt is still made in that case, because a full-length read with a wrong
+    digest could in principle be corruption in transit rather than a different
+    object, and two extra requests are cheap next to a wrong diagnosis. What the
+    attempts buy is an observation -- whether any bytes arrived, and whether the
+    lengths fell short of, matched or exceeded the recorded count, and whether they
+    repeated -- not a verdict. Repeating lengths in particular do not separate a
+    truncated stream from a shorter stored object: a fixed-point truncation repeats
+    too. `_diagnose_fragment_read` reports the observation, names the causes it is
+    consistent with, and points at the store metadata that does discriminate.
     """
 
     failures: list[str] = []
+    lengths: list[int] = []
     for attempt in range(1, attempts + 1):
         try:
             payload = read_bytes_uri(fragment.uri)
@@ -347,14 +399,160 @@ def _read_fragment(fragment, attempts: int = FRAGMENT_READ_ATTEMPTS) -> bytes:
             continue
         if sha256_bytes(payload) == fragment.sha256:
             return payload
+        lengths.append(len(payload))
         failures.append(
-            f"attempt {attempt}: digest mismatch ({len(payload)} bytes read)"
+            f"attempt {attempt}: digest mismatch ({len(payload)} bytes read of "
+            f"{fragment.bytes} recorded)"
         )
     raise Open3dError(
         f"fragment {fragment.id} could not be read as the bytes the manifest "
-        f"recorded at prepare time after {attempts} attempts; the manifest and the "
-        "stored scan disagree, or the transport kept truncating. " + "; ".join(failures)
+        f"recorded at prepare time after {attempts} attempts. "
+        f"{_diagnose_fragment_read(lengths, fragment.bytes)} " + "; ".join(failures)
     )
+
+
+#: What a set of read lengths can distinguish, and what it cannot.
+#:
+#: A read shorter than the recorded length has two causes, not one. A stream that ended
+#: early is short, and so is a complete read of a shorter object that replaced the one
+#: `prepare` recorded. Treating short as truncation sends a reader to retry a stage that
+#: can never succeed; treating it as divergence sends them to rewrite a manifest that
+#: was right all along.
+#:
+#: Repetition does not separate them. That was the first correction's mistake, and it
+#: was wrong: a transport that truncates at a fixed point -- a buffer cap, a proxy
+#: cutoff, a repeatable stream failure -- returns the same prefix on every attempt,
+#: exactly as a complete read of a shorter object does. Against a 100-byte object that
+#: never changed, a deterministic 50-byte cutoff produces [50, 50, 50], and so does a
+#: genuine 50-byte replacement. No inference from these lengths can tell those apart.
+#:
+#: What the lengths do establish is narrower and still worth reporting: whether any
+#: bytes arrived at all, whether they fell short of, matched, or exceeded the recorded
+#: count, and whether the count repeated. The message states that observation, names
+#: every cause consistent with it, and then names the one check that does discriminate
+#: -- the store's own current size and checksum metadata against the manifest.
+_RE_PREPARE = "re-run `npa workbench open3d prepare` against this prefix"
+
+#: The check that separates a diverged store from a damaged transport, which no number
+#: of read attempts can. The store is asked what it currently holds; the manifest says
+#: what `prepare` saw. Deliberately not phrased as "re-prepare and see if it goes away":
+#: re-preparing rewrites the manifest to match whatever is there now, so it makes a
+#: truncating transport look resolved while leaving the run reading short objects.
+_DISCRIMINATE = (
+    "These read lengths cannot settle which it is. Compare what the store currently "
+    "reports for this object -- its size, and its checksum or version metadata if the "
+    "backend exposes them -- against the {recorded} bytes and the digest the manifest "
+    "recorded. If the store still reports what prepare saw, the object is intact and "
+    "the transport is the cause: retry the stage or repair the path to it. If the store "
+    "reports something else, it has diverged and {re_prepare}. Do not re-prepare on "
+    "the strength of the read lengths alone: that rewrites the manifest to match "
+    "whatever is there now, which hides a truncating transport rather than fixing it."
+)
+
+
+def _diagnose_fragment_read(lengths: list[int], recorded: int) -> str:
+    """What the attempts observed, which causes that is consistent with, and the
+    check that separates them.
+
+    The message used to offer both causes with no way to choose -- "the manifest and
+    the stored scan disagree, or the transport kept truncating" -- and the first
+    correction replaced that with a verdict read off the lengths. The verdict was
+    unsound. Against a 100-byte object that never changed, a transport truncating at
+    a fixed 50 bytes returns [50, 50, 50]; so does a genuine 50-byte replacement.
+    Stating either as the cause is wrong half the time, and the two call for opposite
+    actions, so being wrong is expensive.
+
+    What a set of lengths supports is an observation, not an attribution: whether any
+    bytes arrived, how they compare with the recorded count, and whether the count
+    repeated. Each branch below reports that, lists every cause consistent with it,
+    and hands over the discriminating step. Nothing here claims to have ruled a cause
+    out.
+    """
+
+    discriminate = _DISCRIMINATE.format(recorded=recorded, re_prepare=_RE_PREPARE)
+
+    if not lengths:
+        return (
+            "no attempt returned any bytes to compare against the manifest, so the "
+            "failures above are the whole of what was observed: the reads did not "
+            "complete. Retry the stage. If they keep failing without ever delivering "
+            "bytes, the path to the store is the thing to repair, not the manifest."
+        )
+
+    short = [one for one in lengths if one < recorded]
+    exact = [one for one in lengths if one == recorded]
+    longer = [one for one in lengths if one > recorded]
+
+    seen = []
+    if short:
+        distinct = sorted(set(short))
+        lens = ", ".join(str(one) for one in distinct)
+        seen.append(
+            f"{len(short)} read(s) ended short of the recorded {recorded} bytes "
+            + (
+                f"at the same {distinct[0]} bytes every time"
+                if len(distinct) == 1
+                else f"at {len(distinct)} different lengths ({lens})"
+            )
+        )
+    if exact:
+        seen.append(f"{len(exact)} arrived at exactly {recorded} bytes")
+    if longer:
+        seen.append(
+            f"{len(longer)} arrived longer than the {recorded} bytes recorded "
+            f"({', '.join(str(one) for one in sorted(set(longer)))})"
+        )
+
+    causes = []
+    if short:
+        # One short read says nothing about repetition, so it gets neither qualifier.
+        stable = len(short) > 1 and len(set(short)) == 1
+        varied = len(set(short)) > 1
+        causes.append(
+            "a stream ending before the object did"
+            + (
+                ", which a fixed buffer cap, proxy cutoff or repeatable failure will "
+                "do at the same byte on every attempt"
+                if stable
+                else ", ending wherever the connection broke"
+                if varied
+                else ""
+            )
+        )
+        causes.append(
+            "a complete read of an object that is now shorter than the one prepare "
+            "recorded"
+            + (", if it is being rewritten between attempts" if varied else "")
+        )
+    if exact:
+        causes.append(
+            "an object of the recorded length whose content differs from what prepare "
+            "digested, or bytes of the right length corrupted in transit"
+        )
+    if longer:
+        causes.append(
+            "an object that has grown or been replaced since prepare, or a transport "
+            "delivering more than the object (a re-send or concatenation)"
+        )
+
+    if len(short) == 1 and not exact and not longer:
+        return (
+            f"one read ended short of the recorded length ({short[0]} of {recorded} "
+            "bytes) and the other attempts returned no bytes at all, so there is not "
+            "even a repeated length to describe. Consistent with "
+            f"{_join(causes, last='or')}. {discriminate}"
+        )
+
+    return (
+        f"{_join(seen)}, with the digest never matching. Consistent with "
+        f"{_join(causes, last='or')}. {discriminate}"
+    )
+
+
+def _join(parts: list[str], last: str = "and") -> str:
+    if len(parts) == 1:
+        return parts[0]
+    return ", ".join(parts[:-1]) + f", {last} {parts[-1]}"
 
 
 def _download_fragments(manifest: RegistrationManifest, root: Path) -> dict[str, str]:
@@ -400,7 +598,7 @@ def _registration(kind: str, request: RunRequest) -> dict[str, Any]:
             )
         report["subprocess_wall_seconds"] = time.perf_counter() - started
         report["manifest_sha256"] = sha256_bytes(
-            canonical(manifest.model_dump(mode="json"))
+            canonical(manifest.canonical_document())
         )
         # Downstream stages need the scale the registration actually ran at and
         # the prefix its scans came from; re-deriving either from a spec would let
@@ -530,6 +728,7 @@ def reconstruct(request: ReconstructRequest) -> dict[str, Any]:
         validate_mesh(report["mesh"])
         validate_mesh(report["mesh_uncropped"])
         validate_support(report, voxel_size=_load_manifest_voxel(manifest_report))
+        validate_density_crop_contribution(report)
         mesh = (output / MESH_FILENAME).read_bytes()
         if sha256_bytes(mesh) != report["mesh"]["sha256"]:
             raise Open3dError("reconstructed mesh does not match its reported digest")
@@ -633,6 +832,7 @@ def visualize(request: RunRequest) -> dict[str, Any]:
         result = json.loads((output / "runner.json").read_text())
         result["schema_version"] = "npa.open3d.recording.v1"
         validate_overlay_matches_crop(result, report)
+        validate_up_axis_inference(result)
         payload = recording.read_bytes()
         if sha256_bytes(payload) != result["sha256"]:
             raise Open3dError("recording does not match its reported digest")

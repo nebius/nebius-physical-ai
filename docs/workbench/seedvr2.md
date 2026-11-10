@@ -22,7 +22,7 @@ review pass for the same commit and image digest.
 
 ## Run the workflow
 
-Upload one MP4 to your own S3 bucket, then submit the four-stage workflow:
+Upload one MP4 to your own S3 bucket, then submit the five-stage workflow:
 
 ```bash
 npa workbench workflow validate-spec workflows/testing/seedvr2-video-restoration.yaml
@@ -39,10 +39,18 @@ The stages are:
    read the uploaded result back, hash it, and decode it independently.
 4. `review`: render a non-blended bicubic-left/SeedVR2-right MP4, fixed-frame
    contact sheet, JSON manifest, and browser-readable HTML page.
+5. `quality_boundary`: fully decode the exact source and candidate again, run
+   the existing source-relative temporal and motion-hallucination diagnostics,
+   and publish a machine-readable `review_only` boundary.
 
 The output prefix contains `restored.mp4`, `upstream.log`, and `result.json`.
 The review prefix contains `comparison.mp4`, `contact-sheet.png`,
 `review.json`, and `index.html`. Existing output objects are never overwritten.
+The run prefix also contains `quality-boundary.json`. Its successful
+publication means the evidence was complete enough to assess; it does **not**
+mean restoration quality passed. The document always records
+`quality_qualified=false`, `sensor_truth_qualified=false`, and
+`downstream_use=review_only`.
 After an interrupted multi-object publication, retain the partial prefix as
 failure evidence and retry with a new run ID and output prefix.
 
@@ -63,13 +71,21 @@ npa workbench seedvr2 restore \
   --output-height 480 \
   --output-width 640 \
   --seed 666
+
+npa workbench seedvr2 quality-boundary \
+  --input-path "s3://<your-bucket>/runs/<run-id>/restoration/result.json" \
+  --output-path "s3://<your-bucket>/runs/<run-id>/quality-boundary.json" \
+  --run-id "<run-id>"
 ```
 
-`--input-path` must identify one MP4 object and `--output-path` must be an S3
-prefix. `--probe-path` is mandatory for every non-dry restoration, and the run
-fails if the probe run ID, URI, byte hash, or decoded media no longer matches
-the input. Inputs must contain at least two decodable frames; single-frame
-files fail the CPU probe and restore input check before model or GPU work.
+For `probe` and `restore`, `--input-path` identifies one MP4 object; `probe`
+writes one JSON object and `restore` writes an S3 prefix. `verify`, `review`,
+and `quality-boundary` read one exact `result.json`; `verify` and
+`quality-boundary` write one JSON object, while `review` writes a prefix.
+`--probe-path` is mandatory for every non-dry restoration, and the run fails if
+the probe run ID, URI, byte hash, or decoded media no longer matches the input.
+Inputs must contain at least three decodable frames; shorter clips fail the CPU
+probe and restore input check before model or GPU work.
 Source and output frames may contain at most 1920x1080 pixels;
 output dimensions must also be divisible by 16 and preserve the source aspect
 ratio. Non-dry execution requires exactly one full-memory, non-MIG device matching `--expected-gpu`
@@ -78,7 +94,33 @@ ratio. Non-dry execution requires exactly one full-memory, non-MIG device matchi
 or caller-supplied revision is rejected. `--dry-run`
 prints the exact official `torchrun` invocation without fetching the model or
 touching storage. The Python SDK exposes `probe`, `restore`, `verify`, and
-`review`.
+`review`, plus `quality_boundary`.
+
+## Review-only quality boundary
+
+The quality-boundary stage reuses
+`cosmos_evaluator.temporal_consistency.check_temporal_consistency` and
+`cosmos_evaluator.hallucination.check_hallucination`; it does not implement a
+second metric. Before either check it independently verifies the exact
+`result.json`, probe, upstream log, source and restored hashes, then fully
+decodes both videos and requires equal frame counts and frame rates. Missing,
+truncated, mismatched, or incomplete evidence fails the command before a
+boundary document is published.
+
+Both diagnostics are advisory. Frozen behavior evaluation at the existing defaults
+(temporal threshold `0.8`, noise floor `0.25`; motion threshold `0.682`) used
+two identity controls and four retained real B200 outputs that had already
+failed the objective quality gate. Identity scored `1.0` on both diagnostics.
+Temporal rejected all four outputs with scores from `0.122735` to `0.146839`;
+the motion check passed all four with scores from `0.873917` to `0.894264`.
+An independent rerun reproduced every score and full media hash.
+
+That cohort is correlated and lacks benign, adverse, diverse, and held-out
+calibration, so temporal sensitivity is not a calibrated acceptance rule.
+The motion check measures added dynamic pixels after resizing to source
+geometry; it neither detected these failures nor proves that static generated
+detail is observed truth. Consequently neither result can promote a restored
+clip beyond review-only, even when its diagnostic `passed` field is true.
 
 SeedVR2 executes only the NPA installation baked into that image. Workflow
 rendering rejects explicit or ambient `NPA_SRC_OVERLAY` source overlays and

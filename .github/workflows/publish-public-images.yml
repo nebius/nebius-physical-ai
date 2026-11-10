@@ -247,7 +247,7 @@ jobs:
       NPA_PUBLIC_REGISTRY: ${{ needs.resolve.outputs.target }}
       ROBOTWIN_PUBLIC_NATIVE_POLICY_SHA256: df720d408e03ad08dea051b31af6755159cfffc6276cbb7fa60bd1ec0a37236a
       # Updated only after independent review of the exact public content proofs.
-      CUROBO_PUBLIC_NATIVE_POLICY_SHA256: d1b9354047eb8e9d337a85fc7fd64a64f1ce859192fb748f403d729c95b825dc
+      CUROBO_PUBLIC_NATIVE_POLICY_SHA256: edf3e487867113df077601346053c8ed4669a72b81c3e2174f27a90d5c2f75a9
     steps:
       - name: Refuse unsupported NCore Actions publication
         if: matrix.tool == 'ncore'
@@ -489,6 +489,12 @@ jobs:
 
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
         with:
+          # These images exhausted the containerized BuildKit daemon while an
+          # immutable snapshot apt transaction was still running. Docker's
+          # direct driver keeps the exact tagged image in the daemon store
+          # without a second BuildKit-to-Docker import; every runtime,
+          # complete-byte, and security gate below still reads those bytes.
+          driver: ${{ contains(fromJSON('["groot", "sim2real-control", "rerun-viewer"]'), matrix.tool) && 'docker' || 'docker-container' }}
           version: ${{ matrix.tool == 'gymnasium-robotics' && 'v0.30.1' || '' }}
           driver-opts: ${{ matrix.tool == 'gymnasium-robotics' && 'image=moby/buildkit:v0.32.2@sha256:28a898719c18a33f4e8000685287fa36fd0dd9560c6440227d3a732d79bb41d8' || '' }}
 
@@ -557,6 +563,19 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y skopeo
+
+      - name: Reclaim unused hosted-runner SDK space
+        if: matrix.tool != 'ncore' && runner.environment == 'github-hosted'
+        run: |
+          set -euo pipefail
+          # Large CUDA image exports and local byte gates must coexist on the
+          # disposable GitHub-hosted root volume. These runner-image SDKs are
+          # unrelated to public image builds; never alter Docker state here.
+          printf '%s\0' \
+            /usr/local/lib/android /usr/share/dotnet /usr/share/swift /opt/ghc \
+            /usr/local/.ghcup /usr/local/share/boost | \
+            xargs -0 -r -n1 -P4 sudo rm -rf --
+          df -h /
 
       # Build locally first. Every gate below inspects these exact bytes; no registry write
       # occurs until the final explicit docker push.
@@ -731,13 +750,21 @@ jobs:
           # The loaded runtime image remains in Docker's image store. BuildKit's
           # disposable construction cache can be larger than the image itself and
           # otherwise leaves insufficient space to serialize large GPU images for
-          # the mandatory layer-by-layer payload scan.
+          # the mandatory layer-by-layer payload scan.  GR00T is larger than the
+          # hosted root volume when both that image and a second docker-save archive
+          # coexist, so its scanner streams every local layer directly from Docker.
           docker buildx prune --all --force
           save_platform=()
           if [[ "$TOOL" == robomimic ]]; then
             save_platform=(--platform linux/amd64)
           fi
-          docker save "${save_platform[@]}" --output "$RUNNER_TEMP/${TOOL}.tar" "$IMAGE"
+          if [[ "$TOOL" == groot ]]; then
+            npa/.venv/bin/python npa/scripts/scan_image_omniverse_payload.py \
+              --docker-image "$IMAGE" \
+              --json "$RUNNER_TEMP/${TOOL}-payload.json"
+          else
+            docker save "${save_platform[@]}" --output "$RUNNER_TEMP/${TOOL}.tar" "$IMAGE"
+          fi
           if [[ "$TOOL" == robomimic ]]; then
             npa/.venv/bin/python npa/docker/workbench/robomimic/source_delivery.py verify \
               --image-archive "$RUNNER_TEMP/${TOOL}.tar" \
@@ -822,10 +849,16 @@ jobs:
               --verification-report "$RUNNER_TEMP/${TOOL}-curobo-payload.json"
             )
           fi
-          npa/.venv/bin/python npa/scripts/scan_image_omniverse_payload.py \
-            --tarball "$RUNNER_TEMP/${TOOL}.tar" \
-            "${payload_binding[@]}" \
-            --json "$RUNNER_TEMP/${TOOL}-payload.json"
+          if [ "$TOOL" = groot ]; then
+            # The complete local Docker stream above is the pre-push payload
+            # proof.  Do not materialise an image-sized duplicate archive.
+            :
+          else
+            npa/.venv/bin/python npa/scripts/scan_image_omniverse_payload.py \
+              --tarball "$RUNNER_TEMP/${TOOL}.tar" \
+              "${payload_binding[@]}" \
+              --json "$RUNNER_TEMP/${TOOL}-payload.json"
+          fi
           if [ "$TOOL" = curobo ]; then
             umask 077
             phase="$CUROBO_BYTE_GATE_ROOT/pre"
@@ -928,15 +961,70 @@ jobs:
           rm -f "$RUNNER_TEMP/${TOOL}.tar" \
             "$RUNNER_TEMP/${TOOL}-cosmos3-ray-serve-payload.json"
 
-      # CUDA/AI images can exceed 25 GB. Once the exact loaded image passes its
-      # contract, BuildKit's duplicate cache is no longer evidence and can be
-      # discarded. Trivy's export goes on the hosted runner's large temp disk so
-      # the unchanged vulnerability/secret/license gates inspect every layer.
+      # CUDA/AI images can exceed 25 GB. Once the exact tagged image has passed
+      # its runtime and payload gates, unreferenced Docker state is no longer
+      # evidence and can be discarded. `docker system prune --all` would also
+      # remove an otherwise unreferenced tagged image, so retain this exact
+      # image through the scan with a stopped container while pruning every
+      # other hosted-runner image.
       - name: Prepare capacity for full-image security scans
         if: matrix.tool != 'ncore'
+        env:
+          RUNNER_ENVIRONMENT: ${{ runner.environment }}
         run: |
+          set -euo pipefail
+          docker image inspect "$IMAGE" >/dev/null
           docker buildx prune --all --force
+          # A hosted Actions VM is dedicated to this one matrix job. Never
+          # prune Docker state on an operator-selected runner pool.
+          if [[ "$RUNNER_ENVIRONMENT" == github-hosted ]]; then
+            docker container prune --force
+            docker network prune --force
+            docker volume prune --force
+            capacity_hold="npa-publication-capacity-hold-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${TOOL}"
+            docker create --name "$capacity_hold" "$IMAGE" >/dev/null
+            docker image prune --all --force
+            # GR00T's local image is an exact pre-publication scan subject.  Trivy
+            # materializes its largest layer while analysing that image, so retain
+            # the current interpreter but reclaim unrelated hosted-image toolcache
+            # entries only after the build and byte gates have completed.
+            if [[ "$TOOL" == groot ]]; then
+              active_python_dir="$(dirname "${pythonLocation:?setup-python path is required}")"
+              case "$active_python_dir" in
+                /opt/hostedtoolcache/Python/*) ;;
+                *) echo "unexpected hosted Python location" >&2; exit 1 ;;
+              esac
+              find /opt/hostedtoolcache/Python -mindepth 1 -maxdepth 1 \
+                ! -path "$active_python_dir" -print0 | \
+                xargs -0 -r -n1 -P4 sudo rm -rf --
+              printf '%s\0' /opt/hostedtoolcache/CodeQL | \
+                xargs -0 -r -n1 sudo rm -rf --
+              # The remaining gates use the active Python, Docker and the
+              # runner's embedded action runtime. Reclaim only unrelated,
+              # preinstalled SDK and browser caches before Trivy materializes
+              # the large GR00T layer on this disposable runner.
+              case "${HOME:?runner home is required}" in
+                /home/runner) ;;
+                *) echo "unexpected hosted runner home" >&2; exit 1 ;;
+              esac
+              printf '%s\0' \
+                /usr/lib/jvm \
+                /usr/share/miniconda \
+                /opt/microsoft/powershell \
+                /opt/hostedtoolcache/Ruby \
+                /opt/hostedtoolcache/go \
+                /usr/local/share/chromium \
+                /opt/google/chrome \
+                /home/runner/.cargo \
+                /home/runner/.rustup \
+                /home/runner/.cache | \
+                xargs -0 -r -n1 -P4 sudo rm -rf --
+            fi
+          fi
+          docker image inspect "$IMAGE" >/dev/null
           sudo install -d -m 0777 /mnt/npa-trivy
+          docker system df
+          df -h / /mnt
 
       - name: Pre-publication vulnerability, secret, and license scan
         if: matrix.tool != 'ncore'
@@ -951,6 +1039,12 @@ jobs:
           # gives this mandatory gate no practical analysis deadline.
           docker_socket_path="${DOCKER_SOCKET#unix://}"
           [[ "$docker_socket_path" == /* ]] || { echo "Docker socket must be an absolute path" >&2; exit 1; }
+          trivy_parallel=()
+          if [[ "$TOOL" == groot ]]; then
+            # Serializing layer analysis retains full scan coverage while avoiding
+            # simultaneous temporary layer exports for this unusually large image.
+            trivy_parallel=(--parallel 1)
+          fi
           docker run --rm \
             -e TMPDIR=/tmp/trivy \
             -v "$docker_socket_path:/var/run/docker.sock" \
@@ -965,6 +1059,7 @@ jobs:
               --ignore-unfixed \
               --ignorefile /.trivyignore \
               --format table \
+              "${trivy_parallel[@]}" \
               "$IMAGE"
 
       # Trivy applies --severity to every enabled scanner and has no per-scanner
@@ -986,6 +1081,12 @@ jobs:
           set -euo pipefail
           docker_socket_path="${DOCKER_SOCKET#unix://}"
           [[ "$docker_socket_path" == /* ]] || { echo "Docker socket must be an absolute path" >&2; exit 1; }
+          trivy_parallel=()
+          if [[ "$TOOL" == groot ]]; then
+            # Serializing layer analysis retains full scan coverage while avoiding
+            # simultaneous temporary layer exports for this unusually large image.
+            trivy_parallel=(--parallel 1)
+          fi
           docker run --rm \
             -e TMPDIR=/tmp/trivy \
             -v "$docker_socket_path:/var/run/docker.sock" \
@@ -997,6 +1098,7 @@ jobs:
               --severity UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL \
               --exit-code 1 \
               --format table \
+              "${trivy_parallel[@]}" \
               "$IMAGE"
 
       - name: Generate pre-publication SBOM
@@ -1009,6 +1111,12 @@ jobs:
           set -euo pipefail
           docker_socket_path="${DOCKER_SOCKET#unix://}"
           [[ "$docker_socket_path" == /* ]] || { echo "Docker socket must be an absolute path" >&2; exit 1; }
+          trivy_parallel=()
+          if [[ "$TOOL" == groot ]]; then
+            # Serializing layer analysis retains full scan coverage while avoiding
+            # simultaneous temporary layer exports for this unusually large image.
+            trivy_parallel=(--parallel 1)
+          fi
           docker run --rm \
             -e TMPDIR=/tmp/trivy \
             -v "$docker_socket_path:/var/run/docker.sock" \
@@ -1020,6 +1128,7 @@ jobs:
               --scanners vuln \
               --format spdx-json \
               --output "/output/${TOOL}-sbom.spdx.json" \
+              "${trivy_parallel[@]}" \
               "$IMAGE"
 
       - name: Validate exact FiftyOne runtime before publication
@@ -1196,11 +1305,13 @@ jobs:
           config_digest="$(printf '%s' "$remote_config" | sha256sum | cut -d' ' -f1)"
           test "$(printf '%s' "$remote_config" | jq -r '.config.Labels["org.opencontainers.image.revision"] // ""')" = "$DEVELOPMENT_SHA"
           # Bind the remote digest back to the exact local image whose complete
-          # filesystem tar was scanned before publication. Pulling immediately after
+          # filesystem was scanned before publication. Pulling immediately after
           # push reuses local layers and avoids a second multi-GB `crane export`, which
           # GHCR can rate-limit even for authenticated callers. The payload scanner
-          # fetches the exact raw registry manifest and binds its config/layer graph,
-          # the pulled image's rootfs diff IDs, and this saved archive.
+          # normally binds the exact raw registry manifest, pulled rootfs diff IDs,
+          # and saved archive. GR00T streams the exact digest from GHCR instead:
+          # retaining both its local image and a second uncompressed archive exceeds
+          # the hosted root volume, while the remote full scan remains mandatory.
           payload_attempt=1
           while true; do
             payload_log="$RUNNER_TEMP/${TOOL}-pushed-payload-attempt-${payload_attempt}.log"
@@ -1211,7 +1322,11 @@ jobs:
               layer_diff_ids="$(docker image inspect --format '{{json .RootFS.Layers}}' "$exact")" &&
               test "$(docker image inspect --format '{{.Id}}' "$exact")" = \
                 "$(docker image inspect --format '{{.Id}}' "$IMAGE")" &&
-              docker save "${save_platform[@]}" --output "$RUNNER_TEMP/${TOOL}-pushed.tar" "$exact"
+              if [[ "$TOOL" == groot ]]; then
+                :
+              else
+                docker save "${save_platform[@]}" --output "$RUNNER_TEMP/${TOOL}-pushed.tar" "$exact"
+              fi
             } >"$payload_log" 2>&1; then
               cat "$payload_log"
               break
@@ -1330,10 +1445,16 @@ jobs:
               --expected-manifest-digest "$DIGEST"
             )
           fi
-          npa/.venv/bin/python npa/scripts/scan_image_omniverse_payload.py \
-            --tarball "$RUNNER_TEMP/${TOOL}-pushed.tar" \
-            "${payload_binding[@]}" \
-            --json "$RUNNER_TEMP/${TOOL}-pushed-payload.json"
+          if [ "$TOOL" = groot ]; then
+            npa/.venv/bin/python npa/scripts/scan_image_omniverse_payload.py \
+              "$exact" \
+              --json "$RUNNER_TEMP/${TOOL}-pushed-payload.json"
+          else
+            npa/.venv/bin/python npa/scripts/scan_image_omniverse_payload.py \
+              --tarball "$RUNNER_TEMP/${TOOL}-pushed.tar" \
+              "${payload_binding[@]}" \
+              --json "$RUNNER_TEMP/${TOOL}-pushed-payload.json"
+          fi
           if [ "$TOOL" = curobo ]; then
             umask 077
             phase="$CUROBO_BYTE_GATE_ROOT/post"

@@ -31,8 +31,12 @@ def test_complete_shipped_catalog_compiles_with_all_bound_proofs(tmp_path, monke
     monkeypatch.setattr(reviewer, "_public_source", bound_source)
     tmp_path.chmod(0o700)
     with W.authorized_roots(tmp_path, ROOT):
+        detector_inputs = P.detector_inputs_sha256(W.source_bindings())
         entries = P.compile_catalog(
-            catalog, catalog["detector_identity"], reviewer._proof
+            catalog,
+            catalog["detector_identity"],
+            detector_inputs,
+            reviewer._proof,
         )
     assert len(entries) == len(catalog["entries"]) > 0
     assert loaded == {
@@ -40,6 +44,19 @@ def test_complete_shipped_catalog_compiles_with_all_bound_proofs(tmp_path, monke
         for entry in catalog["entries"]
         for kind in ("public_provenance", "semantic_proof")
     }
+
+
+def test_curobo_policy_binds_current_detector_input_closure(tmp_path):
+    policy = json.loads(
+        (
+            ROOT / "npa/scripts/image_byte_scan/public_policies/curobo-v2.json"
+        ).read_text()
+    )
+    tmp_path.chmod(0o700)
+    with W.authorized_roots(tmp_path, ROOT):
+        assert policy["detector_inputs_sha256"] == P.detector_inputs_sha256(
+            W.source_bindings()
+        )
 
 
 def test_curobo_same_byte_remediation_binds_all_ten_exact_record_classes():
@@ -196,6 +213,7 @@ def fixture():
     catalog = {
         "schema_version": P.SCHEMA,
         "detector_identity": {"config_sha256": "c" * 64},
+        "detector_inputs_sha256": "d" * 64,
         "entries": [
             {
                 "record_kind": "layer_regular_content",
@@ -213,7 +231,12 @@ def fixture():
 
 
 def compile_catalog(catalog):
-    return P.compile_catalog(catalog, {"config_sha256": "c" * 64}, lambda binding: None)
+    return P.compile_catalog(
+        catalog,
+        {"config_sha256": "c" * 64},
+        "d" * 64,
+        lambda binding: None,
+    )
 
 
 def test_duplicate_coordinates_and_identical_ancestor_content_conserved():
@@ -263,6 +286,7 @@ def test_public_policy_rejects_one_shot_ledger_iterator():
         "active_credential",
         "duplicate_entry",
         "changed_detector",
+        "changed_detector_inputs",
         "bool_size",
         "missing_proof",
         "bad_proof_hash",
@@ -289,6 +313,8 @@ def test_unreviewed_catalog_changes_refuse(mutation):
         catalog["entries"].append(copy.deepcopy(entry))
     elif mutation == "changed_detector":
         catalog["detector_identity"]["config_sha256"] = "d" * 64
+    elif mutation == "changed_detector_inputs":
+        catalog["detector_inputs_sha256"] = "e" * 64
     elif mutation == "bool_size":
         entry["record_bytes"] = True
     elif mutation == "missing_proof":

@@ -3,7 +3,6 @@
   "recorded_at": "2026-09-21T02:52Z",
   "lane": "geometry",
   "why_this_matters": "This is the one gate LANE.md still required and that I had recorded as an external blocker. It was not one: root's isolated-config-dir finding cleared the controller-adoption guard, and the remaining refusals were a sequence of real preflight checks that each had a supported answer.",
-  "source_commit": "256c26bc915080934814789be6a41bbc253f0d1c",
   "image_digest": "sha256:6afe90e331b932666704858ae3ccc1e658ef7dea1d8343925dda0699c4b6310b",
   "image_note": "Built from the source commit above and delivered privately by digest. Never published.",
   "runtime": {
@@ -103,12 +102,21 @@
       "rrd-manifest.json": "2e919513b0cccac9439f93fd96e8297f4d8aa2ca6e445065040d117abddb2cf1",
       "status.json": "b94918c08d6fe33c96d8762c78fb30bb412724346688e1c4cddd8934059b5107",
       "validation.json": "1ac511dc8c4a2776a1f2c46565c27e4834b1a2190c4b792039d6173b7452b117"
-    }
+    },
+    "hashes_that_name_no_file_here": "rrd_sha256 is of the recording the run produced and this verification downloaded. It is 8 MB of run output, not committed here, and the same hash appears keyed by its filename in artifact_hashes below."
   },
   "housekeeping": {
     "claim": "program/gpu-claims/geometry-open3d-cpu-20260921",
     "coordination": "root and openarm were notified before the run, because the only reachable CPU slot was in a cluster belonging to another lane's work",
     "cleanup": "the lane-owned image pull secret is removed; the isolated controller is left for inspection and recorded here"
   },
-  "redaction_note": "Project ids, cluster names, bucket names and regions are replaced with role placeholders. The measurements, hashes, digests and guard messages are verbatim."
+  "redaction_note": "Project ids, cluster names, bucket names and regions are replaced with role placeholders. The measurements, hashes, digests and guard messages are verbatim.",
+  "provenance": {
+    "source_commit": "256c26bc915080934814789be6a41bbc253f0d1c",
+    "commit_is_an_ancestor_of_main": false,
+    "no_advertised_origin_ref_at_audit": "PR 602 was squashed when it merged, so this commit never became an ancestor of main and was on no advertised origin ref at audit time -- the audit found no advertised origin ref containing it at the recorded time; that does not establish whether the object is fetchable directly by SHA. 15b0b11f0 is where its work reached main: a symbol or source line this commit introduced is present at main and `git log -S` traces it to that merge. That is a check on this commit's contribution reaching main, not a claim that the two trees are identical. The per-commit probes are in capability-record-record-provenance-shape.json.",
+    "commit_on_main_carrying_this_source": "15b0b11f0bc137631954ac87076f44753c513976",
+    "why_this_shape": "A review lane found provenance recorded six different ways across these records, so an auditor had to learn each file. This is the one shape: the commit the record attests to, whether the commit is an ancestor of main, and -- where the answer is no -- why that is deliberate and what a reader can resolve instead. harness/audit_record_provenance.py checks the ancestry claim against the repository rather than trusting it.",
+    "this_key_replaced": "A top-level `source_commit` holding '256c26bc915080934814789be6a41bbc253f0d1c'. Moved rather than dropped."
+  }
 }

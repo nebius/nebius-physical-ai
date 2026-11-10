@@ -131,6 +131,92 @@ def test_v1_preemptible_marker_cannot_satisfy_strict_reserved_pool(existing):
     "failure",
     [
         "",
+        "ambiguous",
+        "malformed-provider",
+        "wrong-project",
+        "wrong-name",
+        "wrong-topology",
+        "nonterminal",
+        "incomplete-inventory",
+    ],
+)
+@pytest.mark.parametrize(
+    "instances", [[{}], []], ids=["missing-attributes", "empty-list"]
+)
+def test_unmaterialized_recovery_derives_only_one_verified_terminal_identity(
+    existing, monkeypatch, failure, instances
+):
+    kwargs, saved, groups, provider_cluster, workdir = existing
+    saved.pop("cluster_id")
+    saved["status"] = "provisioning"
+    state_path = workdir / "terraform.tfstate"
+    state_path.write_text(
+        json.dumps(
+            {
+                "resources": [
+                    {
+                        "mode": "managed",
+                        "type": "nebius_mk8s_v1_cluster",
+                        "instances": instances,
+                    }
+                ]
+            }
+        )
+    )
+    state_before = state_path.read_bytes()
+    listed = deepcopy(provider_cluster)
+    if failure == "wrong-project":
+        listed["metadata"]["parent_id"] = "project-other"
+    elif failure == "wrong-name":
+        listed["metadata"]["name"] = "other"
+    elif failure == "nonterminal":
+        listed["status"]["state"] = "PROVISIONING"
+    elif failure == "wrong-topology":
+        groups[0]["spec"]["fixed_node_count"] = 4
+    listed_items = [listed]
+    if failure == "ambiguous":
+        duplicate = deepcopy(provider_cluster)
+        duplicate["metadata"]["id"] = "cluster-other"
+        listed_items.append(duplicate)
+    elif failure == "malformed-provider":
+        listed_items.append({"metadata": [], "status": []})
+    commands = []
+
+    def capture(command, **_kwargs):
+        commands.append(command)
+        if "node-group" in command:
+            payload = {"items": groups}
+        elif "list" in command:
+            payload = {
+                "items": listed_items,
+                **(
+                    {"next_page_token": "more"}
+                    if failure == "incomplete-inventory"
+                    else {}
+                ),
+            }
+        else:
+            payload = provider_cluster
+        return CompletedProcess(command, 0, json.dumps(payload), "")
+
+    monkeypatch.setattr(E, "_run_capture", capture)
+
+    resolved = E._resolve_verified_unchanged_target(**kwargs)
+
+    assert resolved == ("cluster-test" if not failure else "")
+    assert state_path.read_bytes() == state_before
+    assert commands
+    assert any("cluster" in command and "list" in command for command in commands)
+    assert not any(
+        command[0] == "terraform" or "apply" in command or "destroy" in command
+        for command in commands
+    )
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        "",
         "missing-state",
         "wrong-parent",
         "wrong-id",

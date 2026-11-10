@@ -135,7 +135,7 @@ nvidia-nccl-cu12==2.28.9
 nvidia-nvjitlink-cu12==12.8.93
 nvidia-nvshmem-cu12==3.4.5
 nvidia-nvtx-cu12==12.8.90
-oauthlib==4.0.0
+oauthlib==4.0.1
 omegaconf==2.3.1
 onnx==1.22.0
 onnx-ir==1.0.0

@@ -7,6 +7,7 @@ import runpy
 
 import httpx
 import pytest
+from PIL import Image
 
 from npa.workbench import vlm_eval
 
@@ -74,11 +75,40 @@ def test_current_sample_keeps_new_terminal_case_and_updated_scope() -> None:
     assert current_items["progress-without-terminal-fail"].expected_label is False
     assert current.rubrics["default"] == vlm_eval.DEFAULT_RUBRIC
     assert current.evidence_scope == "illustrative_only"
-    assert "truncated-progress sequence" in current.limitations[0]
-    assert "additional omitted-terminal label" in current.limitations[1]
+    assert "four single-frame 2x2" in current.limitations[0]
+    assert "three-frame 4x2 truncated-progress sequence" in current.limitations[0]
+    assert "omitted-terminal sequence label" in current.limitations[1]
     assert "not task-validation" in current.limitations[2]
     frozen = vlm_eval.load_benchmark_dataset(
         str(_live_lane()["FROZEN_SCOPE_PROTOCOL_PATH"])
     )
     assert current.rubrics["default"] != frozen.rubrics["default"]
     assert [current_items[item.id] for item in frozen.items] == frozen.items
+
+
+def test_current_sample_frame_inventory_matches_disclosure() -> None:
+    current = vlm_eval.load_benchmark_dataset(
+        str(vlm_eval.DEFAULT_SAMPLE_BENCHMARK_PATH)
+    )
+    expected = {
+        "place-block-clear-pass": (1, (2, 2)),
+        "align-tool-pass": (1, (2, 2)),
+        "missed-target-fail": (1, (2, 2)),
+        "unstable-end-state-fail": (1, (2, 2)),
+        "progress-without-terminal-fail": (3, (4, 2)),
+    }
+
+    assert {item.id for item in current.items} == set(expected)
+    for item in current.items:
+        expected_count, expected_size = expected[item.id]
+        frame_paths = sorted(
+            path
+            for path in Path(item.rollout).rglob("*")
+            if path.is_file() and path.suffix.lower() in vlm_eval.IMAGE_SUFFIXES
+        )
+        assert len(frame_paths) == expected_count, item.id
+        for frame_path in frame_paths:
+            with Image.open(frame_path) as frame:
+                frame.load()
+                assert frame.mode == "RGB", frame_path
+                assert frame.size == expected_size, frame_path

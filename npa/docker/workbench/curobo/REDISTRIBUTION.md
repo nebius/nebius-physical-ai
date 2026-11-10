@@ -17,9 +17,11 @@ gates. All historical images, findings and the four-database source census below
 remain as-issued. The final artifact contract requires one filesystem layer,
 only the measured final package database, and the 164 final notices. The measured
 BuildKit export also emits a terminal `WORKDIR` metadata layer: exactly 32 gzip
-bytes decoding to 1024 zero bytes and no tar entries. Only that optional tail's
-exact compressed hash, size and uncompressed diff ID are permitted; arbitrary
-empty archives, hidden gzip metadata, extra layers and whiteouts are rejected.
+bytes decoding to 1024 zero bytes and no tar entries. Docker's classic store
+materializes that same verified tar as exactly 1024 uncompressed zero bytes.
+Only those two stored-byte identities and their common uncompressed diff ID are
+permitted; arbitrary empty archives, hidden gzip metadata, extra layers and
+whiteouts are rejected.
 The original one-layer-only verifier refusal is retained, not relabeled as a
 pass. The contract rejects
 the earlier databases/notices if reintroduced as distributed ancestor bytes.
@@ -43,14 +45,14 @@ indexes, and all three corresponding-source archives; all five artifacts were
 downloaded and hash-checked. Other distro packages keep the original snapshot.
 `install_security_apt.py` verifies downloaded bytes, package control identities
 and the installed versions without resolving an unrelated package upgrade.
-The reference's four actual package databases and all 164 resolved notice files
+The reference's four actual package databases and all 165 resolved notice files
 are bound below. Its inherited OpenSSL `3.0.13-0ubuntu3.6` bytes remain recorded;
 replacing active packages does not remove those ancestor bytes or establish their
 security acceptance. Recheck the exact rebuilt-image closure before accepting a
 successor; these pins do not substitute for the image and vulnerability gates.
 
 `distro-source-closure.json`, also delivered under `/usr/share/doc/npa-curobo/`,
-binds all 250 distinct binary package/version pairs from four actual layer
+binds all 251 distinct binary package/version pairs from four actual layer
 package databases, including 29 source versions superseded in later layers.
 It records 143 Ubuntu source/version closures and every `.dsc`, original archive
 and packaging archive with exact public snapshot URL, size and SHA256. All were
@@ -61,7 +63,8 @@ notices available with the conveyed binaries under each package's terms. A
 broken source link, incomplete ancestor closure or missing notice blocks release.
 Neither a generic source-repository link nor the GCC14 libgomp source suffices
 for the other executables. These controls also cover ordinary distro dependencies
-such as libc, GnuTLS and binutils, not only explicitly installed package names.
+such as libc, GnuTLS, binutils and the `xz-utils` notice extractor, not only
+explicitly installed package names.
 
 The actual image installs GCC13 (`13.3.0-6ubuntu2~24.04.1`), not a guessed GCC14
 compiler closure. GCC's compiler/driver, binutils, patch, wget and rsync retain
@@ -242,8 +245,9 @@ accepted whole-image byte/security review and supported-image release.
   Its product-specific supplement permits any SDK portion subject to the
   application distribution requirements. The build adds that distribution's
   full license and third-party notices at
-  `/usr/share/doc/npa-curobo/NVSHMEM-LICENSE.txt`, verified against SHA256
-  `43a87c0ff94ce3196011ff75e17fbee96933c9e1d511557659ece8a326f95e8f`,
+  `/usr/share/doc/npa-curobo/NVSHMEM-LICENSE.txt`, extracted from the
+  hash-verified CUDA 13 archive and verified against SHA256
+  `1f5b7ada702926bc73327e6eb02dc2d41facc844cc4512ac900451bda06a459e`,
   alongside the wheel's bundled CUDA license. Wheel metadata alone is not a
   license grant. Built-image inventory and notice hashes must verify these
   boundaries before publication.
@@ -263,7 +267,7 @@ Official sources: [cuRobo license](https://github.com/NVlabs/curobo/blob/8e734f3
 [cuSPARSELt SLA](https://docs.nvidia.com/cuda/cusparselt/license.html),
 [NCCL release license](https://github.com/NVIDIA/nccl/blob/v2.29.7-1/LICENSE.txt),
 [NVSHMEM release manifest](https://developer.download.nvidia.com/compute/nvshmem/redist/redistrib_3.4.5.json),
-[NVSHMEM product license](https://developer.download.nvidia.com/compute/nvshmem/redist/libnvshmem/LICENSE.txt),
+[NVSHMEM CUDA 13 archive](https://developer.download.nvidia.com/compute/nvshmem/redist/libnvshmem/linux-x86_64/libnvshmem-linux-x86_64-3.4.5_cuda13-archive.tar.xz),
 [container license](https://gitlab.com/nvidia/container-images/cuda/-/blob/master/NGC-DL-CONTAINER-LICENSE).
 
 Metadata sources: [pinned upstream package metadata](https://github.com/NVlabs/curobo/blob/8e734f3ced1df898990bcd92de40abce475907db/pyproject.toml),

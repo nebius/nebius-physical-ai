@@ -18,19 +18,28 @@ SPEC.loader.exec_module(repair)
 
 
 def test_valid_bundle_replacement_updates_both_versions_and_real_wheel_bytes(tmp_path):
-    source = '_PIP_VERSION = "23.0.1"\n_SETUPTOOLS_VERSION = "79.0.1"\n'
+    source = '_PIP_VERSION = "24.0"\n_SETUPTOOLS_VERSION = "79.0.1"\n'
     bundled = tmp_path / "_bundled"
     bundled.mkdir()
-    (bundled / "pip-23.0.1-py3-none-any.whl").write_bytes(b"previous pip")
+    (bundled / "pip-24.0-py3-none-any.whl").write_bytes(b"previous pip")
     (bundled / "setuptools-79.0.1-py3-none-any.whl").write_bytes(b"previous setuptools")
     wheels = {
         "pip-26.2.1+npa.1-py3-none-any.whl": b"replacement pip bytes",
-        "setuptools-84.0.0-py3-none-any.whl": b"replacement setuptools bytes",
+        "setuptools-84.2.1-py3-none-any.whl": b"replacement setuptools bytes",
     }
     result = repair._replace_bundle(tmp_path, source, wheels)
-    assert repair._versions(result) == {"pip": "26.2.1+npa.1", "setuptools": "84.0.0"}
+    assert repair._versions(result) == {"pip": "26.2.1+npa.1", "setuptools": "84.2.1"}
     assert {path.name: path.read_bytes() for path in bundled.iterdir()} == wheels
     assert repair._replace_bundle(tmp_path, result, wheels) == result
+
+
+def test_repair_matches_the_pinned_wan_python_runtime_and_setuptools_wheel() -> None:
+    assert repair.RUNTIME_PYTHON == (3, 11)
+    assert repair.SETUPTOOLS_VERSION == "84.2.1"
+    assert (
+        repair.SETUPTOOLS_SHA256
+        == "ca140b45d5325a9478f880e351484f62fef15f336462e449ca0c03c873d589c2"
+    )
 
 
 @pytest.mark.parametrize(
@@ -58,16 +67,16 @@ def test_unexpected_bootstrap_wheel_is_not_deleted_or_ignored(tmp_path):
     assert surprise.read_bytes() == b"preserve"
 
 
-@pytest.mark.parametrize("version,corrupt", [("84.0.0", True), ("0.0.0", False)])
+@pytest.mark.parametrize("version,corrupt", [("84.2.1", True), ("0.0.0", False)])
 def test_changed_or_mislabeled_wheel_is_rejected(tmp_path, version, corrupt):
-    wheel = tmp_path / "setuptools-84.0.0-py3-none-any.whl"
+    wheel = tmp_path / "setuptools-84.2.1-py3-none-any.whl"
     with zipfile.ZipFile(wheel, "w") as archive:
         archive.writestr(
-            "setuptools-84.0.0.dist-info/METADATA",
+            "setuptools-84.2.1.dist-info/METADATA",
             f"Name: setuptools\nVersion: {version}\n",
         )
     digest = hashlib.sha256(wheel.read_bytes()).hexdigest()
     if corrupt:
         wheel.write_bytes(wheel.read_bytes() + b"changed")
     with pytest.raises(ValueError, match="bytes|metadata"):
-        repair._wheel(wheel, "setuptools", "84.0.0", digest)
+        repair._wheel(wheel, "setuptools", "84.2.1", digest)

@@ -38,6 +38,7 @@ def _installed_source(root, module, monkeypatch):
                 for dependency in sorted(source["excluded_dependencies"])
             )
         ).encode()
+        original += b"".join(source.get("replacement_dependencies", {}))
         (directory / "METADATA").write_bytes(original)
         (directory / "LICENSE").write_text("retained license notice")
         (directory / "RECORD").write_text(
@@ -56,7 +57,7 @@ def test_exclusions_update_record_and_preserve_other_edges_and_notices(
 ):
     _installed_source(tmp_path, runtime_source, monkeypatch)
     receipt = runtime_source._prepare(tmp_path, check_only=False)
-    assert len(receipt) == 2
+    assert len(receipt) == 3
     for name, source in runtime_source.SOURCES.items():
         directory = tmp_path / name
         metadata = (directory / "METADATA").read_bytes()
@@ -65,6 +66,11 @@ def test_exclusions_update_record_and_preserve_other_edges_and_notices(
         assert (directory / "LICENSE").read_text() == "retained license notice"
         for dependency in source["excluded_dependencies"]:
             assert f"Requires-Dist: {dependency}".encode() not in metadata
+        for original_requirement, replacement in source.get(
+            "replacement_dependencies", {}
+        ).items():
+            assert original_requirement not in metadata
+            assert replacement in metadata
         rows = list(csv.reader((directory / "RECORD").read_text().splitlines()))
         digest = (
             base64.urlsafe_b64encode(hashlib.sha256(metadata).digest())
@@ -100,16 +106,37 @@ def test_apply_requires_excluded_distributions_to_be_uninstalled(
     assert next(tmp_path.glob("*/METADATA")).read_bytes() == original
 
 
+def test_replacement_requires_the_reviewed_original_requirement(
+    runtime_source, monkeypatch, tmp_path
+):
+    _installed_source(tmp_path, runtime_source, monkeypatch)
+    name = "datasets-4.8.5.dist-info"
+    directory = tmp_path / name
+    original, replacement = next(
+        iter(runtime_source.SOURCES[name]["replacement_dependencies"].items())
+    )
+    metadata = (directory / "METADATA").read_bytes().replace(original, replacement)
+    (directory / "METADATA").write_bytes(metadata)
+    runtime_source.SOURCES[name]["metadata_sha256"] = hashlib.sha256(
+        metadata
+    ).hexdigest()
+
+    with pytest.raises(RuntimeError, match="missing reviewed dependency replacement"):
+        runtime_source._prepare(tmp_path, check_only=False)
+
+
 def test_stock_recipe_enforces_reduced_closure_in_the_install_layer():
     text = (RECIPE / "Dockerfile").read_text()
-    installation = text.split("RUN python3.12 -m venv", 1)[1].split("\nENV ", 1)[0]
+    installation = text.split("RUN /opt/genesis/venv/bin/python -m pip install", 1)[
+        1
+    ].split("\nCOPY ", 1)[0]
     assert "NPA_GENESIS_SUPPORTED_STUDENT_POLICIES=act" in text
     assert '"pillow>=13.0.0,<14.0"' in installation
     assert "/opt/genesis/venv/lib/python3.12/site-packages" in installation
     assert "GENESIS_VENV=/opt/genesis/venv" in text
     assert "NPA_BAKED_PYTHON=/opt/genesis/venv/bin/python" in text
     assert "PATH=/opt/genesis/venv/bin:/opt/npa/venv/bin:$PATH" in text
-    assert "RUN python3.12 -m venv /opt/genesis/venv" in text
+    assert "python3.12 -m venv /opt/genesis/venv" in text
     assert "NPA_IMAGE_SOURCE_SHA=${NPA_SOURCE_SHA}" in text
     assert "--check-only" in installation
     assert "pip uninstall -y tetgen diffusers wandb torchcodec" in installation

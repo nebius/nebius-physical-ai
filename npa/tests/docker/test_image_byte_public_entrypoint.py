@@ -132,13 +132,16 @@ def prepared(tmp_path, monkeypatch):
             ],
         }
         policy = destination / "synthetic-policy.json"
-        policy.write_text(json.dumps(catalog))
-        policy.chmod(0o600)
         inventory = Path(auth["literal_inventory"]["path"])
         inventory.write_text(json.dumps({"literals": ["absent confidential fixture"]}))
         auth["literal_inventory"]["sha256"] = hashlib.sha256(
             inventory.read_bytes()
         ).hexdigest()
+        catalog["detector_inputs_sha256"] = P.detector_inputs_sha256(
+            W.source_bindings()
+        )
+        policy.write_text(json.dumps(catalog))
+        policy.chmod(0o600)
         auth["sources"] = W.source_bindings()
         F.write(args.authorization, F.js(auth))
         committed = {

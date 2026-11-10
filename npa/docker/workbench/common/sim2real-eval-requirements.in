@@ -1,0 +1,22 @@
+# Resolver input for the Python 3.12 linux/amd64 loop-eval dependency closure.
+#
+# The digest-pinned EnvGen parent deliberately contributes only its shared
+# runtime.  Compile the complete loop-eval overlay, including every declared
+# transitive dependency, then install the generated lock with --no-deps.
+#
+# MoviePy's released metadata rejects the security-fixed Pillow 13.  Generate
+# with sim2real-eval-requirements.override, restore Pillow 13's exact hashes in
+# the result, and apply the bounded metadata repair immediately after install.
+-r sim2real-control-requirements.txt
+-r sim2real-genesis-requirements.txt
+# The inherited EnvGen botocore 1.43.118 requires python-dateutil<3.
+python-dateutil==2.9.0.post0
+# Preserve the reviewed MoviePy runtime closure while compiling the CUDA
+# compatibility import below.  imageio-ffmpeg remains source-only at install.
+fsspec==2026.6.0
+imageio-ffmpeg==0.6.0
+numpy==2.4.6
+moviepy==2.2.1
+# loop-eval retains the legacy Genesis import smoke, while its public EnvGen
+# parent deliberately excludes the unrelated GPU runtime closure.
+torch==2.13.0+cu130

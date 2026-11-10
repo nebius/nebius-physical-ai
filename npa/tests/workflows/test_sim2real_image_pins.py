@@ -43,7 +43,7 @@ _STANDARD_WORKFLOW_PASSTHROUGH_DOCKERFILES = (
 
 _ENVGEN_PARENT = (
     "ghcr.io/nebius/nebius-physical-ai/npa-envgen@"
-    "sha256:55f1541c1a86e9d865963753cfa38fa1dbf88928c8d28d9ee30e2851a5604b88"
+    "sha256:38a9c229218600dca1e4071561e51c50a76cb0c538e60c9a70b80e81f06fc726"
 )
 
 
@@ -516,9 +516,11 @@ def test_cpu_controller_is_small_pinned_and_resolver_closed() -> None:
     assert "NPA_SOURCE_SHA" in dockerfile
     assert "NPA_IMAGE_SOURCE_SHA=${NPA_SOURCE_SHA}" in dockerfile
     assert "NPA_SKIP_EAGER_IMPORTS=1" in dockerfile
-    assert "ARG DEBIAN_SNAPSHOT=20261002T000000Z" in dockerfile
+    assert "ARG DEBIAN_SNAPSHOT=20261024T000000Z" in dockerfile
     assert "ARG MIN_PERL_BASE_VERSION=5.40.1-6+deb13u1" in dockerfile
+    assert "ARG MIN_LIBBROTLI_VERSION=1.1.0-2+deb13u1" in dockerfile
     assert "apt-get upgrade -y --no-install-recommends" in dockerfile
+    assert '"libbrotli1=${MIN_LIBBROTLI_VERSION}"' in dockerfile
     assert 'dpkg --compare-versions "${installed}" ge "$2"' in dockerfile
     assert "snapshot.debian.org/archive/debian/${DEBIAN_SNAPSHOT}" in dockerfile
     assert "npa-exact-source.pth" in dockerfile
@@ -869,13 +871,16 @@ def test_sim2real_control_plane_requirement_closure_is_exact() -> None:
         "GitPython==3.2.1",
         "pillow==13.0.0",
     ]
-    for relative_path in ("sim2real-eval/Dockerfile",):
-        dockerfile = (root / relative_path).read_text(encoding="utf-8")
-        assert "sim2real-control-requirements.txt" in dockerfile
-        assert "sim2real-genesis-requirements.txt" in dockerfile
-        assert "python -m pip uninstall -y transformers" in dockerfile
-        assert 'd.metadata["Name"].lower() == "transformers"' in dockerfile
-        assert "pip check" in dockerfile
+    eval_dockerfile = (root / "sim2real-eval/Dockerfile").read_text(encoding="utf-8")
+    # Loop evaluation installs its complete, hash-locked Python 3.12 closure;
+    # it must not fall back to the partial control or Genesis requirement files.
+    assert "sim2real-eval-requirements.lock" in eval_dockerfile
+    assert "sim2real-control-requirements.txt" not in eval_dockerfile
+    assert "sim2real-genesis-requirements.txt" not in eval_dockerfile
+    assert "--require-hashes" in eval_dockerfile
+    assert "python -m pip uninstall -y transformers" in eval_dockerfile
+    assert 'd.metadata["Name"].lower() == "transformers"' in eval_dockerfile
+    assert "pip check" in eval_dockerfile
 
     envgen_dockerfile = (root / "sim2real-envgen/Dockerfile").read_text(
         encoding="utf-8"

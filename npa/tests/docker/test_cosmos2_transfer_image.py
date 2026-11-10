@@ -63,7 +63,7 @@ def test_source_base_uv_and_python_are_immutable() -> None:
     assert f"cudnn-runtime-ubuntu24.04@{RUNTIME_BASE_SHA}" in text
     assert "FROM ${CUDA_RUNTIME_IMAGE} AS runtime" in text
     assert re.search(r"UV_IMAGE=\S+@sha256:[0-9a-f]{64}", text)
-    assert "COSMOS_PYTHON_VERSION=3.10.18" in text
+    assert "COSMOS_PYTHON_VERSION=3.11.16" in text
     assert "UBUNTU_SNAPSHOT=20260801T053000Z" in text
     assert (
         text.count("URIs: https://snapshot.ubuntu.com/ubuntu/${UBUNTU_SNAPSHOT}/") == 2
@@ -87,7 +87,7 @@ def test_lfs_media_models_and_build_credentials_are_excluded() -> None:
     text = _dockerfile()
     # The Transfer tree now comes from an integrity-checked public archive; SAM2
     # remains a separate Git fetch and must keep its LFS-smudge protections.
-    assert text.count("GIT_LFS_SKIP_SMUDGE=1") >= 2
+    assert text.count("GIT_LFS_SKIP_SMUDGE=1") >= 3
     assert "filter.lfs.smudge=" in text
     assert "rm -rf .git assets" in text
     assert "matplotlib/mpl-data/sample_data" in text
@@ -119,9 +119,9 @@ def test_lfs_media_models_and_build_credentials_are_excluded() -> None:
         "sha256=931c303696af6fa3417112103b1cad26890e5a07eccb5b99783700e33f2b8aad"
         in overrides
     )
-    assert "msgpack-1.2.1-cp310-cp310-manylinux" in overrides
+    assert "msgpack-1.2.1-cp311-cp311-manylinux" in overrides
     assert (
-        "sha256=83efa1c898e0fc5380fc0cabbf75164c52e3b5cbb45973710d75821928380c73"
+        "sha256=a28d076ca7c82b9c8728ad90b7147489449557038bed50e4241eb832395169b4"
         in overrides
     )
     assert "setuptools-84.2.1-py3-none-any.whl" in overrides
@@ -208,7 +208,7 @@ def test_forbidden_payload_guard_rejects_weight_and_media(tmp_path: Path) -> Non
     assert "model/checkpoint" in proc.stderr
     weight.unlink()
 
-    allowed_site = clean / "lib" / "python3.10" / "site-packages"
+    allowed_site = clean / "lib" / "python3.11" / "site-packages"
     allowed_site.mkdir(parents=True)
     (allowed_site / "_virtualenv.pth").write_text(
         "import _virtualenv\n", encoding="utf-8"
@@ -238,7 +238,7 @@ def test_forbidden_payload_guard_rejects_weight_and_media(tmp_path: Path) -> Non
     (clean / "sample.mp4").unlink()
 
     skimage_data = (
-        clean / ".venv" / "lib" / "python3.10" / "site-packages" / "skimage" / "data"
+        clean / ".venv" / "lib" / "python3.11" / "site-packages" / "skimage" / "data"
     )
     skimage_data.mkdir(parents=True)
     proc = subprocess.run(
@@ -249,7 +249,7 @@ def test_forbidden_payload_guard_rejects_weight_and_media(tmp_path: Path) -> Non
     skimage_data.rmdir()
 
     wandb_bin = (
-        clean / ".venv" / "lib" / "python3.10" / "site-packages" / "wandb" / "bin"
+        clean / ".venv" / "lib" / "python3.11" / "site-packages" / "wandb" / "bin"
     )
     wandb_bin.mkdir(parents=True)
     proc = subprocess.run(

@@ -84,11 +84,12 @@ def _preflight(project, directory, **overrides):
 def test_live_project_overrides_unrelated_host_storage_without_changing_config(
     live_project,
 ):
-    project, _storage, directory = live_project
+    project, storage, directory = live_project
     before = {path.name: path.read_bytes() for path in directory.iterdir()}
     overrides = {
         "AWS_ACCESS_KEY_ID": "synthetic-invalid-access",
         "AWS_SECRET_ACCESS_KEY": "synthetic-invalid-secret",
+        "AWS_ENDPOINT_URL": storage.endpoint_url,
         "NEBIUS_S3_BUCKET": "s3://synthetic-unrelated-bucket",
         "NPA_CHECKPOINT_BUCKET": "s3://synthetic-unrelated-bucket",
     }

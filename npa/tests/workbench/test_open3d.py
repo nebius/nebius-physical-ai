@@ -636,10 +636,17 @@ def test_download_refuses_a_scan_that_changed_since_prepare(
 
     def rewritten(uri: str) -> bytes:
         calls.append(uri)
-        return b"rewritten"
+        # A scan that was rewritten is a complete object of its own, so this has to
+        # arrive at the length the manifest recorded. The nine-byte stub this used to
+        # return modelled a truncated stream, which is the opposite diagnosis.
+        return b"rewritten".ljust(manifest.fragments[0].bytes, b"\0")
 
     monkeypatch.setattr(runtime, "read_bytes_uri", rewritten)
-    with pytest.raises(Open3dError, match="the manifest and the stored scan disagree"):
+    # The message reports the observation -- reads at exactly the recorded length with
+    # the wrong digest -- and both causes consistent with it. It used to assert the
+    # store had diverged, which these bytes cannot establish: a corruption in transit
+    # that preserves length produces the same reads.
+    with pytest.raises(Open3dError, match="arrived at exactly"):
         runtime._download_fragments(manifest, tmp_path)
     # A store that really has diverged must stop, not retry forever.
     assert len(calls) == runtime.FRAGMENT_READ_ATTEMPTS
@@ -735,7 +742,7 @@ def test_download_names_every_failed_attempt_in_the_error(
         runtime._download_fragments(manifest, tmp_path)
     message = str(failure.value)
     assert "attempt 1: OSError: IncompleteRead" in message
-    assert "attempt 2: digest mismatch (5 bytes read)" in message
+    assert "attempt 2: digest mismatch (5 bytes read of 2048 recorded)" in message
     assert "attempt 3: OSError: connection reset by peer" in message
 
 
@@ -882,7 +889,10 @@ def _visualize_payload(monkeypatch, tmp_path, *, factor, cropped) -> dict:
         ],
         "voxel_size": 0.05,
     }
-    manifest = RegistrationManifest.model_validate(manifest).model_dump(mode="json")
+    # The published document, which is what `manifest_sha256` binds and what
+    # `visualize` verifies against -- not `model_dump`, which carries fields the
+    # published manifest omits while they are inactive.
+    manifest = RegistrationManifest.model_validate(manifest).canonical_document()
     graph = {
         "nodes": [{"fragment_id": key, "pose": IDENTITY} for key in ("a", "b")],
         "edges": [

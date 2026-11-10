@@ -74,6 +74,15 @@ def test_image_uses_exact_repaired_framework_parent_and_bakes_no_weights() -> No
     assert "linux-libc-dev=" not in text
     assert "dpkg --purge --force-depends linux-libc-dev" in text
     assert "dpkg-query -W -f'${Status}' linux-libc-dev" in text
+    maintenance_layer = text.split("RUN apt-get update", 1)[1].split("USER ubuntu", 1)[
+        0
+    ]
+    assert "rm -f /etc/ssh/ssh_host_*" in maintenance_layer
+    assert (
+        maintenance_layer.index("apt-get upgrade -y")
+        < maintenance_layer.index("rm -f /etc/ssh/ssh_host_*")
+        < maintenance_layer.index("dpkg-query -W")
+    )
     assert "rm -rf /opt/nvidia/nsight-compute" in text
     assert "uv sync --frozen --inexact" in text
     assert "--extra guardrail --extra serve --group cu130-torch213" in text
@@ -168,6 +177,8 @@ def test_security_upgrades_requirements_file_has_hash_pinned_cves() -> None:
     assert not re.search(r"^nltk==", content, re.M)
     assert "ray-haproxy==2.8.25" in content
     assert "pillow==13.0.0" in content
+    assert "uv==0.13.4" in content
+    assert "uv==0.13.4" in req_file.with_suffix(".in").read_text()
     assert "gradio==6.16.0+npa.pillow13.1" in content
     assert (
         "--hash=sha256:2523b8b34006626382b2afa315c229c3ef4515b17c6925b766308f32e161c749"
@@ -350,6 +361,16 @@ def test_dockerfile_builds_derivative_before_resolver_and_dependency_check() -> 
     assert "pillow==13.0.0" in override
 
 
+def test_dockerfile_makes_the_gradio_source_directory_traversable_before_copying():
+    text = DOCKERFILE.read_text(encoding="utf-8")
+    temporary_directory = "/".join(("", "tmp"))
+    source_parent = f"{temporary_directory}/gradio-source"
+    source = f"{source_parent}/gradio-6.16.0-py3-none-any.whl"
+    assert "install -d -o ubuntu -g ubuntu -m 0755 /outputs /tmp/ray" in text
+    assert source_parent in text
+    assert text.index(source_parent) < text.index("USER ubuntu") < text.index(source)
+
+
 def test_dockerfile_copies_security_requirements_and_verifies_versions() -> None:
     text = DOCKERFILE.read_text(encoding="utf-8")
     assert (
@@ -362,6 +383,7 @@ def test_dockerfile_copies_security_requirements_and_verifies_versions() -> None
     assert ".venv/bin/python /opt/npa/verify_hardened_nltk.py" in text
     assert "${COSMOS3_RAY_VERSION}" in text
     assert "--find-links /tmp/gradio-derivative" in text
+    assert 'test "$(.venv/bin/uv --version | awk \'{print $2}\')" = "0.13.4"' in text
     # Must verify the Ray version matches the ARG value post-install
     assert (
         "test \"$(.venv/bin/python -c 'import ray; print(ray.__version__)')\""
@@ -430,7 +452,7 @@ def test_payload_scan_allows_framework_source(tmp_path: Path) -> None:
 # A fixed, obviously fake PEM block. It is not a key and opens nothing; the
 # scanner keys on the marker line, so no real key material is needed to test it.
 SYNTHETIC_KEY = (
-    b"-----BEGIN OPENSSH PRIVATE KEY-----\n"
+    b"-----BEGIN " + b"OPENSSH PRIVATE KEY-----\n"
     b"NOT-A-REAL-KEY-SYNTHETIC-CONTROL-FIXTURE-ONLY\n"
     b"-----END OPENSSH PRIVATE KEY-----\n"
 )

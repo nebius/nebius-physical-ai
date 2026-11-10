@@ -49,6 +49,7 @@ accidental dead entries fail the guardrail. The retired monolithic
 | `workbench.seedvr2.restore` | `npa workbench seedvr2 restore` | exact low-resolution S3 MP4, dimensions, seed, conditioning mode, assigned-GPU validation | official SeedVR2-3B restored MP4, upstream log, model/source/runtime/config provenance | no (real pinned upstream one-step GPU inference) |
 | `workbench.seedvr2.verify` | `npa workbench seedvr2 verify` | SeedVR2 `result.json` and restored MP4 | independent S3 readback hash and complete decode verification | no |
 | `workbench.seedvr2.review` | `npa workbench seedvr2 review` | verified source/result pair | non-blended bicubic-left/candidate-right MP4, contact sheet, JSON, HTML | no |
+| `workbench.seedvr2.quality_boundary` | `npa workbench seedvr2 quality-boundary` | exact SeedVR2 `result.json`, source MP4, and restored MP4 | hash-bound advisory diagnostics plus an explicit review-only, not-quality-qualified JSON boundary | no |
 | `workbench.open3d.stage_demo` | `npa workbench open3d stage-demo` | nothing (downloads the upstream `open3d.data` indoor scans) | staged `.ply` scans and a digest-bound `manifest.json` | no |
 | `workbench.open3d.prepare` | `npa workbench open3d prepare` | prefix of operator `.pcd`/`.ply` scans | digest-bound `manifest.json` | no |
 | `workbench.open3d.register` | `npa workbench open3d register` | `manifest.json` | per-pair RANSAC/FPFH + ICP results, aligned clouds, journal | no (real `registration_ransac_based_on_feature_matching` + `registration_icp`) |
@@ -233,17 +234,29 @@ accidental dead entries fail the guardrail. The retired monolithic
 | `workbench.fiftyone.curate_augmented` | `npa workbench fiftyone curate-augmented` | `config.augment_uri`, `config.curator_report_uri` | `config.curation_report_uri` (real FiftyOne Brain keep/drop report) | no |
 | `workbench.fiftyone.review_augmented` | `npa workbench fiftyone review-augmented` | canonical run + quality disposition | portable real FiftyOneDataset for every accepted/rejected terminal candidate, with non-promoting rejected fields | no |
 | `workbench.ros2.preflight` | `python3 -m npa.workflows.byof.ros2_pipeline --preflight` | executing process environment (ros2 CLI, ROS_DISTRO, rclpy); workflows require an operator-selected Jazzy image | preflight report (stdout JSON); does not inspect an external robot host | no |
-| `workbench.molmoact.finetune` | `python3 -m npa.workflows.byof.molmoact_pipeline finetune` | `config.model_id`, `config.dataset_uri`, `config.training_uri` | validated config plus a plan-only manifest (training not implemented) | yes (plan-only: validates config, writes manifest, then raises; training not implemented) |
-| `workbench.molmoact.serve` | `python3 -m npa.workflows.byof.molmoact_pipeline serve` | `config.model_id`, `config.serve_port` | validated config plus a plan-only manifest (serving not implemented) | yes (plan-only: validates config, writes manifest, then raises; serving not implemented) |
-| `workbench.molmoact.eval` | `python3 -m npa.workflows.byof.molmoact_pipeline eval` | `config.model_id`, `config.dataset_uri`, `config.evaluation_uri` | validated config plus a plan-only manifest (evaluation not implemented) | yes (plan-only: validates config, writes manifest, then raises; evaluation not implemented) |
+| `workbench.molmoact.finetune` | `python3 -m npa.workflows.byof.molmoact_pipeline finetune` | `config.model_id`, `config.dataset_uri`, `config.training_uri` | stdout-only validated plan JSON; no training or S3 artifact | yes (plan-only: emits stdout JSON and returns zero; training and S3 writes are not implemented) |
+| `workbench.molmoact.serve` | `python3 -m npa.workflows.byof.molmoact_pipeline serve` | `config.trained_checkpoint_uri`, `config.serve_port` | stdout-only validated plan JSON; no serving or S3 artifact | yes (plan-only: emits stdout JSON and returns zero; serving and S3 writes are not implemented) |
+| `workbench.molmoact.eval` | `python3 -m npa.workflows.byof.molmoact_pipeline eval` | `config.model_id`, `config.trained_checkpoint_uri`, `config.dataset_uri`, `config.evaluation_uri` | stdout-only validated plan JSON; no evaluation or S3 artifact | yes (plan-only: emits stdout JSON and returns zero; evaluation and S3 writes are not implemented) |
 | `workbench.openvla.train` | `python3 -m npa.workflows.byof.openvla_pipeline train` | `config.model_id`, `config.dataset_uri`, `config.training_uri` | validated config plus an upstream training plan (training executes via OpenVLA-OFT, not yet wired) | yes (plan-only: validates config, emits upstream argv plan, then raises; training not implemented) |
 | `workbench.openvla.serve` | `python3 -m npa.workflows.byof.openvla_pipeline serve` | `config.trained_checkpoint_uri` | validated config plus an upstream serve plan (serving not yet wired) | yes (plan-only: validates config, emits upstream argv plan, then raises; serving not implemented) |
 | `workbench.openvla.eval` | `python3 -m npa.workflows.byof.openvla_pipeline eval` | `config.trained_checkpoint_uri`, `config.dataset_uri`, `config.evaluation_uri` | validated config plus an upstream eval plan (rollout execution not implemented) | yes (plan-only: validates config, emits upstream argv plan, then raises; evaluation not implemented) |
 | `workbench.newton.train_teacher` | `python3 -m npa.workflows.byof.newton_pipeline train-teacher` | `config.dataset_uri`, `config.training_uri` | validated config plus a plan-only stub manifest under `config.training_uri` | yes (plan-only: validates config, writes stub manifest, then raises; training not implemented) |
 | `workbench.newton.generate_demos` | `python3 -m npa.workflows.byof.newton_pipeline generate-demos` | `config.trained_checkpoint_uri`, `config.demos_uri` | validated config plus a plan-only stub manifest under `config.demos_uri` | yes (plan-only: validates config, writes stub manifest, then raises; demo generation not implemented) |
 | `workbench.newton.eval` | `python3 -m npa.workflows.byof.newton_pipeline eval` | `config.trained_checkpoint_uri`, `config.dataset_uri`, `config.evaluation_uri` | validated config plus a plan-only stub manifest under `config.evaluation_uri` | yes (plan-only: validates config, writes stub manifest, then raises; evaluation not implemented) |
-| `workbench.gemini_robotics.plan` | `python3 -m npa.workflows.byof.gemini_robotics_pipeline plan` | `config.api_base_url`, `config.task`, `config.model_id`, `config.output_uri` | advisory ER plan receipt conditionally created at the exact `config.output_uri` S3 object (provisional adapter; no live access validated) | yes (provisional: requires explicit API base URL/model and a new exact S3 output URI) |
-| `workbench.gemini_robotics.eval` | `python3 -m npa.workflows.byof.gemini_robotics_pipeline eval` | `config.api_base_url`, `config.input_uri`, `config.model_id`, `config.output_uri` | advisory rubric-evaluation receipt conditionally created at the exact `config.output_uri` S3 object; input JSON supplies `plan_text` and `rubric` (provisional adapter; no live access validated) | yes (provisional: requires explicit API base URL/model, a valid S3 input object, and a new exact S3 output URI) |
+| `workbench.gemini_robotics.plan` | `python3 -m npa.workflows.byof.gemini_robotics_pipeline plan` | `config.task`, `config.output_uri`; optional `config.api_base_url`, `config.model_id` overrides | advisory ER plan receipt conditionally created at the exact `config.output_uri` S3 object (endpoint/model defaults live-validated 2026-10-10) | yes (requires `GOOGLE_API_KEY` and a new exact S3 output URI; endpoint/model overrides are optional) |
+| `workbench.gemini_robotics.eval` | `python3 -m npa.workflows.byof.gemini_robotics_pipeline eval` | `config.input_uri`, `config.output_uri`; optional `config.api_base_url`, `config.model_id` overrides | advisory rubric-evaluation receipt conditionally created at the exact `config.output_uri` S3 object; input JSON supplies `plan_text` and `rubric` (endpoint/model defaults live-validated 2026-10-10) | yes (requires `GOOGLE_API_KEY`, a valid S3 input object, and a new exact S3 output URI; endpoint/model overrides are optional) |
+
+MolmoAct execution boundary: these three adapters only validate configuration
+and print plan JSON. They do not write any URI. The shipped
+`workflows/testing/molmoact-finetune.yaml` declares a durable manifest output
+for planning, but normal execution cannot satisfy that output contract and is
+unsupported.
+
+MolmoAct execution boundary: these three adapters only validate configuration
+and print plan JSON. They do not write any URI. The shipped
+`workflows/testing/molmoact-finetune.yaml` declares a durable manifest output
+for planning, but normal execution cannot satisfy that output contract and is
+unsupported.
 
 Creative mashup example: `tokenfactory-cosmos-gate.yaml` (reason → augment → VLM gate loop).
 
@@ -296,4 +309,10 @@ value leaves model selection to the CLI default for the chosen backend; an
 explicit value is passed as `--model`, including legacy dedicated model IDs.
 The audit-only `workbench.vlm_eval.compare_judges` primitive passes distinct
 `config.primary_vlm_model` and `config.secondary_vlm_model` values and never
-averages their outcomes.
+averages their outcomes. It rejects the exact MiniCPM-V-4_5 plus
+gemma-3-27b-it pair because a retained six-family calibration found shared
+false-pass modes in three of six retained adversarial families. See the
+sanitized retained-evidence index
+[`vlm-paired-shared-failure-calibration-20261101`](evidence/vlm-paired-shared-failure-calibration-20261101/README.md).
+Other compatible pairs remain available;
+this measured deny rule does not qualify either model or cover unseen attacks.

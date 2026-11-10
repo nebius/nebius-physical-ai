@@ -1,0 +1,160 @@
+{
+  "what_this_measures": "That the support crop's decision margin is reported by the product's own reconstruct stage, and what it says on the record's own input. The figure existed inside the crop before this and was discarded, so a user had no way to see how close the crop came to deciding something else.",
+  "why_it_matters": "The crop is a threshold on a per-vertex distance, so how close the geometry sits to that cut is a fact about the caller's scan rather than a property of the rule. It is the quantity a caller can act on: a denser capture shortens the distances themselves.",
+  "executed": "npa.workbench.open3d.runner.run_multiway then run_reconstruct, the entry points the workflow calls; no mirrored copy of the stage",
+  "input": "open3d.data DemoICPPointClouds, three fragments, voxel 0.05",
+  "reference_displacements_the_comparison_uses": {
+    "routine_m": 1e-05,
+    "largest_recorded_m": 0.002187,
+    "measured_at": "one scene at voxel 0.02 or 0.05, Poisson depth 9. This run is at voxel 0.05 and depth 9, so the comparison's own configuration_measured flag is true here -- which is a statement about the settings matching, not about this scene being that scene."
+  },
+  "per_support_factor": {
+    "support_distance_factor_1.0": {
+      "unsupported_vertices_removed": 3670,
+      "crop_margin": {
+        "applies": true,
+        "distance_units": "the input point cloud's own coordinate units, the same units as --voxel-size; not inspected or validated by this tool",
+        "threshold": 0.05,
+        "closest_vertex_to_the_threshold": 9.867631837072455e-06,
+        "closest_as_a_fraction_of_the_threshold": 0.0001973526367414491,
+        "vertices_within": {
+          "within_1_percent_of_the_threshold": {
+            "count": 54,
+            "fraction": 0.0029338259263283714
+          },
+          "within_10_percent_of_the_threshold": {
+            "count": 557,
+            "fraction": 0.03026187112897968
+          },
+          "within_50_percent_of_the_threshold": {
+            "count": 4655,
+            "fraction": 0.25290666087145497
+          }
+        },
+        "reference_comparison": {
+          "what_this_is": "A description of this run's distances relative to two displacement figures measured on a different scene. Not a prediction about re-running this pipeline, and not a bound on how much any count would move.",
+          "description": "vertices_closer_than_both_reference_displacements",
+          "vertices_closer_than_the_routine_reference": 1,
+          "vertices_closer_than_the_larger_reference": 241,
+          "fraction_closer_than_the_larger_reference": 0.013093556448984026,
+          "closest_vertex_distance_to_the_threshold": 9.867631837072455e-06,
+          "reference_displacements": {
+            "routine": 1e-05,
+            "largest_recorded": 0.002187,
+            "units": "metres, as measured on the reference scene",
+            "kind_of_figure": "sample maxima -- the largest value seen in a finite number of comparisons. Neither is a bound, and nothing about Poisson reconstruction prevents a run from exceeding either."
+          },
+          "unit_precondition": "This run's distances are in the input point cloud's own coordinate units, the same units as --voxel-size, which this tool does not inspect or validate. The reference figures are metres. The counts above are therefore only meaningful if this run's coordinates are metres as well; if the scan is in millimetres or in an arbitrary unit, read the margin and the band counts and ignore the comparison.",
+          "configuration_measured": true,
+          "why_the_configuration_does_not_match": null,
+          "measured_configuration": {
+            "voxel_sizes": [
+              0.02,
+              0.05
+            ],
+            "poisson_depth": 9,
+            "scene": "the Open3D ICP demo fragments, one scene"
+          },
+          "measured_by": {
+            "what_was_measured": "repeated Poisson reconstructions of one fused cloud, comparing the occupancy decision at every scene voxel between pairs of runs: 46 pair comparisons at two capture densities for the routine figure, and one independent observation that did not reproduce in three further attempts for the worst recorded",
+            "on_what_input": "one scene -- the Open3D ICP demo fragments -- at voxel 0.05 and 0.02. Both figures are therefore properties of that scene's geometry and capture, not of the reconstruction algorithm in general.",
+            "kind_of_figure": "sample maxima. Each is the largest value observed in a finite number of comparisons, which is not the same as a bound on what can occur.",
+            "published_as": "crop-decision-stability.json in the Open3D evidence directory, alongside the stability study that produced it rather than alongside this field"
+          },
+          "what_this_does_not_establish": "That a rerun would decide the same way, or differently. A rerun calls Poisson again and derives its density threshold from that run's own density array, so the vertex set is regenerated rather than perturbed: no vertex can be followed between runs, and a rerun can introduce or drop vertices near the threshold. The reference figures are nearest-point distances between two independently generated vertex sets, not the motion of tracked vertices, so no count here bounds how much any count would change. Scene identity is also not checked -- the comparison assumes a geometry, scale and noise level like the reference scene's, and nothing verifies that."
+        },
+        "what_this_does_not_establish": "That the reconstruction is correct. A vertex far from the cut can still be in the wrong place, and a comfortable margin on an invented surface is still a margin on an invented surface. Nor that re-running would decide the same way: this reports where this run's vertices sat relative to this run's threshold, and nothing here is a prediction."
+      }
+    },
+    "support_distance_factor_0.87": {
+      "unsupported_vertices_removed": 4040,
+      "crop_margin": {
+        "applies": true,
+        "distance_units": "the input point cloud's own coordinate units, the same units as --voxel-size; not inspected or validated by this tool",
+        "threshold": 0.043500000000000004,
+        "closest_vertex_to_the_threshold": 4.739958250128684e-06,
+        "closest_as_a_fraction_of_the_threshold": 0.00010896455747422261,
+        "vertices_within": {
+          "within_1_percent_of_the_threshold": {
+            "count": 47,
+            "fraction": 0.0025535151581006195
+          },
+          "within_10_percent_of_the_threshold": {
+            "count": 430,
+            "fraction": 0.023361947191133325
+          },
+          "within_50_percent_of_the_threshold": {
+            "count": 6356,
+            "fraction": 0.34532217755079864
+          }
+        },
+        "reference_comparison": {
+          "what_this_is": "A description of this run's distances relative to two displacement figures measured on a different scene. Not a prediction about re-running this pipeline, and not a bound on how much any count would move.",
+          "description": "vertices_closer_than_both_reference_displacements",
+          "vertices_closer_than_the_routine_reference": 1,
+          "vertices_closer_than_the_larger_reference": 203,
+          "fraction_closer_than_the_larger_reference": 0.011029012278604802,
+          "closest_vertex_distance_to_the_threshold": 4.739958250128684e-06,
+          "reference_displacements": {
+            "routine": 1e-05,
+            "largest_recorded": 0.002187,
+            "units": "metres, as measured on the reference scene",
+            "kind_of_figure": "sample maxima -- the largest value seen in a finite number of comparisons. Neither is a bound, and nothing about Poisson reconstruction prevents a run from exceeding either."
+          },
+          "unit_precondition": "This run's distances are in the input point cloud's own coordinate units, the same units as --voxel-size, which this tool does not inspect or validate. The reference figures are metres. The counts above are therefore only meaningful if this run's coordinates are metres as well; if the scan is in millimetres or in an arbitrary unit, read the margin and the band counts and ignore the comparison.",
+          "configuration_measured": true,
+          "why_the_configuration_does_not_match": null,
+          "measured_configuration": {
+            "voxel_sizes": [
+              0.02,
+              0.05
+            ],
+            "poisson_depth": 9,
+            "scene": "the Open3D ICP demo fragments, one scene"
+          },
+          "measured_by": {
+            "what_was_measured": "repeated Poisson reconstructions of one fused cloud, comparing the occupancy decision at every scene voxel between pairs of runs: 46 pair comparisons at two capture densities for the routine figure, and one independent observation that did not reproduce in three further attempts for the worst recorded",
+            "on_what_input": "one scene -- the Open3D ICP demo fragments -- at voxel 0.05 and 0.02. Both figures are therefore properties of that scene's geometry and capture, not of the reconstruction algorithm in general.",
+            "kind_of_figure": "sample maxima. Each is the largest value observed in a finite number of comparisons, which is not the same as a bound on what can occur.",
+            "published_as": "crop-decision-stability.json in the Open3D evidence directory, alongside the stability study that produced it rather than alongside this field"
+          },
+          "what_this_does_not_establish": "That a rerun would decide the same way, or differently. A rerun calls Poisson again and derives its density threshold from that run's own density array, so the vertex set is regenerated rather than perturbed: no vertex can be followed between runs, and a rerun can introduce or drop vertices near the threshold. The reference figures are nearest-point distances between two independently generated vertex sets, not the motion of tracked vertices, so no count here bounds how much any count would change. Scene identity is also not checked -- the comparison assumes a geometry, scale and noise level like the reference scene's, and nothing verifies that."
+        },
+        "what_this_does_not_establish": "That the reconstruction is correct. A vertex far from the cut can still be in the wrong place, and a comfortable margin on an invented surface is still a margin on an invented surface. Nor that re-running would decide the same way: this reports where this run's vertices sat relative to this run's threshold, and nothing here is a prediction."
+      }
+    },
+    "support_distance_factor_0.0": {
+      "unsupported_vertices_removed": 0,
+      "crop_margin": {
+        "applies": false,
+        "why_not": "support cropping is disabled, so there is no threshold for anything to sit near"
+      }
+    }
+  },
+  "what_the_result_shows": "Measured on this run: support_distance_factor_0.0: no threshold, so no margin (support cropping is disabled, so there is no threshold for anything to sit near); support_distance_factor_0.87: closest vertex 4.74e-06 from a 0.0435 threshold (0.0109% of it), 1 vertices closer than the routine reference and 203 closer than the larger, out of 4040 removed; support_distance_factor_1.0: closest vertex 9.87e-06 from a 0.05 threshold (0.0197% of it), 1 vertices closer than the routine reference and 241 closer than the larger, out of 3670 removed. These are counts for this run against two reference figures, nothing more. The references are sample maxima from one scene, and a rerun regenerates the vertex set rather than perturbing it, so neither these counts nor the 46 pair comparisons behind the references add up to a prediction about what a rerun would decide.",
+  "what_this_does_not_establish": "Anything about whether the reconstruction is correct -- a vertex far from the cut can still be in the wrong place. Nor what a rerun would decide. An earlier version of this field classified runs as reproducible in practice and offered the near-threshold counts as an error bar for future counts; both were removed, because a rerun has no vertex correspondence for either claim to be about.",
+  "how_to_reproduce": {
+    "command": "python docs/evidence/open3d/harness/crop_margin_live.py  # with this repository's npa/src on PYTHONPATH",
+    "interpreter_note": "These worktrees have no npa/.venv of their own; the run below records the interpreter that was actually used and where npa and open3d were imported from.",
+    "note": "Registration and reconstruction are both nondeterministic, so the counts move between runs. The orders of magnitude are what reproduce; the exact counts are this run's."
+  },
+  "provenance": {
+    "harness": "harness/crop_margin_live.py",
+    "harness_sha256": "15acca00b4a5f0547bc62f05e51e855c334ec1ab8c5d38e200b775013939b3bd",
+    "path_is_relative_to": "this evidence directory",
+    "interpreter": "clone-owned npa/.venv/bin/python",
+    "python": "3.12.14",
+    "npa_runner_imported_from": {
+      "repository_relative": "npa/src/npa/workbench/open3d/runner.py",
+      "sha256": "74719570cca7b194a34e0183e5f12c819410c0703993c82c5792aae3e877bff9",
+      "crop_margin_function_sha256": "e1afe871ac54823f692444ae4332147b3a0d5b0a4b2cf82fb224ae78ad296458",
+      "source_commit": "20419df9a728905ed40284eaccd84dbe94c04b85",
+      "hashes_that_name_no_file_here": "sha256 identifies the complete product runner and crop_margin_function_sha256 identifies the measured function within it. Both are checked against repository_relative at source_commit; neither source file is copied into this evidence directory."
+    },
+    "what_can_be_rechecked_elsewhere": "npa_runner_imported_from.repository_relative, .source_commit, and .sha256. Those portable fields bind the stage without storing a machine-local path.",
+    "open3d_imported_from": {
+      "version": "0.20.0"
+    },
+    "utc": "2026-11-05T15:23:26.772107+00:00"
+  }
+}

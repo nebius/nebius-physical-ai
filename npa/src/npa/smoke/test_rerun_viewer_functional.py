@@ -13,6 +13,8 @@ from pathlib import Path
 
 import rerun as rr
 
+from npa.rerun_cli import resolve_rerun_cli
+
 
 def _free_port() -> int:
     with socket.socket() as sock:
@@ -73,14 +75,15 @@ def main() -> int:
     if not rrd_path.is_file() or rrd_path.stat().st_size == 0:
         raise RuntimeError("robotics trace conversion did not produce an RRD")
 
+    rerun = resolve_rerun_cli()
     verify = subprocess.run(
-        ["rerun", "rrd", "verify", str(rrd_path)],
+        [rerun, "rrd", "verify", str(rrd_path)],
         check=True,
         capture_output=True,
         text=True,
     )
     printed = subprocess.run(
-        ["rerun", "rrd", "print", str(rrd_path)],
+        [rerun, "rrd", "print", str(rrd_path)],
         check=True,
         capture_output=True,
         text=True,
@@ -92,7 +95,7 @@ def main() -> int:
     grpc_port = _free_port()
     process = subprocess.Popen(
         [
-            "rerun",
+            rerun,
             str(rrd_path),
             "--serve-web",
             "--web-viewer",

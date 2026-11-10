@@ -36,7 +36,12 @@ def test_override_gate_uses_serialized_score(
 def _record_response(monkeypatch, tmp_path, provider_success, score):
     frame = tmp_path / "frame.png"
     Image.new("RGB", (8, 8), "green").save(frame)
-    verdict = {"success": provider_success, "score": score, "rationale": "test verdict"}
+    verdict = {
+        "success": provider_success,
+        "score": score,
+        "rationale": "test verdict",
+        "provider_observable_support": ["Frame 1 visibly shows the test image."],
+    }
     response = {
         "model": "MiniMaxAI/MiniMax-M3",
         "choices": [

@@ -1,5 +1,6 @@
-"""Verify the portable Stream client without a private server or credentials."""
+"""Verify the portable World Factory client without a private server or credentials."""
 
+import copy
 import hashlib
 import importlib.util
 import io
@@ -14,7 +15,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[3]
 spec = importlib.util.spec_from_file_location(
     "public_cosmos_client",
-    ROOT / "skills/tools/nebius-stream-beta/scripts/cosmos_client.py",
+    ROOT / "skills/tools/nebius-world-factory/scripts/cosmos_client.py",
 )
 helper = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(helper)
@@ -200,6 +201,161 @@ def test_unsupported_or_unqualified_profile_fails_before_submit():
     }
     with pytest.raises(helper.ClientError, match="qualified"):
         helper.qualify(source, value, "/v1/videos")
+
+
+def transfer_contract(model):
+    value = contract()
+    value["openapi"]["paths"] = {"/v1/transfers": {"post": {}}}
+    value["models"]["data"][0].update(
+        id=model,
+        capability_matrix=[
+            {
+                "task": "structural_transfer",
+                "profiles": ["structural-transfer-832x480-121-v1"],
+                "controls": ["edge", "depth", "seg", "blur"],
+                "control_combinations": ["blur+depth+edge+seg"],
+                "control_weights_supported": True,
+                "negative_prompt_supported": True,
+                "guardrails_required": True,
+                "runtime_implemented": True,
+                "endpoint_exposed": True,
+                "evidence_status": "qualified",
+            }
+        ],
+    )
+    return value
+
+
+def transfer_request(model, frames):
+    path = ROOT / "skills/tools/nebius-world-factory/examples/structural-transfer.json"
+    value = json.loads(path.read_text())
+    value["model"] = model
+    value["input"]["uri"] = f"s3://example-bucket/inputs/source-{frames}.mp4"
+    return value
+
+
+class TransferClient(FakeClient):
+    def __init__(self, model):
+        super().__init__()
+        self.discovery = transfer_contract(model)
+        self.payloads = []
+
+    def contract(self):
+        return self.discovery
+
+    def request(self, method, route, payload=None, identity=None):
+        if method == "POST":
+            self.payloads.append((route, copy.deepcopy(payload), identity))
+        return super().request(method, route, payload, identity)
+
+
+@pytest.mark.parametrize("model", ["nvidia/Cosmos3-Super", "nvidia/Cosmos3-Nano"])
+@pytest.mark.parametrize("frames", [227, 302])
+def test_transfer_keeps_full_source_controls_and_prompts_through_resume(
+    tmp_path, model, frames
+):
+    tmp_path.chmod(0o700)
+    client = TransferClient(model)
+    value = transfer_request(model, frames)
+    state_path = tmp_path / "transfer.json"
+    client.fail = True
+    with pytest.raises(helper.ClientError, match="HTTPS request failed"):
+        helper.submit(client, value, state_path, "/v1/transfers")
+    retained = helper.read_json(state_path)
+    assert "job_id" not in retained
+    client.fail = False
+    state = helper.submit(client, value, state_path, "/v1/transfers")
+    assert helper.status_route(state) == "/v1/jobs/job-001"
+    assert client.attempts == [retained["idempotency_key"]] * 2
+    assert all(
+        route == "/v1/transfers" and body == value for route, body, _ in client.payloads
+    )
+    helper.submit(client, value, state_path, "/v1/transfers")
+    result = helper.resume(client, state_path, tmp_path / "results")
+    assert result["verified_artifacts"] == 1 and len(client.attempts) == 2
+    assert (tmp_path / "results/generated.mp4").read_bytes() == b"verified-output"
+    for change in ("weight", "negative_prompt"):
+        changed = copy.deepcopy(value)
+        if change == "weight":
+            changed["controls"]["depth"]["weight"] = 2
+        else:
+            changed["negative_prompt"] = "Different negative prompt"
+        with pytest.raises(helper.ClientError, match="different request"):
+            helper.submit(client, changed, state_path, "/v1/transfers")
+    assert len(client.attempts) == 2
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        "route",
+        "profile",
+        "wrong-task",
+        "controls",
+        "combination",
+        "weights",
+        "negative",
+        "guardrails",
+        "runtime",
+        "exposure",
+        "evidence",
+    ],
+)
+def test_transfer_requires_its_own_qualified_capabilities_before_post(
+    tmp_path, failure
+):
+    tmp_path.chmod(0o700)
+    client = TransferClient("nvidia/Cosmos3-Nano")
+    value = transfer_request("nvidia/Cosmos3-Nano", 302)
+    row = client.discovery["models"]["data"][0]["capability_matrix"][0]
+    if failure == "route":
+        client.discovery["openapi"]["paths"] = {}
+    elif failure == "profile":
+        row["profiles"] = ["another-profile"]
+    elif failure == "wrong-task":
+        row["task"] = "full_source_v2v_augmentation"
+    elif failure == "controls":
+        row["controls"] = ["edge"]
+    elif failure == "combination":
+        row["control_combinations"] = []
+    elif failure == "weights":
+        row["control_weights_supported"] = False
+    elif failure == "negative":
+        row["negative_prompt_supported"] = False
+    elif failure == "guardrails":
+        row["guardrails_required"] = False
+    elif failure == "runtime":
+        row["runtime_implemented"] = False
+    elif failure == "exposure":
+        row["endpoint_exposed"] = False
+    else:
+        row["profile_evidence"] = {value["generation"]["profile"]: "failed"}
+    with pytest.raises(helper.ClientError):
+        helper.submit(client, value, tmp_path / "transfer.json", "/v1/transfers")
+    assert not client.attempts and not (tmp_path / "transfer.json").exists()
+
+
+@pytest.mark.parametrize("weight", [True, "1", -1, float("inf"), 10**400, 0])
+def test_transfer_invalid_weights_never_reach_admission(tmp_path, weight):
+    tmp_path.chmod(0o700)
+    client = TransferClient("nvidia/Cosmos3-Super")
+    value = transfer_request("nvidia/Cosmos3-Super", 227)
+    for control in value["controls"].values():
+        control["weight"] = weight
+    with pytest.raises(helper.ClientError, match="weights"):
+        helper.submit(client, value, tmp_path / "transfer.json", "/v1/transfers")
+    assert not client.attempts
+
+
+def test_transfer_accepts_unit_weight_without_relative_weight_or_negative_support():
+    model = "nvidia/Cosmos3-Nano"
+    source = transfer_contract(model)
+    row = source["models"]["data"][0]["capability_matrix"][0]
+    row["control_weights_supported"] = row["negative_prompt_supported"] = False
+    value = transfer_request(model, 302)
+    value["controls"] = {"edge": {"weight": 3}}
+    value["negative_prompt"] = ""
+    helper.qualify(source, value, "/v1/transfers")
 
 
 @pytest.mark.parametrize(

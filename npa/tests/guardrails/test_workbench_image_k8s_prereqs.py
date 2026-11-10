@@ -403,9 +403,9 @@ def test_derived_prereq_dockerfile_matches_the_shipped_one(tool: str) -> None:
 @pytest.mark.parametrize(
     ("tool", "snapshot"),
     (
-        ("genesis", "20261002T000000Z"),
-        ("sim2real-envgen", "20261009T000000Z"),
-        ("sim2real-eval", "20261002T000000Z"),
+        ("genesis", "20261103T000000Z"),
+        ("sim2real-envgen", "20261103T000000Z"),
+        ("sim2real-eval", "20261103T000000Z"),
     ),
 )
 def test_genesis_workflow_images_pin_the_bootstrap_closure(
@@ -416,11 +416,11 @@ def test_genesis_workflow_images_pin_the_bootstrap_closure(
     dockerfile = (DOCKER_ROOT / tool / "Dockerfile").read_text(encoding="utf-8")
     assert f"ARG UBUNTU_SNAPSHOT={snapshot}" in dockerfile
     if tool == "sim2real-envgen":
-        assert "ARG ENVGEN_LINUX_LIBC_DEV_VERSION=5.15.0-198.208" in dockerfile
+        assert "ARG ENVGEN_LINUX_LIBC_DEV_VERSION=5.15.0-202.212" in dockerfile
         assert '"${UBUNTU_SNAPSHOT}" "${ENVGEN_LINUX_LIBC_DEV_VERSION}"' in dockerfile
     assert "install_workflow_runtime_prereqs.sh" in dockerfile
     if tool == "sim2real-envgen":
-        assert "ARG ENVGEN_LINUX_LIBC_DEV_VERSION=5.15.0-198.208" in dockerfile
+        assert "ARG ENVGEN_LINUX_LIBC_DEV_VERSION=5.15.0-202.212" in dockerfile
         assert (
             'install-workflow-runtime-prereqs "${UBUNTU_SNAPSHOT}" '
             '"${ENVGEN_LINUX_LIBC_DEV_VERSION}" \\'
@@ -440,7 +440,7 @@ def test_genesis_workflow_images_pin_the_bootstrap_closure(
     assert "ubuntu:22.04" in snapshot_config
     assert "ubuntu:24.04" in snapshot_config
     assert "ubuntu:22.04" in installer
-    assert 'linux_libc_dev_version="5.15.0-198.208"' in installer
+    assert 'linux_libc_dev_version="5.15.0-202.212"' in installer
     assert 'linux_libc_dev_version="6.8.0-147.147"' in installer
     assert "apt-get --fix-broken install -y --no-install-recommends" in installer
     assert '"linux-libc-dev=${linux_libc_dev_version}"' in installer

@@ -20,6 +20,10 @@ regex==2026.9.3
 # derivative from the exact upstream wheel before resolution; it changes only
 # the package version and Pillow constraint, and carries a reproducible hash.
 gradio==6.16.0+npa.pillow13.1
+# Gradio declares this compatibility dependency conditionally for Python 3.13+.
+# The image uses --require-hashes, which validates the complete wheel metadata
+# closure, so retain the exact compatible release and its generated hashes.
+audioop-lts==0.2.2 ; python_version >= "3.13"
 # The pinned framework Transformers requires the final 0.x Hub API.
 huggingface-hub==0.36.2
 # Preserve the framework's numerical and model-validation ABI constraints.
@@ -38,7 +42,7 @@ msgpack==1.2.3
 multidict==6.9.1
 opentelemetry-api==1.45.1
 pillow==13.0.0
-pyasn1==0.6.4
+pyasn1==0.6.5
 pygments==2.21.0
 pytest==9.0.3
 requests==2.34.2
@@ -49,3 +53,7 @@ brotli==1.2.1
 # The secure shared role bootstrap must not reintroduce pip's stale vendored
 # certificate bundle into the framework venv.
 pip==26.2.2
+# cosmos-framework declares an unbounded uv dependency. The frozen upstream
+# lock therefore installs a standalone uv executable into this venv; keep that
+# executable on the fixed release as part of the hash-verified overlay.
+uv==0.13.4

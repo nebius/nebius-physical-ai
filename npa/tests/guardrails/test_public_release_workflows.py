@@ -312,7 +312,71 @@ def test_public_base_pull_authentication_precedes_local_build() -> None:
     assert auth < build < push
 
 
-def test_large_image_scan_reclaims_only_disposable_build_cache_and_tar() -> None:
+def test_hosted_builds_reclaim_only_unused_runner_sdks_before_local_export() -> None:
+    spec = _spec(PUBLISH)
+    steps = spec["jobs"]["build-development"]["steps"]
+    names = [str(step.get("name") or "") for step in steps]
+    cleanup = steps[names.index("Reclaim unused hosted-runner SDK space")]
+    build = names.index("Build immutable development image locally")
+
+    assert cleanup["if"] == (
+        "matrix.tool != 'ncore' && runner.environment == 'github-hosted'"
+    )
+    script = cleanup["run"]
+    for directory in (
+        "/usr/local/lib/android",
+        "/usr/share/dotnet",
+        "/usr/share/swift",
+        "/opt/ghc",
+        "/usr/local/.ghcup",
+        "/usr/local/share/boost",
+    ):
+        assert directory in script
+    assert "xargs -0 -r -n1 -P4 sudo rm -rf --" in script
+    assert "df -h /" in script
+    assert "docker" not in script
+    assert names.index("Reclaim unused hosted-runner SDK space") < build
+
+
+def test_large_snapshot_builds_stream_full_byte_gates_without_duplicate_archives() -> (
+    None
+):
+    spec = _spec(PUBLISH)
+    steps = spec["jobs"]["build-development"]["steps"]
+    buildx = next(
+        step
+        for step in steps
+        if step.get("uses", "").startswith("docker/setup-buildx-action@")
+    )
+    names = [str(step.get("name") or "") for step in steps]
+
+    assert buildx["with"]["driver"] == (
+        '${{ contains(fromJSON(\'["groot", "sim2real-control", "rerun-viewer"]\'), '
+        "matrix.tool) && 'docker' || 'docker-container' }}"
+    )
+    assert (
+        "--load"
+        in steps[names.index("Build immutable development image locally")]["run"]
+    )
+    runtime_gate = steps[
+        names.index(
+            "Enforce runtime, revision, bootstrap, config, and history contracts"
+        )
+    ]["run"]
+    assert 'if [[ "$TOOL" == groot ]]; then' in runtime_gate
+    assert '--docker-image "$IMAGE"' in runtime_gate
+    assert 'if [ "$TOOL" = groot ]; then' in runtime_gate
+    assert '"$RUNNER_TEMP/${TOOL}.tar"' in runtime_gate
+    assert (
+        names.index("Build immutable development image locally")
+        < names.index(
+            "Enforce runtime, revision, bootstrap, config, and history contracts"
+        )
+        < names.index("Pre-publication vulnerability, secret, and license scan")
+    )
+
+
+def test_large_image_scan_reclaims_cache_and_streams_groot_without_a_tar() -> None:
     spec = _spec(PUBLISH)
     step = next(
         item
@@ -322,7 +386,12 @@ def test_large_image_scan_reclaims_only_disposable_build_cache_and_tar() -> None
     )
     script = step["run"]
     assert script.index("docker buildx prune --all --force") < script.index(
-        'docker save "${save_platform[@]}" --output "$RUNNER_TEMP/${TOOL}.tar"'
+        'if [[ "$TOOL" == groot ]]; then'
+    )
+    assert '--docker-image "$IMAGE"' in script
+    assert (
+        'docker save "${save_platform[@]}" --output "$RUNNER_TEMP/${TOOL}.tar" "$IMAGE"'
+        in script
     )
     assert 'rm -f "$RUNNER_TEMP/${TOOL}.tar"' in script
 
@@ -334,7 +403,53 @@ def test_large_image_scan_reclaims_build_cache_and_reuses_large_volume() -> None
     sbom = text.index("Generate pre-publication SBOM")
     push = text.index("Push only after every pre-publication gate passes")
     assert prepare < scan < sbom < push
-    assert "docker buildx prune --all --force" in text[prepare:scan]
+    capacity = text[prepare:scan]
+    assert 'docker image inspect "$IMAGE" >/dev/null' in capacity
+    assert "docker buildx prune --all --force" in capacity
+    assert "RUNNER_ENVIRONMENT: ${{ runner.environment }}" in capacity
+    assert '[[ "$RUNNER_ENVIRONMENT" == github-hosted ]]' in capacity
+    assert "docker container prune --force" in capacity
+    assert "docker network prune --force" in capacity
+    assert "docker volume prune --force" in capacity
+    assert 'docker create --name "$capacity_hold" "$IMAGE" >/dev/null' in capacity
+    assert "docker image prune --all --force" in capacity
+    assert "docker system prune" not in capacity
+    assert (
+        capacity.index("docker container prune --force")
+        < capacity.index('docker create --name "$capacity_hold" "$IMAGE" >/dev/null')
+        < capacity.index("docker image prune --all --force")
+    )
+    assert capacity.count('docker image inspect "$IMAGE" >/dev/null') == 2
+    assert "docker system df" in capacity
+    assert 'if [[ "$TOOL" == groot ]]; then' in capacity
+    assert (
+        'active_python_dir="$(dirname "${pythonLocation:?setup-python path is required}")"'
+        in capacity
+    )
+    assert "/opt/hostedtoolcache/Python/*" in capacity
+    assert "find /opt/hostedtoolcache/Python -mindepth 1 -maxdepth 1" in capacity
+    assert '! -path "$active_python_dir" -print0' in capacity
+    assert "/opt/hostedtoolcache/CodeQL" in capacity
+    assert 'case "${HOME:?runner home is required}" in' in capacity
+    assert "/home/runner) ;;" in capacity
+    for directory in (
+        "/usr/lib/jvm",
+        "/usr/share/miniconda",
+        "/opt/microsoft/powershell",
+        "/opt/hostedtoolcache/Ruby",
+        "/opt/hostedtoolcache/go",
+        "/usr/local/share/chromium",
+        "/opt/google/chrome",
+        "/home/runner/.cargo",
+        "/home/runner/.rustup",
+        "/home/runner/.cache",
+    ):
+        assert directory in capacity
+    assert (
+        capacity.index("docker image prune --all --force")
+        < capacity.index('if [[ "$TOOL" == groot ]]; then')
+        < capacity.rindex('docker image inspect "$IMAGE" >/dev/null')
+    )
     # Three pinned Trivy invocations reach the push: the CRITICAL policy scan,
     # the all-severity secret scan, and the SBOM. Every one of them must reuse
     # the large volume, the shared cache and the unbounded timeout.
@@ -345,6 +460,20 @@ def test_large_image_scan_reclaims_build_cache_and_reuses_large_volume() -> None
     trivy = "aquasec/trivy:0.70.0@sha256:be1190afcb28352bfddc4ddeb71470835d16462af68d310f9f4bca710961a41e image"
     assert text[scan:push].count(trivy) == 3
     assert "docker image prune" not in text[scan:push]
+
+
+def test_groot_trivy_scans_are_serial_without_excluding_content() -> None:
+    """GR00T serializes layer exports without reducing mandatory scan coverage."""
+
+    steps = _spec(PUBLISH)["jobs"]["build-development"]["steps"]
+    scans = [step["run"] for step in steps if "aquasec/trivy:" in step.get("run", "")]
+    assert len(scans) == 3
+    for script in scans:
+        assert 'if [[ "$TOOL" == groot ]]; then' in script
+        assert "trivy_parallel=(--parallel 1)" in script
+        assert '"${trivy_parallel[@]}"' in script
+        assert "--skip-dirs" not in script
+        assert "--skip-files" not in script
 
 
 def test_prepublication_secret_scan_is_not_filtered_to_critical() -> None:
@@ -444,7 +573,9 @@ def test_post_push_and_promotion_gates_are_digest_bound() -> None:
     assert "if ! grep -Eq" in verify
 
 
-def test_post_push_payload_scan_binds_remote_digest_to_local_full_tar() -> None:
+def test_post_push_payload_scan_binds_all_tools_and_streams_groot_exact_digest() -> (
+    None
+):
     text = PUBLISH.read_text(encoding="utf-8")
     post_push = text[text.index("Verify pushed bytes") :]
 
@@ -471,7 +602,9 @@ def test_post_push_payload_scan_binds_remote_digest_to_local_full_tar() -> None:
     )
     assert '--tarball "$RUNNER_TEMP/${TOOL}-pushed.tar"' in post_push
     assert 'rm -f "$RUNNER_TEMP/${TOOL}-pushed.tar"' in post_push
-    assert 'scan_image_omniverse_payload.py \\\n+            "$exact"' not in post_push
+    assert 'if [[ "$TOOL" == groot ]]; then' in post_push
+    assert 'if [ "$TOOL" = groot ]; then' in post_push
+    assert ('scan_image_omniverse_payload.py \\\n              "$exact"') in post_push
 
 
 def test_build_and_cleanup_dispatches_cannot_fall_through_to_promotion() -> None:

@@ -57,6 +57,15 @@ HASH = "sha256"  # 64 lowercase hex
 FLAG = "bool"
 NOTE = "prose"  # the two semantic strings this evidence exists to carry
 COUNT_OR_NULL = "number-or-null"
+FLOAT_OR_NULL = "float-or-null"
+#: The runner-up plane reports whether its axis differs from the winner's only when
+#: the fit was strong enough to imply one, and publishes `null` when it was not. Same
+#: reason COUNT_OR_NULL exists: the absence is the measurement.
+FLAG_OR_NULL = "bool-or-null"
+#: A leaf that is only ever reached as `null`: the vector siblings of the above. When
+#: the axis exists this is a list and the walker descends into the `[]` entries
+#: instead, so this pattern is the absent case and nothing else.
+ABSENT = "null"
 
 _SUMMARY = {
     "summary.icp_fitness.max": NUM,
@@ -86,6 +95,20 @@ def _pose_graph(prefix: str = "") -> dict[str, str]:
         f"{prefix}nodes[].points": NUM,
         f"{prefix}nodes[].pose[][]": NUM,
         f"{prefix}reference_node": NUM,
+        # The optimization block `run_multiway` publishes. This table denies by
+        # default -- an unclassified leaf is a SystemExit -- so adding these fields to
+        # the producer without adding them here would have stopped the next public run
+        # report on `optimization.edges_submitted`. Failing closed, and still failing.
+        f"{prefix}optimization.edges_pruned": NUM,
+        f"{prefix}optimization.edges_submitted": NUM,
+        f"{prefix}optimization.edges_that_survived_pruning": NUM,
+        f"{prefix}optimization.loop_closures_submitted": NUM,
+        f"{prefix}optimization.max_pose_correction": NUM,
+        f"{prefix}optimization.max_pose_correction_per_node[]": NUM,
+        f"{prefix}optimization.max_point_displacement": NUM,
+        f"{prefix}optimization.max_point_displacement_per_node[]": NUM,
+        f"{prefix}optimization.max_point_displacement_as_share_of_extent": NUM,
+        f"{prefix}optimization.scene_extent": NUM,
     }
 
 
@@ -214,18 +237,70 @@ ALLOWED: dict[str, dict[str, str]] = {
         "coverage.sample_to_surface_p95": NUM,
         "coverage.sample_to_surface_rmse": NUM,
         "coverage.samples": NUM,
+        "coverage_before_crop.fraction_within_two_voxels": NUM,
+        "coverage_before_crop.fraction_within_voxel": NUM,
+        "coverage_before_crop.sample_to_surface_p95": NUM,
+        "coverage_before_crop.sample_to_surface_rmse": NUM,
+        "coverage_before_crop.samples": NUM,
+        "coverage_cost_of_crop.coverage_is_bit_identical": FLAG,
+        "coverage_cost_of_crop.samples": NUM,
+        "coverage_cost_of_crop.samples_abandoned_by_crop": NUM,
+        "coverage_cost_of_crop.samples_covered_before_crop": NUM,
+        "coverage_cost_of_crop.worst_abandoned_sample_voxels_from_surface": FLOAT_OR_NULL,
         "crop_justification.note": NOTE,
         "crop_justification.removed_surface_reads_as": NOTE,
         "crop_justification.unsupported_area_share_beyond_3_voxels": NUM,
         "crop_justification.vertex_fraction_removed": NUM,
         "crop_justification.vertices_removed": NUM,
+        "crop_margin.applies": FLAG,
+        "crop_margin.why_not": NOTE,
+        "crop_margin.distance_units": NOTE,
+        "crop_margin.threshold": NUM,
+        "crop_margin.closest_vertex_to_the_threshold": NUM,
+        "crop_margin.closest_as_a_fraction_of_the_threshold": NUM,
+        "crop_margin.vertices_within.*.count": NUM,
+        "crop_margin.vertices_within.*.fraction": NUM,
+        "crop_margin.reference_comparison.what_this_is": NOTE,
+        "crop_margin.reference_comparison.description": TEXT,
+        "crop_margin.reference_comparison.vertices_closer_than_the_routine_reference": NUM,
+        "crop_margin.reference_comparison.vertices_closer_than_the_larger_reference": NUM,
+        "crop_margin.reference_comparison.fraction_closer_than_the_larger_reference": NUM,
+        "crop_margin.reference_comparison.closest_vertex_distance_to_the_threshold": NUM,
+        "crop_margin.reference_comparison.reference_displacements.routine": NUM,
+        "crop_margin.reference_comparison.reference_displacements.largest_recorded": NUM,
+        "crop_margin.reference_comparison.reference_displacements.units": NOTE,
+        "crop_margin.reference_comparison.reference_displacements.kind_of_figure": NOTE,
+        "crop_margin.reference_comparison.unit_precondition": NOTE,
+        "crop_margin.reference_comparison.configuration_measured": FLAG,
+        "crop_margin.reference_comparison.why_the_configuration_does_not_match[]": NOTE,
+        "crop_margin.reference_comparison.measured_configuration.voxel_sizes[]": NUM,
+        "crop_margin.reference_comparison.measured_configuration.poisson_depth": NUM,
+        "crop_margin.reference_comparison.measured_configuration.scene": NOTE,
+        "crop_margin.reference_comparison.measured_by.what_was_measured": NOTE,
+        "crop_margin.reference_comparison.measured_by.on_what_input": NOTE,
+        "crop_margin.reference_comparison.measured_by.kind_of_figure": NOTE,
+        "crop_margin.reference_comparison.measured_by.published_as": NOTE,
+        "crop_margin.reference_comparison.what_this_does_not_establish": NOTE,
+        "crop_margin.what_this_does_not_establish": NOTE,
         "density_quantile": NUM,
+        # What the density crop contributed that the support crop would not have
+        # made. This table denies by default -- an unclassified leaf is a SystemExit --
+        # so publishing the block without listing it here would have aborted the next
+        # derivation of a public report. Failing closed, and still failing.
+        "density_crop_contribution.note": NOTE,
+        "density_crop_contribution.removed_only_by_this_crop": NUM,
+        "density_crop_contribution.support_crop_was_disabled": FLAG,
+        "density_crop_contribution.support_distance": NUM,
+        "density_crop_contribution.vertices_removed": NUM,
         "input_points": NUM,
         "low_density_vertices_removed": NUM,
         "poisson_depth": NUM,
         "schema_version": TEXT,
         "support_distance_factor": NUM,
         "unsupported_vertices_removed": NUM,
+        # The length the support factor multiplies, so the published support distance
+        # can be checked against the configuration rather than taken on trust.
+        "voxel_size": NUM,
         **_mesh("mesh"),
         **_mesh("mesh_uncropped"),
         **_support("support"),
@@ -249,6 +324,50 @@ ALLOWED: dict[str, dict[str, str]] = {
         "up_axis_inference.plane_inliers": NUM,
         "up_axis_inference.source": TEXT,
         "up_axis_inference.up[]": NUM,
+        # The agreement block the repeat check publishes. Deny-by-default means an
+        # unclassified leaf is a SystemExit rather than a leak, so the producer
+        # gaining these fields without this list gaining them would have stopped the
+        # next public run report -- failing closed, but failing.
+        "up_axis_inference.agreement.attempted_fits": NUM,
+        "up_axis_inference.agreement.distinct_axes": NUM,
+        "up_axis_inference.agreement.repeats": NUM,
+        "up_axis_inference.agreement.candidates[].chosen_by_repeats": NUM,
+        "up_axis_inference.agreement.candidates[].up[]": NUM,
+        "up_axis_inference.agreement.runner_up_plane.implies_a_different_axis": (
+            FLAG_OR_NULL
+        ),
+        "up_axis_inference.agreement.runner_up_plane.inliers": NUM,
+        "up_axis_inference.agreement.runner_up_plane.inliers_relative_to_the_winner": NUM,
+        "up_axis_inference.agreement.runner_up_plane.measured": FLAG,
+        "up_axis_inference.agreement.runner_up_plane.up_it_would_imply": ABSENT,
+        "up_axis_inference.agreement.runner_up_plane.up_it_would_imply[]": NUM,
+        "up_axis_inference.agreement.runner_up_plane.why": TEXT,
+        # NOTE, not TEXT: these two are the fixed essays the measurement ships its own
+        # limits in, and both are far past TEXT_LIMIT.
+        "up_axis_inference.agreement.runner_up_plane.no_threshold_is_applied_to_this": (
+            NOTE
+        ),
+        "up_axis_inference.agreement.agreement_is_not_meaningfulness.so": NOTE,
+        "up_axis_inference.agreement.agreement_is_not_meaningfulness."
+        "measured_counterexample.construction": TEXT,
+        "up_axis_inference.agreement.agreement_is_not_meaningfulness."
+        "measured_counterexample.evidence": TEXT,
+        "up_axis_inference.agreement.agreement_is_not_meaningfulness."
+        "measured_counterexample.of_repeats": NUM,
+        "up_axis_inference.agreement.agreement_is_not_meaningfulness."
+        "measured_counterexample.plane_inlier_fraction_was_at_most": NUM,
+        "up_axis_inference.agreement.agreement_is_not_meaningfulness."
+        "measured_counterexample.plane_tilt_to_the_snapped_axis_degrees": NUM,
+        "up_axis_inference.agreement.agreement_is_not_meaningfulness."
+        "measured_counterexample.repeats_that_agreed": NUM,
+        "up_axis_inference.agreement.agreement_is_not_meaningfulness."
+        "measured_counterexample.this_tilt_is_a_floor_the_measurement_cleared": FLAG,
+        # The weak-majority fallback publishes its sample on the inference object
+        # rather than inside an agreement block, because in that branch there is no
+        # agreement to report.
+        "up_axis_inference.attempted_fits": NUM,
+        "up_axis_inference.usable_fits": NUM,
+        "up_axis_inference.why": NOTE,
         **_camera("camera"),
         **_camera("view_cameras.*"),
     },
@@ -295,8 +414,16 @@ def _holds(kind: str, value: object) -> bool:
         return isinstance(value, (int, float)) and not isinstance(value, bool)
     if kind == COUNT_OR_NULL:
         return value is None or (isinstance(value, int) and not isinstance(value, bool))
+    if kind == FLOAT_OR_NULL:
+        return value is None or (
+            isinstance(value, (int, float)) and not isinstance(value, bool)
+        )
     if kind == FLAG:
         return isinstance(value, bool)
+    if kind == FLAG_OR_NULL:
+        return value is None or isinstance(value, bool)
+    if kind == ABSENT:
+        return value is None
     if kind == HASH:
         return isinstance(value, str) and bool(HEX64.match(value))
     if kind == TEXT:
@@ -413,22 +540,37 @@ def build(artifacts: Path) -> dict:
                 "The unmodified artifacts are retained in access-controlled lane "
                 "evidence, not in this repository."
             ),
-            "hashes_are_of_the_originals": (
-                "Each sha256 below is of the artifact as the run wrote it, so it "
-                "identifies those bytes and deliberately matches no file here. The "
-                "hash of this derived file is recorded separately, in "
-                "capability-record-workflow-replay.json."
-            ),
             "artifacts": originals,
         },
         "derived_fields": derived,
+        # The key name is the one `audit_evidence_references.py` reads. This report said
+        # the same thing all along under a name of its own, so the audit counted all
+        # twenty-two of its hashes as undeclared: a declaration nothing can find is prose.
+        #
+        # At the record root because it is true of the whole record rather than one branch
+        # of it. This file is a sanitized copy of a run's result documents, so every hash
+        # in it is of bytes the run wrote, and there is no branch where that stops holding.
+        # It exempts nothing -- a hash that names a file is bound and compared whatever
+        # this says -- and the alternative of a note per branch meant putting prose into
+        # mappings whose keys are artifact paths, which is where the control harness reads
+        # filenames.
+        "hashes_that_name_no_file_here": (
+            "Every sha256 in this report is of bytes the run wrote: either an artifact as "
+            "it was produced, hashed under retained_originals, or a hash the run's own "
+            "result documents carried, quoted under derived_fields. None of them name a "
+            "file committed here, by construction. The hash of this derived file is "
+            "recorded separately, in capability-record-workflow-replay.json."
+        ),
     }
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--artifacts", required=True, type=Path, help="directory holding the run's artifacts"
+        "--artifacts",
+        required=True,
+        type=Path,
+        help="directory holding the run's artifacts",
     )
     parser.add_argument("--output", required=True, type=Path)
     args = parser.parse_args(argv)

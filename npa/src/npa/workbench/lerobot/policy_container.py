@@ -21,7 +21,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Mapping
 
-from npa.literal_values import require_boolean
+from npa.literal_values import require_boolean, require_number
 from npa.workbench.training_config import (
     TrainingConfig,
     TrainingConfigError,
@@ -127,6 +127,14 @@ def _boolean_field(payload: dict[str, Any], field_name: str, *, default: bool) -
         return require_boolean(payload.get(field_name, default), field=field_name)
     except ValueError as exc:
         raise PolicyContainerError(f"{field_name} must be a boolean") from exc
+
+
+def _feedback_score(value: Any) -> float:
+    try:
+        score = require_number(value, field="score", minimum=0.0, maximum=1.0)
+    except ValueError as exc:
+        raise PolicyContainerError(str(exc)) from exc
+    return float(score)
 
 
 @dataclass(frozen=True)
@@ -1511,9 +1519,7 @@ def parse_feedback_batch(
             raise PolicyContainerError(
                 f"feedback record missing required keys: {', '.join(missing)}"
             )
-        score = float(item["score"])
-        if not 0.0 <= score <= 1.0:
-            raise PolicyContainerError(f"feedback score must be in [0, 1], got {score}")
+        score = _feedback_score(item["score"])
         rationale = str(item["rationale"]).strip()
         if not rationale:
             raise PolicyContainerError("feedback rationale must not be empty")

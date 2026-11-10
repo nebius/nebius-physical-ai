@@ -499,6 +499,219 @@ cancels the complete superseded gate instead of six independent fragments:
 | `.github/workflows/gitleaks.yml` | the custom Nebius-pattern rules in `.gitleaks.toml` | `gitleaks detect` |
 | `.github/workflows/image-security-scan.yml` | Always reports scope; runs Trivy and complete-byte checks for image-affecting candidates and every main/scheduled audit | `npa/tests/docker/` for the contract checks |
 
+The exact-tree Gitleaks helper is bootstrapped separately from workflow
+activation. Before activation, validate it with a real installed Gitleaks binary
+and canonical full commit IDs:
+
+```bash
+npa/.venv/bin/python scripts/run_gitleaks_tree_scan.py \
+  --repo-root . \
+  --revision "$(git rev-parse HEAD)" \
+  --history-base "$(git rev-parse origin/main)" \
+  --policy-revision "$(git rev-parse origin/main)" \
+  --gitleaks-bin "$(readlink -f "$(command -v gitleaks)")"
+```
+
+`--policy-revision` is mandatory: routine scans must load `.gitleaks.toml` and
+`.gitleaksignore` from a reviewed trusted commit, never implicitly from the
+candidate. The policy commit must equal or precede the excluded
+`--history-base` through authenticated parent traversal; a candidate or
+intermediate policy commit is rejected. `--history-base` must name an explicit
+excluded commit; missing event history fails instead of falling back to an
+implicit, known-noisy whole-history scan. The helper verifies exact Git object
+bytes, scans every
+intermediate tree and authenticated raw commit body in the selected range, and
+exposes raw policy blobs at inert scan paths. Every blob, path, and commit body
+also receives isolated neutral and logical-path scanner-safe text/Unicode
+wrappers so binary bytes remain visible, path-constrained rules still apply,
+and a rule match cannot span unrelated objects. Separate collision-free scan
+roots expose both original raw bytes and source-start-preserving transformed
+projections at their exact source-relative paths. A complete decoded Unicode
+file, or a localized decoded run beginning at source byte zero, begins at byte
+zero of its transformed projection; later localized runs are separated without
+creating a false absolute-start match. The independent raw and transformed
+domains therefore preserve absolute content anchors and path-constrained
+Unicode/archive matches without letting either representation replace the
+other. Historical file/directory prefix transitions are placed in different
+exact-path roots instead of becoming an unrepresentable collision. Each
+exact-path view population is compacted into deterministic generated forced-text
+Git histories, each limited to 100,000 files and 2 GiB. Complete views stay
+ordered and are never split; at most twelve histories may represent one
+population, preventing a return to one scanner process per view. There is no
+second no-Git filesystem pass. Before any Gitleaks process starts, the helper
+binds every regular file to an ordered path, size, and content digest, rejects
+links and non-regular entries, and prepares every candidate, historical, and
+transformed history. Import revalidates the complete inventory and each digest,
+so deletion, same-size replacement, or other mutation fails before scanning.
+The final receipt reports the exact invocation count for each of those three
+populations. Each generated repository force-adds every path and overrides candidate
+`.gitignore`/`.gitattributes`/filter behavior through private Git metadata, and
+rejects a generated commit identity named by the trusted policy. The Git view
+keeps each complete raw file in one forced-text diff hunk, so wide trusted rules do not
+depend only on bounded overlap windows and archive-suffixed logical paths are
+not redispatched as archives. The root `.gitleaksignore` is retained in inert
+neutral/logical wrappers instead, because exposing its raw bytes there would
+make Gitleaks interpret candidate content as scanner control. The raw file is
+committed at the exact root path only in the forced-text Git view,
+then removed from that generated repository's worktree before Gitleaks starts.
+Path-independent wide rules therefore inspect the complete file without letting
+candidate ignore bytes control the scanner. If a committed custom-rule path
+selects that exact root, the helper still records supplemental candidate,
+historical, and archive-member omissions and fails closed rather than claiming
+equivalent path coverage. It reproduces Gitleaks' pinned
+100,000-byte read plus its data-dependent 25,000-byte safe-boundary peek,
+including the scanner's newline-count reset and 4,096-byte buffered short reads,
+then creates prefixed sub-fragment overlap windows around every actual split.
+Overlaps for a logical wrapper are also sharded under the exact logical path,
+including splits in commit metadata and bounded decompressed archive members.
+Encoded candidates
+are isolated one per scanner file, and every association selected by a trusted
+path-constrained rule is retained in a separate exact-path shard.
+It scans the candidate, historical, commit metadata, and compact probe views
+with the real policy. If a policy commit allowlist intersects an intermediate
+tree, the helper rejects the range because a no-Git tree scan cannot preserve
+that commit identity; split the range or use a narrowly content-scoped
+exception. Generated exact-path commits are checked against those same
+allowlists before scanning. A scan-source blob may contain at most 512 MiB and one materialized
+tree view at most 2 GiB. Each selected commit-metadata object is limited to
+64 MiB from its authenticated Git batch header before its body is allocated,
+with a 256-MiB aggregate metadata ceiling. Each committed config or ignore
+policy blob is similarly limited to 16 MiB before allocation. Authenticated
+reachable-history traversal is limited to 100,000 distinct commits and 2 GiB of
+aggregate authenticated commit reads. Authenticated tree objects, aggregate
+tree metadata, expanded path count/path bytes, and generated scan-view bytes
+have separate ceilings before materialization. Before the two native Gitleaks
+history passes, the helper reproduces the pinned `git log -p -U0` input and
+also inventories every changed regular or symbolic-link blob per selected
+commit. It charges the full size of every such blob as a conservative upper
+bound for binary archives that Gitleaks can reopen through `git cat-file`, even
+when Git's patch contains only a short binary marker. The patch plus changed-blob
+upper bound must fit 1 GiB per pass, and both invocations share a 2-GiB aggregate
+native-history input ceiling. NUL-delimited raw-diff metadata is bounded to
+64 MiB per commit and 512 MiB in aggregate before blob sizes are queried.
+It also scans complete and localized UTF-16/32 text, disables inline `gitleaks:allow`
+suppression, and runs private binary/archive/decode controls. Those controls
+pass only when findings identify all three distinct binary, archive-member, and
+decoded carrier paths; duplicate findings from one carrier cannot satisfy the
+check. Each bounded archive member receives neutral and logical-path
+raw/Unicode wrappers, a source-start-preserving transformed exact-path
+projection, plus an encoded-span probe. ZIP and TAR members retain the
+pinned `outer-archive!member` identity; standalone gzip, bzip2, and xz streams
+retain their outer path. Member names are always literal, including names that
+begin with `<`; synthetic structure and compressed-stream labels use separate
+identity domains instead of overloading user-controlled names. Validated raw
+archives remain inert in ordinary scans
+while generated member and exact-path views provide complete coverage without
+filename-driven redispatch. A separate private control still proves native
+Gitleaks archive traversal. The
+complete bounded decompressed TAR stream is wrapped too, so PAX/global headers
+and trailing structure stay visible. Concatenated TAR streams are enumerated
+through every zero-record boundary, so later members retain their exact path
+instead of disappearing after the first stream. Checksum-valid legacy TAR
+headers are recognized at any offset across Python-parser-valid text and
+base-256 checksum forms, even without `ustar` magic. Text discovery includes
+all accepted ASCII strip whitespace, signs, octal prefixes and underscores,
+and NUL-terminated fields whose ignored tail bytes are arbitrary. Archive
+nesting is deliberately restricted to verified, canonical ZIP, TAR, gzip,
+bzip2, and xz inputs. Alias, unsupported, disguised, encrypted, malformed,
+nested, non-empty directory, and encoded archives fail closed rather than
+relying on filename-sensitive extraction or ambiguous decoder/archive
+composition.
+Validation permits at most 10,000 logical
+archive members, 256 MiB per logical member, and 512 MiB aggregate decompressed
+member bytes per scan source. Parser-only PAX/GNU TAR metadata records are not
+charged as logical members, but the complete decompressed TAR structure,
+including those records, and ZIP central directories are byte-bounded before
+Python parses or indexes them. XZ dictionary allocation is separately capped at
+256 MiB. Embedded-TAR checksum fields must first have a
+parseable numeric layout and supported TAR type; those structurally plausible
+candidates have one 100,000-candidate work limit across all streamed archive
+members, and exhausting it fails closed. ZIP64/multi-disk metadata is rejected.
+ZIP local records must cover every byte before the central directory, and
+declared entry counts must agree, so self-extracting prefixes, concatenated
+archives, undeclared records, and metadata gaps fail closed.
+Container signatures embedded in otherwise nonarchive files or commit bodies
+also fail closed. Because short gzip, bzip2, and RFC 1950 zlib markers occur
+incidentally in ordinary media, those markers are confirmed with a bounded
+decoder. After an exact zlib wrapper header, bounded raw-DEFLATE decoding
+retains every deterministic byte that fits one complete scanner fragment,
+including output emitted before truncation, wrapper-checksum failure, or an
+unavailable FDICT dictionary. A caller with a derived-output sink materializes
+each nonempty result in generic and source-start exact-path views, recursively
+classifies it, and runs the real policy over it. A caller without that sink
+rejects output-bearing, complete-empty, or bounded-but-ambiguous candidates.
+Exhausting the 4,096-candidate work limit also fails closed unless one of the
+exact full-file media admissions below authenticates the same mapped bytes. A
+candidate rejected before producing output is not treated as a container.
+
+Strict PNGs have one format-aware boundary. The helper validates the signature,
+critical-chunk grammar and order, every CRC, IHDR and palette constraints, at
+most 100,000 chunks, the bounded exact decompressed image size, every row filter,
+and one complete zlib stream. Only the authenticated IDAT payload ranges are
+excluded from embedded-container discovery. Chunk framing and ancillary data
+remain scanned, with enough lookahead to detect a container that starts outside
+IDAT. A prefix, trailing bytes, malformed structure, invalid CRC, impossible
+layout or filter, or decoder error removes the PNG exception and returns the
+complete file to ordinary discovery. Three repository-owned public artifacts
+have exact-byte admission for callers without a derived-output sink. The
+Workbench architecture PNG has one incidental output-bearing RFC 1950 candidate
+in CRC-valid ancillary data outside IDAT. The LeRobot MP4/Rerun pair contains
+more than 4,096 incidental compression headers and hundreds of malformed
+raw-DEFLATE prefixes that emit bytes before failing. Their exact full-file
+SHA-256 identities authenticate those known bytes for that no-sink predicate,
+and the helper still probes every candidate against the same open memory map.
+Changed bytes do not inherit that admission. Production probe preparation has
+a derived-output sink instead: within its bounds, changed or non-allowlisted
+files may proceed only after every deterministic RFC 1950 output is retained,
+recursively classified, and scanned through the real policy; an unretained,
+ambiguous, or exhausted population fails closed.
+Archive members have no incidental-candidate hash waiver. A complete bounded
+ZIP member or decompressed stream receives a derived-output sink that retains
+every deterministic RFC 1950 byte under the exact member path for recursive
+policy scanning; a caller that cannot retain that view rejects the candidate.
+Archive-looking member names or prefixes, encoded containers, malformed
+archives, changed member bytes, and standalone compressed streams retain their
+ordinary fail-closed behavior.
+Longer unsupported container signatures and embedded xz signatures remain
+fail-closed.
+Malformed strongly identified Unicode or content that reaches the first
+unsupported decode layer also fails instead of being silently omitted. Encoded
+candidates are fully inspected for encoded containers under a 16-MiB
+fail-closed analysis bound and deduplicated into isolated sub-100-KB scanner
+files; unrelated decoded values never share a fragment. A scanner-decodable
+candidate too large to preserve as one fragment fails closed. The
+decode-recursion ceiling probe scans those isolated streams once instead of
+reporting duplicate matches from fragment and exact-path views; those views
+remain in the real-policy content scans. Match
+cardinality is bounded by distinct codec-and-byte identity so repeated
+scan-view bytes retain every governed path without consuming the same work
+budget again; generated-file count and aggregate encoded-candidate output are
+bounded separately. The runner uses fixed process environments for authenticated
+Git object reads and Gitleaks. Native history scans use fresh private Git
+metadata backed by the source object database, so repository-local signature
+helpers and other caller-controlled Git configuration are not inherited. The
+runner fixes Gitleaks parallelism at eight threads, requires exact Gitleaks
+8.28.0, and compares the Linux x86-64 executable SHA-256 with the pinned official
+release byte digest before executing it. It rejects warning, error, or
+archive-coverage diagnostics even when the scanner returns success, applies a
+256-MiB report-file ceiling in each child process and one 512-MiB aggregate
+report budget across controls and all sharded invocations,
+spools diagnostics to bounded files instead of memory, and revalidates both
+scanner bytes and the exact Git history plan after all long-running scans. Caller
+process hooks,
+an initially counterfeit scanner, scanner replacement, and concurrent
+shallow/graft changes therefore cannot silently change a passing verdict.
+
+Supplemental views contain both neutral synthetic paths and logical-path
+variants. The neutral copy prevents binary-extension allowlists from hiding
+content, while the logical variant preserves path-rule suffixes. An
+original-path fingerprint in `.gitleaksignore` may still fail safe as a finding
+in either supplemental view; use an exact anchored line or other narrowly
+content-scoped policy exception when one is justified. Unit tests with
+controlled scanner processes do not replace the required real-Gitleaks run.
+Workflow activation belongs in a later focused change after this helper has
+landed on the trusted base.
+
 Start with `make precheck`: it checks the working tree's CI dependency fingerprint,
 lint, formatting, and focused CI contract regressions. It does not change files or
 run the full suite. `make format-check` is the formatting check alone.

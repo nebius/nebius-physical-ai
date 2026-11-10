@@ -89,6 +89,11 @@ def test_clean_root_recipe_retains_measured_cuda_and_launch_configuration():
         "blob_bytes": 32,
         "diff_id": "sha256:" + hashlib.sha256(b"\x00" * 1024).hexdigest(),
     }
+    assert expected["optional_empty_metadata_layer_classic"] == {
+        "blob_sha256": hashlib.sha256(b"\x00" * 1024).hexdigest(),
+        "blob_bytes": 1024,
+        "diff_id": "sha256:" + hashlib.sha256(b"\x00" * 1024).hexdigest(),
+    }
     assert expected["platform"] == {"os": "linux", "architecture": "amd64"}
 
 
@@ -151,9 +156,9 @@ def test_full_distro_source_and_notice_closure_is_baked_and_byte_bound():
             {"sha256": selected["sha256"], "size": selected["size"]}
         ]
     assert binding["final_dpkg_database_sha256"] == source["final_dpkg_database_sha256"]
-    assert len(source["packages"]) == 250
+    assert len(source["packages"]) == 251
     assert len(source["dpkg_databases"]) == 4
-    assert len(source["notice_files"]) == 164
+    assert len(source["notice_files"]) == 165
     assert len(source["sources"]) == 143
     sources = {(row["package"], row["version"]) for row in source["sources"]}
     vendor = {
@@ -172,7 +177,14 @@ def test_full_distro_source_and_notice_closure_is_baked_and_byte_bound():
             assert artifact["bytes"] > 0
             assert len(bytes.fromhex(artifact["sha256"])) == 32
     notices = {row["path"]: row for row in source["notice_files"]}
-    assert len(notices) == 164
+    assert len(notices) == 165
+    assert {
+        "package": "xz-utils",
+        "version": "5.6.1+really5.4.5-1ubuntu0.3",
+        "source": "xz-utils",
+        "source_version": "5.6.1+really5.4.5-1ubuntu0.3",
+    } in source["packages"]
+    assert "usr/share/doc/xz-utils/copyright" in notices
     for row in source["vendor_source_exceptions"]:
         assert row["notice_path"] in notices
     for row in notices.values():
@@ -213,6 +225,22 @@ def test_pip_bootstrap_distribution_is_content_pinned():
     assert 'assert msgpack.__version__ == "1.2.1"' in apt
     assert "COPY --from=secure-pip-builder --chmod=0444" in final
     assert "pip install --no-cache-dir --upgrade 'pip==" not in text
+    retained = {
+        row["path"]: row
+        for row in json.loads(RUNTIME_PAYLOAD.read_text())["bootstrap_seeds"][
+            "retained"
+        ]
+    }
+    assert retained["usr/share/python-wheels/pip-26.2.1+npa.1-py3-none-any.whl"] == {
+        "path": "usr/share/python-wheels/pip-26.2.1+npa.1-py3-none-any.whl",
+        "size": 1866879,
+        "sha256": "9c4f6869f53a1fc68a8eb12200280237a5f9b585933c9856bebf6224b0b01856",
+    }
+    assert retained["usr/share/doc/npa-curobo/secure-pip-build.json"] == {
+        "path": "usr/share/doc/npa-curobo/secure-pip-build.json",
+        "size": 9077,
+        "sha256": "520c3d3d214e6a44ac89cc105b9b2fa98f9461b330f5815972f47d57d8cd0485",
+    }
 
 
 def test_full_setuptools_seed_has_its_own_fixed_wheel_lock():
