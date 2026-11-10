@@ -87,6 +87,31 @@ def test_superseded_release_record_remains_valid_for_lifecycle_and_status(
     )
 
 
+def test_tampered_successor_record_is_rejected_for_lifecycle_and_status(
+    tmp_path: Path,
+) -> None:
+    """Both persisted-record readers must reject altered successor provenance."""
+
+    successor = releases.resolve_mk8s_release("mk8s-v2026-11-10")
+    persisted = successor.persistence()
+    tampered = {**persisted, "bundle_sha256": "0" * 64}
+    install_dir = tmp_path / "install"
+    _write_mk8s_sidecar(install_dir, tampered)
+
+    assert tampered["release_id"] == successor.release_id
+    assert tampered != successor.persistence()
+    with pytest.raises(
+        MK8sReleaseError,
+        match="persisted MK8s recipe-release provenance conflicts with the catalog",
+    ):
+        select_installation_release(install_dir)
+    with pytest.raises(
+        MK8sReleaseError,
+        match="persisted MK8s recipe-release provenance conflicts with the catalog",
+    ):
+        release_from_sidecar({"mk8s_recipe_release": tampered})
+
+
 def test_prior_qualified_contract_remains_reconcilable(tmp_path: Path) -> None:
     """A new default must not invalidate an already persisted release."""
 
