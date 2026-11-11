@@ -1039,6 +1039,11 @@ def test_checked_in_workflow_dispatches_every_compositional_stage() -> None:
         assert "--action-contract-uri" in step.argv
         assert "--control-uri" in step.argv
         assert "--evidence-video-key" in step.argv
+    evaluation = next(
+        step for step in plan.steps if step.state == "evaluate-recorded-observations"
+    )
+    evidence_index = evaluation.argv.index("--evidence-episode-index")
+    assert evaluation.argv[evidence_index + 1] == "14"
 
 
 def test_standard_reuse_rejects_a_changed_declaration() -> None:

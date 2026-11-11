@@ -87,7 +87,9 @@ config:
   checkpoint_interval_steps: "500"
   inference_seed: "1701"
 
-  evidence_episode_index: "0"
+  # The reference builder's immutable adapter assigns held-out output episodes
+  # 14, 15, 16, 17, and 19. Keep the evidence clip in that held-out partition.
+  evidence_episode_index: "14"
   evidence_start_frame: "0"
   evidence_frame_count: "120"
   evidence_video_fps: "30"
