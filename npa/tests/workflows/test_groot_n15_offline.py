@@ -1325,6 +1325,127 @@ def test_standard_prepare_materializes_declared_tree_without_external_code(
     assert result["standard_input_config_sha256"] == "c" * 64
 
 
+def test_reference_prepare_binds_published_gallery_tree_to_provenance(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The shipped reference must attest the recovery bytes evaluation reloads."""
+
+    source = tmp_path / "reference-source"
+    (source / "meta").mkdir(parents=True)
+    (source / "meta" / "episodes.jsonl").write_text(
+        "\n".join(
+            json.dumps({"episode_index": index, "length": 2}) for index in range(2)
+        )
+        + "\n"
+    )
+    (source / "meta" / "modality.json").write_text(
+        json.dumps({"action": {"left_arm": {}, "right_arm": {}}})
+    )
+    feedback_path = tmp_path / "reference-feedback.json"
+    feedback_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "npa.groot-feedback/v2",
+                "episodes": [
+                    {"episode_index": 0, "split": "train", "success": True},
+                    {"episode_index": 1, "split": "eval", "success": False},
+                ],
+            }
+        )
+    )
+    gallery_root = tmp_path / "reference-gallery"
+    gallery_root.mkdir()
+    (gallery_root / "recovery.mp4").write_bytes(b"recorded-recovery")
+    (gallery_root / "gallery.json").write_text("{}")
+
+    reference = SimpleNamespace(
+        dataset_root=source,
+        feedback_path=feedback_path,
+        gallery_root=gallery_root,
+        provenance={"source_identifier": "public/reference", "source_revision": "pin"},
+        action_contract={"target_keys": ["action.left_arm", "action.right_arm"]},
+    )
+    import npa.workbench.groot.offline_feedback as offline_feedback
+    import npa.workbench.groot.reference_inputs as reference_inputs
+
+    def transcode(
+        source_root: Path, derivative: Path, *_args: object
+    ) -> dict[str, object]:
+        shutil.copytree(source_root, derivative)
+        return {"sample_derivative_probe": {"codec_name": "h264"}}
+
+    def prepare_feedback(
+        _dataset: Path, _feedback: Path, manifest: Path, **_kwargs: object
+    ) -> SimpleNamespace:
+        manifest.write_text("{}")
+        return SimpleNamespace(schema_version="npa.groot-feedback-manifest/v1")
+
+    monkeypatch.setattr(reference_inputs, "prepare_reference", lambda _stage: reference)
+    monkeypatch.setattr(workflow, "_transcode_h264", transcode)
+    monkeypatch.setattr(workflow, "_validate_custom_native_layout", lambda *_: None)
+    monkeypatch.setattr(
+        workflow,
+        "_statistics_from_train_parquet",
+        lambda *_: {"action": {"mean": [0.0], "std": [1.0]}},
+    )
+    monkeypatch.setattr(
+        workflow,
+        "_custom_action_roundtrip_evidence",
+        lambda *_: {"status": "verified"},
+    )
+    monkeypatch.setattr(
+        workflow,
+        "_validate_gallery_reference",
+        lambda _root: {"schema_version": "npa.groot-recorded-gallery-reference/v1"},
+    )
+    monkeypatch.setattr(offline_feedback, "prepare_feedback", prepare_feedback)
+
+    payloads: dict[str, object] = {}
+
+    class Store:
+        def put_directory(self, root: Path, _uri: str) -> dict[str, object]:
+            return {
+                "tree_sha256": workflow.tree_digest(workflow.directory_inventory(root)),
+                "files": [],
+            }
+
+        def put_file(self, path: Path, _uri: str) -> dict[str, object]:
+            return {"sha256": workflow.sha256_file(path), "bytes": path.stat().st_size}
+
+        def put_json(self, value: object, uri: str) -> dict[str, object]:
+            payloads[uri] = value
+            encoded = json.dumps(value, sort_keys=True).encode()
+            return {"sha256": hashlib.sha256(encoded).hexdigest(), "bytes": len(encoded)}
+
+    args = SimpleNamespace(
+        codec_workers=1,
+        derivative_codec="h264",
+        action_horizon=2,
+        feedback_mode="hybrid",
+        feedback_temperature=1.0,
+        train_episode_count=1,
+        eval_episode_count=1,
+        action_target_keys="action.left_arm,action.right_arm",
+        prepared_dataset_uri="s3://output/prepared/dataset",
+        feedback_output_uri="s3://output/prepared/feedback.json",
+        manifest_uri="s3://output/prepared/manifest.json",
+        gallery_reference_uri="s3://output/prepared/gallery",
+        prepare_receipt_uri="s3://output/prepared/provenance.json",
+        prepare_commit_uri="s3://output/prepared/commit.json",
+    )
+
+    result = workflow._prepare_reference_inputs(args, Store(), tmp_path / "stage")
+
+    provenance = payloads[args.prepare_receipt_uri]
+    assert isinstance(provenance, dict)
+    gallery = provenance["recorded_gallery_reference"]
+    assert isinstance(gallery, dict)
+    assert gallery["tree_sha256"] == result["gallery_tree_sha256"]
+    assert gallery["tree_sha256"] == workflow.tree_digest(
+        workflow.directory_inventory(gallery_root)
+    )
+
+
 def test_readiness_record_is_bound_to_the_checked_in_workflow() -> None:
     root = Path(__file__).resolve().parents[3]
     workflow_bytes = (root / "workflows/testing/groot-n15-offline-rl.yaml").read_bytes()

@@ -2026,7 +2026,10 @@ def _prepare_reference_inputs(
         mode=args.feedback_mode,
         temperature=args.feedback_temperature,
     )
-    gallery = _validate_gallery_reference(reference.gallery_root)
+    gallery = {
+        **_validate_gallery_reference(reference.gallery_root),
+        "tree_sha256": tree_digest(directory_inventory(reference.gallery_root)),
+    }
     label_counts = {
         "success": sum(record.get("success") is True for record in feedback_records),
         "failure": sum(record.get("success") is False for record in feedback_records),
@@ -2082,6 +2085,13 @@ def _prepare_reference_inputs(
         ),
         "provenance": store.put_json(provenance, args.prepare_receipt_uri),
     }
+    if (
+        output_records["recorded_gallery_reference"]["tree_sha256"]
+        != gallery["tree_sha256"]
+    ):
+        raise WorkflowArtifactError(
+            "published reference gallery differs from prepared gallery"
+        )
     store.put_json(
         {
             "schema_version": SCHEMA_VERSION,
