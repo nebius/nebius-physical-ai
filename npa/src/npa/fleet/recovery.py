@@ -416,9 +416,15 @@ def _verify_retained_pool_topology(
         raise FleetRecoveryError(
             "retained provider node-group inventory is malformed"
         ) from exc
-    groups = groups_payload.get("items") if isinstance(groups_payload, dict) else None
+    if allow_missing and groups_payload == {}:
+        groups = []
+    elif isinstance(groups_payload, dict):
+        groups = groups_payload.get("items")
+    else:
+        groups = None
     if (
-        not isinstance(groups, list)
+        not isinstance(groups_payload, dict)
+        or not isinstance(groups, list)
         or groups_payload.get("next_page_token")
         or not all(isinstance(group, dict) for group in groups)
     ):

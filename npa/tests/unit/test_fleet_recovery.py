@@ -1351,10 +1351,18 @@ def test_normal_lifecycle_refuses_registration_when_terminal_pool_never_converge
         assert path.read_bytes() == expected
 
 
-def test_normal_lifecycle_refuses_registration_when_postcreate_inventory_stays_absent(
-    tmp_path, monkeypatch
+@pytest.mark.parametrize(
+    ("postcreate_payload", "error", "minimum_reads", "expected_sleeps"),
+    [
+        ({"items": []}, "did not reach terminal state", 2, [30.0]),
+        ({}, "node-group inventory is incomplete", 1, []),
+    ],
+    ids=["explicit-empty-items", "empty-mapping"],
+)
+def test_normal_lifecycle_refuses_registration_when_postcreate_inventory_is_not_terminal(
+    tmp_path, monkeypatch, postcreate_payload, error, minimum_reads, expected_sleeps
 ):
-    spec, install_dir, before = _unmaterialized_retained_target(tmp_path)
+    spec, install_dir, before = _zero_node_subnet_retained_target(tmp_path)
     calls: dict[str, object] = {}
     _prepare_provider(monkeypatch, calls)
     monkeypatch.setattr(lifecycle, "_assert_terraform_version", lambda _: None)
@@ -1393,7 +1401,7 @@ def test_normal_lifecycle_refuses_registration_when_postcreate_inventory_stays_a
         elif "node-group" in command and "list" in command:
             if created:
                 postcreate_inventory_reads += 1
-            payload = {"items": []}
+            payload = {"items": []} if not created else postcreate_payload
         elif "node-group" in command and "create" in command:
             created = True
             payload = {
@@ -1409,7 +1417,7 @@ def test_normal_lifecycle_refuses_registration_when_postcreate_inventory_stays_a
 
     monkeypatch.setattr(mk8s_execution, "_run_capture", provider)
 
-    with pytest.raises(RuntimeError, match="did not reach terminal state"):
+    with pytest.raises(RuntimeError, match=error):
         lifecycle.deploy_fleet(
             spec,
             work_root=tmp_path,
@@ -1426,8 +1434,8 @@ def test_normal_lifecycle_refuses_registration_when_postcreate_inventory_stays_a
     assert [command[command.index("--name") + 1] for command in creates] == [
         "recover-ng-cpu"
     ]
-    assert postcreate_inventory_reads >= 2
-    assert sleeps == [30.0]
+    assert postcreate_inventory_reads >= minimum_reads
+    assert sleeps == expected_sleeps
     assert "kubeconfig" not in calls
     assert "persist" not in calls
     assert not any("terraform" in command for command in commands)
@@ -1436,6 +1444,7 @@ def test_normal_lifecycle_refuses_registration_when_postcreate_inventory_stays_a
             "owner": install_dir / ".npa-backend-owner.json",
             "sidecar": install_dir / ".npa-fleet-env.json",
             "state": install_dir / "k8s-training" / "terraform.tfstate",
+            "backup": install_dir / "k8s-training" / "terraform.tfstate.backup",
             "lock": install_dir / "k8s-training" / ".terraform.tfstate.lock.info",
             "summary": tmp_path / spec.name / "fleet-state.json",
         }[name]
@@ -1557,7 +1566,7 @@ def test_normal_lifecycle_resumes_zero_subnet_cpu_and_strict_gpu_target(
         elif "node-group" in command and "list" in command:
             pool_lists += 1
             payload = (
-                {"items": []}
+                {}
                 if pool_lists < 3
                 else {
                     "items": [
@@ -1636,6 +1645,165 @@ def test_normal_lifecycle_resumes_zero_subnet_cpu_and_strict_gpu_target(
     assert (workdir / "terraform.tfstate").read_bytes() == before["state"]
     assert backup_path.read_bytes() == before["backup"]
     assert (workdir / ".terraform.tfstate.lock.info").read_bytes() == before["lock"]
+
+
+def test_normal_lifecycle_empty_node_group_mapping_refusal_preserves_retained_bytes(
+    tmp_path, monkeypatch
+):
+    spec, install_dir, before = _zero_node_subnet_retained_target(tmp_path)
+    calls: dict[str, object] = {}
+    _prepare_provider(monkeypatch, calls)
+    monkeypatch.setattr(lifecycle, "_assert_terraform_version", lambda _: None)
+    monkeypatch.setattr(lifecycle, "_resolve_tenant_id", lambda *_: "tenant-test")
+    monkeypatch.setattr(lifecycle, "_resolve_region", lambda _: "test-region")
+    monkeypatch.setattr(recovery, "_assert_no_live_apply_owner", lambda _workdir: None)
+    monkeypatch.setattr(
+        lifecycle,
+        "_deploy_one_cluster",
+        lambda **_: pytest.fail("retained target must not enter Terraform apply"),
+    )
+    commands: list[list[str]] = []
+
+    def provider(command, **_kwargs):
+        commands.append(command)
+        if "cluster" in command and "list" in command:
+            payload = {
+                "items": [
+                    {
+                        "metadata": {
+                            "id": "cluster-test",
+                            "parent_id": "project-test",
+                            "name": "recover",
+                        },
+                        "status": {"state": "RUNNING"},
+                    }
+                ]
+            }
+            return CompletedProcess(command, 0, json.dumps(payload), "")
+        if "node-group" in command and "list" in command:
+            return CompletedProcess(command, 0, "{}", "")
+        if "node-group" in command and "create" in command:
+            return CompletedProcess(command, 1, "", "provider refused")
+        pytest.fail(f"unexpected provider command: {command}")
+
+    monkeypatch.setattr(mk8s_execution, "_run_capture", provider)
+
+    with pytest.raises(RuntimeError, match="could not create retained node group"):
+        lifecycle.deploy_fleet(
+            spec,
+            work_root=tmp_path,
+            k8s_training_dir=install_dir,
+            preflight=False,
+        )
+
+    creates = [
+        command
+        for command in commands
+        if "node-group" in command and "create" in command
+    ]
+    assert [command[command.index("--name") + 1] for command in creates] == [
+        "recover-ng-cpu"
+    ]
+    assert "kubeconfig" not in calls
+    assert "persist" not in calls
+    assert not any("terraform" in command for command in commands)
+    paths = {
+        "owner": install_dir / ".npa-backend-owner.json",
+        "sidecar": install_dir / ".npa-fleet-env.json",
+        "state": install_dir / "k8s-training" / "terraform.tfstate",
+        "backup": install_dir / "k8s-training" / "terraform.tfstate.backup",
+        "lock": install_dir / "k8s-training" / ".terraform.tfstate.lock.info",
+        "summary": tmp_path / spec.name / "fleet-state.json",
+    }
+    for name, path in paths.items():
+        assert path.read_bytes() == before[name]
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        None,
+        {"metadata": {}},
+        {"items": [], "next_page_token": "next"},
+        {"items": [{"metadata": []}]},
+        {
+            "items": [
+                _provider_pool(
+                    "unexpected-pool",
+                    platform="cpu-d3",
+                    preset="48vcpu-192gb",
+                    count=1,
+                )
+            ]
+        },
+    ],
+    ids=["absent", "missing-items", "paged", "malformed-item", "unexpected-pool"],
+)
+def test_normal_lifecycle_rejects_noncanonical_empty_node_group_inventory(
+    tmp_path, monkeypatch, payload
+):
+    spec, install_dir, before = _zero_node_subnet_retained_target(tmp_path)
+    calls: dict[str, object] = {}
+    _prepare_provider(monkeypatch, calls)
+    monkeypatch.setattr(lifecycle, "_assert_terraform_version", lambda _: None)
+    monkeypatch.setattr(lifecycle, "_resolve_tenant_id", lambda *_: "tenant-test")
+    monkeypatch.setattr(lifecycle, "_resolve_region", lambda _: "test-region")
+    monkeypatch.setattr(recovery, "_assert_no_live_apply_owner", lambda _workdir: None)
+    monkeypatch.setattr(
+        lifecycle,
+        "_deploy_one_cluster",
+        lambda **_: pytest.fail("retained target must not enter Terraform apply"),
+    )
+    commands: list[list[str]] = []
+
+    def provider(command, **_kwargs):
+        commands.append(command)
+        if "cluster" in command and "list" in command:
+            response = {
+                "items": [
+                    {
+                        "metadata": {
+                            "id": "cluster-test",
+                            "parent_id": "project-test",
+                            "name": "recover",
+                        },
+                        "status": {"state": "RUNNING"},
+                    }
+                ]
+            }
+            return CompletedProcess(command, 0, json.dumps(response), "")
+        if "node-group" in command and "list" in command:
+            return CompletedProcess(command, 0, json.dumps(payload), "")
+        pytest.fail(f"unexpected provider command: {command}")
+
+    monkeypatch.setattr(mk8s_execution, "_run_capture", provider)
+
+    with pytest.raises(
+        RuntimeError, match="failed exact normal-lifecycle reconciliation"
+    ):
+        lifecycle.deploy_fleet(
+            spec,
+            work_root=tmp_path,
+            k8s_training_dir=install_dir,
+            preflight=False,
+        )
+
+    assert not any(
+        "node-group" in command and "create" in command for command in commands
+    )
+    assert "kubeconfig" not in calls
+    assert "persist" not in calls
+    assert not any("terraform" in command for command in commands)
+    paths = {
+        "owner": install_dir / ".npa-backend-owner.json",
+        "sidecar": install_dir / ".npa-fleet-env.json",
+        "state": install_dir / "k8s-training" / "terraform.tfstate",
+        "backup": install_dir / "k8s-training" / "terraform.tfstate.backup",
+        "lock": install_dir / "k8s-training" / ".terraform.tfstate.lock.info",
+        "summary": tmp_path / spec.name / "fleet-state.json",
+    }
+    for name, path in paths.items():
+        assert path.read_bytes() == before[name]
 
 
 def test_normal_lifecycle_refuses_zero_subnet_when_provider_has_a_pool(
