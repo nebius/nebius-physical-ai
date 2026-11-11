@@ -208,8 +208,11 @@ def _warn_if_nebius_version_mismatch(nebius_path: str) -> None:
     if actual not in tested:
         supported = ", ".join(sorted(tested))
         raise NebiusCliCompatibilityError(
-            f"Unsupported Nebius CLI {actual}; NPA has tested {supported}. "
-            f"Install {expected}: `{_nebius_cli_install_remedy(expected)}`"
+            f"Unsupported Nebius CLI {actual} at {nebius_path}; "
+            f"NPA has tested {supported}. Install {expected}: "
+            f"`{_nebius_cli_install_remedy(expected)}`. If this already matches "
+            f"`nebius version`, a stale binary earlier on PATH is being resolved "
+            "here; check with `type -a nebius` and remove the old copy."
         )
     _NEBIUS_VERSION_CHECKED = True
     if actual != expected:

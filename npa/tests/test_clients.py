@@ -930,8 +930,9 @@ def test_nebius_blocks_unsupported_cli_version_with_exact_remedy(
     with pytest.raises(NebiusError, match="Unsupported Nebius CLI") as caught:
         nebius._require_nebius()
 
-    assert f"Unsupported Nebius CLI {version};" in str(caught.value)
+    assert f"Unsupported Nebius CLI {version} at /usr/bin/nebius;" in str(caught.value)
     assert "NEBIUS_CLI_VERSION=0.12.298 bash" in str(caught.value)
+    assert "type -a nebius" in str(caught.value)
     assert nebius._NEBIUS_VERSION_CHECKED is False
 
 
