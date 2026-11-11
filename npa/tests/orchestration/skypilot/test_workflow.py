@@ -7415,6 +7415,73 @@ def test_exact_lookup_uses_task_local_kubernetes_absence_only_for_controller_los
     assert calls[1] == ("task-context", kubeconfig, {"KUBECONFIG": str(kubeconfig)})
 
 
+def test_task_local_binding_uses_content_bound_local_api_config(
+    monkeypatch, tmp_path
+) -> None:
+    """Receipt-routed status retains its exact context without --config."""
+
+    isolated = tmp_path / "isolated"
+    local_api = isolated / "local-api"
+    local_api.mkdir(parents=True)
+    user_hash = isolated / "home" / ".sky" / "user_hash"
+    user_hash.parent.mkdir(parents=True)
+    user_hash.write_text("npa-0123456789ab\n", encoding="utf-8")
+    config = local_api / "server-config.yaml"
+    config.write_text(
+        yaml.safe_dump({"kubernetes": {"allowed_contexts": ["task-context"]}}),
+        encoding="utf-8",
+    )
+    (local_api / "daemon.json").write_text(
+        json.dumps({"config_sha256": hashlib.sha256(config.read_bytes()).hexdigest()}),
+        encoding="utf-8",
+    )
+    kubeconfig = tmp_path / "kubeconfig"
+    kubeconfig.write_text("apiVersion: v1\n", encoding="utf-8")
+    monkeypatch.setattr(
+        "npa.cluster.state.existing_kubeconfig", lambda _context: kubeconfig
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.cluster_validation.resolve_validation_target",
+        lambda path, context: (path, context),
+    )
+
+    binding = workflow_module._task_local_kubernetes_binding(
+        SimpleNamespace(isolated_config_dir=isolated, global_config_path=None)
+    )
+
+    assert binding == ("task-context", kubeconfig, "npa-0123456789ab")
+
+
+@pytest.mark.parametrize("tamper", ("digest", "symlink"))
+def test_task_local_binding_rejects_unbound_local_api_config(tmp_path, tamper) -> None:
+    isolated = tmp_path / "isolated"
+    local_api = isolated / "local-api"
+    local_api.mkdir(parents=True)
+    config = local_api / "server-config.yaml"
+    config.write_text(
+        yaml.safe_dump({"kubernetes": {"allowed_contexts": ["task-context"]}}),
+        encoding="utf-8",
+    )
+    (local_api / "daemon.json").write_text(
+        json.dumps({"config_sha256": hashlib.sha256(config.read_bytes()).hexdigest()}),
+        encoding="utf-8",
+    )
+    if tamper == "digest":
+        config.write_text("kubernetes: {}\n", encoding="utf-8")
+    else:
+        replacement = tmp_path / "replacement.yaml"
+        replacement.write_text(config.read_text(encoding="utf-8"), encoding="utf-8")
+        config.unlink()
+        config.symlink_to(replacement)
+
+    assert (
+        workflow_module._task_local_controller_config_path(
+            SimpleNamespace(isolated_config_dir=isolated, global_config_path=None)
+        )
+        is None
+    )
+
+
 def test_exact_lookup_refuses_kubernetes_absence_when_exact_worker_is_present(
     monkeypatch, tmp_path
 ) -> None:

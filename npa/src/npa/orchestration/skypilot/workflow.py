@@ -3232,7 +3232,9 @@ def _task_local_kubernetes_binding(
     """Load one validated cached context and its isolated controller identity."""
 
     isolated_dir = runtime_config.isolated_config_dir
-    context = _single_kubernetes_context(runtime_config.global_config_path)
+    context = _single_kubernetes_context(
+        _task_local_controller_config_path(runtime_config)
+    )
     user_id = _isolated_controller_user(isolated_dir)
     if isolated_dir is None or not context or not user_id:
         return None
@@ -3249,6 +3251,45 @@ def _task_local_kubernetes_binding(
     except (OSError, ValueError):
         return None
     return selected_context, kubeconfig, user_id
+
+
+def _task_local_controller_config_path(runtime_config: Any) -> Path | None:
+    """Return the verified local API config when no client config was recorded.
+
+    Fresh-shell workflow status resolves the persistent local API endpoint from
+    the run receipt.  That endpoint owns a content-bound ``server-config.yaml``
+    even when the client did not pass ``--config``.  The Kubernetes absence
+    fallback must use that same configuration to recover the sole allowed
+    context; otherwise an unreachable controller is needlessly reported as
+    unknown forever.  Never infer a context from an unbound local file.
+    """
+
+    configured = getattr(runtime_config, "global_config_path", None)
+    if configured is not None:
+        return Path(configured)
+    isolated_dir = getattr(runtime_config, "isolated_config_dir", None)
+    if isolated_dir is None:
+        return None
+    root = Path(isolated_dir) / "local-api"
+    record_path = root / "daemon.json"
+    config_path = root / "server-config.yaml"
+    try:
+        if (
+            record_path.is_symlink()
+            or config_path.is_symlink()
+            or not record_path.is_file()
+            or not config_path.is_file()
+        ):
+            return None
+        record = json.loads(record_path.read_text(encoding="utf-8"))
+        expected_digest = str(record.get("config_sha256") or "")
+        if not re.fullmatch(r"[a-f0-9]{64}", expected_digest):
+            return None
+        if hashlib.sha256(config_path.read_bytes()).hexdigest() != expected_digest:
+            return None
+    except (OSError, TypeError, ValueError, json.JSONDecodeError):
+        return None
+    return config_path
 
 
 def _single_kubernetes_context(config_path: Path | None) -> str:
