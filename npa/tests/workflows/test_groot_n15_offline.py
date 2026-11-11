@@ -1415,7 +1415,10 @@ def test_reference_prepare_binds_published_gallery_tree_to_provenance(
         def put_json(self, value: object, uri: str) -> dict[str, object]:
             payloads[uri] = value
             encoded = json.dumps(value, sort_keys=True).encode()
-            return {"sha256": hashlib.sha256(encoded).hexdigest(), "bytes": len(encoded)}
+            return {
+                "sha256": hashlib.sha256(encoded).hexdigest(),
+                "bytes": len(encoded),
+            }
 
     args = SimpleNamespace(
         codec_workers=1,
