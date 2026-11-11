@@ -17,6 +17,7 @@ status  Show the last-known deployment state for the fleet.
 verify-mig  Verify exact RTX PRO 6000 MIG labels, operands, and kubelet resources.
 verify-storage  Verify host mounts and shared PVC visibility on every selected worker.
 verify-graphics  Qualify CUDA, GLX, EGL, and Vulkan on every selected RTX worker.
+recover  Adopt one verified terminal MK8s apply without Terraform mutation.
 ```
 
 ## Options
@@ -36,6 +37,7 @@ verify-graphics  Qualify CUDA, GLX, EGL, and Vulkan on every selected RTX worker
 | `verify-mig` | Verify exact RTX PRO 6000 MIG labels, operands, and kubelet resources. |
 | `verify-storage` | Verify host mounts and shared PVC visibility on every selected worker. |
 | `verify-graphics` | Qualify CUDA, GLX, EGL, and Vulkan on every selected RTX worker. |
+| `recover` | Adopt one verified terminal MK8s apply without Terraform mutation. |
 
 ## Examples
 

@@ -1,8 +1,9 @@
 {
   "detector_identity": {
-    "config_sha256": "4ae31a02bb25f4f1c94b024a5163f45f461692260d0656556635c98e663b9e4e",
-    "helper_sha256": "6e4891bd5e423b9c7031770c8adc8b5ec89a65ae592a7fb3fd0e59aeaa96fced"
+    "config_sha256": "a3f008d5da1d9fcefd8507119cfd419804164adc811c42da00f2f0c44724be6e",
+    "helper_sha256": "12e8d3fcfc033729cc99a769c329b60e8851ac3f6a1dd7ac00ea411df6f306dd"
   },
+  "detector_inputs_sha256": "7b386baa057333f8187c556b0e9d72f9cdd81bbb63115c6af2ba26de772eeccb",
   "entries": [
     {
       "native_findings": [

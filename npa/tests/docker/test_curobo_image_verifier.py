@@ -372,12 +372,30 @@ def test_clean_root_accepts_only_exact_measured_empty_metadata_tail(tmp_path, pa
     )
 
 
+def test_clean_root_accepts_exact_classic_empty_metadata_tail(tmp_path, payload):
+    use_clean_root_contract(payload)
+    raw = b"\x00" * 1024
+    report = verify(
+        tmp_path,
+        payload,
+        [payload[1], []],
+        config_update=clean_root_config,
+        layer_overrides={1: (raw, raw)},
+    )
+    assert report["valid"] is True
+    expected = json.loads((IMAGE / "clean-root-config.json").read_text())
+    assert (
+        report["verified_layer_identities"][-1]
+        == expected["optional_empty_metadata_layer_classic"]
+    )
+
+
 @pytest.mark.parametrize(
     "kind",
     [
         "alternate_gzip",
-        "raw_tar",
         "padding",
+        "raw_padding",
         "file",
         "whiteout",
         "symlink",
@@ -393,11 +411,12 @@ def test_clean_root_rejects_other_metadata_layer_forms(tmp_path, payload, kind):
     layers = [payload[1], []]
     if kind == "alternate_gzip":
         packed = gzip.compress(raw, mtime=0)
-    elif kind == "raw_tar":
-        packed = raw
     elif kind == "padding":
         raw = b"\x00" * 10240
         packed = gzip.compress(raw, mtime=0)
+    elif kind == "raw_padding":
+        raw = b"\x00" * 10240
+        packed = raw
     elif kind in {"file", "whiteout", "symlink"}:
         entries = {
             "file": [entry("unexpected", b"payload")],

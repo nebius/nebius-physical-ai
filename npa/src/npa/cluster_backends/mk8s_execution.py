@@ -442,11 +442,15 @@ def _persist_npa_cluster_identity(
 
     existing = load_cluster_state(context, base_dir=base_dir)
     if existing is not None and (
-        existing.cluster_id != cluster_id or existing.project_id != project_id
+        existing.cluster_id != cluster_id
+        or existing.project_id != project_id
+        or existing.region != region
+        or existing.subnet_id != subnet_id
     ):
         raise RuntimeError(
             f"NPA cluster context {context!r} already records a different immutable "
-            "project/cluster identity; refusing to overwrite it"
+            "project/cluster identity or Fleet region/subnet context; refusing to "
+            "overwrite it"
         )
     if not kubeconfig_path.is_file():
         raise RuntimeError(
@@ -2093,6 +2097,61 @@ def _normalize_tfvars_assignments(text: str) -> str:
     return "\n".join(normalized)
 
 
+def retained_target_tfvars_match(
+    saved: str, expected: str, *, strict_capacity_block_group: str = ""
+) -> bool:
+    """Compare retained inputs with an exact verified STRICT policy selector.
+
+    Managed Kubernetes uses the declared capacity-block-group ID directly in
+    the STRICT reservation policy. A retained input with any alternate policy
+    ID therefore has material drift and cannot proceed to provider mutation.
+    """
+
+    saved_assignments = _tfvars_assignment_map(saved)
+    expected_assignments = _tfvars_assignment_map(expected)
+    if saved_assignments is None or expected_assignments is None:
+        return False
+    if saved_assignments != expected_assignments:
+        return False
+    if not strict_capacity_block_group:
+        return True
+    return (
+        _strict_reservation_id(
+            saved_assignments.get("gpu_nodes_reservation_policy", "")
+        )
+        == strict_capacity_block_group
+    )
+
+
+def _tfvars_assignment_map(text: str) -> dict[str, str] | None:
+    """Return normalized simple tfvars assignments or ``None`` on ambiguity."""
+
+    assignments: dict[str, str] = {}
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        normalized = _normalize_tfvars_assignments(line)
+        if "=" not in normalized:
+            return None
+        name, value = normalized.split("=", 1)
+        name = name.strip()
+        if not name or name in assignments:
+            return None
+        assignments[name] = value.strip()
+    return assignments
+
+
+def _strict_reservation_id(value: str) -> str:
+    """Extract exactly one strict reservation ID from renderer-owned syntax."""
+
+    match = re.fullmatch(
+        r'\{\s*policy\s*=\s*"STRICT"\s*,\s*reservation_ids\s*=\s*\[\s*"([^"\\]+)"\s*\]\s*\}',
+        value,
+    )
+    return match.group(1) if match else ""
+
+
 def _is_verified_unchanged_target(
     *,
     project: MK8sProjectIdentity,
@@ -2105,6 +2164,7 @@ def _is_verified_unchanged_target(
     nebius_bin: str,
     profile: str,
     env: dict[str, str],
+    _cluster_id_override: str = "",
 ) -> bool:
     """Prove that a target consumes no *additional* quota on this deploy."""
 
@@ -2112,7 +2172,15 @@ def _is_verified_unchanged_target(
     saved = _load_env_sidecar(install_dir) or {}
     project_id = str(saved.get("project_id") or "")
     cluster_id = str(saved.get("cluster_id") or "")
-    if not cluster_id and saved.get("status") == "provisioning":
+    if _cluster_id_override:
+        # Only the recovery resolver below may provide this value.  It first
+        # proves a complete provider inventory has exactly one terminal match,
+        # then this ordinary verifier proves the project's and every pool's
+        # identity.  A persisted ID must never be silently replaced.
+        if cluster_id or saved.get("status") != "provisioning":
+            return False
+        cluster_id = _cluster_id_override
+    elif not cluster_id and saved.get("status") == "provisioning":
         # A later application failure must not count existing workers twice.
         # Recover only this target's exact local resource identity, then
         # independently verify every requested cloud pool below.
@@ -2146,6 +2214,7 @@ def _is_verified_unchanged_target(
             "validating-gpu-health",
             "validating-mig",
             "validating-cluster-basics",
+            "recovered-pending-validation",
             "deployed-validation-failed",
             "deployed-credentials-failed",
         }
@@ -2179,7 +2248,16 @@ def _is_verified_unchanged_target(
         previous_capacity = capacity_configuration(saved_tfvars)
         desired_capacity = capacity_configuration(rendered_tfvars)
         removes_cpu_pool = is_cpu_pool_removal(previous_capacity, desired_capacity)
-        if previous_capacity != desired_capacity and not removes_cpu_pool:
+        if (
+            not retained_target_tfvars_match(
+                previous_capacity,
+                desired_capacity,
+                strict_capacity_block_group=(
+                    cluster.gpu_nodes.capacity_block_group if cluster.gpu_nodes else ""
+                ),
+            )
+            and not removes_cpu_pool
+        ):
             return False
         provider_project = _get_project(nebius_bin, project_id, env, profile)
     except (OSError, RuntimeError, ValueError):
@@ -2363,6 +2441,211 @@ def _is_verified_unchanged_target(
     return not unmatched_with_allocation
 
 
+def _resolve_verified_unchanged_target(
+    *,
+    project: MK8sProjectIdentity,
+    cluster: MK8sDesired,
+    prefix: str,
+    tenant_id: str,
+    region: str,
+    ssh_public_key: str,
+    fleet_root: Path,
+    nebius_bin: str,
+    profile: str,
+    env: dict[str, str],
+) -> str:
+    """Return one verified target ID, including the narrow missing-state case.
+
+    A provisioning sidecar normally obtains its ID from Terraform state.  An
+    interrupted apply can leave one root cluster instance without attributes,
+    however.  This resolver deliberately supports only that exact state shape:
+    it reads a complete project inventory, requires one terminal candidate with
+    the saved name and parent, and then delegates all project, cluster, and
+    node-group topology checks to the ordinary unchanged-target verifier.
+    """
+
+    install_dir = fleet_root / project.key() / cluster.name
+    saved = _load_env_sidecar(install_dir) or {}
+    project_id = str(saved.get("project_id") or "")
+    if str(saved.get("cluster_id") or ""):
+        return ""
+    cluster_id = _materialized_state_cluster_id(install_dir, project_id, cluster.name)
+    if cluster_id:
+        if _is_verified_unchanged_target(
+            project=project,
+            cluster=cluster,
+            prefix=prefix,
+            tenant_id=tenant_id,
+            region=region,
+            ssh_public_key=ssh_public_key,
+            fleet_root=fleet_root,
+            nebius_bin=nebius_bin,
+            profile=profile,
+            env=env,
+        ):
+            return cluster_id
+        return ""
+
+    if (
+        str(saved.get("status") or "") != "provisioning"
+        or str(saved.get("cluster_id") or "")
+        or not project_id
+        or not _has_one_unmaterialized_root_cluster(install_dir)
+    ):
+        return ""
+    candidate = _unmaterialized_state_provider_candidate(
+        project_id=project_id,
+        cluster_name=cluster.name,
+        nebius_bin=nebius_bin,
+        profile=profile,
+        env=env,
+    )
+    if not candidate:
+        return ""
+    if _is_verified_unchanged_target(
+        project=project,
+        cluster=cluster,
+        prefix=prefix,
+        tenant_id=tenant_id,
+        region=region,
+        ssh_public_key=ssh_public_key,
+        fleet_root=fleet_root,
+        nebius_bin=nebius_bin,
+        profile=profile,
+        env=env,
+        _cluster_id_override=candidate,
+    ):
+        return candidate
+    return ""
+
+
+def _materialized_state_cluster_id(
+    install_dir: Path, project_id: str, cluster_name: str
+) -> str:
+    """Read one exact materialized root cluster ID without accepting ambiguity."""
+
+    try:
+        state = json.loads(
+            (install_dir / _K8S_TRAINING_SUBDIR / "terraform.tfstate").read_text()
+        )
+    except (OSError, ValueError, TypeError, AttributeError):
+        return ""
+    candidates = [
+        instance.get("attributes")
+        for resource in state.get("resources", [])
+        if isinstance(resource, dict)
+        and resource.get("mode") == "managed"
+        and resource.get("type") == "nebius_mk8s_v1_cluster"
+        and not resource.get("module")
+        and isinstance(resource.get("instances"), list)
+        for instance in resource["instances"]
+        if isinstance(instance, dict)
+        and not instance.get("deposed")
+        and isinstance(instance.get("attributes"), dict)
+    ]
+    if len(candidates) != 1:
+        return ""
+    candidate = candidates[0]
+    if (
+        candidate.get("parent_id") != project_id
+        or candidate.get("name") != cluster_name
+    ):
+        return ""
+    cluster_id = candidate.get("id")
+    return cluster_id if isinstance(cluster_id, str) else ""
+
+
+def _has_one_unmaterialized_root_cluster(install_dir: Path) -> bool:
+    """Accept only one root cluster with an exact unmaterialized state shape."""
+
+    try:
+        state = json.loads(
+            (install_dir / _K8S_TRAINING_SUBDIR / "terraform.tfstate").read_text()
+        )
+    except (OSError, ValueError, TypeError, AttributeError):
+        return False
+    resources = state.get("resources") if isinstance(state, dict) else None
+    if not isinstance(resources, list):
+        return False
+    root_resources = [
+        resource
+        for resource in resources
+        if isinstance(resource, dict)
+        and resource.get("mode") == "managed"
+        and resource.get("type") == "nebius_mk8s_v1_cluster"
+        and not resource.get("module")
+        and isinstance(resource.get("instances"), list)
+    ]
+    if len(root_resources) != 1:
+        return False
+    instances = root_resources[0]["instances"]
+    if not instances:
+        return True
+    active_instances = [
+        instance
+        for instance in instances
+        if isinstance(instance, dict) and not instance.get("deposed")
+    ]
+    return len(active_instances) == 1 and "attributes" not in active_instances[0]
+
+
+def _unmaterialized_state_provider_candidate(
+    *,
+    project_id: str,
+    cluster_name: str,
+    nebius_bin: str,
+    profile: str,
+    env: dict[str, str],
+) -> str:
+    """Find one exact terminal cluster candidate from a complete inventory."""
+
+    result = _run_capture(
+        [
+            *_nebius_argv(nebius_bin, profile),
+            "mk8s",
+            "cluster",
+            "list",
+            "--parent-id",
+            project_id,
+            "--all",
+            "--format",
+            "json",
+        ],
+        env=env,
+        check=False,
+    )
+    if result.returncode != 0:
+        return ""
+    try:
+        payload = json.loads(result.stdout or "{}")
+    except json.JSONDecodeError:
+        return ""
+    items = payload.get("items") if isinstance(payload, dict) else None
+    if (
+        not isinstance(items, list)
+        or payload.get("next_page_token")
+        or not all(isinstance(item, dict) for item in items)
+    ):
+        return ""
+    candidates = []
+    for item in items:
+        metadata = item.get("metadata")
+        status = item.get("status")
+        if not isinstance(metadata, dict) or not isinstance(status, dict):
+            return ""
+        parent_id = _provider_field(metadata, "parent_id", "parentId")
+        candidate_id = metadata.get("id")
+        if (
+            isinstance(candidate_id, str)
+            and candidate_id
+            and parent_id == project_id
+            and metadata.get("name") == cluster_name
+            and status.get("state") == "RUNNING"
+        ):
+            candidates.append(candidate_id)
+    return candidates[0] if len(candidates) == 1 else ""
+
+
 def _node_group_has_allocated_workers(
     payload: dict[str, Any],
     instances: list[dict[str, Any]],
@@ -2481,6 +2764,7 @@ def _provider_node_group_matches_pool(
         return False
     strict_reserved = bool(
         pool.capacity_block_group
+        and pool.compute_reservation_id == pool.capacity_block_group
         and isinstance(reservation, dict)
         and str(reservation.get("policy") or "") == "STRICT"
         and reservation_ids == [pool.capacity_block_group]
@@ -3197,3 +3481,4 @@ def _is_not_found_result(result: Any) -> bool:
 deploy_cluster = _deploy_one_cluster
 destroy_cluster = _destroy_one_cluster
 is_verified_unchanged_target = _is_verified_unchanged_target
+resolve_verified_unchanged_target = _resolve_verified_unchanged_target

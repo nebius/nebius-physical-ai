@@ -247,7 +247,7 @@ jobs:
       NPA_PUBLIC_REGISTRY: ${{ needs.resolve.outputs.target }}
       ROBOTWIN_PUBLIC_NATIVE_POLICY_SHA256: df720d408e03ad08dea051b31af6755159cfffc6276cbb7fa60bd1ec0a37236a
       # Updated only after independent review of the exact public content proofs.
-      CUROBO_PUBLIC_NATIVE_POLICY_SHA256: d1b9354047eb8e9d337a85fc7fd64a64f1ce859192fb748f403d729c95b825dc
+      CUROBO_PUBLIC_NATIVE_POLICY_SHA256: edf3e487867113df077601346053c8ed4669a72b81c3e2174f27a90d5c2f75a9
     steps:
       - name: Refuse unsupported NCore Actions publication
         if: matrix.tool == 'ncore'
