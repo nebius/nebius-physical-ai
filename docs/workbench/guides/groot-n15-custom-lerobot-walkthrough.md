@@ -127,12 +127,20 @@ npa/.venv/bin/python -m npa workbench workflow logs "<run-id>" train-native-n15 
   --project "$NPA_PROJECT_ALIAS" --json
 npa/.venv/bin/python -m npa workbench workflow artifacts "<run-id>" \
   --project "$NPA_PROJECT_ALIAS" --json
+npa/.venv/bin/python -m npa workbench workflow download-artifact "<run-id>" \
+  --project "$NPA_PROJECT_ALIAS" \
+  --artifact-uri "<exact-uri-returned-by-artifacts>" \
+  --output-path ./groot-n15-readback/standalone.html --json
 ```
 
 `artifacts` intentionally has no SkyPilot `--isolated-config-dir` or
 `--config-path` flags. If a live status route needs isolated state, use only the
 saved submission receipt's documented isolation/config bindings; never recover
-them from a daemon process environment.
+them from a daemon process environment. `download-artifact` accepts only an
+exact URI returned by `artifacts` for that resolved run; it streams the object
+through the configured project credentials, writes it atomically, and returns
+its local SHA-256 and byte count. Use a newly created local output path unless
+you explicitly intend to pass `--overwrite`.
 
 ## Input contracts
 

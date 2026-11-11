@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from npa.orchestration.npa_workflow.batch import batch_status, run_batch
@@ -119,6 +120,51 @@ def artifacts(
     return list_artifacts(state, stage)
 
 
+def download_artifact(
+    run_id: str,
+    *,
+    artifact_uri: str,
+    output_path: str | Path,
+    overwrite: bool = False,
+    project: str | None = None,
+    workflow_s3_uri: str = "",
+    workflow_s3_prefix: str = "",
+    s3_bucket: str = "",
+    s3_endpoint: str = "",
+    sky_bin: str = "",
+) -> dict[str, Any]:
+    """Materialize one exact durable artifact and return its local identity."""
+
+    from npa.orchestration.npa_workflow.run_resolution import (
+        download_resolved_artifact,
+        resolve_run,
+    )
+
+    resolution = resolve_run(
+        run_id,
+        project=project or "",
+        workflow_s3_uri=workflow_s3_uri,
+        workflow_s3_prefix=workflow_s3_prefix,
+        s3_bucket=s3_bucket,
+        s3_endpoint=s3_endpoint,
+        sky_bin=sky_bin,
+    )
+    downloaded = download_resolved_artifact(
+        resolution,
+        artifact_uri=artifact_uri,
+        output_path=Path(output_path),
+        overwrite=overwrite,
+    )
+    return {
+        "run_id": resolution.run_id,
+        "resolution_source": resolution.source,
+        "artifact_uri": downloaded.artifact_uri,
+        "output_path": str(downloaded.output_path),
+        "bytes": downloaded.bytes,
+        "sha256": downloaded.sha256,
+    }
+
+
 def runs(parent_state: WorkflowS3Config, *, limit: int = 50) -> list[dict[str, Any]]:
     """List workflow manifests below a parent S3 prefix."""
 
@@ -146,6 +192,7 @@ def _state(
 
 __all__ = [
     "artifacts",
+    "download_artifact",
     "logs",
     "runs",
     "schema",

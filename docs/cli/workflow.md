@@ -17,6 +17,7 @@ run  Run a named workflow end-to-end.
 status  Check the status of a workflow run.
 logs  Show a bounded log tail for a specific stage of a workflow run.
 artifacts  List durable S3 artifact URIs for a workflow run.
+download-artifact  Materialize one exact workflow artifact and report its local digest.
 load-artifact  Retry only the final artifact load; never relaunch workflow stages.
 list  List durable S3 workflow runs.
 cancel  Cancel a launched run; never-launched and terminal runs are repeat-safe no-ops.
@@ -54,6 +55,7 @@ challenge  Prepare a BEHAVIOR DEV evaluation from one setup file.
 | `status` | Check the status of a workflow run. |
 | `logs` | Show a bounded log tail for a specific stage of a workflow run. |
 | `artifacts` | List durable S3 artifact URIs for a workflow run. |
+| `download-artifact` | Materialize one exact workflow artifact and report its local digest. |
 | `load-artifact` | Retry only the final artifact load; never relaunch workflow stages. |
 | `list` | List durable S3 workflow runs. |
 | `cancel` | Cancel a launched run; never-launched and terminal runs are repeat-safe no-ops. |

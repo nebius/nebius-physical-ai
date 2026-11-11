@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from io import BytesIO
 from pathlib import Path
@@ -53,6 +54,7 @@ def _execution_scope_boundary(monkeypatch):
         "status",
         "logs",
         "artifacts",
+        "download-artifact",
         "cancel",
         "teardown",
         "distill",
@@ -102,7 +104,14 @@ class FakeWorkflowS3:
 
     def get_object(self, *, Bucket: str, Key: str):
         self.get_requests.append((Bucket, Key))
-        return {"Body": BytesIO(self.objects[(Bucket, Key)])}
+        body = self.objects[(Bucket, Key)]
+
+        class Body(BytesIO):
+            def iter_chunks(self, *, chunk_size: int):
+                while chunk := self.read(chunk_size):
+                    yield chunk
+
+        return {"Body": Body(body), "ContentLength": len(body)}
 
     def get_paginator(self, name: str):
         assert name == "list_objects_v2"
@@ -139,6 +148,10 @@ def _patch_workflow_s3(
     )
     monkeypatch.setattr(
         "npa.orchestration.skypilot.workflow_state.boto3.client",
+        lambda *args, **kwargs: fake_s3,
+    )
+    monkeypatch.setattr(
+        "npa.clients.storage.boto3.client",
         lambda *args, **kwargs: fake_s3,
     )
     monkeypatch.setattr(
@@ -4196,6 +4209,103 @@ def test_manifest_pending_status_logs_artifacts_and_cancel_share_resolution(
     assert cancelled["outcome"] == "cancelled"
     assert cancelled["sky_job_id"] == "81"
     assert cleanup_calls == ["81"]
+
+
+def test_workflow_download_artifact_materializes_only_exact_run_output(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    fake_s3 = FakeWorkflowS3()
+    _patch_workflow_s3(monkeypatch, fake_s3)
+    _patch_managed_job_absent(monkeypatch)
+    run_id = "readback-run"
+    control_prefix = f"{run_id}/npa-workflow"
+    artifact_key = f"{run_id}/reports/standalone.html"
+    artifact_uri = f"s3://bucket/{artifact_key}"
+    contents = b"<html><body>offline evidence</body></html>"
+    fake_s3.put_object(
+        Bucket="bucket",
+        Key=f"{control_prefix}/manifest.json",
+        Body=json.dumps(
+            {
+                "schema_version": "npa.workflow.run.v1",
+                "workflow": "unit-workflow",
+                "api_version": "npa.workflow/v0.0.1",
+                "run_id": run_id,
+                "run_prefix_uri": f"s3://bucket/{run_id}",
+                "status": "succeeded",
+                "steps": [],
+            }
+        ).encode(),
+    )
+    fake_s3.put_object(Bucket="bucket", Key=artifact_key, Body=contents)
+    output = tmp_path / "readback" / "standalone.html"
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "download-artifact",
+            run_id,
+            "--workflow-s3-uri",
+            f"s3://bucket/{control_prefix}",
+            "--artifact-uri",
+            artifact_uri,
+            "--output-path",
+            str(output),
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["artifact_uri"] == artifact_uri
+    assert payload["output_path"] == str(output.resolve())
+    assert payload["bytes"] == len(contents)
+    assert payload["sha256"] == hashlib.sha256(contents).hexdigest()
+    assert output.read_bytes() == contents
+
+    collision = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "download-artifact",
+            run_id,
+            "--workflow-s3-uri",
+            f"s3://bucket/{control_prefix}",
+            "--artifact-uri",
+            artifact_uri,
+            "--output-path",
+            str(output),
+            "--json",
+        ],
+    )
+    assert collision.exit_code == 1
+    assert "already exists" in collision.output
+
+    foreign = tmp_path / "foreign.html"
+    rejected = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "download-artifact",
+            run_id,
+            "--workflow-s3-uri",
+            f"s3://bucket/{control_prefix}",
+            "--artifact-uri",
+            "s3://bucket/unrelated/private.html",
+            "--output-path",
+            str(foreign),
+            "--json",
+        ],
+    )
+
+    assert rejected.exit_code == 1
+    assert "not an exact artifact" in rejected.output
+    assert not foreign.exists()
+    assert ("bucket", "unrelated/private.html") not in fake_s3.get_requests
 
 
 @pytest.mark.parametrize(

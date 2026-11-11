@@ -9466,6 +9466,89 @@ def artifacts_cmd(
         typer.echo(uri)
 
 
+@app.command("download-artifact")
+@intent_boundary(OperationIntent.OBSERVE)
+@json_stdout_contract
+def download_artifact_cmd(
+    run_id: str = typer.Argument(help="Durable workflow run ID or s3:// run prefix."),
+    artifact_uri: str = typer.Option(
+        ..., "--artifact-uri", help="Exact URI returned by workflow artifacts."
+    ),
+    output_path: Path = typer.Option(
+        ..., "--output-path", help="Local file to materialize after exact-run verification."
+    ),
+    overwrite: bool = typer.Option(
+        False, "--overwrite", help="Replace an existing local output file."
+    ),
+    project: str = typer.Option(
+        "", "--project", "-p", help="Project alias for S3 credentials."
+    ),
+    workflow_s3_uri: str = typer.Option(
+        "",
+        "--workflow-s3-uri",
+        help="Exact workflow prefix; takes precedence over receipts and discovery.",
+    ),
+    workflow_s3_prefix: str = typer.Option(
+        "", "--workflow-s3-prefix", help="Parent prefix. The run ID is appended."
+    ),
+    s3_bucket: str = typer.Option("", "--s3-bucket", help="S3 bucket name or URI."),
+    s3_endpoint: str = typer.Option(
+        "", "--s3-endpoint", help="S3-compatible endpoint."
+    ),
+    sky_bin: str = typer.Option(
+        "", "--sky-bin", help="Pinned SkyPilot executable path."
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit JSON."),
+) -> None:
+    """Materialize one exact workflow artifact and report its local digest."""
+
+    target = output_path.expanduser().resolve()
+    if target.exists() and not overwrite:
+        _fail(
+            "artifact output path already exists; choose a new path or pass --overwrite"
+        )
+        return
+    try:
+        from npa.orchestration.npa_workflow.run_resolution import (
+            download_resolved_artifact,
+            resolve_run,
+        )
+
+        resolution = resolve_run(
+            run_id,
+            project=project,
+            workflow_s3_uri=workflow_s3_uri,
+            workflow_s3_prefix=workflow_s3_prefix,
+            s3_bucket=s3_bucket,
+            s3_endpoint=s3_endpoint,
+            sky_bin=sky_bin,
+        )
+        downloaded = download_resolved_artifact(
+            resolution,
+            artifact_uri=artifact_uri,
+            output_path=target,
+            overwrite=overwrite,
+        )
+    except Exception as exc:
+        _fail(str(exc))
+        return
+    payload = {
+        "run_id": resolution.run_id,
+        "resolution_source": resolution.source,
+        "artifact_uri": downloaded.artifact_uri,
+        "output_path": str(downloaded.output_path),
+        "bytes": downloaded.bytes,
+        "sha256": downloaded.sha256,
+    }
+    if json_output:
+        typer.echo(json.dumps(payload, indent=2, sort_keys=True))
+        return
+    typer.echo(f"artifact_uri: {payload['artifact_uri']}")
+    typer.echo(f"output_path: {payload['output_path']}")
+    typer.echo(f"bytes: {payload['bytes']}")
+    typer.echo(f"sha256: {payload['sha256']}")
+
+
 @app.command("load-artifact")
 def load_artifact_cmd(
     run_id: str = typer.Argument(

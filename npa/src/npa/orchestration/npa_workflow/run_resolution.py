@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import hashlib
 from pathlib import Path
 import re
 from typing import Any, Literal, Mapping, cast
@@ -81,6 +82,16 @@ class RunResolution:
 
     def checks_payload(self) -> list[dict[str, str]]:
         return [item.to_dict() for item in self.checks]
+
+
+@dataclass(frozen=True)
+class DownloadedArtifact:
+    """Content identity for one exact artifact materialized locally."""
+
+    artifact_uri: str
+    output_path: Path
+    bytes: int
+    sha256: str
 
 
 def validate_run_id(run_id: str) -> str:
@@ -989,3 +1000,58 @@ def list_resolved_artifacts(
             f"s3://{state.bucket}/{run_prefix}: {redact_text(str(exc))}"
         ) from exc
     return sorted(set(objects))
+
+
+def download_resolved_artifact(
+    resolution: RunResolution,
+    *,
+    artifact_uri: str,
+    output_path: Path,
+    overwrite: bool = False,
+) -> DownloadedArtifact:
+    """Download one exact, resolver-authorized workflow artifact.
+
+    The requested URI must be returned by :func:`list_resolved_artifacts` for
+    this exact run. This prevents a workflow readback command from becoming a
+    general bucket reader merely because its caller has S3 credentials.
+    """
+
+    require_resolved_run(resolution)
+    state = resolution.state
+    if state is None:
+        raise WorkflowStateError(
+            "run was found via managed-job evidence but its artifact location is unavailable"
+        )
+    selected = str(artifact_uri or "").strip()
+    if not selected:
+        raise WorkflowStateError("artifact URI is required")
+    if selected not in set(list_resolved_artifacts(resolution)):
+        raise WorkflowStateError(
+            "artifact URI is not an exact artifact of the resolved workflow run"
+        )
+    target = Path(output_path).expanduser().resolve()
+    if target.exists() and target.is_dir():
+        raise WorkflowStateError("artifact output path must name a file, not a directory")
+    if target.exists() and not overwrite:
+        raise WorkflowStateError(
+            "artifact output path already exists; choose a new path or authorize overwrite"
+        )
+
+    from npa.clients.storage import StorageClient
+
+    storage = StorageClient(
+        endpoint_url=state.endpoint_url,
+        aws_access_key_id=state.aws_access_key_id,
+        aws_secret_access_key=state.aws_secret_access_key,
+    )
+    storage.download_file(selected, str(target))
+    digest = hashlib.sha256()
+    with target.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return DownloadedArtifact(
+        artifact_uri=selected,
+        output_path=target,
+        bytes=target.stat().st_size,
+        sha256=digest.hexdigest(),
+    )
