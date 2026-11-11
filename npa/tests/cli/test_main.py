@@ -773,6 +773,18 @@ def test_configure_show_env_scopes_kube_context_to_configured_project(
             SimpleNamespace(name="someone-elses", project_id="project-OTHER"),
         ],
     )
+    kubeconfig = tmp_path / "kubeconfig"
+    kubeconfig.write_text(
+        yaml.safe_dump(
+            {
+                "apiVersion": "v1",
+                "kind": "Config",
+                "current-context": "my-cluster",
+                "contexts": [{"name": "my-cluster", "context": {"cluster": "target"}}],
+            }
+        )
+    )
+    monkeypatch.setattr(state_module, "existing_kubeconfig", lambda context: kubeconfig)
 
     result = runner.invoke(app, ["configure", "--show", "--env"])
 
@@ -781,7 +793,57 @@ def test_configure_show_env_scopes_kube_context_to_configured_project(
         line.split("=", 1) for line in result.output.strip().splitlines() if "=" in line
     )
     assert values["NPA_KUBE_CONTEXT"] == "my-cluster"
+    assert values["KUBECONFIG"] == str(kubeconfig)
     assert "someone-elses" not in result.output
+
+
+def test_configure_show_env_omits_unvalidated_saved_kubeconfig(
+    monkeypatch, tmp_path
+) -> None:
+    """A convenience export must never select a different ambient context."""
+    import yaml
+
+    from npa.clients import config as config_module
+    from npa.cluster import state as state_module
+
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "default_project": "mine",
+                "projects": {"mine": {"project_id": "project-1"}},
+            }
+        )
+    )
+    kubeconfig = tmp_path / "kubeconfig"
+    kubeconfig.write_text(
+        yaml.safe_dump(
+            {
+                "apiVersion": "v1",
+                "kind": "Config",
+                "current-context": "other-cluster",
+                "contexts": [
+                    {"name": "other-cluster", "context": {"cluster": "other"}}
+                ],
+            }
+        )
+    )
+    monkeypatch.setattr(config_module, "CONFIG_PATH", config_path)
+    monkeypatch.setattr(
+        state_module,
+        "list_local_clusters",
+        lambda: [SimpleNamespace(name="my-cluster", project_id="project-1")],
+    )
+    monkeypatch.setattr(state_module, "existing_kubeconfig", lambda context: kubeconfig)
+
+    result = runner.invoke(app, ["configure", "--show", "--env"])
+
+    assert result.exit_code == 0, result.output
+    values = dict(
+        line.split("=", 1) for line in result.output.strip().splitlines() if "=" in line
+    )
+    assert values["NPA_KUBE_CONTEXT"] == "my-cluster"
+    assert "KUBECONFIG" not in values
 
 
 def test_configure_show_env_exports_executable_managed_nebius_binary(

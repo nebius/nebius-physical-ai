@@ -50,10 +50,12 @@ also fetches one separately pinned CC-BY recovery reference whose outcome is
 explicitly **unknown**; recovery provenance never becomes a success label.
 
 After normal `npa configure` and project selection, load the saved non-secret
-project, bucket, and owned cluster context once in each new shell. This is a
-supported convenience export; it does not print or export credentials. Where a
-tested NPA-local Nebius CLI exists it also exports that non-secret executable
-path, so an older ambient binary cannot silently change the provider client.
+project, bucket, and owned cluster context once in each new shell. When the
+saved NPA kubeconfig validates for that exact context, it also selects that
+local file for generic Kubernetes-aware preflight commands. This is a supported
+convenience export; it does not print or export credentials. Where a tested
+NPA-local Nebius CLI exists it also exports that non-secret executable path, so
+an older ambient binary cannot silently change the provider client.
 The reference submission is then one generic command, with no hand-built
 sidecars or hidden task values:
 
@@ -84,7 +86,8 @@ npa/.venv/bin/python -m npa workbench workflow validate-spec \
 npa/.venv/bin/python -m npa workbench workflow plan-spec \
   workflows/testing/groot-n15-offline-rl.yaml --run-id groot-n15-reference-plan \
   --var bucket="$NPA_BUCKET" --check-render --json
-npa/.venv/bin/python -m npa cluster list --project "$NPA_PROJECT_ALIAS" --format json
+npa/.venv/bin/python -m npa cluster status --name "$NPA_KUBE_CONTEXT" \
+  --project "$NPA_PROJECT_ALIAS" --format json
 npa/.venv/bin/python -m npa workbench workflow gpus \
   --project "$NPA_PROJECT_ALIAS" --cluster "$NPA_KUBE_CONTEXT" \
   --spec workflows/testing/groot-n15-offline-rl.yaml --json

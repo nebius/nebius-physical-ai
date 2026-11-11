@@ -2447,6 +2447,14 @@ def _configured_env_lines() -> str:
     context = _saved_kube_context()
     if context:
         lines.append(f"NPA_KUBE_CONTEXT={shlex.quote(context)}")
+        kubeconfig = _saved_kubeconfig(context)
+        if kubeconfig:
+            # The context is not sufficient for generic Kubernetes-aware
+            # preflights: NPA deliberately does not fall back to an ambient
+            # kubeconfig.  Export only a locally validated, NPA-owned exact
+            # kubeconfig so a new shell can run the documented preflight and
+            # submit commands without hand-discovering a private file path.
+            lines.append(f"KUBECONFIG={shlex.quote(kubeconfig)}")
     # NPA's local bootstrap can install a tested Nebius CLI beside the saved
     # project configuration.  Prefer that explicit non-secret binary in a
     # fresh shell over an arbitrary older system ``nebius`` on PATH.  Do not
@@ -2485,6 +2493,40 @@ def _saved_kube_context() -> str:
         if context:
             return context
     return ""
+
+
+def _saved_kubeconfig(context: str) -> str:
+    """Return a locally validated NPA kubeconfig for one emitted context.
+
+    ``configure --show --env`` is intentionally a convenience export rather
+    than a remote identity verifier.  It still must not point a clean shell at
+    an ambient, symlinked, malformed, or differently selected context.  Remote
+    provider verification remains the responsibility of the command that uses
+    this path.
+    """
+
+    try:
+        import yaml
+
+        from npa.cluster.state import existing_kubeconfig
+
+        candidate = existing_kubeconfig(context)
+        if candidate is None or candidate.is_symlink() or not candidate.is_file():
+            return ""
+        resolved = candidate.resolve(strict=True)
+        payload = yaml.safe_load(resolved.read_text(encoding="utf-8")) or {}
+        if not isinstance(payload, dict) or payload.get("current-context") != context:
+            return ""
+        names = {
+            str(item.get("name") or "")
+            for item in payload.get("contexts") or []
+            if isinstance(item, dict)
+        }
+        if context not in names:
+            return ""
+        return str(resolved)
+    except (OSError, ValueError, yaml.YAMLError):
+        return ""
 
 
 def _configured_project_id() -> str:
