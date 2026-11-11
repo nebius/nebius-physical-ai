@@ -58,11 +58,12 @@ deployment claims.
 ### Independent operator-journey rehearsal
 
 The linked walkthrough preserves an archived two-revision custom-extension
-rehearsal as historical evidence only. The current checked-in reference and
-standard declaration have their own fresh-checkout/live-run verification table;
-they are not covered by that earlier private extension. Neither path was run
-with customer inputs or hardware, and offline action error is not a deployment
-decision.
+rehearsal as historical evidence only. The checked-in reference now has its own
+[fresh-checkout, private-artifact-sanitized receipt](../evidence/groot-n15-offline-rl-turnkey-v5/turnkey-receipt.json);
+the standard declaration has separate strict-declaration and non-default render
+coverage. Neither is covered by the earlier private extension. Neither path was
+run with customer inputs or hardware, and offline action error is not a
+deployment decision.
 
 ### Historical public uniform proof
 

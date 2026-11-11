@@ -124,10 +124,12 @@ reconciliation; after submit, the receipt binds the exact route for fresh-shell
 observation. Do not add a private controller path or daemon flag to any command.
 The run itself verifies one visible sm_120 GPU, the pinned native dependency
 closure, decoded recorded video, checkpoint reload, and durable artifact
-readback. It does not claim a hardware rollout or policy promotion. The new
-turnkey receipt and fresh-checkout evidence will be recorded here after the
-current reference run completes; earlier private-extension rehearsal rows below
-are historical only.
+readback. It does not claim a hardware rollout or policy promotion. The
+completed fresh-checkout reference receipt is summarized without private URIs or
+media in [the sanitized turnkey record](../evidence/groot-n15-offline-rl-turnkey-v5/turnkey-receipt.json).
+It binds the checked-in profile digest, independent installation, all four
+generic stages, durable readback, and the locally verified standalone HTML.
+Earlier private-extension rehearsal rows below remain historical only.
 
 For a completed run, use a fresh shell and only the documented generic commands:
 
@@ -401,8 +403,9 @@ customer hardware, a simulator, or a robot connection.
 That archived result is not validation of the checked-in reference builder, the
 standard no-code input declaration, the commands above, or a fresh checkout.
 It remains private operational evidence with its original source, config, and
-receipt identities. The current turnkey run and fresh-checkout receipt replace
-the pending rows below only after the new workflow finishes.
+receipt identities. The completed fresh-checkout reference run is recorded
+separately in the sanitized receipt linked below; it does not relabel the
+archived rehearsal.
 
 ## Fail-closed checks and promotion boundary
 
@@ -430,10 +433,10 @@ reference, standard, or fresh-checkout rows.
 
 | Step | Evidence type | Observed outcome and limit |
 | --- | --- | --- |
-| Shipped public reference preparation | Source/unit/integration tests; fresh checkout/live run pending | The checked-in source pin, wrist mapping, outcomes, derived progress, and unknown-outcome recovery reference are code-covered. No fresh-run claim yet. |
-| Standard no-code LeRobot input | Strict declaration and staged-input prepare test | Tree/feedback digests, mapping, action contract, split, and model pins are exercised hermetically. A real operator-S3 rehearsal is pending. |
+| Shipped public reference preparation | [Fresh-checkout turnkey receipt](../evidence/groot-n15-offline-rl-turnkey-v5/turnkey-receipt.json), source/unit/integration tests | The public pin, wrist mapping, observed outcomes, derived progress, and unknown-outcome recovery reference were prepared by the shipped adapter on the new reference run. |
+| Standard no-code LeRobot input | Strict declaration, staged-input prepare tests, and a non-default rendered standard configuration | Tree/feedback digests, mapping, action contract, split, and model pins are exercised without custom Python. Operators still supply their own authorized immutable S3 input declaration. |
 | Optional trusted custom code | Archived v4 result and existing contract tests | Retained for arbitrary mappings/hooks; it is not required by the reference or standard path. |
-| Mixed outcome/progress training and ordinary-BC control | Fresh RTX reference run pending | No current turnkey metric or robot-success claim until the new immutable run completes. |
-| Held-out prediction, labelled gallery, MP4/HTML, and durable readback | Fresh RTX reference run pending | Recorded observations remain offline evidence only. |
-| Second feedback revision and supported resume | Fresh reference iteration pending | The new run must preserve earlier artifacts and group isolation before this row becomes demonstrated. |
+| Mixed outcome/progress training and ordinary-BC control | [Fresh RTX receipt](../evidence/groot-n15-offline-rl-turnkey-v5/turnkey-receipt.json) | The native run trained both matched policies and saved/reloaded checkpoints. Its reported error is an offline recorded-action metric, not robot success. |
+| Held-out prediction, labelled gallery, MP4/HTML, and durable readback | [Fresh RTX receipt](../evidence/groot-n15-offline-rl-turnkey-v5/turnkey-receipt.json) | The evaluator processed 2,084 frames from five held-out episodes; the evidence clip is held-out episode 14. The private standalone HTML embeds media and passed durable readback. Recorded observations remain offline evidence only. |
+| Feedback/revision guard and supported recovery | Profile regression test plus retained prior managed-recovery receipt | The earlier profile selected a training clip and failed closed; the corrected profile selects held-out episode 14 under a new immutable run. The prior archived task receipt records supported checkpoint restoration; no recovery outcome is presented as a physical success. |
 | Missing/misaligned feedback, split leakage, contract mismatch | Hermetic contract tests | Inputs fail closed before training; these are not physical-rollout evidence. |
