@@ -27,6 +27,12 @@ one-camera/state/action modality, structured feedback, and optional recovery
 gallery. No mode executes code selected from dataset metadata, infers licenses,
 or publishes private inputs.
 
+Use the linked walkthrough's submit command unchanged, including
+`--max-wait-seconds 0`. Native N1.5 waves can legitimately exceed the generic
+one-hour wait default; that default cancels the exact managed job rather than
+merely returning control to the shell. Cancellation is therefore an explicit
+`workflow cancel` operation, not an implicit timeout in this reference path.
+
 The workflow creates two matched policies from the same foundation checkpoint,
 split, seed, batch size, and schedule: an ordinary behavior-cloning control and
 a feedback-weighted candidate. It evaluates foundation, control, and candidate

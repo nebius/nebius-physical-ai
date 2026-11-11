@@ -70,8 +70,13 @@ npa/.venv/bin/python -m npa workbench workflow submit \
   workflows/testing/groot-n15-offline-rl.yaml \
   --project "$NPA_PROJECT_ALIAS" --infra "k8s/$NPA_KUBE_CONTEXT" \
   --run-id "groot-n15-reference-<unique-id>" --var bucket="$NPA_BUCKET" \
-  --runtime --output-format json
+  --runtime --max-wait-seconds 0 --output-format json
 ```
+
+`--max-wait-seconds 0` is deliberate: it waits for each native wave to reach a
+real terminal state instead of applying the generic one-hour cancellation
+default. The operator may interrupt with the documented `workflow cancel`
+command; do not rely on a client-side deadline to stop a training run.
 
 Before spending GPU time, run the commands below verbatim from the same checkout
 and configured project. They are supported generic operations, not a private
@@ -192,7 +197,7 @@ npa/.venv/bin/python -m npa workbench workflow submit \
   --run-id "groot-n15-standard-<unique-id>" --var bucket="$NPA_BUCKET" \
   --var input_mode=standard \
   --var standard_input_config_uri="s3://<operator-inputs>/standard-input.json" \
-  --runtime --output-format json
+  --runtime --max-wait-seconds 0 --output-format json
 ```
 
 The config's model pins override the checked-in reference values inside each
@@ -351,7 +356,7 @@ npa/.venv/bin/python -m npa workbench workflow submit \
   workflows/testing/groot-n15-offline-rl.yaml --runtime --resume \
   --project "$NPA_PROJECT_ALIAS" --infra "k8s/$NPA_KUBE_CONTEXT" \
   --resume-run "<same-run-id>" --retries 1 \
-  --var bucket="$NPA_BUCKET" --output-format json
+  --var bucket="$NPA_BUCKET" --max-wait-seconds 0 --output-format json
 ```
 
 The retry creates a new immutable attempt under the existing run ID and retains
