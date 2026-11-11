@@ -1351,16 +1351,8 @@ def test_normal_lifecycle_refuses_registration_when_terminal_pool_never_converge
         assert path.read_bytes() == expected
 
 
-@pytest.mark.parametrize(
-    ("postcreate_payload", "error", "minimum_reads", "expected_sleeps"),
-    [
-        ({"items": []}, "did not reach terminal state", 2, [30.0]),
-        ({}, "node-group inventory is incomplete", 1, []),
-    ],
-    ids=["explicit-empty-items", "empty-mapping"],
-)
 def test_normal_lifecycle_refuses_registration_when_postcreate_inventory_is_not_terminal(
-    tmp_path, monkeypatch, postcreate_payload, error, minimum_reads, expected_sleeps
+    tmp_path, monkeypatch
 ):
     spec, install_dir, before = _zero_node_subnet_retained_target(tmp_path)
     calls: dict[str, object] = {}
@@ -1401,7 +1393,7 @@ def test_normal_lifecycle_refuses_registration_when_postcreate_inventory_is_not_
         elif "node-group" in command and "list" in command:
             if created:
                 postcreate_inventory_reads += 1
-            payload = {"items": []} if not created else postcreate_payload
+            payload = {"items": []}
         elif "node-group" in command and "create" in command:
             created = True
             payload = {
@@ -1417,7 +1409,7 @@ def test_normal_lifecycle_refuses_registration_when_postcreate_inventory_is_not_
 
     monkeypatch.setattr(mk8s_execution, "_run_capture", provider)
 
-    with pytest.raises(RuntimeError, match=error):
+    with pytest.raises(RuntimeError, match="did not reach terminal state"):
         lifecycle.deploy_fleet(
             spec,
             work_root=tmp_path,
@@ -1434,8 +1426,8 @@ def test_normal_lifecycle_refuses_registration_when_postcreate_inventory_is_not_
     assert [command[command.index("--name") + 1] for command in creates] == [
         "recover-ng-cpu"
     ]
-    assert postcreate_inventory_reads >= minimum_reads
-    assert sleeps == expected_sleeps
+    assert postcreate_inventory_reads >= 2
+    assert sleeps == [30.0]
     assert "kubeconfig" not in calls
     assert "persist" not in calls
     assert not any("terraform" in command for command in commands)
@@ -1544,11 +1536,17 @@ def test_normal_lifecycle_resumes_zero_subnet_cpu_and_strict_gpu_target(
         "_deploy_one_cluster",
         lambda **_: pytest.fail("retained target must not enter Terraform apply"),
     )
+    monotonic_values = iter((0.0, 0.0))
+    sleeps: list[float] = []
+    monkeypatch.setattr(recovery.time, "monotonic", lambda: next(monotonic_values))
+    monkeypatch.setattr(recovery.time, "sleep", sleeps.append)
     commands: list[list[str]] = []
     pool_lists = 0
+    postcreate_inventory_reads = 0
+    created = False
 
     def provider(command, **_kwargs):
-        nonlocal pool_lists
+        nonlocal created, pool_lists, postcreate_inventory_reads
         commands.append(command)
         if "cluster" in command and "list" in command:
             payload = {
@@ -1565,9 +1563,11 @@ def test_normal_lifecycle_resumes_zero_subnet_cpu_and_strict_gpu_target(
             }
         elif "node-group" in command and "list" in command:
             pool_lists += 1
+            if created:
+                postcreate_inventory_reads += 1
             payload = (
                 {}
-                if pool_lists < 3
+                if not created or postcreate_inventory_reads == 1
                 else {
                     "items": [
                         _provider_pool(
@@ -1587,6 +1587,7 @@ def test_normal_lifecycle_resumes_zero_subnet_cpu_and_strict_gpu_target(
                 }
             )
         elif "node-group" in command and "create" in command:
+            created = True
             payload = {
                 "metadata": {
                     "id": "nodegroup-" + command[command.index("--name") + 1],
@@ -1617,7 +1618,9 @@ def test_normal_lifecycle_resumes_zero_subnet_cpu_and_strict_gpu_target(
         "recover-ng-cpu",
         "recover-ng-gpu-0",
     ]
-    assert pool_lists == 3
+    assert pool_lists == 4
+    assert postcreate_inventory_reads == 2
+    assert sleeps == [30.0]
     gpu_command = creates[1]
     assert (
         gpu_command[gpu_command.index("--template-reservation-policy-policy") + 1]
