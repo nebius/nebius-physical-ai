@@ -16,7 +16,7 @@ import pytest
 from npa.clients.storage import StorageClient
 from npa.orchestration.npa_workflow import build_plan, load_spec, run_workflow
 from npa.orchestration.npa_workflow.submit import merge_config_overrides
-from npa.workbench.encord.schemas import RoundtripReport
+from npa.workbench.encord.schemas import CurateReceipt, PushReceipt, RoundtripReport
 from npa.workbench.encord.storage import (
     ConditionalArtifactStore,
     S3ObjectStorageGateway,
@@ -118,13 +118,22 @@ def _download_verified_videos(report: RoundtripReport, storage, evidence: Path):
 
 def _run_roundtrip(spec, run_id: str, evidence: Path) -> None:
     plan = build_plan(spec, run_id=run_id)
-    if [step.state for step in plan.steps] != ["push", "pull", "verify"]:
-        raise ValueError("Expected the shipped three-stage Encord roundtrip")
+    if [step.state for step in plan.steps] != ["push", "curate", "pull", "verify"]:
+        raise ValueError("Expected the shipped four-stage Encord roundtrip")
     result = run_workflow(spec, run_id=run_id, execute=True, require_inputs=True)
     _write_private(evidence / "workflow.json", json.dumps(result, indent=2))
     storage = StorageClient.from_environment()
+    artifacts = ConditionalArtifactStore(storage)
+    push = PushReceipt.model_validate(
+        artifacts.read_json(plan.steps[0].outputs[0]["uri"])
+    )
+    curation = CurateReceipt.model_validate(
+        artifacts.read_json(plan.steps[1].outputs[0]["uri"])
+    )
+    if not 0 < curation.items_selected < push.counts.successful:
+        raise ValueError("Curation did not select a strict subset of pushed media")
     report = RoundtripReport.model_validate(
-        ConditionalArtifactStore(storage).read_json(plan.steps[-1].outputs[0]["uri"])
+        artifacts.read_json(plan.steps[-1].outputs[0]["uri"])
     )
     if not report.passed or not report.matched:
         raise ValueError("Roundtrip did not verify any media")

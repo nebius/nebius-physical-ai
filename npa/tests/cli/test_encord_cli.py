@@ -25,6 +25,7 @@ def test_encord_group_exposes_transport_and_labeling_verbs() -> None:
     assert result.exit_code == 0, result.output
     assert "push" in result.output
     assert "pull" in result.output
+    assert "curate" in result.output
     assert "verify-roundtrip" in result.output
     assert "import-labels" in result.output
     assert "render-labels" in result.output
@@ -176,6 +177,44 @@ def test_pull_defaults_to_no_label_initialization(
     assert captured["label_export"] == "none"
 
 
+def test_curate_forwards_filter_and_source_receipt(monkeypatch):
+    captured = {}
+
+    def fake_curate(**kwargs):
+        captured.update(kwargs)
+        return Result(
+            payload={"schema": "npa.encord.curate_receipt.v1"},
+            items_selected=1,
+            items_total=2,
+            receipt_uri="s3://bucket/curate/curate_receipt.json",
+        )
+
+    monkeypatch.setattr("npa.sdk.workbench.encord.curate", fake_curate)
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "encord",
+            "curate",
+            "--folder",
+            "folder",
+            "--filter",
+            "width:128:4096",
+            "--collection",
+            "keepers",
+            "--receipt-uri",
+            "s3://bucket/push/push_receipt.json",
+            "--output-path",
+            "s3://bucket/curate/curate_receipt.json",
+            "--json",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout)["schema"] == "npa.encord.curate_receipt.v1"
+    assert captured["filters"] == ["width:128:4096"]
+    assert captured["source_receipt_uri"] == "s3://bucket/push/push_receipt.json"
+
+
 def test_pull_help_discloses_initialize_mutation() -> None:
     result = runner.invoke(app, ["workbench", "encord", "pull", "--help"])
     assert result.exit_code == 0, result.output
@@ -208,6 +247,8 @@ def test_verify_forwards_both_artifacts(monkeypatch: pytest.MonkeyPatch) -> None
             "s3://bucket/push_receipt.json",
             "--manifest-uri",
             "s3://bucket/manifest.json",
+            "--curate-receipt-uri",
+            "s3://bucket/curate_receipt.json",
             "--output-path",
             "s3://bucket/report.json",
             "--json",
@@ -216,6 +257,7 @@ def test_verify_forwards_both_artifacts(monkeypatch: pytest.MonkeyPatch) -> None
     assert result.exit_code == 0, result.output
     assert captured["receipt_uri"] == "s3://bucket/push_receipt.json"
     assert captured["manifest_uri"] == "s3://bucket/manifest.json"
+    assert captured["curate_receipt_uri"] == "s3://bucket/curate_receipt.json"
 
 
 def test_contract_error_exits_one_without_traceback(
