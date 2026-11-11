@@ -5,6 +5,10 @@ from __future__ import annotations
 import importlib.metadata
 import os
 from pathlib import Path
+import shlex
+import shutil
+import subprocess
+import sysconfig
 
 from packaging.markers import default_environment
 from packaging.requirements import Requirement
@@ -38,8 +42,30 @@ def verify_accelerator_dependencies() -> None:
         )
 
 
+def verify_triton_driver_compilation() -> None:
+    """Compile the real CUDA helper source without requiring a GPU or driver."""
+    import triton
+
+    compiler = shlex.split(os.environ.get("CC", "gcc"))
+    if not compiler or shutil.which(compiler[0]) is None:
+        raise RuntimeError("Triton requires a C compiler for first inference")
+    backend = Path(triton.__file__).parent / "backends" / "nvidia"
+    subprocess.run(
+        [
+            *compiler,
+            "-fsyntax-only",
+            "-O3",
+            f"-I{sysconfig.get_path('include')}",
+            f"-I{backend / 'include'}",
+            str(backend / "driver.c"),
+        ],
+        check=True,
+    )
+
+
 def main() -> None:
     verify_accelerator_dependencies()
+    verify_triton_driver_compilation()
     if importlib.metadata.version("gradio") != "6.16.0+npa.pillow13.1":
         raise RuntimeError("framework environment lacks the reviewed Gradio derivative")
     if importlib.metadata.version("pillow") != "13.0.0":
