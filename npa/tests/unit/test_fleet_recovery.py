@@ -798,6 +798,34 @@ def _backup_root_retained_target(tmp_path: Path) -> tuple[FleetSpec, Path, dict]
     return spec, install_dir, {name: path.read_bytes() for name, path in paths.items()}
 
 
+def _zero_node_subnet_retained_target(tmp_path: Path) -> tuple[FleetSpec, Path, dict]:
+    """Build the exact backup-root shape with no Terraform node-group resource."""
+
+    spec, install_dir, _before = _backup_root_retained_target(tmp_path)
+    workdir = install_dir / "k8s-training"
+    state_path = workdir / "terraform.tfstate"
+    backup_path = workdir / "terraform.tfstate.backup"
+    state = json.loads(state_path.read_text())
+    backup = json.loads(backup_path.read_text())
+    for payload in (state, backup):
+        payload["resources"] = [
+            resource
+            for resource in payload["resources"]
+            if resource["type"] != "nebius_mk8s_v1_node_group"
+        ]
+    _write_json(state_path, state)
+    _write_json(backup_path, backup)
+    paths = {
+        "owner": install_dir / ".npa-backend-owner.json",
+        "sidecar": install_dir / ".npa-fleet-env.json",
+        "state": state_path,
+        "backup": backup_path,
+        "lock": workdir / ".terraform.tfstate.lock.info",
+        "summary": tmp_path / spec.name / "fleet-state.json",
+    }
+    return spec, install_dir, {name: path.read_bytes() for name, path in paths.items()}
+
+
 def test_generic_recovery_rejects_backup_root_compatibility_shape(
     tmp_path, monkeypatch
 ):
@@ -1274,10 +1302,10 @@ def test_retained_pool_quota_demand_counts_only_verified_missing_pools() -> None
         lifecycle._RetainedPoolQuotaDemand(cluster, ["unexpected-node-group"])
 
 
-def test_normal_lifecycle_resumes_backup_root_cpu_and_strict_gpu_target(
+def test_normal_lifecycle_resumes_zero_subnet_cpu_and_strict_gpu_target(
     tmp_path, monkeypatch
 ):
-    spec, install_dir, before = _backup_root_retained_target(tmp_path)
+    spec, install_dir, before = _zero_node_subnet_retained_target(tmp_path)
     cluster = spec.projects[0].clusters[0]
     cluster.enable_filestore = True
     cluster.filesystem_csi_chart_repository = "oci://charts.example.invalid/nebius"
@@ -1438,6 +1466,151 @@ def test_normal_lifecycle_resumes_backup_root_cpu_and_strict_gpu_target(
     assert (workdir / "terraform.tfstate").read_bytes() == before["state"]
     assert backup_path.read_bytes() == before["backup"]
     assert (workdir / ".terraform.tfstate.lock.info").read_bytes() == before["lock"]
+
+
+def test_normal_lifecycle_refuses_zero_subnet_when_provider_has_a_pool(
+    tmp_path, monkeypatch
+):
+    spec, install_dir, before = _zero_node_subnet_retained_target(tmp_path)
+    calls: dict[str, object] = {}
+    _prepare_provider(monkeypatch, calls)
+    monkeypatch.setattr(lifecycle, "_assert_terraform_version", lambda _: None)
+    monkeypatch.setattr(lifecycle, "_resolve_tenant_id", lambda *_: "tenant-test")
+    monkeypatch.setattr(lifecycle, "_resolve_region", lambda _: "test-region")
+    monkeypatch.setattr(recovery, "_assert_no_live_apply_owner", lambda _workdir: None)
+    monkeypatch.setattr(
+        lifecycle,
+        "_deploy_one_cluster",
+        lambda **_: pytest.fail("retained target must not enter Terraform apply"),
+    )
+    commands: list[list[str]] = []
+
+    def provider(command, **_kwargs):
+        commands.append(command)
+        if "cluster" in command and "list" in command:
+            payload = {
+                "items": [
+                    {
+                        "metadata": {
+                            "id": "cluster-test",
+                            "parent_id": "project-test",
+                            "name": "recover",
+                        },
+                        "status": {"state": "RUNNING"},
+                    }
+                ]
+            }
+        elif "node-group" in command and "list" in command:
+            payload = {
+                "items": [
+                    _provider_pool(
+                        "recover-ng-cpu",
+                        platform="cpu-d3",
+                        preset="48vcpu-192gb",
+                        count=1,
+                    )
+                ]
+            }
+        else:
+            pytest.fail(f"unexpected provider command: {command}")
+        return CompletedProcess(command, 0, json.dumps(payload), "")
+
+    monkeypatch.setattr(mk8s_execution, "_run_capture", provider)
+
+    with pytest.raises(
+        RuntimeError, match="requires zero retained provider node groups"
+    ):
+        lifecycle.deploy_fleet(
+            spec,
+            work_root=tmp_path,
+            k8s_training_dir=install_dir,
+            preflight=False,
+        )
+
+    assert not any(
+        "node-group" in command and "create" in command for command in commands
+    )
+    assert "kubeconfig" not in calls
+    assert "persist" not in calls
+    for name, expected in before.items():
+        path = {
+            "owner": install_dir / ".npa-backend-owner.json",
+            "sidecar": install_dir / ".npa-fleet-env.json",
+            "state": install_dir / "k8s-training" / "terraform.tfstate",
+            "backup": install_dir / "k8s-training" / "terraform.tfstate.backup",
+            "lock": install_dir / "k8s-training" / ".terraform.tfstate.lock.info",
+            "summary": tmp_path / spec.name / "fleet-state.json",
+        }[name]
+        assert path.read_bytes() == expected
+
+
+@pytest.mark.parametrize("subnet_shape", ["missing-sidecar", "mismatching", "multiple"])
+def test_normal_lifecycle_refuses_invalid_state_subnet_before_provider_or_persistence(
+    tmp_path, monkeypatch, subnet_shape
+):
+    spec, install_dir, _before = _unmaterialized_retained_target(tmp_path)
+    workdir = install_dir / "k8s-training"
+    sidecar_path = install_dir / ".npa-fleet-env.json"
+    state_path = workdir / "terraform.tfstate"
+    backup_path = workdir / "terraform.tfstate.backup"
+    sidecar = json.loads(sidecar_path.read_text())
+    state = json.loads(state_path.read_text())
+    _write_json(backup_path, deepcopy(state))
+    if subnet_shape == "missing-sidecar":
+        sidecar["subnet_id"] = ""
+        _write_json(sidecar_path, sidecar)
+    elif subnet_shape == "mismatching":
+        state["resources"][1]["instances"][0]["attributes"]["template"][
+            "network_interfaces"
+        ][0]["subnet_id"] = "other-subnet"
+        _write_json(state_path, state)
+    elif subnet_shape == "multiple":
+        duplicate = deepcopy(state["resources"][1]["instances"][0])
+        duplicate["attributes"]["template"]["network_interfaces"][0]["subnet_id"] = (
+            "other-subnet"
+        )
+        state["resources"][1]["instances"].append(duplicate)
+        _write_json(state_path, state)
+    else:
+        raise AssertionError(f"unhandled subnet shape: {subnet_shape}")
+    paths = {
+        "owner": install_dir / ".npa-backend-owner.json",
+        "sidecar": sidecar_path,
+        "state": state_path,
+        "backup": backup_path,
+        "lock": workdir / ".terraform.tfstate.lock.info",
+        "summary": tmp_path / spec.name / "fleet-state.json",
+    }
+    before = {name: path.read_bytes() for name, path in paths.items()}
+    calls: dict[str, object] = {}
+    _prepare_provider(monkeypatch, calls)
+    monkeypatch.setattr(lifecycle, "_assert_terraform_version", lambda _: None)
+    monkeypatch.setattr(lifecycle, "_resolve_tenant_id", lambda *_: "tenant-test")
+    monkeypatch.setattr(lifecycle, "_resolve_region", lambda _: "test-region")
+    monkeypatch.setattr(recovery, "_assert_no_live_apply_owner", lambda _workdir: None)
+    monkeypatch.setattr(
+        lifecycle,
+        "_deploy_one_cluster",
+        lambda **_: pytest.fail("invalid subnet must not enter Terraform apply"),
+    )
+    monkeypatch.setattr(
+        mk8s_execution,
+        "_run_capture",
+        lambda *_args, **_kwargs: pytest.fail("invalid subnet called provider"),
+    )
+
+    with pytest.raises(RuntimeError, match="failed exact normal-lifecycle"):
+        lifecycle.deploy_fleet(
+            spec,
+            work_root=tmp_path,
+            k8s_training_dir=install_dir,
+            preflight=False,
+        )
+
+    assert calls == {}
+    assert not (install_dir / "kubeconfig").exists()
+    for name, path in paths.items():
+        assert path.read_bytes() == before[name]
 
 
 def test_retained_resume_rejects_nonmatching_saved_selector_before_provider(
