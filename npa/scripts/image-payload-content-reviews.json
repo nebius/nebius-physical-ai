@@ -1998,6 +1998,17 @@
       }
     },
     {
+      "sha256": "209a70f5a79350df5477324291627355d44a04d5e1b7827ffc87aec2a5235f33",
+      "bytes": 146674,
+      "match_counts": {"credential_assignment": 10},
+      "reason": "The generic configure CLI references only operator-provided inputs and documented placeholders; its --env helper emits non-secret project routing. The detector's named assignments are not operational credential literals.",
+      "source": {
+        "url": "https://github.com/nebius/nebius-physical-ai/blob/58b954a914e29a0894e9f4113812696c564867db/npa/src/npa/cli/main.py",
+        "revision": "58b954a914e29a0894e9f4113812696c564867db",
+        "member": "npa/src/npa/cli/main.py"
+      }
+    },
+    {
       "sha256": "5c5000bd231f4b073591ca8bec7359aad8f768b2d47cc88289dc1ba21972ff78",
       "bytes": 83802,
       "match_counts": {"credential_assignment": 10},

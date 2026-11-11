@@ -314,7 +314,7 @@ def test_current_npa_source_review_bindings_are_content_exact() -> None:
         "src/npa/cli/genesis/__init__.py": "f329e5c06705fe9b3cdd4b0a697609506d530cca14617096ab2490b17e24f302",
         "src/npa/cli/groot/__init__.py": "7b76b736c913693f0207ad60724a7d85c1984bdff5c46b3b099cba22b667df7b",
         "src/npa/cli/isaac_lab/__init__.py": "dcaccb56118e7dae83bee9e9887573d06ffde586effc65f1cd9fecc94aa603cb",
-        "src/npa/cli/main.py": "d44cc153914c57dd14e8f347006e66104045fd92741589d29218118c9200340a",
+        "src/npa/cli/main.py": "209a70f5a79350df5477324291627355d44a04d5e1b7827ffc87aec2a5235f33",
         "src/npa/cli/workbench/health.py": "937cf083dffb784a6b866051ffdc0415ab14a01b4d06f1d6fed50f3021e7547b",
         "src/npa/cli/workbench/lerobot.py": "2e6c2e467e395ebf566f75642f012a768d2ad806689a7615c962a531318170a5",
         "src/npa/cli/workbench/robocasa/deploy.py": "bf2ffee8ca78ba05d125677942d76a40258835b44466919a2b783aa73b746b90",
