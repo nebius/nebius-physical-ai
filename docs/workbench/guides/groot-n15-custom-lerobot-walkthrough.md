@@ -23,20 +23,31 @@ npa/.venv/bin/python -m pip install --upgrade pip
 npa/.venv/bin/python -m pip install -e "npa[dev,adapter]"
 ```
 
-Install and authenticate the tested Nebius CLI (`0.12.298`) as described in
-the repository [installation guide](../../install.md). `npa configure` records
-the normal project and storage setup. Bootstrap the pinned SkyPilot runtime once
-in that same normal NPA configuration; it is idempotent and persists the
-selected executable for later shells:
+Install the tested Nebius CLI (`0.12.298`) once into the NPA-managed location.
+This is the supported non-secret bootstrap that lets the normal fresh-shell
+configuration select the exact tested binary instead of an arbitrary ambient
+`nebius` executable:
+
+```bash
+curl -fsSL https://storage.eu-north1.nebius.cloud/cli/install.sh \
+  | NEBIUS_CLI_VERSION=0.12.298 NEBIUS_INSTALL_FOLDER="$HOME/.npa/bin" bash
+```
+
+Then complete normal one-time authentication/project configuration with
+`npa configure` (the repository [installation guide](../../install.md) explains
+that flow). `npa configure --show --env` exports `NPA_NEBIUS_BIN` when this
+managed binary is present; subsequent commands in this guide use that export
+and fail closed for an untested CLI version. Bootstrap the pinned SkyPilot
+runtime once in that same normal NPA configuration; it is idempotent and
+persists the selected executable for later shells:
 
 ```bash
 npa/.venv/bin/python -m npa skypilot bootstrap
 ```
 
-If the NPA configuration also contains a tested local Nebius CLI, the shell
-setup below selects it; otherwise the tested CLI must be on `PATH`. Provider
-calls fail closed on an untested version. The GPU worker independently records
-its CUDA, Python, SM120, and native dependency closure before it trains.
+The shell setup below selects the managed tested CLI. The GPU worker
+independently records its CUDA, Python, SM120, and native dependency closure
+before it trains.
 
 ## Turnkey public reference (the default)
 

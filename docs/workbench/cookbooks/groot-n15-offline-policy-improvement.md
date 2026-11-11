@@ -32,10 +32,13 @@ Use the linked walkthrough's submit command unchanged, including
 one-hour wait default; that default cancels the exact managed job rather than
 merely returning control to the shell. Cancellation is therefore an explicit
 `workflow cancel` operation, not an implicit timeout in this reference path.
-For private evidence, first list the resolved run with `workflow artifacts`,
-then use the generic `workflow download-artifact` command on an exact returned
-URI. It materializes one authorized object locally with a SHA-256 receipt; it
-does not publish the object or grant broad bucket read access.
+Before the first configured shell, use the walkthrough's one-time managed
+Nebius CLI bootstrap; its `configure --show --env` step then selects the exact
+tested client without an ambient-path override. For private evidence, first list
+the resolved run with `workflow artifacts`, then use the generic
+`workflow download-artifact` command on an exact returned URI. It materializes
+one authorized object locally with a SHA-256 receipt; it does not publish the
+object or grant broad bucket read access.
 
 The workflow creates two matched policies from the same foundation checkpoint,
 split, seed, batch size, and schedule: an ordinary behavior-cloning control and
