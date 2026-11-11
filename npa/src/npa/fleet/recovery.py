@@ -52,6 +52,7 @@ class _RecoveryInputs:
     desired: Any
     cluster_id: str
     ssh_public_key: str
+    requires_empty_provider_pools: bool
 
 
 @dataclass(frozen=True)
@@ -298,14 +299,26 @@ def _recovery_inputs(
         target.cluster.name,
         allow_backup_root=allow_backup_root,
     )
-    _assert_state_subnet(workdir, saved["subnet_id"])
+    requires_empty_provider_pools = _assert_state_subnet(
+        workdir,
+        saved["subnet_id"],
+        allow_empty_unmaterialized=allow_backup_root and not cluster_id,
+    )
     _assert_unregistered(
         target.fleet_root,
         target.project.key(),
         target.cluster.name,
         saved["region"],
     )
-    return _RecoveryInputs(sidecar, saved, release, desired, cluster_id, ssh_public_key)
+    return _RecoveryInputs(
+        sidecar,
+        saved,
+        release,
+        desired,
+        cluster_id,
+        ssh_public_key,
+        requires_empty_provider_pools,
+    )
 
 
 def _verify_provider(
@@ -367,6 +380,7 @@ def _verify_retained_pool_resume(
     missing = _verify_retained_pool_topology(
         verified_inputs, session, allow_missing=True
     )
+    _assert_empty_provider_pools_if_required(verified_inputs, missing)
     return session, verified_inputs, missing
 
 
@@ -566,6 +580,21 @@ def _retained_pool_layout(cluster) -> dict[str, Any]:
     if not layout:
         raise FleetRecoveryError("retained target has no declared node pools")
     return layout
+
+
+def _assert_empty_provider_pools_if_required(
+    inputs: _RecoveryInputs, missing: list[tuple[str, Any]]
+) -> None:
+    """Require zero live pools before accepting an empty state subnet inventory."""
+
+    if not inputs.requires_empty_provider_pools:
+        return
+    expected = set(_retained_pool_layout(inputs.desired))
+    missing_names = {name for name, _pool in missing}
+    if missing_names != expected:
+        raise FleetRecoveryError(
+            "empty Terraform node-group state requires zero retained provider node groups"
+        )
 
 
 def _assert_pool_resume_supported(cluster) -> None:
@@ -1209,13 +1238,35 @@ def _is_exact_empty_root_cluster_resource(resource: object) -> bool:
     )
 
 
-def _assert_state_subnet(workdir: Path, sidecar_subnet: str) -> None:
+def _assert_state_subnet(
+    workdir: Path,
+    sidecar_subnet: str,
+    *,
+    allow_empty_unmaterialized: bool = False,
+) -> bool:
+    """Return whether an exact unmaterialized empty subnet inventory needs live proof."""
+
     state = _read_mapping(workdir / _STATE_FILE, "Terraform state")
-    subnets = _state_node_group_subnets(state.get("resources"))
-    if len(subnets) != 1 or not sidecar_subnet or sidecar_subnet not in subnets:
-        raise FleetRecoveryError(
-            "Terraform node-group subnet differs from the Fleet sidecar"
-        )
+    resources = state.get("resources")
+    subnets = _state_node_group_subnets(resources)
+    if len(subnets) == 1 and sidecar_subnet and sidecar_subnet in subnets:
+        return False
+    if (
+        allow_empty_unmaterialized
+        and sidecar_subnet
+        and not subnets
+        and _has_no_state_node_group_resources(resources)
+    ):
+        return True
+    raise FleetRecoveryError(
+        "Terraform node-group subnet differs from the Fleet sidecar"
+    )
+
+
+def _has_no_state_node_group_resources(resources: object) -> bool:
+    if not isinstance(resources, list):
+        raise FleetRecoveryError("Terraform state has no resource inventory")
+    return not any(_is_node_group_resource_kind(resource) for resource in resources)
 
 
 def _state_node_group_subnets(resources: object) -> set[str]:
@@ -1240,10 +1291,17 @@ def _state_node_group_subnets(resources: object) -> set[str]:
 
 def _is_node_group_resource(resource: object) -> bool:
     return bool(
+        _is_node_group_resource_kind(resource)
+        and isinstance(resource, dict)
+        and isinstance(resource.get("instances"), list)
+    )
+
+
+def _is_node_group_resource_kind(resource: object) -> bool:
+    return bool(
         isinstance(resource, dict)
         and resource.get("mode") == "managed"
         and resource.get("type") == "nebius_mk8s_v1_node_group"
-        and isinstance(resource.get("instances"), list)
     )
 
 
