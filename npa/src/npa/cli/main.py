@@ -40,7 +40,6 @@ from npa.cli.storage import app as storage_app
 from npa.cli.soperator import app as soperator_app
 from npa.cli.viz import app as viz_app
 from npa.cli.workflow_shim import workflow_shim_app
-from npa.cli.tools import app as tools_app
 from npa.cli.workbench.team_login import login_cmd, logout_cmd
 from npa.clients.serverless import ServerlessClientError
 from npa.workbench.team.errors import TeamError
@@ -116,7 +115,6 @@ app.add_typer(
     short_help="Primary Workbench solution: tools and workflows.",
     rich_help_panel="Primary solution",
 )
-app.add_typer(tools_app, name="tools", rich_help_panel="Platform utilities")
 # Authentication is also available under workbench team for namespace discovery.
 app.command("login", rich_help_panel="Setup")(login_cmd)
 app.command("logout", rich_help_panel="Setup")(logout_cmd)
