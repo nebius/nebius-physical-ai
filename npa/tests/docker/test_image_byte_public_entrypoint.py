@@ -197,7 +197,7 @@ def test_fresh_cli_keeps_raw_failure_and_counts_every_native_occurrence(
 
 
 @pytest.mark.parametrize("target", ["policy", "proof", "authorization", "archive"])
-def test_changed_inputs_cannot_emit_accepted_receipt(prepared, target):
+def test_changed_inputs_cannot_emit_accepted_receipt(prepared, target, capsys):
     W, _P, argv, out, auth, policy, proof = prepared
     path = {
         "policy": policy,
@@ -205,8 +205,11 @@ def test_changed_inputs_cannot_emit_accepted_receipt(prepared, target):
         "authorization": Path(argv[5]),
         "archive": Path(auth["archive"]["path"]),
     }[target]
-    path.write_bytes(path.read_bytes() + b"changed")
+    path.write_bytes(path.read_bytes() + b"private-test-only-marker")
     assert W.main(argv) == 1
+    captured = capsys.readouterr()
+    assert "gate failed (" in captured.out
+    assert "private-test-only-marker" not in captured.out + captured.err
     assert not (out / "public-policy-acceptance.json").exists()
 
 
