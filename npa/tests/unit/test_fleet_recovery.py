@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 import json
 from dataclasses import replace
 from pathlib import Path
@@ -768,6 +769,185 @@ def _unmaterialized_retained_target(tmp_path: Path) -> tuple[FleetSpec, Path, di
     return spec, install_dir, {name: path.read_bytes() for name, path in paths.items()}
 
 
+def _backup_root_retained_target(tmp_path: Path) -> tuple[FleetSpec, Path, dict]:
+    """Build the exact retained current-state/backup-root compatibility shape."""
+
+    spec, install_dir, _before = _unmaterialized_retained_target(tmp_path)
+    workdir = install_dir / "k8s-training"
+    state_path = workdir / "terraform.tfstate"
+    backup_path = workdir / "terraform.tfstate.backup"
+    state = json.loads(state_path.read_text())
+    state["lineage"] = "retained-backup-root-lineage"
+    state["serial"] = 2
+    backup = deepcopy(state)
+    backup["serial"] = 1
+    root = backup["resources"][0]
+    state["resources"] = state["resources"][1:]
+    assert root["type"] == "nebius_mk8s_v1_cluster"
+    assert root["instances"] == []
+    _write_json(state_path, state)
+    _write_json(backup_path, backup)
+    paths = {
+        "owner": install_dir / ".npa-backend-owner.json",
+        "sidecar": install_dir / ".npa-fleet-env.json",
+        "state": state_path,
+        "backup": backup_path,
+        "lock": workdir / ".terraform.tfstate.lock.info",
+        "summary": tmp_path / spec.name / "fleet-state.json",
+    }
+    return spec, install_dir, {name: path.read_bytes() for name, path in paths.items()}
+
+
+def test_generic_recovery_rejects_backup_root_compatibility_shape(
+    tmp_path, monkeypatch
+):
+    spec, install_dir, before = _backup_root_retained_target(tmp_path)
+    calls: dict[str, object] = {}
+    _prepare_provider(monkeypatch, calls)
+
+    with pytest.raises(
+        recovery.FleetRecoveryError,
+        match="Terraform state does not contain one exact mk8s cluster",
+    ):
+        recovery.recover_interrupted_fleet_apply(spec, work_root=tmp_path)
+
+    assert calls == {}
+    assert not (install_dir / "kubeconfig").exists()
+    paths = {
+        "owner": install_dir / ".npa-backend-owner.json",
+        "sidecar": install_dir / ".npa-fleet-env.json",
+        "state": install_dir / "k8s-training" / "terraform.tfstate",
+        "backup": install_dir / "k8s-training" / "terraform.tfstate.backup",
+        "lock": install_dir / "k8s-training" / ".terraform.tfstate.lock.info",
+        "summary": tmp_path / spec.name / "fleet-state.json",
+    }
+    for name, path in paths.items():
+        assert path.read_bytes() == before[name]
+
+
+@pytest.mark.parametrize(
+    "invalid_shape",
+    [
+        "materialized-root",
+        "deposed-root",
+        "duplicate-root",
+        "malformed-root",
+        "module-scoped-root",
+        "common-module-cluster",
+        "current-malformed-root",
+        "lineage-divergent",
+        "serial-regressing",
+        "common-resource-divergent",
+        "current-only-resource",
+        "extra-backup-resource",
+    ],
+)
+def test_normal_lifecycle_rejects_invalid_backup_root_before_provider_or_persistence(
+    tmp_path, monkeypatch, invalid_shape
+):
+    spec, install_dir, _before = _backup_root_retained_target(tmp_path)
+    workdir = install_dir / "k8s-training"
+    state_path = workdir / "terraform.tfstate"
+    backup_path = workdir / "terraform.tfstate.backup"
+    state = json.loads(state_path.read_text())
+    backup = json.loads(backup_path.read_text())
+    root = backup["resources"][0]
+    if invalid_shape == "materialized-root":
+        root["instances"] = [{"attributes": {"id": "cluster-test"}}]
+    elif invalid_shape == "deposed-root":
+        root["instances"] = [{"deposed": "retained"}]
+    elif invalid_shape == "duplicate-root":
+        backup["resources"].append(deepcopy(root))
+    elif invalid_shape == "malformed-root":
+        root["instances"] = {"not": "a-list"}
+    elif invalid_shape == "module-scoped-root":
+        root["module"] = "module.retained"
+    elif invalid_shape == "common-module-cluster":
+        common_module_cluster = {
+            "mode": "managed",
+            "type": "nebius_mk8s_v1_cluster",
+            "name": "retained-module-cluster",
+            "module": "module.retained",
+            "instances": [],
+        }
+        state["resources"].append(common_module_cluster)
+        backup["resources"].append(deepcopy(common_module_cluster))
+    elif invalid_shape == "current-malformed-root":
+        state["resources"].append(
+            {
+                "mode": "managed",
+                "type": "nebius_mk8s_v1_cluster",
+                "instances": {"not": "a-list"},
+            }
+        )
+    elif invalid_shape == "lineage-divergent":
+        backup["lineage"] = "different-lineage"
+    elif invalid_shape == "serial-regressing":
+        backup["serial"] = state["serial"] + 1
+    elif invalid_shape == "common-resource-divergent":
+        backup["resources"][1]["name"] = "changed-common-resource"
+    elif invalid_shape == "current-only-resource":
+        state["resources"].append(
+            {
+                "mode": "managed",
+                "type": "nebius_compute_v1_filesystem",
+                "instances": [],
+            }
+        )
+    elif invalid_shape == "extra-backup-resource":
+        backup["resources"].append(
+            {
+                "mode": "managed",
+                "type": "nebius_compute_v1_filesystem",
+                "instances": [],
+            }
+        )
+    else:
+        raise AssertionError(f"unhandled invalid shape: {invalid_shape}")
+    _write_json(state_path, state)
+    _write_json(backup_path, backup)
+    paths = {
+        "owner": install_dir / ".npa-backend-owner.json",
+        "sidecar": install_dir / ".npa-fleet-env.json",
+        "state": state_path,
+        "backup": backup_path,
+        "lock": workdir / ".terraform.tfstate.lock.info",
+        "summary": tmp_path / spec.name / "fleet-state.json",
+    }
+    before = {name: path.read_bytes() for name, path in paths.items()}
+    calls: dict[str, object] = {}
+    _prepare_provider(monkeypatch, calls)
+    monkeypatch.setattr(lifecycle, "_assert_terraform_version", lambda _: None)
+    monkeypatch.setattr(lifecycle, "_resolve_tenant_id", lambda *_: "tenant-test")
+    monkeypatch.setattr(lifecycle, "_resolve_region", lambda _: "test-region")
+    monkeypatch.setattr(recovery, "_assert_no_live_apply_owner", lambda _workdir: None)
+    monkeypatch.setattr(
+        lifecycle,
+        "_deploy_one_cluster",
+        lambda **_: pytest.fail("retained target must not enter Terraform apply"),
+    )
+    monkeypatch.setattr(
+        mk8s_execution,
+        "_run_capture",
+        lambda *_args, **_kwargs: pytest.fail("invalid backup shape called provider"),
+    )
+
+    with pytest.raises(
+        RuntimeError, match="failed exact normal-lifecycle reconciliation"
+    ):
+        lifecycle.deploy_fleet(
+            spec,
+            work_root=tmp_path,
+            k8s_training_dir=install_dir,
+            preflight=False,
+        )
+
+    assert calls == {}
+    assert not (install_dir / "kubeconfig").exists()
+    for name, path in paths.items():
+        assert path.read_bytes() == before[name]
+
+
 def test_normal_lifecycle_resumes_only_missing_retained_cpu_pool(tmp_path, monkeypatch):
     spec, install_dir, before = _unmaterialized_retained_target(tmp_path)
     calls: dict[str, object] = {}
@@ -1094,10 +1274,10 @@ def test_retained_pool_quota_demand_counts_only_verified_missing_pools() -> None
         lifecycle._RetainedPoolQuotaDemand(cluster, ["unexpected-node-group"])
 
 
-def test_normal_lifecycle_resumes_zero_group_cpu_and_strict_gpu_target(
+def test_normal_lifecycle_resumes_backup_root_cpu_and_strict_gpu_target(
     tmp_path, monkeypatch
 ):
-    spec, install_dir, before = _unmaterialized_retained_target(tmp_path)
+    spec, install_dir, before = _backup_root_retained_target(tmp_path)
     cluster = spec.projects[0].clusters[0]
     cluster.enable_filestore = True
     cluster.filesystem_csi_chart_repository = "oci://charts.example.invalid/nebius"
@@ -1116,15 +1296,18 @@ def test_normal_lifecycle_resumes_zero_group_cpu_and_strict_gpu_target(
     )
     workdir = install_dir / "k8s-training"
     state = json.loads((workdir / "terraform.tfstate").read_text())
-    state["resources"].append(
-        {
-            "mode": "managed",
-            "type": "nebius_compute_v1_filesystem",
-            "name": "shared-filesystem",
-            "instances": [{"attributes": {"id": "filesystem-test"}}],
-        }
-    )
+    backup_path = workdir / "terraform.tfstate.backup"
+    backup = json.loads(backup_path.read_text())
+    filesystem = {
+        "mode": "managed",
+        "type": "nebius_compute_v1_filesystem",
+        "name": "shared-filesystem",
+        "instances": [{"attributes": {"id": "filesystem-test"}}],
+    }
+    state["resources"].append(filesystem)
+    backup["resources"].append(deepcopy(filesystem))
     _write_json(workdir / "terraform.tfstate", state)
+    _write_json(backup_path, backup)
     tfvars = render_tfvars(
         as_mk8s_desired(bound_cluster), ssh_public_key="ssh-test", recipe_dir=workdir
     )
@@ -1133,6 +1316,7 @@ def test_normal_lifecycle_resumes_zero_group_cpu_and_strict_gpu_target(
         encoding="utf-8",
     )
     before["state"] = (workdir / "terraform.tfstate").read_bytes()
+    before["backup"] = backup_path.read_bytes()
     before["lock"] = (workdir / ".terraform.tfstate.lock.info").read_bytes()
     calls: dict[str, object] = {}
     _prepare_provider(monkeypatch, calls)
@@ -1252,6 +1436,7 @@ def test_normal_lifecycle_resumes_zero_group_cpu_and_strict_gpu_target(
     assert not any("cluster" in command and "create" in command for command in commands)
     assert not any("terraform" in command for command in commands)
     assert (workdir / "terraform.tfstate").read_bytes() == before["state"]
+    assert backup_path.read_bytes() == before["backup"]
     assert (workdir / ".terraform.tfstate.lock.info").read_bytes() == before["lock"]
 
 

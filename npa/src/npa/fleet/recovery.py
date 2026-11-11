@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass, replace
 import json
 import os
@@ -27,8 +28,9 @@ class _RetainedPoolTopologyPending(FleetRecoveryError):
 _ENV_SIDECAR = ".npa-fleet-env.json"
 _OWNER_MARKER = ".npa-backend-owner.json"
 _STATE_FILE = "terraform.tfstate"
+_BACKUP_STATE_FILE = "terraform.tfstate.backup"
 _TERRAFORM_STATE_PATHS = frozenset(
-    {_STATE_FILE, "terraform.tfstate.backup", ".terraform.tfstate.lock.info"}
+    {_STATE_FILE, _BACKUP_STATE_FILE, ".terraform.tfstate.lock.info"}
 )
 
 
@@ -164,7 +166,12 @@ def verify_retained_fleet_pool_resume(
     )
     workdir = target.install_dir / "k8s-training"
     _assert_no_live_apply_owner(workdir)
-    inputs = _recovery_inputs(target, workdir, profile=profile)
+    inputs = _recovery_inputs(
+        target,
+        workdir,
+        profile=profile,
+        allow_backup_root=True,
+    )
     _session, inputs, missing = _verify_retained_pool_resume(target, inputs)
     _assert_context_adoptable(inputs.saved["context"], inputs)
     _assert_no_live_apply_owner(workdir)
@@ -214,7 +221,12 @@ def resume_retained_fleet_pool_target(
     workdir = target.install_dir / "k8s-training"
     timeout_seconds = _retained_pool_resume_timeout_seconds(timeout_minutes)
     _assert_no_live_apply_owner(workdir)
-    inputs = _recovery_inputs(target, workdir, profile=profile)
+    inputs = _recovery_inputs(
+        target,
+        workdir,
+        profile=profile,
+        allow_backup_root=True,
+    )
     session, inputs, missing = _verify_retained_pool_resume(target, inputs)
     _assert_context_adoptable(inputs.saved["context"], inputs)
     _assert_no_live_apply_owner(workdir)
@@ -265,7 +277,11 @@ def _recover_locked(target: _RecoveryTarget, *, profile: str | None) -> dict[str
 
 
 def _recovery_inputs(
-    target: _RecoveryTarget, workdir: Path, *, profile: str | None
+    target: _RecoveryTarget,
+    workdir: Path,
+    *,
+    profile: str | None,
+    allow_backup_root: bool = False,
 ) -> _RecoveryInputs:
     from npa.fleet import lifecycle
 
@@ -277,7 +293,10 @@ def _recovery_inputs(
     ssh_public_key = lifecycle._resolve_ssh_public_key(target.spec.ssh_public_key)
     _assert_materialized_spec(workdir, desired, ssh_public_key)
     cluster_id = _terraform_cluster_id_or_unmaterialized(
-        workdir, saved["project_id"], target.cluster.name
+        workdir,
+        saved["project_id"],
+        target.cluster.name,
+        allow_backup_root=allow_backup_root,
     )
     _assert_state_subnet(workdir, saved["subnet_id"])
     _assert_unregistered(
@@ -1014,13 +1033,23 @@ def _terraform_cluster_id(workdir: Path, project_id: str, cluster_name: str) -> 
 
 
 def _terraform_cluster_id_or_unmaterialized(
-    workdir: Path, project_id: str, cluster_name: str
+    workdir: Path,
+    project_id: str,
+    cluster_name: str,
+    *,
+    allow_backup_root: bool = False,
 ) -> str:
     """Allow only the recorded unmaterialized root shapes for verified recovery."""
 
     state = _read_mapping(workdir / _STATE_FILE, "Terraform state")
     resources = _root_cluster_resources(state.get("resources"))
     if len(resources) != 1:
+        if (
+            allow_backup_root
+            and not resources
+            and _has_exact_backup_unmaterialized_root(workdir, state)
+        ):
+            return ""
         raise FleetRecoveryError(
             "Terraform state does not contain one exact mk8s cluster"
         )
@@ -1086,6 +1115,100 @@ def _root_cluster_resources(resources: object) -> list[dict[str, Any]]:
     return [resource for resource in resources if _is_root_cluster_resource(resource)]
 
 
+def _has_exact_backup_unmaterialized_root(workdir: Path, state: dict[str, Any]) -> bool:
+    """Recognize only the retained pool-resume backup-root compatibility shape.
+
+    The current state must be a strict resource subset of its same-lineage
+    backup, with exactly one added empty root MK8s resource.  This is an
+    opt-in compatibility check for the normal pool-only lifecycle; callers
+    performing generic recovery deliberately leave it disabled.
+    """
+
+    try:
+        backup = _read_mapping(workdir / _BACKUP_STATE_FILE, "Terraform state backup")
+    except FleetRecoveryError:
+        return False
+    current_resources = _state_resources(state)
+    backup_resources = _state_resources(backup)
+    if current_resources is None or backup_resources is None:
+        return False
+    # The compatibility exception permits only the one backup-only canonical
+    # root resource. Any managed MK8s resource already present in current state,
+    # including one addressed through a Terraform module, exceeds that shape.
+    if any(_is_cluster_resource_kind(resource) for resource in current_resources):
+        return False
+    if not _state_lineage_and_serial_match(state, backup):
+        return False
+
+    current_counts = Counter(
+        _canonical_resource(resource) for resource in current_resources
+    )
+    backup_counts = Counter(
+        _canonical_resource(resource) for resource in backup_resources
+    )
+    if current_counts - backup_counts:
+        return False
+    backup_only = backup_counts - current_counts
+    if sum(backup_only.values()) != 1:
+        return False
+    candidate = next(
+        (
+            resource
+            for resource in backup_resources
+            if backup_only[_canonical_resource(resource)] == 1
+        ),
+        None,
+    )
+    return _is_exact_empty_root_cluster_resource(candidate)
+
+
+def _state_resources(state: dict[str, Any]) -> list[dict[str, Any]] | None:
+    resources = state.get("resources")
+    if not isinstance(resources, list) or not all(
+        isinstance(resource, dict) for resource in resources
+    ):
+        return None
+    return resources
+
+
+def _state_lineage_and_serial_match(
+    state: dict[str, Any], backup: dict[str, Any]
+) -> bool:
+    lineage = state.get("lineage")
+    backup_lineage = backup.get("lineage")
+    serial = state.get("serial")
+    backup_serial = backup.get("serial")
+    return bool(
+        isinstance(lineage, str)
+        and lineage
+        and lineage == backup_lineage
+        and isinstance(serial, int)
+        and not isinstance(serial, bool)
+        and serial >= 0
+        and isinstance(backup_serial, int)
+        and not isinstance(backup_serial, bool)
+        and backup_serial >= 0
+        and serial >= backup_serial
+    )
+
+
+def _canonical_resource(resource: dict[str, Any]) -> bytes:
+    return json.dumps(
+        resource,
+        ensure_ascii=True,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+
+
+def _is_exact_empty_root_cluster_resource(resource: object) -> bool:
+    return bool(
+        _is_root_cluster_resource(resource)
+        and isinstance(resource, dict)
+        and resource["instances"] == []
+    )
+
+
 def _assert_state_subnet(workdir: Path, sidecar_subnet: str) -> None:
     state = _read_mapping(workdir / _STATE_FILE, "Terraform state")
     subnets = _state_node_group_subnets(state.get("resources"))
@@ -1140,11 +1263,25 @@ def _state_instance_subnet(instance: object) -> str:
 
 def _is_root_cluster_resource(resource: object) -> bool:
     return bool(
+        _is_root_cluster_resource_kind(resource)
+        and isinstance(resource, dict)
+        and isinstance(resource.get("instances"), list)
+    )
+
+
+def _is_root_cluster_resource_kind(resource: object) -> bool:
+    return bool(
+        _is_cluster_resource_kind(resource)
+        and isinstance(resource, dict)
+        and not resource.get("module")
+    )
+
+
+def _is_cluster_resource_kind(resource: object) -> bool:
+    return bool(
         isinstance(resource, dict)
         and resource.get("mode") == "managed"
         and resource.get("type") == "nebius_mk8s_v1_cluster"
-        and not resource.get("module")
-        and isinstance(resource.get("instances"), list)
     )
 
 
