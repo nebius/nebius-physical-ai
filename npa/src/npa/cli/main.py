@@ -3427,8 +3427,9 @@ def configure(
         False,
         "--env",
         help=(
-            "Print the saved project/bucket/kube-context values as NPA_* shell "
-            "assignments (no secrets) instead of prompting: "
+            "Print saved non-secret project/storage/context assignments (NPA_* "
+            "plus a locally validated KUBECONFIG and managed CLI selection when "
+            "available) instead of prompting: "
             'eval "$(npa configure --show --env)".'
         ),
     ),
@@ -3554,8 +3555,9 @@ def init(
         False,
         "--env",
         help=(
-            "Print the saved project/bucket/kube-context values as NPA_* shell "
-            "assignments (no secrets) instead of prompting: "
+            "Print saved non-secret project/storage/context assignments (NPA_* "
+            "plus a locally validated KUBECONFIG and managed CLI selection when "
+            "available) instead of prompting: "
             'eval "$(npa configure --show --env)".'
         ),
     ),
