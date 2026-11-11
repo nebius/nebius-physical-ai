@@ -9475,7 +9475,9 @@ def download_artifact_cmd(
         ..., "--artifact-uri", help="Exact URI returned by workflow artifacts."
     ),
     output_path: Path = typer.Option(
-        ..., "--output-path", help="Local file to materialize after exact-run verification."
+        ...,
+        "--output-path",
+        help="Local file to materialize after exact-run verification.",
     ),
     overwrite: bool = typer.Option(
         False, "--overwrite", help="Replace an existing local output file."

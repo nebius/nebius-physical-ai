@@ -1031,7 +1031,9 @@ def download_resolved_artifact(
         )
     target = Path(output_path).expanduser().resolve()
     if target.exists() and target.is_dir():
-        raise WorkflowStateError("artifact output path must name a file, not a directory")
+        raise WorkflowStateError(
+            "artifact output path must name a file, not a directory"
+        )
     if target.exists() and not overwrite:
         raise WorkflowStateError(
             "artifact output path already exists; choose a new path or authorize overwrite"
