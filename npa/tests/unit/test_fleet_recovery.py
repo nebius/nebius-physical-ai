@@ -16,7 +16,13 @@ from npa.cluster_backends.mk8s_model import as_mk8s_desired
 from npa.cluster_backends.mk8s_render import render_tfvars
 from npa.fleet import lifecycle, recovery
 from npa.fleet.release import default_mk8s_release
-from npa.fleet.spec import ClusterSpec, FleetSpec, NodePoolSpec, ProjectSpec
+from npa.fleet.spec import (
+    ClusterSpec,
+    FleetSpec,
+    NodePoolSpec,
+    ObjectStorageSpec,
+    ProjectSpec,
+)
 
 
 def _spec() -> FleetSpec:
@@ -203,6 +209,21 @@ def _error_summary(status: str = "error", **overrides: object) -> dict[str, obje
     }
 
 
+def _ordinary_error_summary(
+    install_dir: Path, status: str = "error", **overrides: object
+) -> dict[str, object]:
+    """Build the bounded diagnostics emitted by the ordinary Fleet failure path."""
+
+    diagnostics = {
+        "project_id": "project-test",
+        "install_dir": str(install_dir),
+        "object_storage": {"enabled": False},
+        "terraform_log": str(install_dir / "deploy.log"),
+    }
+    diagnostics.update(overrides)
+    return _error_summary(status, **diagnostics)
+
+
 def _write_summary(path: Path, entries: list[object]) -> bytes:
     path.write_text(json.dumps({"clusters": entries}), encoding="utf-8")
     return path.read_bytes()
@@ -379,7 +400,7 @@ def test_recovery_supersedes_identity_free_error_summary_after_verification(
         [_error_summary(kube_context="fleet-recovery-test-team-recover")],
         [_error_summary(kubeconfig="/owner-private/kubeconfig")],
         [_error_summary(mk8s_recipe_release={"id": "release-test"})],
-        [_error_summary(project_id="project-test")],
+        [_error_summary(project_id="other-project")],
         [_error_summary(backend="soperator")],
         [_error_summary(region="other-region")],
         [
@@ -402,7 +423,7 @@ def test_recovery_supersedes_identity_free_error_summary_after_verification(
         "context",
         "kubeconfig",
         "release",
-        "project-id",
+        "wrong-project-id",
         "wrong-backend",
         "wrong-region",
         "missing-backend",
@@ -420,6 +441,9 @@ def test_recovery_rejects_identity_bearing_or_ambiguous_summary_without_mutation
     workdir = install_dir / "k8s-training"
     state_path = workdir / "terraform.tfstate"
     state_before = state_path.read_bytes()
+    backup_path = workdir / "terraform.tfstate.backup"
+    backup_path.write_bytes(state_before)
+    backup_before = backup_path.read_bytes()
     sidecar_path = install_dir / ".npa-fleet-env.json"
     sidecar_before = sidecar_path.read_bytes()
     lock_path = workdir / ".terraform.tfstate.lock.info"
@@ -435,10 +459,147 @@ def test_recovery_rejects_identity_bearing_or_ambiguous_summary_without_mutation
 
     assert calls == {}
     assert state_path.read_bytes() == state_before
+    assert backup_path.read_bytes() == backup_before
     assert sidecar_path.read_bytes() == sidecar_before
     assert lock_path.read_bytes() == lock_before
     assert not (install_dir / "kubeconfig").exists()
     assert summary_path.read_bytes() == summary_before
+
+
+@pytest.mark.parametrize("status", ["error", "incomplete"])
+def test_normal_lifecycle_reconciles_exact_ordinary_error_summary_without_persistence(
+    tmp_path, monkeypatch, status
+):
+    spec, install_dir = _install(tmp_path)
+    workdir = install_dir / "k8s-training"
+    state_path = workdir / "terraform.tfstate"
+    backup_path = workdir / "terraform.tfstate.backup"
+    backup_path.write_bytes(state_path.read_bytes())
+    lock_path = workdir / ".terraform.tfstate.lock.info"
+    lock_path.write_text("retained lock", encoding="utf-8")
+    summary_path = tmp_path / spec.name / "fleet-state.json"
+    _write_summary(summary_path, [_ordinary_error_summary(install_dir, status)])
+    paths = {
+        "owner": install_dir / ".npa-backend-owner.json",
+        "sidecar": install_dir / ".npa-fleet-env.json",
+        "state": state_path,
+        "backup": backup_path,
+        "lock": lock_path,
+        "summary": summary_path,
+    }
+    before = {name: path.read_bytes() for name, path in paths.items()}
+    calls: dict[str, object] = {}
+    _prepare_provider(monkeypatch, calls)
+
+    result = recovery.reconcile_retained_fleet_target(spec, work_root=tmp_path)
+
+    assert result["status"] == "reconciled-pending-validation"
+    assert set(calls) == {"verify"}
+    assert not (install_dir / "kubeconfig").exists()
+    for name, path in paths.items():
+        assert path.read_bytes() == before[name]
+
+
+def test_normal_lifecycle_reconciles_matching_enabled_object_storage_summary(
+    tmp_path, monkeypatch
+):
+    spec, install_dir = _install(tmp_path)
+    spec.projects[0].object_storage = ObjectStorageSpec(
+        enabled=True, storage_class="enhanced", size_gibibytes=2048
+    )
+    summary_path = tmp_path / spec.name / "fleet-state.json"
+    _write_summary(
+        summary_path,
+        [
+            _ordinary_error_summary(
+                install_dir,
+                object_storage={
+                    "enabled": True,
+                    "status": "ready",
+                    "storage_class": "enhanced",
+                    "size_gibibytes": 2048,
+                    "writable": True,
+                    "retained_on_destroy": True,
+                },
+            )
+        ],
+    )
+    summary_before = summary_path.read_bytes()
+    calls: dict[str, object] = {}
+    _prepare_provider(monkeypatch, calls)
+
+    result = recovery.reconcile_retained_fleet_target(spec, work_root=tmp_path)
+
+    assert result["status"] == "reconciled-pending-validation"
+    assert set(calls) == {"verify"}
+    assert summary_path.read_bytes() == summary_before
+    assert not (install_dir / "kubeconfig").exists()
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("project_id", "other-project"),
+        ("project_id", []),
+        ("install_dir", "/outside-selected-installation"),
+        ("install_dir", []),
+        ("install_dir", "\0"),
+        ("terraform_log", "/outside-selected-installation/deploy.log"),
+        ("terraform_log", []),
+        ("terraform_log", "\0"),
+        ("object_storage", {"enabled": True}),
+        ("object_storage", []),
+        ("unexpected_diagnostic", "unexpected"),
+        ("cluster_id", "identity-bearing"),
+    ],
+    ids=[
+        "wrong-project-id",
+        "malformed-project-id",
+        "wrong-install-dir",
+        "malformed-install-dir",
+        "embedded-nul-install-dir",
+        "log-outside-install-dir",
+        "malformed-terraform-log",
+        "embedded-nul-terraform-log",
+        "wrong-object-storage",
+        "malformed-object-storage",
+        "unknown-extra-field",
+        "durable-cluster-identity",
+    ],
+)
+def test_normal_lifecycle_rejects_unsafe_ordinary_error_diagnostics_without_mutation(
+    tmp_path, monkeypatch, field, value
+):
+    spec, install_dir = _install(tmp_path)
+    workdir = install_dir / "k8s-training"
+    state_path = workdir / "terraform.tfstate"
+    backup_path = workdir / "terraform.tfstate.backup"
+    backup_path.write_bytes(state_path.read_bytes())
+    lock_path = workdir / ".terraform.tfstate.lock.info"
+    lock_path.write_text("retained lock", encoding="utf-8")
+    summary_path = tmp_path / spec.name / "fleet-state.json"
+    entry = _ordinary_error_summary(install_dir)
+    entry[field] = value
+    _write_summary(summary_path, [entry])
+    paths = {
+        "owner": install_dir / ".npa-backend-owner.json",
+        "sidecar": install_dir / ".npa-fleet-env.json",
+        "state": state_path,
+        "backup": backup_path,
+        "lock": lock_path,
+        "summary": summary_path,
+    }
+    before = {name: path.read_bytes() for name, path in paths.items()}
+    calls: dict[str, object] = {}
+    _prepare_provider(monkeypatch, calls)
+
+    with pytest.raises(recovery.FleetRecoveryError, match="already registered"):
+        recovery.reconcile_retained_fleet_target(spec, work_root=tmp_path)
+
+    assert calls == {}
+    assert not (install_dir / "kubeconfig").exists()
+    for name, path in paths.items():
+        assert path.read_bytes() == before[name]
 
 
 @pytest.mark.parametrize(
@@ -487,15 +648,22 @@ def test_recovery_preserves_admitted_error_summary_when_provider_refuses(
 ):
     spec, install_dir = _install(tmp_path)
     workdir = install_dir / "k8s-training"
+    owner_path = install_dir / ".npa-backend-owner.json"
+    owner_before = owner_path.read_bytes()
     state_path = workdir / "terraform.tfstate"
     state_before = state_path.read_bytes()
+    backup_path = workdir / "terraform.tfstate.backup"
+    backup_path.write_bytes(state_before)
+    backup_before = backup_path.read_bytes()
     sidecar_path = install_dir / ".npa-fleet-env.json"
     sidecar_before = sidecar_path.read_bytes()
     lock_path = workdir / ".terraform.tfstate.lock.info"
     lock_path.write_text("retained lock", encoding="utf-8")
     lock_before = lock_path.read_bytes()
     summary_path = tmp_path / spec.name / "fleet-state.json"
-    summary_before = _write_summary(summary_path, [_error_summary(status)])
+    summary_before = _write_summary(
+        summary_path, [_ordinary_error_summary(install_dir, status)]
+    )
     calls: dict[str, object] = {}
     _prepare_provider(monkeypatch, calls)
 
@@ -511,7 +679,9 @@ def test_recovery_preserves_admitted_error_summary_when_provider_refuses(
         recovery.recover_interrupted_fleet_apply(spec, work_root=tmp_path)
 
     assert set(calls) == {"verify"}
+    assert owner_path.read_bytes() == owner_before
     assert state_path.read_bytes() == state_before
+    assert backup_path.read_bytes() == backup_before
     assert sidecar_path.read_bytes() == sidecar_before
     assert lock_path.read_bytes() == lock_before
     assert not (install_dir / "kubeconfig").exists()

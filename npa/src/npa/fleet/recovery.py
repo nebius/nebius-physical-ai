@@ -304,12 +304,7 @@ def _recovery_inputs(
         saved["subnet_id"],
         allow_empty_unmaterialized=allow_backup_root and not cluster_id,
     )
-    _assert_unregistered(
-        target.fleet_root,
-        target.project.key(),
-        target.cluster.name,
-        saved["region"],
-    )
+    _assert_unregistered(target, saved)
     return _RecoveryInputs(
         sidecar,
         saved,
@@ -1343,34 +1338,41 @@ def _is_cluster_resource_kind(resource: object) -> bool:
     )
 
 
-def _assert_unregistered(
-    fleet_root: Path, project_key: str, cluster_name: str, expected_region: str
-) -> None:
+def _assert_unregistered(target: _RecoveryTarget, saved: dict[str, str]) -> None:
+    """Reject durable registration, except one verified pre-registration error row."""
+
     from npa.fleet import lifecycle
 
-    entries = lifecycle._load_fleet_state(fleet_root).get("clusters", [])
+    entries = lifecycle._load_fleet_state(target.fleet_root).get("clusters", [])
     if not isinstance(entries, list):
         raise FleetRecoveryError("persisted Fleet state is malformed")
     matching = [
         entry
         for entry in entries
         if isinstance(entry, dict)
-        and entry.get("project_key") == project_key
-        and entry.get("cluster_name") == cluster_name
+        and entry.get("project_key") == target.project.key()
+        and entry.get("cluster_name") == target.cluster.name
     ]
     if not matching:
         return
     if len(matching) == 1 and _is_identity_free_error_summary(
-        matching[0], expected_region
+        matching[0], target=target, saved=saved
     ):
         return
     raise FleetRecoveryError("selected Fleet target is already registered")
 
 
 def _is_identity_free_error_summary(
-    entry: dict[str, Any], expected_region: str
+    entry: dict[str, Any], *, target: _RecoveryTarget, saved: dict[str, str]
 ) -> bool:
-    """Return whether an error record has no durable registration identity."""
+    """Return whether one persisted error has no registration identity.
+
+    Fleet's ordinary failure summary includes a small set of diagnostics after
+    project and storage preparation.  They remain identity-free only when they
+    bind exactly to the selected retained target; any other diagnostic is a
+    durable-record ambiguity and must stop recovery before provider access.
+    """
+
     allowed_keys = {
         "backend",
         "project_key",
@@ -1378,17 +1380,83 @@ def _is_identity_free_error_summary(
         "region",
         "status",
         "error",
+        "project_id",
+        "install_dir",
+        "object_storage",
+        "terraform_log",
     }
     status = entry.get("status")
-    return bool(
+    if not (
         set(entry).issubset(allowed_keys)
         and entry.get("backend") == "mk8s"
+        and entry.get("project_key") == target.project.key()
+        and entry.get("cluster_name") == target.cluster.name
         and isinstance(status, str)
         and status in {"error", "incomplete"}
         and isinstance(entry.get("error"), str)
         and entry["error"]
-        and entry.get("region") == expected_region
-    )
+        and entry.get("region") == saved["region"]
+    ):
+        return False
+    if "project_id" in entry and entry["project_id"] != saved["project_id"]:
+        return False
+    if "install_dir" in entry and not _is_selected_install_dir(
+        entry["install_dir"], target.install_dir
+    ):
+        return False
+    if "terraform_log" in entry and not _is_log_within_install_dir(
+        entry["terraform_log"], target.install_dir
+    ):
+        return False
+    return "object_storage" not in entry or entry[
+        "object_storage"
+    ] == _expected_error_summary_object_storage(target)
+
+
+def _is_selected_install_dir(value: object, install_dir: Path) -> bool:
+    """Require an error diagnostic to name the exact selected install root."""
+
+    if not isinstance(value, str) or not value:
+        return False
+    try:
+        candidate = Path(value).expanduser()
+        if not candidate.is_absolute():
+            return False
+        return candidate.resolve() == install_dir.expanduser().resolve()
+    except (OSError, ValueError):
+        return False
+
+
+def _is_log_within_install_dir(value: object, install_dir: Path) -> bool:
+    """Require an error diagnostic log to remain below the selected install root."""
+
+    if not isinstance(value, str) or not value:
+        return False
+    try:
+        candidate = Path(value).expanduser()
+        if not candidate.is_absolute():
+            return False
+        root = install_dir.expanduser().resolve()
+        resolved = candidate.resolve()
+        return resolved != root and resolved.is_relative_to(root)
+    except (OSError, ValueError):
+        return False
+
+
+def _expected_error_summary_object_storage(target: _RecoveryTarget) -> dict[str, Any]:
+    """Return the exact safe object-storage projection for one selected project."""
+
+    storage = target.project.object_storage
+    if storage is None or not storage.enabled:
+        return {"enabled": False}
+    return {
+        "enabled": True,
+        "status": "ready",
+        "storage_class": storage.display_storage_class(),
+        "size_gibibytes": storage.size_gibibytes,
+        "writable": True,
+        "retained_on_destroy": True,
+    }
 
 
 def _assert_context_adoptable(context: str, inputs: _RecoveryInputs) -> None:
