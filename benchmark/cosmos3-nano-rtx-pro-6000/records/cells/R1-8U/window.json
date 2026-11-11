@@ -1,0 +1,64 @@
+{
+ "cell": "R1-8U",
+ "derived": {
+  "attempts": 24,
+  "clips_per_node_hour": 50.5,
+  "expected_clip_video_seconds": 7.875,
+  "gpu_util_mean_pct": 87.7,
+  "max_client_wall_s": 71.884,
+  "median_client_wall_s": 71.251,
+  "p95_client_wall_s": 71.877,
+  "peak_mem_gib": 25.61,
+  "valid_attempts": 24,
+  "video_seconds_per_node_hour": 397.5,
+  "window_seconds": 1711.835
+ },
+ "dispatch_schedule": "synchronized_rounds",
+ "negative_sha256": "7a60bd0c1335641cddd8b3ae66de767d2282f08861324f0ebe850e613af6a3a1",
+ "prompt_sha256": "61c9c4b46b6787d967cc509a2bf323766e70bf5ecf40e09a739362beac135677",
+ "protocol_version": "v1-p2-runlocal-r8",
+ "replica_ports": [
+  8100
+ ],
+ "seeds": [
+  17,
+  23,
+  41
+ ],
+ "shape": {
+  "flow_shift": "10.0",
+  "fps": "24",
+  "guidance_scale": "6.0",
+  "height": "720",
+  "max_sequence_length": "4096",
+  "num_frames": "189",
+  "num_inference_steps": "35",
+  "width": "1280"
+ },
+ "warmup_records": [
+  {
+   "attempt_id": "prod-r-1-r00",
+   "client_wall_s": 73.459,
+   "finished_utc": "2026-10-20T23:51:28Z",
+   "http_status": 200,
+   "kind": "production",
+   "output_bytes": 6873931,
+   "output_file": "prod-r-1-r00.mp4",
+   "replica": "r0",
+   "seed": 17,
+   "started_utc": "2026-10-20T23:50:14Z",
+   "video_validation": {
+    "errors": [],
+    "stream": {
+     "avg_frame_rate": "24/1",
+     "height": 720,
+     "nb_read_frames": "189",
+     "width": 1280
+    },
+    "valid": true
+   }
+  }
+ ],
+ "window_end_utc": "2026-10-21T00:20:00Z",
+ "window_start_utc": "2026-10-20T23:51:28Z"
+}
