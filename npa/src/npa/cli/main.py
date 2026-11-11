@@ -2487,9 +2487,28 @@ def _saved_kube_context() -> str:
         if configured_pid
         and str(getattr(state, "project_id", "") or "") == configured_pid
     ]
-    for state in reversed(scoped or clusters):
+    candidates = scoped or clusters
+    if candidates:
+        # list_local_clusters is ordered by directory name, not save time.  A
+        # fresh operator must get the target that was actually saved most
+        # recently, rather than whichever similarly scoped directory sorts last.
+        # Status refreshes record last_seen_at; immediately-created targets use
+        # their immutable creation time until then.  The index preserves the
+        # historical "last listed" behavior for legacy records without either
+        # timestamp.
+        _, selected = max(
+            enumerate(candidates),
+            key=lambda indexed: (
+                str(
+                    getattr(indexed[1], "last_seen_at", "")
+                    or getattr(indexed[1], "created_at", "")
+                    or ""
+                ),
+                indexed[0],
+            ),
+        )
         # `cluster up` names the kubeconfig context after the cluster by default.
-        context = str(getattr(state, "name", "") or "")
+        context = str(getattr(selected, "name", "") or "")
         if context:
             return context
     return ""

@@ -797,6 +797,73 @@ def test_configure_show_env_scopes_kube_context_to_configured_project(
     assert "someone-elses" not in result.output
 
 
+def test_configure_show_env_uses_most_recent_project_scoped_context(
+    monkeypatch, tmp_path
+) -> None:
+    """The normal fresh-shell export must not select contexts by directory name."""
+    import yaml
+
+    from npa.clients import config as config_module
+    from npa.clients import credentials as credentials_module
+    from npa.cluster import state as state_module
+
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "default_project": "mine",
+                "projects": {
+                    "mine": {"project_id": "project-1", "region": "us-central1"}
+                },
+            }
+        )
+    )
+    monkeypatch.setattr(config_module, "CONFIG_PATH", config_path)
+    monkeypatch.setattr(
+        credentials_module, "CREDENTIALS_PATH", tmp_path / "credentials.yaml"
+    )
+    monkeypatch.setattr(
+        state_module,
+        "list_local_clusters",
+        # The older state sorts last alphabetically, which used to make it win.
+        lambda: [
+            SimpleNamespace(
+                name="new-target",
+                project_id="project-1",
+                created_at="2026-11-11T08:00:00Z",
+                last_seen_at="2026-11-11T08:05:00Z",
+            ),
+            SimpleNamespace(
+                name="z-old-target",
+                project_id="project-1",
+                created_at="2026-11-10T08:00:00Z",
+                last_seen_at="2026-11-10T08:05:00Z",
+            ),
+        ],
+    )
+    kubeconfig = tmp_path / "kubeconfig"
+    kubeconfig.write_text(
+        yaml.safe_dump(
+            {
+                "apiVersion": "v1",
+                "kind": "Config",
+                "current-context": "new-target",
+                "contexts": [{"name": "new-target", "context": {"cluster": "target"}}],
+            }
+        )
+    )
+    monkeypatch.setattr(state_module, "existing_kubeconfig", lambda context: kubeconfig)
+
+    result = runner.invoke(app, ["configure", "--show", "--env"])
+
+    assert result.exit_code == 0, result.output
+    values = dict(
+        line.split("=", 1) for line in result.output.strip().splitlines() if "=" in line
+    )
+    assert values["NPA_KUBE_CONTEXT"] == "new-target"
+    assert values["KUBECONFIG"] == str(kubeconfig)
+
+
 def test_configure_show_env_omits_unvalidated_saved_kubeconfig(
     monkeypatch, tmp_path
 ) -> None:
