@@ -833,6 +833,7 @@ def test_generic_recovery_rejects_backup_root_compatibility_shape(
         "duplicate-root",
         "malformed-root",
         "module-scoped-root",
+        "common-module-cluster",
         "current-malformed-root",
         "lineage-divergent",
         "serial-regressing",
@@ -861,6 +862,16 @@ def test_normal_lifecycle_rejects_invalid_backup_root_before_provider_or_persist
         root["instances"] = {"not": "a-list"}
     elif invalid_shape == "module-scoped-root":
         root["module"] = "module.retained"
+    elif invalid_shape == "common-module-cluster":
+        common_module_cluster = {
+            "mode": "managed",
+            "type": "nebius_mk8s_v1_cluster",
+            "name": "retained-module-cluster",
+            "module": "module.retained",
+            "instances": [],
+        }
+        state["resources"].append(common_module_cluster)
+        backup["resources"].append(deepcopy(common_module_cluster))
     elif invalid_shape == "current-malformed-root":
         state["resources"].append(
             {

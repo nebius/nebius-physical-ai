@@ -1132,7 +1132,10 @@ def _has_exact_backup_unmaterialized_root(workdir: Path, state: dict[str, Any]) 
     backup_resources = _state_resources(backup)
     if current_resources is None or backup_resources is None:
         return False
-    if any(_is_root_cluster_resource_kind(resource) for resource in current_resources):
+    # The compatibility exception permits only the one backup-only canonical
+    # root resource. Any managed MK8s resource already present in current state,
+    # including one addressed through a Terraform module, exceeds that shape.
+    if any(_is_cluster_resource_kind(resource) for resource in current_resources):
         return False
     if not _state_lineage_and_serial_match(state, backup):
         return False
@@ -1268,10 +1271,17 @@ def _is_root_cluster_resource(resource: object) -> bool:
 
 def _is_root_cluster_resource_kind(resource: object) -> bool:
     return bool(
+        _is_cluster_resource_kind(resource)
+        and isinstance(resource, dict)
+        and not resource.get("module")
+    )
+
+
+def _is_cluster_resource_kind(resource: object) -> bool:
+    return bool(
         isinstance(resource, dict)
         and resource.get("mode") == "managed"
         and resource.get("type") == "nebius_mk8s_v1_cluster"
-        and not resource.get("module")
     )
 
 
