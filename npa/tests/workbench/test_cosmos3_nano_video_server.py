@@ -244,6 +244,69 @@ def test_loopback_readiness_ignores_ambient_proxy_configuration(
         runtime.close()
 
 
+def _capture_ingress(monkeypatch, runtime):
+    options = {}
+
+    def deployment(**values):
+        options.update(values)
+        return lambda definition: SimpleNamespace(bind=lambda: definition)
+
+    serve = SimpleNamespace(deployment=deployment, ingress=lambda api: lambda cls: cls)
+    monkeypatch.setitem(sys.modules, "ray", SimpleNamespace(serve=serve))
+    router = ModuleType("npa.workbench.cosmos.nano_video_router")
+    router.LeastOutstandingRouter = object
+    monkeypatch.setitem(sys.modules, router.__name__, router)
+    from npa.workbench.cosmos import nano_video_auth
+
+    monkeypatch.setattr(nano_video_auth, "require_management_auth", lambda: None)
+    monkeypatch.setattr(server, "NanoVideoRuntime", lambda: runtime)
+    return server.app(), options
+
+
+def test_health_responds_while_admitted_generation_holds_gpu(runtime, monkeypatch):
+    definition, options = _capture_ingress(monkeypatch, runtime)
+    entered, release = threading.Event(), threading.Event()
+
+    def generate(**kwargs):
+        entered.set()
+        assert release.wait(5)
+        return {"status": "succeeded"}
+
+    async def models(client, url, **kwargs):
+        return httpx.Response(200, request=httpx.Request("GET", url))
+
+    monkeypatch.setattr(nano_video, "run_rollout", generate)
+    monkeypatch.setattr(httpx.AsyncClient, "get", models)
+    runtime.process = SimpleNamespace(poll=lambda: None, terminate=lambda: None)
+
+    async def exercise():
+        ingress = object.__new__(definition)
+        ingress.runtime = runtime
+        admission = asyncio.Semaphore(options["max_ongoing_requests"])
+
+        async def call(method, incoming):
+            async with admission:
+                return await method(incoming)
+
+        work = asyncio.create_task(
+            call(
+                ingress.run,
+                request({"request_id": "busy", "prompt": "scene", "seed": 1}),
+            )
+        )
+        assert await asyncio.to_thread(entered.wait, 2)
+        try:
+            assert runtime._generation_lock.locked()
+            health = await asyncio.wait_for(call(ingress.health, request()), 0.5)
+            assert health["status"] == "ready" and not work.done()
+            assert options["ray_actor_options"]["num_gpus"] == 1
+        finally:
+            release.set()
+            await work
+
+    asyncio.run(exercise())
+
+
 def test_subprocess_spawn_failure_closes_log_and_preserves_original_error(
     runtime, monkeypatch
 ):

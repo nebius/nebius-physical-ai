@@ -66,22 +66,23 @@ def test_image_uses_exact_repaired_framework_parent_and_bakes_no_weights() -> No
     assert "*.safetensors" in text
     assert "NPA_COSMOS3_RAY_GUARDRAILS=true" in text
     assert "ARG COSMOS3_RAY_VERSION=2.58.0" in text
-    # Stale linux-libc-dev version pin must not be present (it ages out of
-    # Ubuntu repos). The purge is now conditional: check the package is
-    # installed first, then purge if present.
+    # Triton's first CUDA helper compile needs the Linux userspace headers.
+    # Use the refreshed Ubuntu index rather than an aging version pin.
     assert "ARG LINUX_LIBC_DEV_VERSION" not in text
     assert "LINUX_LIBC_DEV_VERSION" not in text
     assert "linux-libc-dev=" not in text
-    assert "dpkg --purge --force-depends linux-libc-dev" in text
-    assert "dpkg-query -W -f'${Status}' linux-libc-dev" in text
+    assert "apt-get install -y --no-install-recommends linux-libc-dev" in text
+    assert "dpkg --purge --force-depends linux-libc-dev" not in text
     maintenance_layer = text.split("RUN apt-get update", 1)[1].split("USER ubuntu", 1)[
         0
     ]
     assert "rm -f /etc/ssh/ssh_host_*" in maintenance_layer
     assert (
         maintenance_layer.index("apt-get upgrade -y")
+        < maintenance_layer.index(
+            "apt-get install -y --no-install-recommends linux-libc-dev"
+        )
         < maintenance_layer.index("rm -f /etc/ssh/ssh_host_*")
-        < maintenance_layer.index("dpkg-query -W")
     )
     assert "rm -rf /opt/nvidia/nsight-compute" in text
     assert "uv sync --frozen --inexact" in text

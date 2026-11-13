@@ -518,7 +518,9 @@ def app(args: dict[str, Any] | None = None) -> Any:
     @serve.deployment(
         name="Cosmos3NanoVideo",
         num_replicas=16,
-        max_ongoing_requests=1,
+        # Health reads must reach the replica while a rollout holds the GPU.
+        # NanoVideoRuntime._generation_lock still serializes model execution.
+        max_ongoing_requests=8,
         ray_actor_options={"num_gpus": 1, "num_cpus": 2},
         request_router_config={"request_router_class": LeastOutstandingRouter},
     )
