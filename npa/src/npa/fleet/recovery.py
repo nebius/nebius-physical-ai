@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass, replace
 import json
 import os
@@ -27,8 +28,9 @@ class _RetainedPoolTopologyPending(FleetRecoveryError):
 _ENV_SIDECAR = ".npa-fleet-env.json"
 _OWNER_MARKER = ".npa-backend-owner.json"
 _STATE_FILE = "terraform.tfstate"
+_BACKUP_STATE_FILE = "terraform.tfstate.backup"
 _TERRAFORM_STATE_PATHS = frozenset(
-    {_STATE_FILE, "terraform.tfstate.backup", ".terraform.tfstate.lock.info"}
+    {_STATE_FILE, _BACKUP_STATE_FILE, ".terraform.tfstate.lock.info"}
 )
 
 
@@ -50,6 +52,7 @@ class _RecoveryInputs:
     desired: Any
     cluster_id: str
     ssh_public_key: str
+    requires_empty_provider_pools: bool
 
 
 @dataclass(frozen=True)
@@ -164,7 +167,12 @@ def verify_retained_fleet_pool_resume(
     )
     workdir = target.install_dir / "k8s-training"
     _assert_no_live_apply_owner(workdir)
-    inputs = _recovery_inputs(target, workdir, profile=profile)
+    inputs = _recovery_inputs(
+        target,
+        workdir,
+        profile=profile,
+        allow_backup_root=True,
+    )
     _session, inputs, missing = _verify_retained_pool_resume(target, inputs)
     _assert_context_adoptable(inputs.saved["context"], inputs)
     _assert_no_live_apply_owner(workdir)
@@ -214,7 +222,12 @@ def resume_retained_fleet_pool_target(
     workdir = target.install_dir / "k8s-training"
     timeout_seconds = _retained_pool_resume_timeout_seconds(timeout_minutes)
     _assert_no_live_apply_owner(workdir)
-    inputs = _recovery_inputs(target, workdir, profile=profile)
+    inputs = _recovery_inputs(
+        target,
+        workdir,
+        profile=profile,
+        allow_backup_root=True,
+    )
     session, inputs, missing = _verify_retained_pool_resume(target, inputs)
     _assert_context_adoptable(inputs.saved["context"], inputs)
     _assert_no_live_apply_owner(workdir)
@@ -265,7 +278,11 @@ def _recover_locked(target: _RecoveryTarget, *, profile: str | None) -> dict[str
 
 
 def _recovery_inputs(
-    target: _RecoveryTarget, workdir: Path, *, profile: str | None
+    target: _RecoveryTarget,
+    workdir: Path,
+    *,
+    profile: str | None,
+    allow_backup_root: bool = False,
 ) -> _RecoveryInputs:
     from npa.fleet import lifecycle
 
@@ -277,16 +294,26 @@ def _recovery_inputs(
     ssh_public_key = lifecycle._resolve_ssh_public_key(target.spec.ssh_public_key)
     _assert_materialized_spec(workdir, desired, ssh_public_key)
     cluster_id = _terraform_cluster_id_or_unmaterialized(
-        workdir, saved["project_id"], target.cluster.name
-    )
-    _assert_state_subnet(workdir, saved["subnet_id"])
-    _assert_unregistered(
-        target.fleet_root,
-        target.project.key(),
+        workdir,
+        saved["project_id"],
         target.cluster.name,
-        saved["region"],
+        allow_backup_root=allow_backup_root,
     )
-    return _RecoveryInputs(sidecar, saved, release, desired, cluster_id, ssh_public_key)
+    requires_empty_provider_pools = _assert_state_subnet(
+        workdir,
+        saved["subnet_id"],
+        allow_empty_unmaterialized=allow_backup_root and not cluster_id,
+    )
+    _assert_unregistered(target, saved)
+    return _RecoveryInputs(
+        sidecar,
+        saved,
+        release,
+        desired,
+        cluster_id,
+        ssh_public_key,
+        requires_empty_provider_pools,
+    )
 
 
 def _verify_provider(
@@ -348,6 +375,7 @@ def _verify_retained_pool_resume(
     missing = _verify_retained_pool_topology(
         verified_inputs, session, allow_missing=True
     )
+    _assert_empty_provider_pools_if_required(verified_inputs, missing)
     return session, verified_inputs, missing
 
 
@@ -388,9 +416,15 @@ def _verify_retained_pool_topology(
         raise FleetRecoveryError(
             "retained provider node-group inventory is malformed"
         ) from exc
-    groups = groups_payload.get("items") if isinstance(groups_payload, dict) else None
+    if groups_payload == {}:
+        groups = []
+    elif isinstance(groups_payload, dict):
+        groups = groups_payload.get("items")
+    else:
+        groups = None
     if (
-        not isinstance(groups, list)
+        not isinstance(groups_payload, dict)
+        or not isinstance(groups, list)
         or groups_payload.get("next_page_token")
         or not all(isinstance(group, dict) for group in groups)
     ):
@@ -547,6 +581,21 @@ def _retained_pool_layout(cluster) -> dict[str, Any]:
     if not layout:
         raise FleetRecoveryError("retained target has no declared node pools")
     return layout
+
+
+def _assert_empty_provider_pools_if_required(
+    inputs: _RecoveryInputs, missing: list[tuple[str, Any]]
+) -> None:
+    """Require zero live pools before accepting an empty state subnet inventory."""
+
+    if not inputs.requires_empty_provider_pools:
+        return
+    expected = set(_retained_pool_layout(inputs.desired))
+    missing_names = {name for name, _pool in missing}
+    if missing_names != expected:
+        raise FleetRecoveryError(
+            "empty Terraform node-group state requires zero retained provider node groups"
+        )
 
 
 def _assert_pool_resume_supported(cluster) -> None:
@@ -1014,13 +1063,23 @@ def _terraform_cluster_id(workdir: Path, project_id: str, cluster_name: str) -> 
 
 
 def _terraform_cluster_id_or_unmaterialized(
-    workdir: Path, project_id: str, cluster_name: str
+    workdir: Path,
+    project_id: str,
+    cluster_name: str,
+    *,
+    allow_backup_root: bool = False,
 ) -> str:
     """Allow only the recorded unmaterialized root shapes for verified recovery."""
 
     state = _read_mapping(workdir / _STATE_FILE, "Terraform state")
     resources = _root_cluster_resources(state.get("resources"))
     if len(resources) != 1:
+        if (
+            allow_backup_root
+            and not resources
+            and _has_exact_backup_unmaterialized_root(workdir, state)
+        ):
+            return ""
         raise FleetRecoveryError(
             "Terraform state does not contain one exact mk8s cluster"
         )
@@ -1086,13 +1145,129 @@ def _root_cluster_resources(resources: object) -> list[dict[str, Any]]:
     return [resource for resource in resources if _is_root_cluster_resource(resource)]
 
 
-def _assert_state_subnet(workdir: Path, sidecar_subnet: str) -> None:
+def _has_exact_backup_unmaterialized_root(workdir: Path, state: dict[str, Any]) -> bool:
+    """Recognize only the retained pool-resume backup-root compatibility shape.
+
+    The current state must be a strict resource subset of its same-lineage
+    backup, with exactly one added empty root MK8s resource.  This is an
+    opt-in compatibility check for the normal pool-only lifecycle; callers
+    performing generic recovery deliberately leave it disabled.
+    """
+
+    try:
+        backup = _read_mapping(workdir / _BACKUP_STATE_FILE, "Terraform state backup")
+    except FleetRecoveryError:
+        return False
+    current_resources = _state_resources(state)
+    backup_resources = _state_resources(backup)
+    if current_resources is None or backup_resources is None:
+        return False
+    # The compatibility exception permits only the one backup-only canonical
+    # root resource. Any managed MK8s resource already present in current state,
+    # including one addressed through a Terraform module, exceeds that shape.
+    if any(_is_cluster_resource_kind(resource) for resource in current_resources):
+        return False
+    if not _state_lineage_and_serial_match(state, backup):
+        return False
+
+    current_counts = Counter(
+        _canonical_resource(resource) for resource in current_resources
+    )
+    backup_counts = Counter(
+        _canonical_resource(resource) for resource in backup_resources
+    )
+    if current_counts - backup_counts:
+        return False
+    backup_only = backup_counts - current_counts
+    if sum(backup_only.values()) != 1:
+        return False
+    candidate = next(
+        (
+            resource
+            for resource in backup_resources
+            if backup_only[_canonical_resource(resource)] == 1
+        ),
+        None,
+    )
+    return _is_exact_empty_root_cluster_resource(candidate)
+
+
+def _state_resources(state: dict[str, Any]) -> list[dict[str, Any]] | None:
+    resources = state.get("resources")
+    if not isinstance(resources, list) or not all(
+        isinstance(resource, dict) for resource in resources
+    ):
+        return None
+    return resources
+
+
+def _state_lineage_and_serial_match(
+    state: dict[str, Any], backup: dict[str, Any]
+) -> bool:
+    lineage = state.get("lineage")
+    backup_lineage = backup.get("lineage")
+    serial = state.get("serial")
+    backup_serial = backup.get("serial")
+    return bool(
+        isinstance(lineage, str)
+        and lineage
+        and lineage == backup_lineage
+        and isinstance(serial, int)
+        and not isinstance(serial, bool)
+        and serial >= 0
+        and isinstance(backup_serial, int)
+        and not isinstance(backup_serial, bool)
+        and backup_serial >= 0
+        and serial >= backup_serial
+    )
+
+
+def _canonical_resource(resource: dict[str, Any]) -> bytes:
+    return json.dumps(
+        resource,
+        ensure_ascii=True,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+
+
+def _is_exact_empty_root_cluster_resource(resource: object) -> bool:
+    return bool(
+        _is_root_cluster_resource(resource)
+        and isinstance(resource, dict)
+        and resource["instances"] == []
+    )
+
+
+def _assert_state_subnet(
+    workdir: Path,
+    sidecar_subnet: str,
+    *,
+    allow_empty_unmaterialized: bool = False,
+) -> bool:
+    """Return whether an exact unmaterialized empty subnet inventory needs live proof."""
+
     state = _read_mapping(workdir / _STATE_FILE, "Terraform state")
-    subnets = _state_node_group_subnets(state.get("resources"))
-    if len(subnets) != 1 or not sidecar_subnet or sidecar_subnet not in subnets:
-        raise FleetRecoveryError(
-            "Terraform node-group subnet differs from the Fleet sidecar"
-        )
+    resources = state.get("resources")
+    subnets = _state_node_group_subnets(resources)
+    if len(subnets) == 1 and sidecar_subnet and sidecar_subnet in subnets:
+        return False
+    if (
+        allow_empty_unmaterialized
+        and sidecar_subnet
+        and not subnets
+        and _has_no_state_node_group_resources(resources)
+    ):
+        return True
+    raise FleetRecoveryError(
+        "Terraform node-group subnet differs from the Fleet sidecar"
+    )
+
+
+def _has_no_state_node_group_resources(resources: object) -> bool:
+    if not isinstance(resources, list):
+        raise FleetRecoveryError("Terraform state has no resource inventory")
+    return not any(_is_node_group_resource_kind(resource) for resource in resources)
 
 
 def _state_node_group_subnets(resources: object) -> set[str]:
@@ -1117,10 +1292,17 @@ def _state_node_group_subnets(resources: object) -> set[str]:
 
 def _is_node_group_resource(resource: object) -> bool:
     return bool(
+        _is_node_group_resource_kind(resource)
+        and isinstance(resource, dict)
+        and isinstance(resource.get("instances"), list)
+    )
+
+
+def _is_node_group_resource_kind(resource: object) -> bool:
+    return bool(
         isinstance(resource, dict)
         and resource.get("mode") == "managed"
         and resource.get("type") == "nebius_mk8s_v1_node_group"
-        and isinstance(resource.get("instances"), list)
     )
 
 
@@ -1140,42 +1322,63 @@ def _state_instance_subnet(instance: object) -> str:
 
 def _is_root_cluster_resource(resource: object) -> bool:
     return bool(
-        isinstance(resource, dict)
-        and resource.get("mode") == "managed"
-        and resource.get("type") == "nebius_mk8s_v1_cluster"
-        and not resource.get("module")
+        _is_root_cluster_resource_kind(resource)
+        and isinstance(resource, dict)
         and isinstance(resource.get("instances"), list)
     )
 
 
-def _assert_unregistered(
-    fleet_root: Path, project_key: str, cluster_name: str, expected_region: str
-) -> None:
+def _is_root_cluster_resource_kind(resource: object) -> bool:
+    return bool(
+        _is_cluster_resource_kind(resource)
+        and isinstance(resource, dict)
+        and not resource.get("module")
+    )
+
+
+def _is_cluster_resource_kind(resource: object) -> bool:
+    return bool(
+        isinstance(resource, dict)
+        and resource.get("mode") == "managed"
+        and resource.get("type") == "nebius_mk8s_v1_cluster"
+    )
+
+
+def _assert_unregistered(target: _RecoveryTarget, saved: dict[str, str]) -> None:
+    """Reject durable registration, except one verified pre-registration error row."""
+
     from npa.fleet import lifecycle
 
-    entries = lifecycle._load_fleet_state(fleet_root).get("clusters", [])
+    entries = lifecycle._load_fleet_state(target.fleet_root).get("clusters", [])
     if not isinstance(entries, list):
         raise FleetRecoveryError("persisted Fleet state is malformed")
     matching = [
         entry
         for entry in entries
         if isinstance(entry, dict)
-        and entry.get("project_key") == project_key
-        and entry.get("cluster_name") == cluster_name
+        and entry.get("project_key") == target.project.key()
+        and entry.get("cluster_name") == target.cluster.name
     ]
     if not matching:
         return
     if len(matching) == 1 and _is_identity_free_error_summary(
-        matching[0], expected_region
+        matching[0], target=target, saved=saved
     ):
         return
     raise FleetRecoveryError("selected Fleet target is already registered")
 
 
 def _is_identity_free_error_summary(
-    entry: dict[str, Any], expected_region: str
+    entry: dict[str, Any], *, target: _RecoveryTarget, saved: dict[str, str]
 ) -> bool:
-    """Return whether an error record has no durable registration identity."""
+    """Return whether one persisted error has no registration identity.
+
+    Fleet's ordinary failure summary includes a small set of diagnostics after
+    project and storage preparation.  They remain identity-free only when they
+    bind exactly to the selected retained target; any other diagnostic is a
+    durable-record ambiguity and must stop recovery before provider access.
+    """
+
     allowed_keys = {
         "backend",
         "project_key",
@@ -1183,17 +1386,83 @@ def _is_identity_free_error_summary(
         "region",
         "status",
         "error",
+        "project_id",
+        "install_dir",
+        "object_storage",
+        "terraform_log",
     }
     status = entry.get("status")
-    return bool(
+    if not (
         set(entry).issubset(allowed_keys)
         and entry.get("backend") == "mk8s"
+        and entry.get("project_key") == target.project.key()
+        and entry.get("cluster_name") == target.cluster.name
         and isinstance(status, str)
         and status in {"error", "incomplete"}
         and isinstance(entry.get("error"), str)
         and entry["error"]
-        and entry.get("region") == expected_region
-    )
+        and entry.get("region") == saved["region"]
+    ):
+        return False
+    if "project_id" in entry and entry["project_id"] != saved["project_id"]:
+        return False
+    if "install_dir" in entry and not _is_selected_install_dir(
+        entry["install_dir"], target.install_dir
+    ):
+        return False
+    if "terraform_log" in entry and not _is_log_within_install_dir(
+        entry["terraform_log"], target.install_dir
+    ):
+        return False
+    return "object_storage" not in entry or entry[
+        "object_storage"
+    ] == _expected_error_summary_object_storage(target)
+
+
+def _is_selected_install_dir(value: object, install_dir: Path) -> bool:
+    """Require an error diagnostic to name the exact selected install root."""
+
+    if not isinstance(value, str) or not value:
+        return False
+    try:
+        candidate = Path(value).expanduser()
+        if not candidate.is_absolute():
+            return False
+        return candidate.resolve() == install_dir.expanduser().resolve()
+    except (OSError, ValueError):
+        return False
+
+
+def _is_log_within_install_dir(value: object, install_dir: Path) -> bool:
+    """Require an error diagnostic log to remain below the selected install root."""
+
+    if not isinstance(value, str) or not value:
+        return False
+    try:
+        candidate = Path(value).expanduser()
+        if not candidate.is_absolute():
+            return False
+        root = install_dir.expanduser().resolve()
+        resolved = candidate.resolve()
+        return resolved != root and resolved.is_relative_to(root)
+    except (OSError, ValueError):
+        return False
+
+
+def _expected_error_summary_object_storage(target: _RecoveryTarget) -> dict[str, Any]:
+    """Return the exact safe object-storage projection for one selected project."""
+
+    storage = target.project.object_storage
+    if storage is None or not storage.enabled:
+        return {"enabled": False}
+    return {
+        "enabled": True,
+        "status": "ready",
+        "storage_class": storage.display_storage_class(),
+        "size_gibibytes": storage.size_gibibytes,
+        "writable": True,
+        "retained_on_destroy": True,
+    }
 
 
 def _assert_context_adoptable(context: str, inputs: _RecoveryInputs) -> None:
