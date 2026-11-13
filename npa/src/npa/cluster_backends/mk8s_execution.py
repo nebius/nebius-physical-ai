@@ -2097,6 +2097,61 @@ def _normalize_tfvars_assignments(text: str) -> str:
     return "\n".join(normalized)
 
 
+def retained_target_tfvars_match(
+    saved: str, expected: str, *, strict_capacity_block_group: str = ""
+) -> bool:
+    """Compare retained inputs with an exact verified STRICT policy selector.
+
+    Managed Kubernetes uses the declared capacity-block-group ID directly in
+    the STRICT reservation policy. A retained input with any alternate policy
+    ID therefore has material drift and cannot proceed to provider mutation.
+    """
+
+    saved_assignments = _tfvars_assignment_map(saved)
+    expected_assignments = _tfvars_assignment_map(expected)
+    if saved_assignments is None or expected_assignments is None:
+        return False
+    if saved_assignments != expected_assignments:
+        return False
+    if not strict_capacity_block_group:
+        return True
+    return (
+        _strict_reservation_id(
+            saved_assignments.get("gpu_nodes_reservation_policy", "")
+        )
+        == strict_capacity_block_group
+    )
+
+
+def _tfvars_assignment_map(text: str) -> dict[str, str] | None:
+    """Return normalized simple tfvars assignments or ``None`` on ambiguity."""
+
+    assignments: dict[str, str] = {}
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        normalized = _normalize_tfvars_assignments(line)
+        if "=" not in normalized:
+            return None
+        name, value = normalized.split("=", 1)
+        name = name.strip()
+        if not name or name in assignments:
+            return None
+        assignments[name] = value.strip()
+    return assignments
+
+
+def _strict_reservation_id(value: str) -> str:
+    """Extract exactly one strict reservation ID from renderer-owned syntax."""
+
+    match = re.fullmatch(
+        r'\{\s*policy\s*=\s*"STRICT"\s*,\s*reservation_ids\s*=\s*\[\s*"([^"\\]+)"\s*\]\s*\}',
+        value,
+    )
+    return match.group(1) if match else ""
+
+
 def _is_verified_unchanged_target(
     *,
     project: MK8sProjectIdentity,
@@ -2193,7 +2248,16 @@ def _is_verified_unchanged_target(
         previous_capacity = capacity_configuration(saved_tfvars)
         desired_capacity = capacity_configuration(rendered_tfvars)
         removes_cpu_pool = is_cpu_pool_removal(previous_capacity, desired_capacity)
-        if previous_capacity != desired_capacity and not removes_cpu_pool:
+        if (
+            not retained_target_tfvars_match(
+                previous_capacity,
+                desired_capacity,
+                strict_capacity_block_group=(
+                    cluster.gpu_nodes.capacity_block_group if cluster.gpu_nodes else ""
+                ),
+            )
+            and not removes_cpu_pool
+        ):
             return False
         provider_project = _get_project(nebius_bin, project_id, env, profile)
     except (OSError, RuntimeError, ValueError):
@@ -2700,6 +2764,7 @@ def _provider_node_group_matches_pool(
         return False
     strict_reserved = bool(
         pool.capacity_block_group
+        and pool.compute_reservation_id == pool.capacity_block_group
         and isinstance(reservation, dict)
         and str(reservation.get("policy") or "") == "STRICT"
         and reservation_ids == [pool.capacity_block_group]

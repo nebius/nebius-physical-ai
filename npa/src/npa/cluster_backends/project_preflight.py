@@ -152,16 +152,49 @@ class ProjectCapacityReader:
             raise ValueError("could not verify project reservation allowances") from exc
         _verify_project_reservations(payload, self.project_id, requirements)
 
-    def verify_reservations(self, requirements: Mapping, on_status=None) -> None:
-        """Validate strict placement using the permitted reservation evidence.
+    def resolve_compute_reservations(
+        self, requirements: Mapping, on_status=None
+    ) -> dict[str, str]:
+        """Validate STRICT placement and bind groups to policy selectors.
 
         Args:
             requirements: Exact reservations and cumulative GPU demand.
             on_status: Optional non-secret progress sink.
         Returns:
-            None after complete tenant or exact-project evidence is verified.
+            Exact group-to-STRICT-policy bindings after complete tenant
+            evidence is verified.
         Raises:
             ValueError: Capacity or compatibility is denied or unverified.
+        """
+        from npa.cluster_backends.quotas import (
+            compute_reservation_bindings,
+            parse_capacity_blocks,
+        )
+
+        payload = self.reservation_catalog(requirements, on_status)
+        if payload is None:
+            raise ValueError(
+                "tenant capacity-block inventory is required to bind a STRICT "
+                "capacity group to an exact reservation policy selector"
+            )
+        blocks = parse_capacity_blocks(json.dumps(payload))
+        bindings = compute_reservation_bindings(requirements, blocks, self.tenant_id)
+        if on_status:
+            reserved = sum(item.required_gpus for item in requirements.values())
+            on_status(
+                f"validated {reserved} GPU(s) against {len(requirements)} active "
+                "capacity block group(s); ordinary GPU quota excluded"
+            )
+        return bindings
+
+    def verify_reservations(self, requirements: Mapping, on_status=None) -> None:
+        """Validate STRICT placement without requiring a render-time binding.
+
+        Compatibility callers need only entitlement and capacity validation.
+        In particular, an exact project allowance remains valid when tenant
+        inventory is RBAC-denied, because it cannot safely establish the
+        provider compute-reservation ID.  Render paths call
+        :meth:`resolve_compute_reservations` explicitly when that ID is needed.
         """
         from npa.cluster_backends.quotas import (
             find_reservation_shortfalls,

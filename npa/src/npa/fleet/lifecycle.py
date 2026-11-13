@@ -76,7 +76,8 @@ from npa.soperator.lifecycle import (
     SoperatorDeploymentValidationError,
     SoperatorStateCaptureError,
 )
-from npa.cluster_backends.quotas import shortfall_message
+from npa.cluster_backends.quotas import required_reservations, shortfall_message
+from npa.cluster_backends.project_preflight import ProjectCapacityReader
 from npa.fleet.capacity_preflight import group_project_demands, preflight_fleet_region
 from npa.fleet.spec import ClusterSpec, FleetSpec, ObjectStorageSpec, ProjectSpec
 from npa.fleet.release import (
@@ -1386,12 +1387,14 @@ def _persist_target_backend_owner(
     project_key: str,
     cluster_name: str,
     expected_backend: str,
+    persist: bool = True,
 ) -> None:
-    """Fail closed on crash-residual backend evidence, then persist ownership."""
+    """Validate crash-residual ownership and optionally persist a new marker."""
 
     target_root = fleet_root / project_key / cluster_name
     marker = target_root / _TARGET_BACKEND_OWNER
     evidence: list[dict[str, Any]] = []
+    existing_marker: dict[str, Any] | None = None
     if marker.exists():
         try:
             payload = json.loads(marker.read_text())
@@ -1404,6 +1407,7 @@ def _persist_target_backend_owner(
                 f"backend owner marker for {project_key}/{cluster_name} is malformed"
             )
         evidence.append(payload)
+        existing_marker = payload
     mk8s_sidecar = target_root / ".npa-fleet-env.json"
     if mk8s_sidecar.exists():
         evidence.append({"backend": "mk8s"})
@@ -1437,6 +1441,24 @@ def _persist_target_backend_owner(
                 raise BackendOwnershipError(
                     f"backend owner marker {key} does not match requested target"
                 )
+    # A retained target's exact owner marker is evidence, not something a
+    # normal lifecycle read/reconciliation may rewrite.  This preserves the
+    # original bytes until a separately authorized state transition occurs.
+    if existing_marker is not None:
+        expected_marker = {
+            "fleet_name": fleet_name,
+            "project_key": project_key,
+            "cluster_name": cluster_name,
+            "backend": expected_backend,
+        }
+        if existing_marker != expected_marker:
+            raise BackendOwnershipError(
+                f"backend owner marker for {project_key}/{cluster_name} has "
+                "unexpected retained fields"
+            )
+        return
+    if not persist:
+        return
     _ensure_private_directory(fleet_root.parent)
     _ensure_private_directory(fleet_root)
     _ensure_private_directory(fleet_root / project_key)
@@ -1514,6 +1536,7 @@ def deploy_fleet(
             cluster,
             fleet_root / project.key() / cluster.name,
         )
+
     for project, cluster in spec.cluster_targets():
         if not _project_in_scope(project, selected_projects, selected_prefix):
             continue
@@ -1528,6 +1551,7 @@ def deploy_fleet(
             project_key=project.key(),
             cluster_name=cluster.name,
             expected_backend=cluster.backend_name(),
+            persist=cluster.backend_name() == "soperator",
         )
     mk8s_projects: list[ProjectSpec] = []
     soperator_targets: list[tuple[ProjectSpec, ClusterSpec]] = []
@@ -1780,6 +1804,237 @@ def _cluster_for_mk8s_release(
     )
 
 
+def _bind_strict_compute_reservations(
+    clusters: dict[tuple[str, str], Any],
+    *,
+    tenant_id: str,
+    nebius_bin: str,
+    profile: str,
+    env: dict[str, str],
+    region_by_target: dict[tuple[str, str], str],
+    on_status: Callable[[str], None] | None,
+) -> dict[tuple[str, str], Any]:
+    """Bind each selected STRICT group to its verified policy selector.
+
+    A capacity-block group is both the declarative selector and the supported
+    managed-Kubernetes STRICT reservation ID. This read-only step verifies
+    complete compatible evidence before any rendered input, project/network
+    setup, or Terraform action. Missing tenant inventory is a refusal because
+    project allowance evidence alone cannot prove selector compatibility.
+    """
+
+    by_region: dict[str, list[Any]] = {}
+    for key, cluster in clusters.items():
+        gpu = cluster.gpu_nodes
+        if gpu and gpu.capacity_block_group:
+            # ``compute_reservation_id`` is runtime state, not a public
+            # placement override. Even an already populated value must agree
+            # with fresh complete capacity evidence before it can reach a
+            # STRICT provider payload.
+            by_region.setdefault(region_by_target[key], []).append(cluster)
+    bindings: dict[str, str] = {}
+    for region, selected in by_region.items():
+        requirements = required_reservations(selected, region)
+        if not requirements:
+            continue
+        reader = ProjectCapacityReader(
+            nebius_bin,
+            tenant_id,
+            "",
+            profile,
+            env,
+            _run_capture,
+            _nebius_argv,
+        )
+        bindings.update(reader.resolve_compute_reservations(requirements, on_status))
+
+    resolved: dict[tuple[str, str], Any] = {}
+    for key, cluster in clusters.items():
+        gpu = cluster.gpu_nodes
+        if gpu and gpu.capacity_block_group:
+            compute_reservation_id = bindings.get(gpu.capacity_block_group, "")
+            if not compute_reservation_id:
+                raise ValueError(
+                    "STRICT capacity-block selection has no verified policy identity"
+                )
+            if (
+                gpu.compute_reservation_id
+                and gpu.compute_reservation_id != compute_reservation_id
+            ):
+                raise ValueError(
+                    "STRICT capacity-block selection conflicts with the verified "
+                    "reservation policy identity"
+                )
+            cluster = replace(
+                cluster,
+                gpu_nodes=replace(gpu, compute_reservation_id=compute_reservation_id),
+            )
+        resolved[key] = cluster
+    return resolved
+
+
+def _spec_with_selected_clusters(
+    spec: FleetSpec, clusters: dict[tuple[str, str], Any]
+) -> FleetSpec:
+    """Return a private runtime view with preflight-bound mk8s desired state."""
+
+    projects = []
+    for project in spec.projects:
+        projects.append(
+            replace(
+                project,
+                clusters=[
+                    clusters.get((project.key(), cluster.name), cluster)
+                    for cluster in project.clusters
+                ],
+            )
+        )
+    return replace(spec, projects=projects)
+
+
+def _requires_retained_target_reconciliation(
+    fleet_root: Path, project_key: str, cluster_name: str
+) -> bool:
+    """Recognize a partial local target that must never fall through to apply."""
+
+    saved = _load_env_sidecar(fleet_root / project_key / cluster_name) or {}
+    return bool(
+        saved.get("backend") == "mk8s"
+        and saved.get("status") == "provisioning"
+        and not saved.get("cluster_id")
+    )
+
+
+def _reconcile_retained_target(
+    spec: FleetSpec,
+    *,
+    project_key: str,
+    cluster_name: str,
+    profile: str,
+    work_root: Path,
+) -> dict[str, Any]:
+    """Verify one retained target for normal lifecycle without persistence writes."""
+
+    from npa.fleet.recovery import FleetRecoveryError, reconcile_retained_fleet_target
+
+    try:
+        return reconcile_retained_fleet_target(
+            spec,
+            only_projects=[project_key],
+            only_clusters=[cluster_name],
+            profile=profile,
+            work_root=work_root,
+        )
+    except FleetRecoveryError as exc:
+        raise RuntimeError(
+            f"retained Fleet target failed exact normal-lifecycle reconciliation: {exc}"
+        ) from exc
+
+
+class _RetainedPoolQuotaDemand:
+    """Expose only missing-worker demand for a verified retained control plane."""
+
+    retained_control_plane = True
+
+    def __init__(self, cluster: Any, missing_node_groups: list[str]) -> None:
+        from npa.cluster_backends.mk8s_render import gpu_node_group_layout
+
+        expected_names: set[str] = set()
+        cpu = cluster.cpu_nodes
+        cpu_name = f"{cluster.name}-ng-cpu"
+        if cpu and cpu.count > 0:
+            expected_names.add(cpu_name)
+        gpu = cluster.gpu_nodes
+        gpu_names: list[str] = []
+        if gpu and gpu.count > 0:
+            _per_group, group_count = gpu_node_group_layout(cluster)
+            gpu_names = [
+                f"{cluster.name}-ng-gpu-{index}" for index in range(group_count)
+            ]
+            expected_names.update(gpu_names)
+        missing = set(missing_node_groups)
+        if not missing <= expected_names:
+            raise ValueError(
+                "retained target reported an undeclared missing node group"
+            )
+        if cpu and cpu_name not in missing:
+            cpu = replace(cpu, count=0)
+        if gpu:
+            per_group, _group_count = gpu_node_group_layout(cluster)
+            missing_gpu_count = sum(name in missing for name in gpu_names)
+            gpu = replace(gpu, count=per_group * missing_gpu_count)
+        self._cluster = replace(cluster, cpu_nodes=cpu, gpu_nodes=gpu)
+        # The exact filesystem is proven from retained state before this object
+        # reaches preflight.  It is attached to new workers, not recreated.
+        self.enable_filestore = bool(cluster.enable_filestore)
+        self.existing_filestore = (
+            cluster.existing_filestore or "verified-retained-filesystem"
+        )
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._cluster, name)
+
+
+def _verify_retained_pool_target(
+    spec: FleetSpec,
+    *,
+    project_key: str,
+    cluster_name: str,
+    profile: str,
+    work_root: Path,
+) -> dict[str, Any]:
+    """Read-only gate before capacity preflight and pool-only resume."""
+
+    from npa.fleet.recovery import (
+        FleetRecoveryError,
+        verify_retained_fleet_pool_resume,
+    )
+
+    try:
+        return verify_retained_fleet_pool_resume(
+            spec,
+            only_projects=[project_key],
+            only_clusters=[cluster_name],
+            profile=profile,
+            work_root=work_root,
+        )
+    except FleetRecoveryError as exc:
+        raise RuntimeError(
+            f"retained Fleet target failed exact normal-lifecycle reconciliation: {exc}"
+        ) from exc
+
+
+def _resume_retained_pool_target(
+    spec: FleetSpec,
+    *,
+    project_key: str,
+    cluster_name: str,
+    profile: str,
+    work_root: Path,
+    timeout_minutes: int,
+) -> dict[str, Any]:
+    """Perform the verified pool-only mutation; never run Terraform apply."""
+
+    from npa.fleet.recovery import (
+        FleetRecoveryError,
+        resume_retained_fleet_pool_target,
+    )
+
+    try:
+        return resume_retained_fleet_pool_target(
+            spec,
+            only_projects=[project_key],
+            only_clusters=[cluster_name],
+            profile=profile,
+            work_root=work_root,
+            timeout_minutes=timeout_minutes,
+        )
+    except FleetRecoveryError as exc:
+        raise RuntimeError(
+            f"retained Fleet target failed exact normal-lifecycle pool resume: {exc}"
+        ) from exc
+
+
 def _deploy_mk8s_fleet(
     spec: FleetSpec,
     *,
@@ -1861,7 +2116,7 @@ def _deploy_mk8s_fleet(
     )
     release_by_target: dict[tuple[str, str], MK8sRecipeRelease | None] = {}
     recipe_root_by_target: dict[tuple[str, str], Path] = {}
-    cluster_by_target: dict[tuple[str, str], ClusterSpec] = {}
+    cluster_by_target: dict[tuple[str, str], Any] = {}
     release_errors: dict[tuple[str, str], dict[str, Any]] = {}
     for project in spec.projects:
         if not _project_in_scope(project, only_projects, prefix):
@@ -1930,7 +2185,60 @@ def _deploy_mk8s_fleet(
             )
 
     cli_env = _nebius_cli_env()
+    region_by_target = {
+        key: next(
+            project.region or fleet_region
+            for project in spec.projects
+            if project.key() == key[0]
+        )
+        for key in cluster_by_target
+    }
+    cluster_by_target = _bind_strict_compute_reservations(
+        cluster_by_target,
+        tenant_id=tenant_id,
+        nebius_bin=nebius_bin,
+        profile=nebius_profile,
+        env=cli_env,
+        region_by_target=region_by_target,
+        on_status=on_status,
+    )
+    reconciliation_spec = _spec_with_selected_clusters(spec, cluster_by_target)
+    retained_target_keys = {
+        target_key
+        for target_key in cluster_by_target
+        if _requires_retained_target_reconciliation(
+            fleet_root, target_key[0], target_key[1]
+        )
+    }
+    for project_key, cluster_name in cluster_by_target:
+        _persist_target_backend_owner(
+            fleet_root,
+            fleet_name=spec.name,
+            project_key=project_key,
+            cluster_name=cluster_name,
+            expected_backend="mk8s",
+            # A provisioning sidecar without a materialized cluster is a
+            # retained target.  Its marker is evidence for recovery, never a
+            # normal-lifecycle write before provider verification succeeds.
+            persist=(project_key, cluster_name) not in retained_target_keys,
+        )
     results: list[dict[str, Any]] = list(release_errors.values())
+
+    # A provisioning sidecar with no durable provider identity is a retained
+    # target, not permission to issue a replacement apply.  Before preflight,
+    # prove only the exact owned target and its currently existing pool subset.
+    # The later pool-only operation may create declared missing pools, but it
+    # must never enter Terraform, recreate the cluster, or write local state
+    # before all provider identity checks have succeeded.
+    retained_targets: dict[tuple[str, str], dict[str, Any]] = {}
+    for target_key in retained_target_keys:
+        retained_targets[target_key] = _verify_retained_pool_target(
+            reconciliation_spec,
+            project_key=target_key[0],
+            cluster_name=target_key[1],
+            profile=nebius_profile,
+            work_root=work_root,
+        )
 
     base_meta = {
         "name": spec.name,
@@ -1968,9 +2276,27 @@ def _deploy_mk8s_fleet(
                 if (project.key(), cluster.name) in release_errors:
                     continue
                 project_has_scoped_cluster = True
+                if (project.key(), cluster.name) in retained_targets:
+                    _log(
+                        on_status,
+                        f"capacity/quota preflight: {project.key()}/{cluster.name} "
+                        "has a provider-verified retained control plane; "
+                        "budgeting only its declared missing worker pools",
+                    )
+                    retained_demand = _RetainedPoolQuotaDemand(
+                        cluster_by_target[(project.key(), cluster.name)],
+                        retained_targets[(project.key(), cluster.name)][
+                            "missing_node_groups"
+                        ],
+                    )
+                    scoped.setdefault(region, []).append(retained_demand)
+                    scoped_by_project.setdefault(project.key(), []).append(
+                        retained_demand
+                    )
+                    continue
                 if _is_verified_unchanged_target(
                     project=project,
-                    cluster=cluster,
+                    cluster=cluster_by_target[(project.key(), cluster.name)],
                     prefix=prefix,
                     tenant_id=tenant_id,
                     region=region,
@@ -2048,6 +2374,21 @@ def _deploy_mk8s_fleet(
                 ),
             )
 
+    # After quota/reservation evidence is current, resume only the retained
+    # targets that passed every read-only identity/provenance check.  This path
+    # creates missing declared pools through MK8s and never invokes Terraform.
+    for project_key, cluster_name in retained_targets:
+        results.append(
+            _resume_retained_pool_target(
+                reconciliation_spec,
+                project_key=project_key,
+                cluster_name=cluster_name,
+                profile=nebius_profile,
+                work_root=work_root,
+                timeout_minutes=timeout_minutes,
+            )
+        )
+
     # Phase 1 (sequential, cheap): resolve/create each in-scope project and build
     # the flat list of (project, cluster) targets to apply.
     targets: list[dict[str, Any]] = []
@@ -2059,6 +2400,13 @@ def _deploy_mk8s_fleet(
             for cluster in project.clusters
             if not (only_clusters and cluster.name not in only_clusters)
             and (project.key(), cluster.name) not in release_errors
+        ]
+        if not scoped_clusters:
+            continue
+        scoped_clusters = [
+            cluster
+            for cluster in scoped_clusters
+            if (project.key(), cluster.name) not in retained_targets
         ]
         if not scoped_clusters:
             continue
@@ -2325,6 +2673,7 @@ _UNRESOLVED_CLUSTER_STATUSES = {
     "provisioning",
     "reconciling",
     "recovered-pending-validation",
+    "reconciled-pending-validation",
 }
 _IGNORED_CLUSTER_STATUSES = {"destroyed", "absent"}
 
@@ -2364,6 +2713,14 @@ def _upsert_fleet_state(
     ``(project_key, cluster_name)`` rather than overwritten wholesale.
     """
 
+    persistable = [
+        entry for entry in results if not entry.get("nonpersistent_reconciliation")
+    ]
+    # Exact retained-target reconciliation is deliberately read-only.  In
+    # particular, do not reserialize an identity-free historical error row
+    # merely because all selected results were verified without persistence.
+    if not persistable:
+        return
     state = _load_fleet_state(fleet_root)
     clusters = (
         state.get("clusters", []) if isinstance(state.get("clusters"), list) else []
@@ -2371,7 +2728,7 @@ def _upsert_fleet_state(
     index = {
         (c.get("project_key"), c.get("cluster_name")): i for i, c in enumerate(clusters)
     }
-    for entry in results:
+    for entry in persistable:
         entry = {"backend": str(entry.get("backend") or "mk8s"), **entry}
         key = (entry.get("project_key"), entry.get("cluster_name"))
         if key[1] is None:  # project-level failure (no cluster) -- don't persist
