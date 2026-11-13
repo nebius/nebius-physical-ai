@@ -113,7 +113,8 @@ and [process-worker stderr hangs](https://github.com/advisories/GHSA-5p39-cfhj-2
 The client requires Python 3.11+ to use
 [Pillow 13's security fixes](https://pillow.readthedocs.io/en/stable/releasenotes/13.0.0.html).
 The certifi floor is 2026.10.19, and CI also requires GitPython 3.2.1 and
-OpenTelemetry API 1.45.1. Scanner and CI uv pins require 0.13.4 to remove the
+[OpenTelemetry API 1.45.2](https://github.com/open-telemetry/opentelemetry-python/security/advisories/GHSA-mf5v-w3w3-f6cg).
+Scanner and CI uv pins require 0.13.4 to remove the
 [compromised emSign trust root](https://github.com/astral-sh/uv/security/advisories/GHSA-hq85-5cpj-mr62).
 The Genesis, Cosmos, and GR00T source recipes use Python 3.12 vendor
 environments with an explicit launcher for their NPA adapters. This launcher

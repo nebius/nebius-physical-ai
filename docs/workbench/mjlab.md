@@ -47,6 +47,11 @@ Their adjacent readiness records identify the storage and checkpoint inputs to c
 
 ## Capabilities
 
+For a local-artifact comparison on an already allocated RTX PRO 6000 VM, use the
+[stock G1 / RSL-RL reproduction guide](guides/mjlab-g1-rsl-rl-reproduction.md).
+It invokes the pinned image's upstream `train` entrypoint with a 22-CPU quota
+and 160 GiB RAM, and retains native checkpoints, parameters and TensorBoard logs.
+
 Inside the GPU image, or after `pip install -e 'npa[mjlab]'` on a compatible
 Python 3.11–3.13 environment:
 
