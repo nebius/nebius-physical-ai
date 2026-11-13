@@ -67,7 +67,7 @@ def test_oauthlib_security_floor_is_locked() -> None:
         ("certifi", "2026.7.22", "2026.10.19"),
         ("filelock", "4.0.10", "4.2.1"),
         ("gitpython", "3.2.0", "3.2.1"),
-        ("opentelemetry-api", "1.45.0", "1.45.1"),
+        ("opentelemetry-api", "1.45.1", "1.45.2"),
         ("pyasn1", "0.6.4", "0.6.5"),
         ("setuptools", "84.0.0", "84.1.0"),
     ],
