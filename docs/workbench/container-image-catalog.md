@@ -518,9 +518,10 @@ interpreter is PSF-2.0. Its new source-attested digest still requires complete
 byte/security scans and a current role evaluation; the preceding Genesis-based
 release does not supply that evidence.
 
-The canonical EnvGen recipe now selects the October 9 Ubuntu snapshot and
-`linux-libc-dev=5.15.0-198.208`, replacing the inherited headers that failed
-the fixed-critical publication gate. The Isaac 3 OSS dependency closure and
+The canonical EnvGen recipe selects the immutable 2026-11-10 Ubuntu snapshot
+and `linux-libc-dev=5.15.0-203.213`, replacing the vulnerable 202.212 headers
+that failed the fixed-critical publication gate. The checked-in signed-index
+receipt binds this exact package closure. The Isaac 3 OSS dependency closure and
 Cosmos Transfer's hash-pinned security overlay select PyJWT 2.15.1, which includes the
 [CVE-2026-102268 fix](https://github.com/jpadilla/pyjwt/security/advisories/GHSA-ffc3-869f-jxw9)
 and the subsequent supported [2.15 security updates](https://github.com/jpadilla/pyjwt/releases).
@@ -678,9 +679,9 @@ lock and Transfer's hash-verified security override both select PyJWT 2.15.1,
 which fixes the critical signature-verification issue that blocked their rebuilt
 image scans. The controller and viewer use the immutable 2026-10-02 Debian
 snapshot with fixed Perl, GLib and Mbed TLS, and both upgrade inherited packages.
-EnvGen uses the 2026-10-09 Ubuntu snapshot and the legacy Loop Eval recipe
-uses the 2026-10-02 Ubuntu snapshot; both pin the fixed `linux-libc-dev`
-5.15.0-198.208 package. The dedicated EnvGen role removes the complete inherited
+EnvGen uses the 2026-11-10 Ubuntu snapshot and pins scanner-fixed
+`linux-libc-dev` 5.15.0-203.213; the legacy Loop Eval recipe independently uses
+the 2026-10-02 Ubuntu snapshot. The dedicated EnvGen role removes the complete inherited
 NPA tree and creates its own NPA-only Python 3.12 environment, so its flattened
 runtime contains neither the Genesis nor LeRobot dependency closure and does not
 modify the historical scikit-image recipe. The cuRobo source correction remains

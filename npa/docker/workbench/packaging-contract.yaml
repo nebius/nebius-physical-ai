@@ -1257,9 +1257,12 @@ images:
     notes: >-
       The flattened public runtime removes the complete inherited NPA tree and
       creates a dedicated Python 3.12 EnvGen venv from the reviewed exact
-      closure using uv-managed CPython 3.12.14. The digest-pinned uv builder
-      is Apache-2.0 OR MIT and is removed before the flattened public runtime;
-      the retained CPython interpreter is PSF-2.0. It contains scenario/task-
+      closure using uv-managed CPython 3.12.14. Its immutable Jammy
+      20261110T000000Z snapshot pins linux-libc-dev=5.15.0-203.213; the
+      checked-in signed-index receipt binds that package closure. The
+      digest-pinned uv builder is Apache-2.0 OR MIT and is removed before the
+      flattened public runtime; the retained CPython interpreter is PSF-2.0.
+      It contains scenario/task-
       contract code, Pillow 13 and fsspec 2026.6.0, but no Genesis, LeRobot,
       datasets, Torch, model weights, source assets, credentials, or runtime
       caches. Genesis is a separate fail-closed tool and must not be relabelled
