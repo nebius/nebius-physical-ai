@@ -132,6 +132,12 @@ for this read-only audit and the setup guide's scoped cleanup.
 
 ## Twelve accepted starter variants
 
+This is an opt-in, exploratory recipe for the pinned starter clip, not a general
+quality fix. Here "accepted" means the workflow's exploratory gate: the `0.2`
+aggregate and `0.25` attribute thresholds, with the temporal-consistency and
+appearance-fidelity checks left in their default `advisory` mode. It is not a
+fidelity qualification. Other sources need their own profiles and evaluation.
+
 The count-only fanout above generates twelve videos but has been rejected by its
 quality gate in every recorded run (seven to eleven of twelve clips passed). Two
 measured causes explain the failed clips:
@@ -223,6 +229,11 @@ clips shifted the bottle's green slightly toward teal. The result is an accepted
 exploratory augmentation of one pinned clip. It does not certify realism,
 physics, policy-training suitability, other inputs or concurrent multi-GPU
 generation.
+In the same run, every clip failed both advisory fidelity checks at their `0.8`
+thresholds: temporal-consistency scores were 0.038–0.059 and appearance-fidelity
+scores 0.087–0.440. Setting either check to `required` rejects this batch. A
+stricter, calibrated fidelity standard has not been met by this or any other
+tested Cosmos3 setting.
 
 The video and prompt guardrails also constrain which profiles you can use. In an
 intermediate run, the prompt blocklist of the pinned `nvidia/Cosmos-Guardrail1`

@@ -205,6 +205,8 @@ skill's Cosmos Transfer 2.5 blueprint.
 For twelve accepted starter variants, apply every key of
 `docs/workbench/examples/paidf-cosmos3-starter-12.yaml` as a `--var` override and
 follow `docs/workbench/guides/paidf-cosmos3.md#twelve-accepted-starter-variants`.
+That opt-in recipe passes only the exploratory gate; its temporal and appearance
+fidelity checks remain advisory and failed for every clip in the measured run.
 For twelve Cosmos3 candidates with shipped settings, use only the
 `variant_count=12` override and follow
 `docs/workbench/guides/paidf-cosmos3.md#twelve-variants-with-the-current-defaults`;

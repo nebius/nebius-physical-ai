@@ -3,6 +3,7 @@
 # Run instructions, measured results and limits: ../guides/paidf-cosmos3.md#twelve-accepted-starter-variants
 # Only these keys differ from the canonical defaults. Sampling, guardrails, alignment and the
 # 0.2 / 0.25 exploratory quality thresholds keep their workflow values.
+# Exploratory only: temporal and appearance fidelity stay advisory; this is not a fidelity qualification.
 config:
   variant_count: '12'
   # Release the original first RGB frame so the requested appearance applies from frame 0.
