@@ -7,7 +7,6 @@ from dataclasses import dataclass, replace
 import json
 import os
 from pathlib import Path
-import re
 import time
 from typing import Any
 
@@ -33,12 +32,9 @@ _BACKUP_STATE_FILE = "terraform.tfstate.backup"
 _TERRAFORM_STATE_PATHS = frozenset(
     {_STATE_FILE, _BACKUP_STATE_FILE, ".terraform.tfstate.lock.info"}
 )
-_RETAINED_CREATE_DIAGNOSTIC_LIMIT = 1024
-_RETAINED_CREATE_DIAGNOSTIC_FIELDS = frozenset(
-    {"code", "message", "reason", "status", "type"}
-)
-_DIAGNOSTIC_ENDPOINT_RE = re.compile(r"(?i)\b(?:https?|grpc)://[^\s'\"<>]+")
-_DIAGNOSTIC_REQUEST_RE = re.compile(r"(?im)^.*\b(?:request|payload|body)\b.*$")
+# The current MK8s CLI exposes this stable gRPC category in its direct error
+# envelope. Map it to an NPA-owned label rather than exposing provider text.
+_RETAINED_CREATE_SAFE_OUTCOMES = {"INVALID_ARGUMENT": "invalid-argument"}
 
 
 @dataclass(frozen=True)
@@ -69,47 +65,31 @@ class _ProviderSession:
     project: MK8sProjectIdentity
 
 
-def _bounded_retained_create_diagnostic(
-    result: Any, environment: dict[str, str]
-) -> str:
-    """Return safe, bounded provider failure context without retaining request data."""
+def _safe_retained_create_outcome(payload: object) -> str | None:
+    """Return a direct, provider-safe outcome token from a trusted envelope."""
 
-    from npa.cluster_backends.process import _redact, _sensitive_values
+    if not isinstance(payload, dict):
+        return None
+    error = payload.get("error")
+    if not isinstance(error, dict):
+        return None
+    code = error.get("code")
+    return _RETAINED_CREATE_SAFE_OUTCOMES.get(code) if isinstance(code, str) else None
 
-    raw_parts = [
-        value.decode(errors="replace") if isinstance(value, bytes) else str(value)
-        for value in (getattr(result, "stderr", ""), getattr(result, "stdout", ""))
-        if value
-    ]
-    structured: list[str] = []
-    for part in raw_parts:
+
+def _bounded_retained_create_diagnostic(result: Any) -> str:
+    """Return only a bounded typed provider outcome, never provider output."""
+
+    for value in (getattr(result, "stderr", ""), getattr(result, "stdout", "")):
+        if not value:
+            continue
         try:
-            payload = json.loads(part)
+            payload = json.loads(value)
         except (TypeError, ValueError):
             continue
-
-        def collect(value: object) -> None:
-            if isinstance(value, dict):
-                for key, item in value.items():
-                    if (
-                        key.casefold() in _RETAINED_CREATE_DIAGNOSTIC_FIELDS
-                        and isinstance(item, (str, int, float, bool))
-                    ):
-                        structured.append(f"{key}={item}")
-                    elif isinstance(item, (dict, list)):
-                        collect(item)
-            elif isinstance(value, list):
-                for item in value:
-                    collect(item)
-
-        collect(payload)
-    detail = "; ".join(structured) if structured else "\n".join(raw_parts[-20:])
-    detail = _DIAGNOSTIC_REQUEST_RE.sub("<redacted-request>", detail)
-    detail = _DIAGNOSTIC_ENDPOINT_RE.sub("<redacted-endpoint>", detail)
-    detail = _redact(detail, sensitive_values=_sensitive_values(environment)).strip()
-    if len(detail) > _RETAINED_CREATE_DIAGNOSTIC_LIMIT:
-        detail = detail[:_RETAINED_CREATE_DIAGNOSTIC_LIMIT] + "…"
-    return detail
+        if outcome := _safe_retained_create_outcome(payload):
+            return f"outcome={outcome}"
+    return "category=provider-rejected"
 
 
 def recover_interrupted_fleet_apply(
@@ -767,7 +747,7 @@ def _create_retained_node_group(
             )
     result = mk8s_execution._run_capture(command, env=session.environment, check=False)
     if result.returncode:
-        detail = _bounded_retained_create_diagnostic(result, session.environment)
+        detail = _bounded_retained_create_diagnostic(result)
         raise FleetRecoveryError(
             f"could not create retained node group {name!r} "
             f"(provider exit {result.returncode})" + (f": {detail}" if detail else "")

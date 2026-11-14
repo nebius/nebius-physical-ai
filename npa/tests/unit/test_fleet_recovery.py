@@ -1664,8 +1664,73 @@ def test_normal_lifecycle_resumes_zero_subnet_cpu_and_strict_gpu_target(
     assert (workdir / ".terraform.tfstate.lock.info").read_bytes() == before["lock"]
 
 
-def test_normal_lifecycle_empty_node_group_mapping_refusal_preserves_retained_bytes(
-    tmp_path, monkeypatch
+@pytest.mark.parametrize(
+    ("stdout", "stderr", "expected_diagnostic", "forbidden_tokens"),
+    [
+        (
+            "",
+            json.dumps(
+                {
+                    "error": {
+                        "code": "INVALID_ARGUMENT",
+                        "message": "provider-secret endpoint=https://private.invalid/",
+                        "request": {
+                            "message": "nested-request-message",
+                            "body": "raw-request-body",
+                        },
+                    },
+                    "payload": {"message": "payload-message"},
+                }
+            ),
+            "outcome=invalid-argument",
+            (
+                "provider-secret",
+                "private.invalid",
+                "raw-request-body",
+                "nested-request-message",
+                "payload-message",
+            ),
+        ),
+        (
+            "non-json-provider-output-with-secret",
+            "",
+            "category=provider-rejected",
+            ("non-json-provider-output-with-secret",),
+        ),
+        (
+            "",
+            json.dumps(
+                {
+                    "code": "SYNTHETIC_ROOT_TOKEN",
+                    "request": {"body": "root-request-body"},
+                }
+            ),
+            "category=provider-rejected",
+            ("SYNTHETIC_ROOT_TOKEN", "root-request-body"),
+        ),
+        (
+            "",
+            json.dumps(
+                {
+                    "error": {
+                        "code": "UNEXPECTED_DIRECT_ENVELOPE_TOKEN",
+                        "message": "unexpected-envelope-message",
+                    }
+                }
+            ),
+            "category=provider-rejected",
+            ("UNEXPECTED_DIRECT_ENVELOPE_TOKEN", "unexpected-envelope-message"),
+        ),
+    ],
+    ids=[
+        "safe-error-envelope-excludes-request-content",
+        "non-json-output-is-generic",
+        "root-token-is-generic",
+        "unexpected-envelope-token-is-generic",
+    ],
+)
+def test_normal_lifecycle_node_group_create_refusal_preserves_retained_bytes(
+    tmp_path, monkeypatch, stdout, stderr, expected_diagnostic, forbidden_tokens
 ):
     spec, install_dir, before = _zero_node_subnet_retained_target(tmp_path)
     calls: dict[str, object] = {}
@@ -1703,19 +1768,8 @@ def test_normal_lifecycle_empty_node_group_mapping_refusal_preserves_retained_by
             return CompletedProcess(
                 command,
                 47,
-                "",
-                json.dumps(
-                    {
-                        "error": {
-                            "code": "INVALID_ARGUMENT",
-                            "message": (
-                                "token=provider-secret endpoint=https://private.invalid/"
-                                + "x" * 2048
-                            ),
-                            "request": {"private": "raw-request-body"},
-                        }
-                    }
-                ),
+                stdout,
+                stderr,
             )
         pytest.fail(f"unexpected provider command: {command}")
 
@@ -1732,13 +1786,9 @@ def test_normal_lifecycle_empty_node_group_mapping_refusal_preserves_retained_by
     message = str(exc_info.value)
     assert "could not create retained node group" in message
     assert "provider exit 47" in message
-    assert "code=INVALID_ARGUMENT" in message
-    assert "<redacted>" in message
-    assert "<redacted-endpoint>" in message
-    assert "provider-secret" not in message
-    assert "private.invalid" not in message
-    assert "raw-request-body" not in message
-    assert len(message) < 1200
+    assert expected_diagnostic in message
+    for token in forbidden_tokens:
+        assert token not in message
 
     creates = [
         command
@@ -1746,7 +1796,7 @@ def test_normal_lifecycle_empty_node_group_mapping_refusal_preserves_retained_by
         if "node-group" in command and "create" in command
     ]
     assert [command[command.index("--name") + 1] for command in creates] == [
-        "recover-ng-cpu"
+        "recover-ng-cpu",
     ]
     create = creates[0]
     assert create[create.index("--parent-id") + 1] == "cluster-test"
