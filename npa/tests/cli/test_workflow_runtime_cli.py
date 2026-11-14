@@ -2599,6 +2599,7 @@ def test_cli_resume_preserves_recorded_legacy_store(
     receipt = load_submission_state("unit", run_id)
     assert receipt["workflow"]["run_prefix_uri"] == legacy
     assert receipt["workflow"]["manifest_uri"] == f"{legacy}/npa-workflow/manifest.json"
+    assert receipt["controller"]["isolated"] is False
 
 
 def test_cli_resume_rejects_a_different_explicit_store_before_update(
@@ -2681,15 +2682,198 @@ def test_cli_denied_recorded_prefix_stops_before_update_or_launch(
     driver.assert_not_called()
 
 
-def _resume_receipt(run_id: str, legacy: str) -> str:
-    return json.dumps(
-        {
-            "schema_version": "npa.workflow.submission.v1",
-            "project": "unit",
-            "run_id": run_id,
-            "workflow": {"run_prefix_uri": legacy},
-        }
+def test_runtime_resume_keeps_the_recorded_shared_controller(
+    fake_runtime, monkeypatch, mocker, tmp_path: Path
+) -> None:
+    from npa.orchestration.npa_workflow.submission_state import load_submission_state
+
+    run_id = "recorded-shared-controller"
+    recorded = f"s3://unit-output/recorded/{run_id}"
+    controller = _controller_route()
+    _write_local_receipt(
+        monkeypatch,
+        tmp_path,
+        run_id,
+        _resume_receipt(run_id, recorded, controller=controller),
     )
+    implicit = mocker.patch(
+        "npa.cli.workbench.workflow._implicit_runtime_isolated_config_dir"
+    )
+    _prepare_runtime_kubernetes_submit(mocker)
+
+    result = RUNNER.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(FANOUT),
+            "--runtime",
+            "--resume-run",
+            run_id,
+            "--project",
+            "unit",
+            "--infra",
+            "k8s/unit-context",
+            "--no-deploy-if-absent",
+            "--var",
+            "bucket=rt-bucket",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert fake_runtime["options"].isolated_config_dir is None
+    assert fake_runtime["options"].sky_bin == controller["sky_bin"]
+    assert load_submission_state("unit", run_id)["controller"] == controller
+    implicit.assert_not_called()
+
+
+def test_runtime_fresh_kubernetes_submit_keeps_the_private_default(
+    fake_runtime, mocker, tmp_path: Path
+) -> None:
+    controller_dir = (tmp_path / "fresh-controller").resolve()
+    implicit = mocker.patch(
+        "npa.cli.workbench.workflow._implicit_runtime_isolated_config_dir",
+        return_value=controller_dir,
+    )
+    _prepare_runtime_kubernetes_submit(mocker)
+
+    result = RUNNER.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(FANOUT),
+            "--runtime",
+            "--run-id",
+            "fresh-private-controller",
+            "--infra",
+            "k8s/unit-context",
+            "--no-deploy-if-absent",
+            "--var",
+            "bucket=rt-bucket",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert fake_runtime["options"].isolated_config_dir == controller_dir
+    implicit.assert_called_once_with(project="default", context="unit-context")
+
+
+def test_runtime_resume_keeps_the_recorded_isolated_controller(
+    fake_runtime, monkeypatch, tmp_path: Path
+) -> None:
+    run_id = "recorded-isolated-controller"
+    recorded = f"s3://unit-output/recorded/{run_id}"
+    controller_dir = (tmp_path / "recorded-controller").resolve()
+    _write_local_receipt(
+        monkeypatch,
+        tmp_path,
+        run_id,
+        _resume_receipt(
+            run_id,
+            recorded,
+            controller=_controller_route(isolated_config_dir=controller_dir),
+        ),
+    )
+
+    result = RUNNER.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(FANOUT),
+            "--runtime",
+            "--resume-run",
+            run_id,
+            "--project",
+            "unit",
+            "--var",
+            "bucket=rt-bucket",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert fake_runtime["options"].isolated_config_dir == controller_dir
+
+
+def test_runtime_resume_refuses_a_controller_route_replacement_before_launch(
+    monkeypatch, mocker, satisfied_preflight, tmp_path: Path
+) -> None:
+    run_id = "recorded-pending-controller"
+    recorded = f"s3://unit-output/recorded/{run_id}"
+    payload = json.loads(
+        _resume_receipt(run_id, recorded, controller=_controller_route())
+    )
+    payload["launch"] = {"status": "pending", "job_id": "17"}
+    _write_local_receipt(monkeypatch, tmp_path, run_id, json.dumps(payload))
+    update = mocker.patch(
+        "npa.orchestration.npa_workflow.submission_state.update_submission_state"
+    )
+    driver = mocker.patch("npa.orchestration.npa_workflow.runtime.run_workflow_runtime")
+
+    result = RUNNER.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(FANOUT),
+            "--runtime",
+            "--resume-run",
+            run_id,
+            "--project",
+            "unit",
+            "--isolated-config-dir",
+            str(tmp_path / "replacement-controller"),
+            "--var",
+            "bucket=rt-bucket",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "conflicts with submission receipt" in result.output
+    update.assert_not_called()
+    driver.assert_not_called()
+
+
+def _controller_route(*, isolated_config_dir: Path | None = None) -> dict[str, object]:
+    return {
+        "schema": "npa.workflow.controller-route.v1",
+        "isolated": isolated_config_dir is not None,
+        "isolated_config_dir": str(isolated_config_dir or ""),
+        "sky_bin": "/usr/bin/sky",
+    }
+
+
+def _prepare_runtime_kubernetes_submit(mocker) -> None:
+    mocker.patch("npa.cli.workbench.workflow._submit_prerequisites", return_value=[])
+    mocker.patch("npa.cli.workbench.workflow._adopt_npa_kubeconfig", return_value=True)
+    mocker.patch("npa.cli.workbench.workflow._verify_submit_controller_owner")
+    mocker.patch("npa.cli.workbench.workflow._preflight_submit_images", return_value={})
+    mocker.patch(
+        "npa.cli.workbench.workflow._resolve_submit_accelerators", return_value={}
+    )
+    mocker.patch(
+        "npa.orchestration.npa_workflow.model_cache_preflight.adopt_model_cache_claim",
+        return_value="",
+    )
+
+
+def _resume_receipt(
+    run_id: str, legacy: str, *, controller: dict[str, object] | None = None
+) -> str:
+    payload: dict[str, object] = {
+        "schema_version": "npa.workflow.submission.v1",
+        "project": "unit",
+        "run_id": run_id,
+        "workflow": {"run_prefix_uri": legacy},
+    }
+    if controller is not None:
+        payload["controller"] = controller
+    return json.dumps(payload)
 
 
 def _invoke_runtime_resume(run_id: str):

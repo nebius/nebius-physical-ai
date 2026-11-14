@@ -173,25 +173,39 @@ def _state_from_uri(
     project: str,
     s3_endpoint: str,
 ) -> WorkflowS3Config:
+    """Build the exact storage state named by an operator URI."""
+
     _validate_s3_locator(uri)
     normalized = uri.rstrip("/")
     if normalized.endswith("/manifest.json"):
         normalized = normalized.removesuffix("/manifest.json")
-    _bucket, prefix = parse_s3_uri(normalized)
-    # Public workflow commands accept a run-root URI (``.../<run-id>``), while
-    # the durable control records live below its ``npa-workflow`` child.  Treat
-    # that exact trailing run ID as the documented shorthand for the control
-    # prefix for every workflow, not only the historical PAIDF layout.  A nested
-    # ``.../<run-id>/<workflow>`` URI remains unchanged because its tail is not
-    # the requested run ID.
-    if prefix.rstrip("/").endswith(f"/{run_id}"):
-        normalized = f"{normalized}/npa-workflow"
     return resolve_workflow_s3_config(
         run_id=run_id,
         project=project or None,
         workflow_s3_uri=normalized,
         s3_endpoint=s3_endpoint,
     )
+
+
+def _explicit_uri_states(
+    uri: str,
+    *,
+    run_id: str,
+    project: str,
+    s3_endpoint: str,
+) -> tuple[WorkflowS3Config, ...]:
+    """Return the bounded exact candidates for one explicit workflow locator."""
+
+    state = _state_from_uri(
+        uri,
+        run_id=run_id,
+        project=project,
+        s3_endpoint=s3_endpoint,
+    )
+    if state.prefix.rstrip("/").rsplit("/", 1)[-1] != run_id:
+        return (state,)
+    nested = _child_state(state, f"{state.prefix.rstrip('/')}/npa-workflow")
+    return state, nested
 
 
 def _parent_state(
@@ -540,14 +554,38 @@ def resolve_run(
 
     if explicit_uri:
         try:
-            explicit_state = _state_from_uri(
+            explicit_states = _explicit_uri_states(
                 explicit_uri,
                 run_id=resolved_id,
                 project=project,
                 s3_endpoint=s3_endpoint,
             )
-            outcome, manifest, detail = _probe_manifest(explicit_state, resolved_id)
-            if outcome == "absent":
+            explicit_state = explicit_states[-1]
+            outcome: ResolutionOutcome = "absent"
+            manifest: dict[str, Any] | None = None
+            detail = ""
+            for index, candidate in enumerate(explicit_states):
+                explicit_state = candidate
+                outcome, manifest, detail = _probe_manifest(candidate, resolved_id)
+                if outcome == "absent":
+                    if index == 0 and len(explicit_states) > 1:
+                        continue
+                    prefix_outcome, prefix_detail = _probe_exact_prefix(
+                        candidate,
+                        run_id=resolved_id,
+                    )
+                    if prefix_outcome == "found":
+                        outcome, detail = "found", prefix_detail
+                        result.found = True
+                        result.source = "explicit_workflow_s3_uri"
+                        result.manifest_pending = True
+                        _attach_runtime_state(result, candidate)
+                    elif prefix_outcome == "unavailable":
+                        outcome, detail = "unavailable", prefix_detail
+                if outcome != "absent":
+                    break
+            if outcome == "absent" and len(explicit_states) > 1:
+                explicit_state = explicit_states[0]
                 prefix_outcome, prefix_detail = _probe_exact_prefix(
                     explicit_state,
                     run_id=resolved_id,

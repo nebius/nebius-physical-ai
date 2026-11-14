@@ -754,6 +754,55 @@ def test_ordinary_exact_workflow_contract_remains_supported(
     assert resolved.manifest == manifest
 
 
+@pytest.mark.parametrize("suffix", ["", "/manifest.json"])
+def test_explicit_flat_ordinary_uri_keeps_the_exact_legacy_layout(
+    resolver_env: ExactS3, suffix: str
+) -> None:
+    run_id = "ordinary-flat-explicit"
+    manifest = {
+        "schema_version": 1,
+        "run_id": run_id,
+        "workflow_name": "ordinary",
+        "sky_job_id": "14",
+        "stages": {"train": {"name": "train"}},
+    }
+    root = f"checkpoints/{run_id}"
+    resolver_env.put_json("alias-bucket", f"{root}/manifest.json", manifest)
+
+    resolved = resolve_run(
+        run_id,
+        project="paidf",
+        workflow_s3_uri=f"s3://alias-bucket/{root}{suffix}",
+    )
+
+    assert resolved.found is True
+    assert resolved.state is not None
+    assert resolved.state.uri == f"s3://alias-bucket/{root}"
+    assert resolved.manifest == manifest
+    assert resolver_env.queries == []
+
+
+def test_explicit_flat_uri_never_scans_a_neighboring_run(
+    resolver_env: ExactS3,
+) -> None:
+    run_id = "ordinary-flat-absent"
+    root = f"checkpoints/{run_id}"
+    resolver_env.objects[("alias-bucket", f"{root}-other/private.bin")] = b"secret"
+
+    resolved = resolve_run(
+        run_id,
+        project="paidf",
+        workflow_s3_uri=f"s3://alias-bucket/{root}",
+    )
+
+    assert resolved.found is False
+    assert resolved.conclusively_absent is True
+    assert [query[1] for query in resolver_env.queries] == [
+        f"{root}/npa-workflow/",
+        f"{root}/",
+    ]
+
+
 def test_explicit_nested_ordinary_workflow_uri_uses_manifest_run_id(
     resolver_env: ExactS3,
 ) -> None:

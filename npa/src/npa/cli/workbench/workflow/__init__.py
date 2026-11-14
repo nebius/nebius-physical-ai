@@ -618,6 +618,72 @@ def _controller_route_receipt(
     }
 
 
+def _load_resume_controller_route(
+    *, project: str, run_id: str
+) -> tuple[bool, tuple[Path | None, str] | None]:
+    """Read the immutable controller route for an existing runtime submission."""
+
+    from npa.orchestration.npa_workflow.run_resolution import _receipt_controller_route
+    from npa.orchestration.npa_workflow.submission_state import (
+        inspect_submission_state,
+    )
+
+    receipt = inspect_submission_state(project or "default", run_id)
+    if receipt.outcome == "absent":
+        return False, None
+    if receipt.outcome == "unavailable":
+        raise ValueError(f"resume controller route is unavailable: {receipt.error}")
+    return True, _receipt_controller_route(receipt.payload)
+
+
+def _legacy_shared_resume_route(
+    *, sky_bin: str, isolated_config_dir: Path | None
+) -> tuple[str, Path | None]:
+    """Preserve a route-less legacy receipt as shared-controller state only."""
+
+    from npa.orchestration.skypilot._bin import resolve_isolated_config_dir
+
+    if sky_bin or isolated_config_dir is not None or resolve_isolated_config_dir():
+        raise ValueError(
+            "legacy resume has no recorded controller route; refusing to select "
+            "a replacement controller"
+        )
+    return "", None
+
+
+def _select_resume_controller_route(
+    *, project: str, run_id: str, sky_bin: str, isolated_config_dir: Path | None
+) -> tuple[str, Path | None]:
+    """Return the recorded controller route after rejecting route substitutions."""
+
+    from npa.orchestration.skypilot._bin import resolve_isolated_config_dir
+
+    has_receipt, route = _load_resume_controller_route(project=project, run_id=run_id)
+    if not has_receipt:
+        return sky_bin, isolated_config_dir
+    if route is None:
+        return _legacy_shared_resume_route(
+            sky_bin=sky_bin, isolated_config_dir=isolated_config_dir
+        )
+    recorded_dir, recorded_bin = route
+    if isolated_config_dir is not None:
+        requested_dir = Path(isolated_config_dir).expanduser().resolve()
+        if recorded_dir is None or requested_dir != recorded_dir:
+            raise ValueError(
+                "explicit controller state root conflicts with submission receipt"
+            )
+    elif recorded_dir is None and resolve_isolated_config_dir() is not None:
+        raise ValueError(
+            "recorded shared controller conflicts with active isolated SkyPilot state"
+        )
+    requested_bin = str(Path(sky_bin).expanduser().resolve()) if sky_bin else ""
+    if requested_bin and requested_bin != recorded_bin:
+        raise ValueError(
+            "explicit SkyPilot executable conflicts with submission receipt"
+        )
+    return recorded_bin, recorded_dir
+
+
 def _fail(
     msg: str,
     code: int = 1,
@@ -1859,6 +1925,17 @@ def submit_cmd(
     except Exception as exc:
         _fail(str(exc))
         return
+    if is_npa_spec and runtime and resume and not plan_only:
+        try:
+            sky_bin, isolated_config_dir = _select_resume_controller_route(
+                project=project,
+                run_id=resolved_run_id,
+                sky_bin=sky_bin or "",
+                isolated_config_dir=isolated_config_dir,
+            )
+        except ValueError as exc:
+            _fail(str(exc))
+            return
     routes_at_isaac = False
     if not plan_only and not accept_eula:
         routes_at_isaac = (
@@ -2101,7 +2178,13 @@ def submit_cmd(
         # its cluster kubeconfigs outside ~/.kube/config, so a context it
         # provisioned looks missing until KUBECONFIG points at it.
         infra_context = _infra_kube_context(infra)
-        if runtime and infra_context and not plan_only and isolated_config_dir is None:
+        if (
+            runtime
+            and infra_context
+            and not plan_only
+            and not resume
+            and isolated_config_dir is None
+        ):
             from npa.orchestration.skypilot._bin import resolve_isolated_config_dir
 
             # A generic runtime workflow must never attach a fresh operator
@@ -4122,8 +4205,21 @@ def _run_npa_workflow_runtime(
         resolve_sky_bin,
     )
 
-    effective_sky_bin = str(resolve_sky_bin(sky_bin or None))
-    isolated_config_dir = resolve_isolated_config_dir(isolated_config_dir)
+    if resume:
+        try:
+            sky_bin, isolated_config_dir = _select_resume_controller_route(
+                project=project,
+                run_id=run_id,
+                sky_bin=sky_bin,
+                isolated_config_dir=isolated_config_dir,
+            )
+        except ValueError as exc:
+            _fail(str(exc), secrets=tuple(secret_env_values.values()))
+            return
+        effective_sky_bin = str(resolve_sky_bin(sky_bin or None))
+    else:
+        effective_sky_bin = str(resolve_sky_bin(sky_bin or None))
+        isolated_config_dir = resolve_isolated_config_dir(isolated_config_dir)
     workflow_receipt = _runtime_submission_receipt(spec, run_id, assume_decision)
     if recorded_store is not None:
         workflow_receipt["run_prefix_uri"] = recorded_store.run_prefix_uri
