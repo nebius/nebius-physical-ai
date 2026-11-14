@@ -36,6 +36,7 @@ _RESOLVED_WAVE_RECOVERY_DECISIONS = frozenset(
         "operator_authorized_absent_output_adoption",
         "adopted_terminal_success_after_driver_failure",
         "operator_authorized_verified_absent_relaunch",
+        "operator_authorized_interrupted_absent_relaunch_with_incomplete_outputs",
         "phantom_record_cancelled_verified_relaunch",
     }
 )
@@ -974,19 +975,41 @@ class RunStateStore:
             aws_access_key_id=self._aws_access_key_id,
             aws_secret_access_key=self._aws_secret_access_key,
         )._s3
-        try:
-            if uri.endswith("/"):
+        if uri.endswith("/"):
+            try:
                 return s3_prefix_has_nonempty_object(
                     client,
                     bucket=parsed.netloc,
                     prefix=key,
                 )
+            except ClientError as exc:
+                code = str(exc.response.get("Error", {}).get("Code", ""))
+                if code in {"404", "NoSuchKey", "NotFound"}:
+                    return False
+                raise
+        try:
             response = client.head_object(Bucket=parsed.netloc, Key=key)
             return int(response.get("ContentLength") or 0) > 0
         except ClientError as exc:
             code = str(exc.response.get("Error", {}).get("Code", ""))
             if code in {"404", "NoSuchKey", "NotFound"}:
-                return False
+                # Declarative directory outputs are commonly written without a
+                # trailing slash.  A direct object miss is not absence until the
+                # exact child prefix has also been checked; do not match a
+                # neighboring prefix such as ``candidate-old``.
+                try:
+                    return s3_prefix_has_nonempty_object(
+                        client,
+                        bucket=parsed.netloc,
+                        prefix=f"{key.rstrip('/')}/",
+                    )
+                except ClientError as prefix_error:
+                    prefix_code = str(
+                        prefix_error.response.get("Error", {}).get("Code", "")
+                    )
+                    if prefix_code in {"404", "NoSuchKey", "NotFound"}:
+                        return False
+                    raise
             raise
 
     def read_manifest(self) -> RunManifest | None:
@@ -1468,23 +1491,53 @@ def _task_observation_matches(members, rows, *, legacy=False):
     return matches, unresolved
 
 
+def _job_observation(
+    observations: Mapping[object, Mapping[str, Any]], job_id: str, job_name: str
+) -> Mapping[str, Any]:
+    """Select a scheduler observation by immutable job ID and recorded name.
+
+    A rebuilt task-local SkyPilot controller may reuse numeric IDs.  Callers
+    that have a recorded name therefore store exact observations under the
+    ``(job_id, job_name)`` pair.  The string-key fallback preserves the older
+    one-ID contract for callers and persisted fixtures that do not know a name.
+    """
+
+    identity = (str(job_id), str(job_name))
+    exact = observations.get(identity)
+    if isinstance(exact, Mapping):
+        return exact
+    legacy = observations.get(str(job_id))
+    if not isinstance(legacy, Mapping):
+        return {}
+    observed_name = str(legacy.get("job_name") or "")
+    if job_name and observed_name and observed_name != job_name:
+        return {}
+    return legacy
+
+
 def _scheduler_task_observations(stages, task_rows, observations):
     if not observations:
         return _task_observation_matches(stages, task_rows, legacy=True)
     matches, unresolved = {}, set()
-    job_ids = {stage["managed_job_id"] for stage in stages.values()}
-    for job_id in job_ids:
+    identities = {
+        (str(stage["managed_job_id"]), str(stage.get("job_name") or ""))
+        for stage in stages.values()
+    }
+    for job_id, job_name in identities:
         members = {
             key: stage
             for key, stage in stages.items()
-            if stage["managed_job_id"] == job_id
+            if str(stage["managed_job_id"]) == job_id
+            and str(stage.get("job_name") or "") == job_name
         }
-        rows = observations.get(job_id, {}).get("task_rows") or []
+        observation = _job_observation(observations, job_id, job_name)
+        if observation.get("identity_absent"):
+            matches.update({key: [] for key in members})
+            continue
+        rows = observation.get("task_rows") or []
         job_matches, job_unresolved = _task_observation_matches(members, rows)
         matches.update(job_matches)
         unresolved.update(job_unresolved)
-    if set(observations) - job_ids:
-        unresolved.update(stages)
     return matches, unresolved
 
 
@@ -1523,7 +1576,7 @@ def build_actionable_run_status(
     live_status: str = "",
     task_rows: Sequence[Mapping[str, Any]] = (),
     runtime_waves: Sequence[Mapping[str, Any]] = (),
-    job_observations: Mapping[str, Mapping[str, Any]] | None = None,
+    job_observations: Mapping[object, Mapping[str, Any]] | None = None,
     controller_output: str = "",
     project: str = "",
     isolated_config_dir: str = "",
@@ -1565,7 +1618,9 @@ def build_actionable_run_status(
             key = f"{key}@{index}"
         attribution = attributions.get(key, {})
         managed_job_id = str(attribution.get("managed_job_id") or "")
-        observation = observations.get(managed_job_id, {})
+        observation = _job_observation(
+            observations, managed_job_id, str(attribution.get("job_name") or "")
+        )
         observed_rows = [
             item
             for item in observation.get("task_rows") or []
@@ -1646,6 +1701,12 @@ def build_actionable_run_status(
         elif step_terminal:
             state = step_state
             outcome_provenance = "authoritative_stage_record"
+        elif attempt_terminal and not scheduler_terminal:
+            # A reconstructed SkyPilot controller can restart its numeric job
+            # sequence.  A nonterminal observation for that reused number must
+            # not rewrite the terminal outcome of this stage's named wave.
+            state = attempt_state
+            outcome_provenance = "durable_runtime_attempt"
         elif raw_scheduler:
             state = _TASK_STATUS_MAP.get(scheduler_state, scheduler_state)
             outcome_provenance = "scheduler_final_attempt"

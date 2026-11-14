@@ -553,6 +553,21 @@ def test_groot_case_truthfully_describes_offline_configurable_training() -> None
     assert "not closed-loop or physical-robot task evidence" in case.notes
 
 
+def test_groot_n15_testing_case_is_runtime_backed_but_not_daily_rotation() -> None:
+    case = next(
+        case for case in SUBMIT_LIVE_MATRIX if case.spec == "groot-n15-offline-rl.yaml"
+    )
+
+    assert case.tier == "gpu"
+    assert case.runtime
+    assert not case.plan_only
+    assert case.rotation_skip
+    assert set(case.secret_envs) == {"AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"}
+    assert "matched ordinary-BC/control" in case.notes
+    assert "feedback-weighted candidate training" in case.notes
+    assert "not a simulator" in case.notes
+
+
 def test_robotwin_case_is_plan_only_until_worker_authorization_exists() -> None:
     case = next(
         item for item in SUBMIT_LIVE_MATRIX if item.spec == "byof-robotwin.yaml"

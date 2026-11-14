@@ -888,6 +888,35 @@ def test_nebius_requires_binary(mocker) -> None:
         nebius._require_nebius()
 
 
+def test_nebius_honors_explicit_configured_binary(monkeypatch, mocker) -> None:
+    """A configured NPA CLI must not silently fall back to an ambient binary."""
+    monkeypatch.setenv("NPA_NEBIUS_BIN", "/npa-managed/bin/nebius")
+    which = mocker.patch("shutil.which", return_value="/npa-managed/bin/nebius")
+    mocker.patch("npa.clients.nebius._warn_if_nebius_version_mismatch")
+
+    assert nebius._require_nebius() == "/npa-managed/bin/nebius"
+    which.assert_called_once_with("/npa-managed/bin/nebius")
+
+
+def test_nebius_discovers_executable_managed_binary_from_config(
+    monkeypatch, mocker, tmp_path
+) -> None:
+    """Fresh subprocesses keep the NPA-managed binary ahead of ambient PATH."""
+    from npa.clients import config as config_module
+
+    monkeypatch.delenv("NPA_NEBIUS_BIN", raising=False)
+    managed = tmp_path / "bin" / "nebius"
+    managed.parent.mkdir()
+    managed.write_text("#!/bin/sh\n")
+    managed.chmod(0o700)
+    monkeypatch.setattr(config_module, "NPA_CONFIG_DIR", tmp_path)
+    which = mocker.patch("shutil.which", return_value=str(managed))
+    mocker.patch("npa.clients.nebius._warn_if_nebius_version_mismatch")
+
+    assert nebius._require_nebius() == str(managed)
+    which.assert_called_once_with(str(managed))
+
+
 def test_nebius_accepts_required_cli_without_warning_and_checks_once(mocker) -> None:
     mocker.patch("shutil.which", return_value="/usr/bin/nebius")
     mocker.patch("npa.clients.nebius.supported_tool_version", return_value="0.12.298")

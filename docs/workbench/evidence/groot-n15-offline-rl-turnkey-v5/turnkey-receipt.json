@@ -1,0 +1,49 @@
+{
+  "schema_version": "npa.groot-n15.turnkey-reference-receipt/v1",
+  "kind": "sanitized-private-run-summary",
+  "reference_profile": {
+    "path": "workflows/testing/groot-n15-offline-rl.yaml",
+    "sha256": "d691c49b242cf0aa1513048097a5303adf02cda277187fbaa7f1585d597456dd"
+  },
+  "execution_source_commit": "1f2f345dca84b01171031465b98b887012ad75a8",
+  "fresh_checkout": {
+    "independent_python_install": true,
+    "documented_configure_validate_plan_submit_observe_commands": true,
+    "private_run_receipt": "operator-held; resolved through normal workflow artifacts and download-artifact"
+  },
+  "workflow": {
+    "status": "succeeded",
+    "stages": [
+      "prepare-custom-lerobot",
+      "train-native-n15",
+      "evaluate-recorded-observations",
+      "verify-durable-publication"
+    ],
+    "retry_count": 0
+  },
+  "evidence": {
+    "held_out_episodes": 5,
+    "held_out_frames": 2084,
+    "evidence_episode_index": 14,
+    "baseline_mae": 0.23935557901859283,
+    "ordinary_bc_control_mae": 0.08031739294528961,
+    "feedback_weighted_candidate_mae": 0.07903070747852325,
+    "standalone_html_sha256": "10276bd86893ce4ef0fdc081fc31d59f7b0563b4acf61366fa5741537064d6b6",
+    "evaluation_sha256": "40023571ef9cf642ebba964f0f12f5acaf543c7ee8fb7e803657188a0323295e",
+    "media_validation_sha256": "b236c1ded449c6b48f27278a521b3693d12f42b4ec37ed466e94107da6da8517",
+    "workflow_readback_sha256": "8dcd6e5336525a1630b61ca9699944470639ceb8da14c115f741782323937dbb",
+    "training_receipt_sha256": "7c83ff657fa66d4e8ddbeca9a222ee8d0895afbb6bc85414e077e4d5f058af8a"
+  },
+  "readback": {
+    "artifact_count": 16,
+    "standalone_html_embeds_media": true,
+    "standalone_html_requires_remote_src_or_href": false,
+    "private_artifact_uris_omitted": true
+  },
+  "limitations": [
+    "Metrics compare native offline predictions with recorded action targets; they are not robot-rollout or deployment results.",
+    "Observed episode outcome is not a learned chunk advantage label.",
+    "Recovery-reference provenance retains unknown outcome and is not treated as observed success.",
+    "No simulator or physical robot evaluation was performed."
+  ]
+}

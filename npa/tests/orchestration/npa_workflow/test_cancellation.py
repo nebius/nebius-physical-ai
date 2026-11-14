@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from botocore.exceptions import ClientError
+from pathlib import Path
 import pytest
 
 from npa.orchestration.npa_workflow.cancellation import (
@@ -58,6 +59,186 @@ def test_terminal_multistage_run_without_root_job_id_is_an_explicit_noop() -> No
     assert assessment.no_cancellation_needed
     assert assessment.active_jobs == []
     assert [job.job_id for job in assessment.terminal_jobs] == ["101", "102"]
+
+
+def test_terminal_wave_tolerates_a_stale_submitted_manifest_snapshot() -> None:
+    resolution = _resolution(
+        {"status": "succeeded", "waves": [{"job_id": "101", "status": "succeeded"}]},
+        manifest={
+            "schema_version": "npa.workflow.run.v1",
+            "run_id": "paidf-runtime",
+            "status": "submitted",
+            "steps": [{"state": "train", "status": "submitted", "job_id": "101"}],
+        },
+    )
+
+    assessment = assess_run_cancellation(
+        resolution,
+        lookup=lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("terminal success must not be reopened by stale submission")
+        ),
+    )
+
+    assert assessment.detected_state == "SUCCEEDED"
+    assert assessment.no_cancellation_needed
+
+
+def test_reused_numeric_job_id_keeps_new_wave_fail_closed() -> None:
+    resolution = _resolution(
+        {
+            "status": "running",
+            "waves": [
+                {
+                    "job_id": "7",
+                    "job_name": "previous-controller-attempt",
+                    "status": "failed",
+                },
+                {
+                    "job_id": "7",
+                    "job_name": "replacement-controller-attempt",
+                    "status": "submitted",
+                },
+            ],
+        }
+    )
+    looked_up: list[tuple[str, str]] = []
+
+    def unavailable(job_name: str, *, job_id: str, **_kwargs) -> ManagedJobEvidence:
+        looked_up.append((job_name, job_id))
+        return ManagedJobEvidence("unavailable", job_id=job_id, error="offline")
+
+    assessment = assess_run_cancellation(resolution, lookup=unavailable)
+
+    assert assessment.detected_state == "VERIFICATION_UNAVAILABLE"
+    assert not assessment.no_cancellation_needed
+    assert [(job.job_id, job.job_name) for job in assessment.jobs] == [
+        ("7", "previous-controller-attempt"),
+        ("7", "replacement-controller-attempt"),
+    ]
+    assert looked_up == [("replacement-controller-attempt", "7")]
+
+
+def test_reused_numeric_job_id_does_not_apply_cached_live_evidence() -> None:
+    resolution = _resolution(
+        {
+            "status": "running",
+            "waves": [
+                {"job_id": "7", "job_name": "old-attempt", "status": "failed"},
+                {"job_id": "7", "job_name": "new-attempt", "status": "submitted"},
+            ],
+        }
+    )
+    resolution.job_id = "7"
+    resolution.job_name = "new-attempt"
+    resolution.managed_job = ManagedJobEvidence("found", job_id="7", status="RUNNING")
+    looked_up: list[tuple[str, str]] = []
+
+    def unavailable(job_name: str, *, job_id: str, **_kwargs) -> ManagedJobEvidence:
+        looked_up.append((job_name, job_id))
+        return ManagedJobEvidence("unavailable", job_id=job_id, error="offline")
+
+    assessment = assess_run_cancellation(resolution, lookup=unavailable)
+
+    assert assessment.detected_state == "VERIFICATION_UNAVAILABLE"
+    assert looked_up == [("new-attempt", "7")]
+
+
+def test_exact_numeric_job_id_refuses_distinct_controller_identities() -> None:
+    resolution = _resolution(
+        {
+            "status": "running",
+            "waves": [
+                {"job_id": "7", "job_name": "old-attempt", "status": "failed"},
+                {"job_id": "7", "job_name": "new-attempt", "status": "submitted"},
+            ],
+        }
+    )
+
+    assessment = assess_run_cancellation(
+        resolution,
+        exact_job_id="7",
+        lookup=lambda *_args, **_kwargs: pytest.fail(
+            "ambiguous ID must not be looked up"
+        ),
+    )
+
+    assert assessment.detected_state == "VERIFICATION_UNAVAILABLE"
+    assert "ambiguous" in assessment.errors[0]
+
+
+def test_same_controller_identity_keeps_terminal_convergence() -> None:
+    resolution = _resolution(
+        {
+            "status": "failed",
+            "waves": [
+                {"job_id": "7", "job_name": "same-attempt", "status": "failed"},
+                {
+                    "job_id": "7",
+                    "job_name": "same-attempt",
+                    "status": "submitted",
+                },
+            ],
+        }
+    )
+
+    assessment = assess_run_cancellation(
+        resolution,
+        lookup=lambda *_args, **_kwargs: pytest.fail(
+            "terminal identity needs no lookup"
+        ),
+    )
+
+    assert assessment.detected_state == "FAILED"
+    assert assessment.no_cancellation_needed
+    assert [(job.job_id, job.job_name) for job in assessment.terminal_jobs] == [
+        ("7", "same-attempt")
+    ]
+
+
+def test_named_resolution_enriches_an_unnamed_legacy_job_identity() -> None:
+    resolution = _resolution(
+        {},
+        manifest={
+            "run_id": "paidf-runtime",
+            "status": "submitted",
+            "sky_job_id": "7",
+        },
+    )
+    resolution.job_id = "7"
+    resolution.job_name = "recovered-attempt"
+    looked_up: list[tuple[str, str]] = []
+
+    def active(job_name: str, *, job_id: str, **_kwargs) -> ManagedJobEvidence:
+        looked_up.append((job_name, job_id))
+        return ManagedJobEvidence("found", job_id=job_id, status="RUNNING")
+
+    assessment = assess_run_cancellation(resolution, lookup=active)
+
+    assert [(job.job_id, job.job_name) for job in assessment.jobs] == [
+        ("7", "recovered-attempt")
+    ]
+    assert looked_up == [("recovered-attempt", "7")]
+
+
+def test_exact_cancellation_lookup_uses_the_pinned_skypilot_config() -> None:
+    resolution = _resolution(
+        {"status": "running", "waves": [{"job_id": "101", "status": "running"}]}
+    )
+    config_path = Path("/private/task/skypilot.yaml")
+    observed_configs: list[Path | None] = []
+
+    def lookup(_job_name: str, *, config_path=None, **_kwargs) -> ManagedJobEvidence:
+        observed_configs.append(config_path)
+        return ManagedJobEvidence("found", job_id="101", status="RUNNING")
+
+    assessment = assess_run_cancellation(
+        resolution,
+        lookup=lookup,
+        config_path=config_path,
+    )
+
+    assert assessment.detected_state == "ACTIVE"
+    assert observed_configs == [config_path]
 
 
 def test_denied_stage_status_blocks_a_terminal_cancellation_noop(

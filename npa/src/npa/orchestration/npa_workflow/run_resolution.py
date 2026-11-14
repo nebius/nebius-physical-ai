@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import hashlib
 from pathlib import Path
 import re
 from typing import Any, Literal, Mapping, cast
@@ -32,6 +33,9 @@ from npa.orchestration.skypilot.workflow_state import (
 
 
 _RUN_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,95}$")
+_CONTENT_BOUND_RUN_ROOT_RE = re.compile(
+    r"^(?P<run_id>[A-Za-z0-9][A-Za-z0-9._-]{0,95})-(?P<digest>[0-9a-f]{12,64})$"
+)
 ResolutionOutcome = Literal["found", "absent", "unavailable", "not_supplied", "skipped"]
 
 
@@ -80,6 +84,16 @@ class RunResolution:
         return [item.to_dict() for item in self.checks]
 
 
+@dataclass(frozen=True)
+class DownloadedArtifact:
+    """Content identity for one exact artifact materialized locally."""
+
+    artifact_uri: str
+    output_path: Path
+    bytes: int
+    sha256: str
+
+
 def validate_run_id(run_id: str) -> str:
     """Require a single safe path component for every exact lookup."""
 
@@ -112,7 +126,11 @@ def run_id_from_locator(run_id: str, workflow_s3_uri: str = "") -> str:
         # identify the supplied run. Accepting an earlier component lets the exact-
         # prefix fallback misreport an unrelated populated prefix as this run while
         # its manifest is still absent.
-        if supplied not in parts[-2:]:
+        trailing_root = parts[-1]
+        content_bound_root = _CONTENT_BOUND_RUN_ROOT_RE.fullmatch(trailing_root)
+        if supplied not in parts[-2:] and not (
+            content_bound_root and content_bound_root["run_id"] == supplied
+        ):
             raise WorkflowStateError(
                 f"run ID {supplied!r} is not in the trailing run/workflow layout "
                 "of --workflow-s3-uri"
@@ -155,21 +173,39 @@ def _state_from_uri(
     project: str,
     s3_endpoint: str,
 ) -> WorkflowS3Config:
+    """Build the exact storage state named by an operator URI."""
+
     _validate_s3_locator(uri)
     normalized = uri.rstrip("/")
     if normalized.endswith("/manifest.json"):
         normalized = normalized.removesuffix("/manifest.json")
-    _bucket, prefix = parse_s3_uri(normalized)
-    if PAIDF_WORKFLOW_NAME in prefix.split("/") and prefix.rstrip("/").endswith(
-        f"/{run_id}"
-    ):
-        normalized = f"{normalized}/npa-workflow"
     return resolve_workflow_s3_config(
         run_id=run_id,
         project=project or None,
         workflow_s3_uri=normalized,
         s3_endpoint=s3_endpoint,
     )
+
+
+def _explicit_uri_states(
+    uri: str,
+    *,
+    run_id: str,
+    project: str,
+    s3_endpoint: str,
+) -> tuple[WorkflowS3Config, ...]:
+    """Return the bounded exact candidates for one explicit workflow locator."""
+
+    state = _state_from_uri(
+        uri,
+        run_id=run_id,
+        project=project,
+        s3_endpoint=s3_endpoint,
+    )
+    if state.prefix.rstrip("/").rsplit("/", 1)[-1] != run_id:
+        return (state,)
+    nested = _child_state(state, f"{state.prefix.rstrip('/')}/npa-workflow")
+    return state, nested
 
 
 def _parent_state(
@@ -318,6 +354,31 @@ def _attach_runtime_state(result: RunResolution, state: WorkflowS3Config) -> Non
     if active:
         result.job_id = str(active.get("job_id") or result.job_id)
         result.job_name = str(active.get("job_name") or result.job_name)
+
+
+def _runtime_has_active_attempt(payload: Mapping[str, Any]) -> bool:
+    """Return whether a validated runtime ledger records one active exact wave.
+
+    A resumed workflow can preserve an earlier terminal attempt in the local
+    project ledger while a later retry is running under the same run ID.  Only
+    a current runtime ledger with a non-terminal wave and both pieces of its
+    managed-job identity may supersede that historical terminal summary.
+    """
+
+    if str(payload.get("status") or "").lower() != "running":
+        return False
+    for wave in payload.get("waves") or []:
+        if not isinstance(wave, Mapping):
+            continue
+        if str(wave.get("status") or "").lower() in {
+            "succeeded",
+            "failed",
+            "cancelled",
+        }:
+            continue
+        if str(wave.get("job_id") or "") and str(wave.get("job_name") or ""):
+            return True
+    return False
 
 
 def _receipt_workflow(receipt: Mapping[str, Any]) -> dict[str, Any]:
@@ -493,14 +554,38 @@ def resolve_run(
 
     if explicit_uri:
         try:
-            explicit_state = _state_from_uri(
+            explicit_states = _explicit_uri_states(
                 explicit_uri,
                 run_id=resolved_id,
                 project=project,
                 s3_endpoint=s3_endpoint,
             )
-            outcome, manifest, detail = _probe_manifest(explicit_state, resolved_id)
-            if outcome == "absent":
+            explicit_state = explicit_states[-1]
+            outcome: ResolutionOutcome = "absent"
+            manifest: dict[str, Any] | None = None
+            detail = ""
+            for index, candidate in enumerate(explicit_states):
+                explicit_state = candidate
+                outcome, manifest, detail = _probe_manifest(candidate, resolved_id)
+                if outcome == "absent":
+                    if index == 0 and len(explicit_states) > 1:
+                        continue
+                    prefix_outcome, prefix_detail = _probe_exact_prefix(
+                        candidate,
+                        run_id=resolved_id,
+                    )
+                    if prefix_outcome == "found":
+                        outcome, detail = "found", prefix_detail
+                        result.found = True
+                        result.source = "explicit_workflow_s3_uri"
+                        result.manifest_pending = True
+                        _attach_runtime_state(result, candidate)
+                    elif prefix_outcome == "unavailable":
+                        outcome, detail = "unavailable", prefix_detail
+                if outcome != "absent":
+                    break
+            if outcome == "absent" and len(explicit_states) > 1:
+                explicit_state = explicit_states[0]
                 prefix_outcome, prefix_detail = _probe_exact_prefix(
                     explicit_state,
                     run_id=resolved_id,
@@ -640,7 +725,18 @@ def resolve_run(
     terminal_evidence = terminal_run_evidence(
         project=ledger_project, run_id=resolved_id
     )
-    if terminal_evidence:
+    if terminal_evidence and _runtime_has_active_attempt(result.runtime_state):
+        # A locally recorded terminal result remains historical evidence, but
+        # cannot hide a newer active retry that the exact durable runtime ledger
+        # binds to a distinct managed-job identity.
+        result.checks.append(
+            ResolutionCheck(
+                "project_run_terminal_ledger",
+                "skipped",
+                "historical terminal state does not override an active durable runtime attempt",
+            )
+        )
+    elif terminal_evidence:
         result.found = True
         result.source = "project_run_terminal_ledger"
         result.durable_terminal_state = str(
@@ -942,3 +1038,60 @@ def list_resolved_artifacts(
             f"s3://{state.bucket}/{run_prefix}: {redact_text(str(exc))}"
         ) from exc
     return sorted(set(objects))
+
+
+def download_resolved_artifact(
+    resolution: RunResolution,
+    *,
+    artifact_uri: str,
+    output_path: Path,
+    overwrite: bool = False,
+) -> DownloadedArtifact:
+    """Download one exact, resolver-authorized workflow artifact.
+
+    The requested URI must be returned by :func:`list_resolved_artifacts` for
+    this exact run. This prevents a workflow readback command from becoming a
+    general bucket reader merely because its caller has S3 credentials.
+    """
+
+    require_resolved_run(resolution)
+    state = resolution.state
+    if state is None:
+        raise WorkflowStateError(
+            "run was found via managed-job evidence but its artifact location is unavailable"
+        )
+    selected = str(artifact_uri or "").strip()
+    if not selected:
+        raise WorkflowStateError("artifact URI is required")
+    if selected not in set(list_resolved_artifacts(resolution)):
+        raise WorkflowStateError(
+            "artifact URI is not an exact artifact of the resolved workflow run"
+        )
+    target = Path(output_path).expanduser().resolve()
+    if target.exists() and target.is_dir():
+        raise WorkflowStateError(
+            "artifact output path must name a file, not a directory"
+        )
+    if target.exists() and not overwrite:
+        raise WorkflowStateError(
+            "artifact output path already exists; choose a new path or authorize overwrite"
+        )
+
+    from npa.clients.storage import StorageClient
+
+    storage = StorageClient(
+        endpoint_url=state.endpoint_url,
+        aws_access_key_id=state.aws_access_key_id,
+        aws_secret_access_key=state.aws_secret_access_key,
+    )
+    storage.download_file(selected, str(target))
+    digest = hashlib.sha256()
+    with target.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return DownloadedArtifact(
+        artifact_uri=selected,
+        output_path=target,
+        bytes=target.stat().st_size,
+        sha256=digest.hexdigest(),
+    )

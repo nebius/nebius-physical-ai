@@ -17,6 +17,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+from botocore.exceptions import ClientError
 import pytest
 import yaml
 
@@ -37,6 +38,7 @@ from npa.orchestration.npa_workflow.runtime import (
     MAX_TERMINAL_PLAN_MIGRATIONS,
     SCHEDULER_OBSERVATION_SCHEMA,
     SCHEDULER_OBSERVATION_SOURCE,
+    STATUS_QUERY_TIMEOUT_SECONDS,
     RuntimeLedger,
     RuntimeOptions,
     SkyPilotWaveExecutor,
@@ -1167,7 +1169,12 @@ def test_default_skypilot_calls_preserve_explicit_runtime_isolation(
         "logical_launch_id": "",
         "project": "default",
     }
-    status.assert_called_once_with("1", **expected)
+    status.assert_called_once_with(
+        "1",
+        **expected,
+        timeout=STATUS_QUERY_TIMEOUT_SECONDS,
+        kill_process_group_on_timeout=True,
+    )
     timeline.assert_called_once_with("1", **expected)
     lookup.assert_called_once_with("isolated-job", **expected)
     reconcile.assert_called_once_with("isolated-job", job_id="1", **expected)
@@ -1253,6 +1260,37 @@ def test_prefix_marker_does_not_authorize_absent_output_recovery(
 
     assert executor._outputs_exist([output])
     assert executor._declared_outputs_absent([output]) == (False, "present")
+
+
+def test_runtime_output_without_trailing_slash_checks_exact_children(
+    monkeypatch,
+) -> None:
+    calls: list[dict[str, object]] = []
+
+    class FakeS3:
+        def head_object(self, **_kwargs: object) -> object:
+            raise ClientError({"Error": {"Code": "NoSuchKey"}}, "HeadObject")
+
+        def list_objects_v2(self, **kwargs: object) -> dict[str, object]:
+            calls.append(dict(kwargs))
+            return {
+                "Contents": [{"Key": "gate-loop/run/output/result.json", "Size": 17}],
+                "IsTruncated": False,
+            }
+
+    monkeypatch.setattr(
+        "npa.clients.storage.StorageClient.from_environment",
+        lambda **_kwargs: SimpleNamespace(s3=FakeS3()),
+    )
+
+    assert s3_artifact_exists("s3://example-bucket/gate-loop/run/output")
+    assert calls == [
+        {
+            "Bucket": "example-bucket",
+            "Prefix": "gate-loop/run/output/",
+            "MaxKeys": 1000,
+        }
+    ]
 
 
 def test_malformed_prefix_pagination_is_indeterminate_for_recovery(
@@ -3988,6 +4026,93 @@ def test_explicit_absent_resume_refuses_existing_declared_output(
     )
 
 
+@pytest.mark.parametrize("include_running_evidence", [True, False])
+def test_explicit_absent_resume_preserves_interrupted_partial_output_fragments(
+    tmp_path: Path, include_running_evidence: bool
+) -> None:
+    """Only a proven interruption may restart a wave with partial directories."""
+
+    from npa.orchestration.skypilot.workflow import ManagedJobEvidence
+
+    output_spec = FANOUT_SPEC.replace(
+        "    resources: cpu\n\n  shard-b:",
+        "    resources: cpu\n"
+        "    outputs:\n"
+        '      - uri: "s3://{{config.bucket}}/{{config.prefix}}/partial/"\n'
+        "        kind: directory\n"
+        '      - uri: "s3://{{config.bucket}}/{{config.prefix}}/commit.json"\n\n'
+        "  shard-b:",
+        1,
+    )
+    spec = load_spec(_write_spec(tmp_path, output_spec))
+    key = "001|shards|shards:shard-a:-,shards:shard-b:-"
+    record: dict[str, Any] = {
+        "key": key,
+        "status": "failed",
+        "job_id": "77",
+        "job_name": "rt-partial-interruption-01-shards",
+        "attempt": 1,
+        "sky_status": "SUBMITTED",
+        "logical_launch_id": "logical-partial-interruption",
+        "scheduler_fence_sequence": 1,
+        "launch_sequence": 1,
+        "error": "scheduler returned ABSENT after an interrupted worker",
+        "recovery_decision": "resume_block_terminal_or_legacy_absence",
+    }
+    if include_running_evidence:
+        record["observations"] = [
+            _typed_running_observation(
+                wave_key=key,
+                job_id="77",
+                job_name="rt-partial-interruption-01-shards",
+                logical_launch_id="logical-partial-interruption",
+            )
+        ]
+    store = MemoryStore()
+    state = RuntimeRunState(workflow=spec.name, run_id="rt-partial-interruption")
+    state.record_wave(record)
+    store.write_runtime_state(state)
+    options = RuntimeOptions(
+        poll_seconds=0,
+        max_wait_seconds=60,
+        resume=True,
+        retries=1,
+        retry_absent_in_flight=True,
+    )
+    submitter = FakeSubmitter()
+    executor = _executor(
+        spec,
+        run_id="rt-partial-interruption",
+        submitter=submitter,
+        options=options,
+        store=store,
+        output_checker=lambda uri: uri.endswith("/partial/") or bool(submitter.calls),
+        reconcile_fn=lambda *_args, **_kwargs: ManagedJobEvidence("absent"),
+    )
+
+    report = run_workflow_runtime(
+        spec, run_id="rt-partial-interruption", executor=executor, options=options
+    )
+
+    if not include_running_evidence:
+        assert report.status == "failed"
+        assert submitter.calls == []
+        assert (
+            store.read_runtime_state().waves[0]["recovery_decision"]
+            == "resume_block_output_present"
+        )
+        return
+
+    assert report.status == "succeeded"
+    assert submitter.calls[0]["job_name"].endswith("-a2")
+    prior = store.read_runtime_state().waves[0]
+    assert prior["recovery_decision"] == (
+        "operator_authorized_interrupted_absent_relaunch_with_incomplete_outputs"
+    )
+    assert prior["reconciliation"][-1]["declared_outputs_complete"] is False
+    assert prior["reconciliation"][-1]["incomplete_output_fragments_preserved"] is True
+
+
 def test_explicit_resume_adopts_controller_lost_running_wave_with_valid_outputs(
     tmp_path: Path,
 ) -> None:
@@ -4772,9 +4897,11 @@ def test_explicit_resume_rejects_untyped_running_task_evidence(
 
 
 @pytest.mark.parametrize("default_resumes", [0, 1, 2])
-def test_explicit_resume_relaunches_typed_pre_id_transport_failure(
+@pytest.mark.parametrize("error_category", ["kubernetes_transport", "schema"])
+def test_explicit_resume_relaunches_verified_pre_id_failure(
     tmp_path: Path,
     default_resumes: int,
+    error_category: str,
 ) -> None:
     from npa.orchestration.skypilot.workflow import ManagedJobEvidence
 
@@ -4814,7 +4941,8 @@ def test_explicit_resume_relaunches_typed_pre_id_transport_failure(
             "sky_status": "",
             "logical_launch_id": "logical-pre-id-transport",
             "launch_sequence": 1,
-            "error_category": "kubernetes_transport",
+            "error_category": error_category,
+            "error": "launch failed before a managed job ID",
             "recovery_decision": "block_indeterminate",
         }
     )

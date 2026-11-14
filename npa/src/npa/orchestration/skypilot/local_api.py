@@ -29,6 +29,7 @@ import yaml
 
 _ENDPOINT = "SKYPILOT_API_SERVER_ENDPOINT"
 _MARKER = "NPA_OWNED_SKYPILOT_API_ID"
+_CODE_IDENTITY = "NPA_SKYPILOT_API_CODE_IDENTITY"
 _METADATA_TOKEN_ROOT = Path("/mnt/cloud-metadata")
 _METADATA_CREDENTIAL_SOURCE = "instance_metadata"
 _NATIVE_METADATA_TOKEN_ENDPOINT = "http://metadata.nebius.internal/v1/iam/sa/token"
@@ -46,6 +47,38 @@ _RUNTIME_SETTINGS = {
 
 class IsolatedApiError(ValueError):
     """Secret-safe failure; no fallback to a shared daemon is permitted."""
+
+
+def _isolated_api_code_identity() -> str:
+    """Return a path-independent identity for the code loaded by this API.
+
+    The isolated server imports ``local_api_plugin`` through ``PYTHONPATH``.
+    A fresh checkout of the same revision necessarily has a different path, but
+    should be able to adopt the same task-owned server.  Bind the small import
+    closure by bytes instead of treating the checkout location as a principal.
+    """
+
+    source_root = Path(__file__).resolve().parents[3]
+    files = (
+        source_root / "npa" / "__init__.py",
+        source_root / "npa" / "orchestration" / "skypilot" / "__init__.py",
+        Path(__file__).resolve(),
+        Path(__file__).with_name("local_api_plugin.py").resolve(),
+    )
+    digest = hashlib.sha256()
+    for path in files:
+        try:
+            relative = path.relative_to(source_root)
+            contents = path.read_bytes()
+        except (OSError, ValueError) as exc:
+            raise IsolatedApiError(
+                "isolated SkyPilot API code identity could not be verified"
+            ) from exc
+        digest.update(str(relative).encode())
+        digest.update(b"\0")
+        digest.update(contents)
+        digest.update(b"\0")
+    return digest.hexdigest()
 
 
 def _require_linux_host() -> None:
@@ -1345,6 +1378,53 @@ def isolated_api_environment(
     return selected
 
 
+def owned_api_health_environment(
+    isolated_dir: Path, environment: Mapping[str, str]
+) -> dict[str, str]:
+    """Select a recorded server identity for a compatible health check.
+
+    A SkyPilot client may use an owner-only per-request config while a live
+    isolated API necessarily keeps its durable server config.  This helper is
+    deliberately narrow: it substitutes only the server-owned bindings when
+    the supplied endpoint/scope/plugin/marker values are absent or already
+    compatible with the recorded receipt.  A foreign binding is preserved so
+    :func:`ensure_isolated_api` rejects it fail-closed.
+    """
+
+    selected = dict(environment)
+    root = _isolated_api_root(isolated_dir)
+    record = _read(root)
+    server_config = root / "server-config.yaml"
+    server_plugins = root / "server-plugins.yaml"
+    if record is None or not server_config.is_file():
+        return selected
+    expected_scope = str(Path(isolated_dir).expanduser().resolve(strict=False))
+    endpoint = str(selected.get(_ENDPOINT) or "")
+    scope = str(selected.get("NPA_SKYPILOT_ISOLATED_API_DIR") or "")
+    plugins = str(selected.get("SKYPILOT_SERVER_PLUGINS_CONFIG") or "")
+    marker = str(selected.get(_MARKER) or "")
+    is_server = str(selected.get("IS_SKYPILOT_SERVER") or "")
+    if not (
+        (not endpoint or endpoint == _endpoint(record))
+        and (not scope or scope == expected_scope)
+        and (not plugins or plugins == str(server_plugins))
+        and (not marker or marker == str(record["marker"]))
+        and (not is_server or is_server == "true")
+    ):
+        return selected
+    selected.update(
+        {
+            _ENDPOINT: _endpoint(record),
+            "SKYPILOT_GLOBAL_CONFIG": str(server_config),
+            "SKYPILOT_SERVER_PLUGINS_CONFIG": str(server_plugins),
+            _MARKER: str(record["marker"]),
+            "IS_SKYPILOT_SERVER": "true",
+            "NPA_SKYPILOT_ISOLATED_API_DIR": expected_scope,
+        }
+    )
+    return selected
+
+
 def ensure_isolated_api(
     *,
     isolated_dir: Path,
@@ -1383,6 +1463,20 @@ def ensure_isolated_api(
             )
         config_bytes = config_source.read_bytes()
         parsed_config = _yaml_document(config_bytes)
+        if not isinstance(parsed_config, dict):
+            raise IsolatedApiError(
+                "isolated SkyPilot API requires a mapping-valued SkyPilot global configuration"
+            )
+        npa_only_fields = sorted(
+            {"default_project", "projects", "skypilot"}.intersection(parsed_config)
+        )
+        if npa_only_fields:
+            raise IsolatedApiError(
+                "isolated SkyPilot API requires a SkyPilot global configuration, "
+                "not an NPA settings file (found NPA-only top-level field(s): "
+                + ", ".join(npa_only_fields)
+                + ")"
+            )
         if parsed_config.get("db"):
             raise IsolatedApiError(
                 "isolated SkyPilot API cannot use a shared external database"
@@ -1400,6 +1494,7 @@ def ensure_isolated_api(
                 _MARKER: record["marker"],
                 "IS_SKYPILOT_SERVER": "true",
                 "SKYPILOT_GLOBAL_CONFIG": str(config_path),
+                _CODE_IDENTITY: _isolated_api_code_identity(),
             }
         )
         plugins_path = root / "server-plugins.yaml"
@@ -1441,7 +1536,7 @@ def ensure_isolated_api(
             "NPA_NEBIUS_IAM_TOKEN_FILE",
             "SKYPILOT_GLOBAL_CONFIG",
             "SKYPILOT_SERVER_PLUGINS_CONFIG",
-            "PYTHONPATH",
+            _CODE_IDENTITY,
             _ENDPOINT,
             _MARKER,
         )

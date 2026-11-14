@@ -194,6 +194,87 @@ def test_runtime_terminal_state_is_used_when_scheduler_observation_is_missing() 
     assert result["status"] == "FAILED"
 
 
+def test_terminal_wave_is_not_rewritten_by_reused_numeric_job_id() -> None:
+    manifest = RunManifest(
+        workflow="collection",
+        run_id="reconstructed-controller",
+        api_version="npa.workflow/v0.0.1",
+        status="running",
+        steps=[
+            {"state": "prepare", "status": "submitted"},
+            {"state": "train", "status": "submitted"},
+        ],
+    )
+    waves = [
+        _wave(1, "prepare", "1", status="succeeded"),
+        _wave(2, "train", "1", status="running"),
+    ]
+
+    result = build_actionable_run_status(
+        manifest,
+        runtime_waves=waves,
+        job_observations={"1": {"status": "RUNNING", "task_rows": []}},
+    )
+
+    assert result["stages"]["prepare"]["state"] == "SUCCEEDED"
+    assert result["stages"]["prepare"]["outcome_provenance"] == (
+        "durable_runtime_attempt"
+    )
+    assert result["stages"]["train"]["state"] == "RUNNING"
+    assert result["active_stage_name"] == "train"
+    assert result["status"] == "RUNNING"
+
+
+def test_exact_named_observations_do_not_mark_prior_wave_scheduler_running() -> None:
+    manifest = RunManifest(
+        workflow="collection",
+        run_id="reconstructed-controller",
+        api_version="npa.workflow/v0.0.1",
+        status="running",
+        steps=[
+            {"state": "prepare", "status": "submitted"},
+            {"state": "train", "status": "submitted"},
+        ],
+    )
+    waves = [
+        _wave(1, "prepare", "1", status="succeeded"),
+        _wave(2, "train", "1", status="running"),
+    ]
+
+    result = build_actionable_run_status(
+        manifest,
+        runtime_waves=waves,
+        job_observations={
+            ("1", "paidf-prepare-attempt-1"): {
+                "status": "",
+                "identity_absent": True,
+                "task_rows": [],
+                "job_name": "paidf-prepare-attempt-1",
+            },
+            ("1", "paidf-train-attempt-1"): {
+                "status": "RUNNING",
+                "task_rows": [
+                    {
+                        "task_id": 0,
+                        "task_name": "train",
+                        "status": "RUNNING",
+                    }
+                ],
+                "job_name": "paidf-train-attempt-1",
+            },
+        },
+    )
+
+    assert result["stages"]["prepare"]["state"] == "SUCCEEDED"
+    assert result["stages"]["prepare"]["raw_scheduler_state"] == ""
+    assert result["stages"]["train"]["state"] == "RUNNING"
+    assert result["scheduler_task_activity"] == {
+        "active_stage_keys": ["train"],
+        "unresolved_stage_keys": [],
+        "all_stage_tasks_terminal": False,
+    }
+
+
 def test_legacy_single_job_manifest_remains_compatible() -> None:
     attribution = reconstruct_stage_job_attribution(_manifest(root_job="8"))
 

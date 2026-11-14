@@ -136,6 +136,69 @@ def test_version_flag_reports_package_version() -> None:
     assert result.stdout.strip() == f"npa {version('npa')}"
 
 
+def test_destroy_retain_project_requires_explicit_safe_shape() -> None:
+    result = runner.invoke(app, ["destroy", "--retain-project", "--yes"])
+
+    assert result.exit_code != 0
+    assert "requires exact --project and --operation-id" in result.output
+
+    result = runner.invoke(
+        app,
+        [
+            "destroy",
+            "--retain-project",
+            "--project",
+            "task",
+            "--operation-id",
+            "project-teardown-task-0000000000000000",
+            "--yes",
+            "--all",
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert "cannot be combined" in result.output
+
+
+def test_destroy_retain_project_delegates_only_after_explicit_confirmation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    called: dict[str, str] = {}
+
+    def _retain(*, project: str, operation_id: str) -> dict[str, str]:
+        called.update(project=project, operation_id=operation_id)
+        return {
+            "status": "retained",
+            "operation_id": operation_id,
+            "project": project,
+            "project_id": "project-task",
+        }
+
+    monkeypatch.setattr(
+        "npa.project_destroy.retain_recovery_required_project_teardown", _retain
+    )
+    result = runner.invoke(
+        app,
+        [
+            "destroy",
+            "--retain-project",
+            "--project",
+            "task",
+            "--operation-id",
+            "project-teardown-task-0000000000000000",
+            "--yes",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert called == {
+        "project": "task",
+        "operation_id": "project-teardown-task-0000000000000000",
+    }
+    assert json.loads(result.output)["status"] == "retained"
+
+
 @pytest.mark.parametrize("command", ["configure", "init"])
 def test_setup_guidance_commands_show_credentials_path(command: str) -> None:
     result = runner.invoke(app, [command])
@@ -559,6 +622,53 @@ def test_configure_show_env_emits_shell_assignments(monkeypatch, tmp_path) -> No
     assert "Credential setup" not in result.output
 
 
+def test_configure_show_env_uses_project_scoped_storage_without_shared_credentials(
+    monkeypatch, tmp_path
+) -> None:
+    """A fresh shell gets non-secret routing from its selected project config."""
+    import yaml
+
+    from npa.clients import config as config_module
+    from npa.clients import credentials as credentials_module
+    from npa.cluster import state as state_module
+
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "default_project": "operator-project",
+                "projects": {
+                    "operator-project": {
+                        "project_id": "project-1",
+                        "tenant_id": "tenant-1",
+                        "region": "us-central1",
+                        "storage": {
+                            "bucket": "s3://operator-bucket/reference/",
+                            "endpoint_url": "https://storage.example.invalid",
+                        },
+                    }
+                },
+            }
+        )
+    )
+    monkeypatch.setattr(config_module, "CONFIG_PATH", config_path)
+    monkeypatch.setattr(credentials_module, "CREDENTIALS_PATH", tmp_path / "missing")
+    monkeypatch.setattr(state_module, "list_local_clusters", lambda: [])
+
+    result = runner.invoke(app, ["configure", "--show", "--env"])
+
+    assert result.exit_code == 0, result.output
+    values = dict(
+        line.split("=", 1) for line in result.output.strip().splitlines() if "=" in line
+    )
+    assert values["NPA_PROJECT_ALIAS"] == "operator-project"
+    assert values["NPA_BUCKET"] == "operator-bucket"
+    assert values["NPA_BUCKET_URI"] == "s3://operator-bucket/reference/"
+    assert values["NPA_S3_ENDPOINT"] == "https://storage.example.invalid"
+    assert "access_key" not in result.output.lower()
+    assert "secret" not in result.output.lower()
+
+
 def test_configure_show_env_is_eval_safe_in_clean_subprocess(tmp_path) -> None:
     """Machine stdout stays shell-only even when credential diagnostics exist."""
 
@@ -663,6 +773,18 @@ def test_configure_show_env_scopes_kube_context_to_configured_project(
             SimpleNamespace(name="someone-elses", project_id="project-OTHER"),
         ],
     )
+    kubeconfig = tmp_path / "kubeconfig"
+    kubeconfig.write_text(
+        yaml.safe_dump(
+            {
+                "apiVersion": "v1",
+                "kind": "Config",
+                "current-context": "my-cluster",
+                "contexts": [{"name": "my-cluster", "context": {"cluster": "target"}}],
+            }
+        )
+    )
+    monkeypatch.setattr(state_module, "existing_kubeconfig", lambda context: kubeconfig)
 
     result = runner.invoke(app, ["configure", "--show", "--env"])
 
@@ -671,7 +793,160 @@ def test_configure_show_env_scopes_kube_context_to_configured_project(
         line.split("=", 1) for line in result.output.strip().splitlines() if "=" in line
     )
     assert values["NPA_KUBE_CONTEXT"] == "my-cluster"
+    assert values["KUBECONFIG"] == str(kubeconfig)
     assert "someone-elses" not in result.output
+
+
+def test_configure_show_env_uses_most_recent_project_scoped_context(
+    monkeypatch, tmp_path
+) -> None:
+    """The normal fresh-shell export must not select contexts by directory name."""
+    import yaml
+
+    from npa.clients import config as config_module
+    from npa.clients import credentials as credentials_module
+    from npa.cluster import state as state_module
+
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "default_project": "mine",
+                "projects": {
+                    "mine": {"project_id": "project-1", "region": "us-central1"}
+                },
+            }
+        )
+    )
+    monkeypatch.setattr(config_module, "CONFIG_PATH", config_path)
+    monkeypatch.setattr(
+        credentials_module, "CREDENTIALS_PATH", tmp_path / "credentials.yaml"
+    )
+    monkeypatch.setattr(
+        state_module,
+        "list_local_clusters",
+        # The older state sorts last alphabetically, which used to make it win.
+        lambda: [
+            SimpleNamespace(
+                name="new-target",
+                project_id="project-1",
+                created_at="2026-11-11T08:00:00Z",
+                last_seen_at="2026-11-11T08:05:00Z",
+            ),
+            SimpleNamespace(
+                name="z-old-target",
+                project_id="project-1",
+                created_at="2026-11-10T08:00:00Z",
+                last_seen_at="2026-11-10T08:05:00Z",
+            ),
+        ],
+    )
+    kubeconfig = tmp_path / "kubeconfig"
+    kubeconfig.write_text(
+        yaml.safe_dump(
+            {
+                "apiVersion": "v1",
+                "kind": "Config",
+                "current-context": "new-target",
+                "contexts": [{"name": "new-target", "context": {"cluster": "target"}}],
+            }
+        )
+    )
+    monkeypatch.setattr(state_module, "existing_kubeconfig", lambda context: kubeconfig)
+
+    result = runner.invoke(app, ["configure", "--show", "--env"])
+
+    assert result.exit_code == 0, result.output
+    values = dict(
+        line.split("=", 1) for line in result.output.strip().splitlines() if "=" in line
+    )
+    assert values["NPA_KUBE_CONTEXT"] == "new-target"
+    assert values["KUBECONFIG"] == str(kubeconfig)
+
+
+def test_configure_show_env_omits_unvalidated_saved_kubeconfig(
+    monkeypatch, tmp_path
+) -> None:
+    """A convenience export must never select a different ambient context."""
+    import yaml
+
+    from npa.clients import config as config_module
+    from npa.cluster import state as state_module
+
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "default_project": "mine",
+                "projects": {"mine": {"project_id": "project-1"}},
+            }
+        )
+    )
+    kubeconfig = tmp_path / "kubeconfig"
+    kubeconfig.write_text(
+        yaml.safe_dump(
+            {
+                "apiVersion": "v1",
+                "kind": "Config",
+                "current-context": "other-cluster",
+                "contexts": [
+                    {"name": "other-cluster", "context": {"cluster": "other"}}
+                ],
+            }
+        )
+    )
+    monkeypatch.setattr(config_module, "CONFIG_PATH", config_path)
+    monkeypatch.setattr(
+        state_module,
+        "list_local_clusters",
+        lambda: [SimpleNamespace(name="my-cluster", project_id="project-1")],
+    )
+    monkeypatch.setattr(state_module, "existing_kubeconfig", lambda context: kubeconfig)
+
+    result = runner.invoke(app, ["configure", "--show", "--env"])
+
+    assert result.exit_code == 0, result.output
+    values = dict(
+        line.split("=", 1) for line in result.output.strip().splitlines() if "=" in line
+    )
+    assert values["NPA_KUBE_CONTEXT"] == "my-cluster"
+    assert "KUBECONFIG" not in values
+
+
+def test_configure_show_env_exports_executable_managed_nebius_binary(
+    monkeypatch, tmp_path
+) -> None:
+    """A fresh shell may select NPA's tested local CLI without exposing secrets."""
+    import yaml
+
+    from npa.clients import config as config_module
+
+    config_root = tmp_path / "npa"
+    config_root.mkdir()
+    config_path = config_root / "config.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "default_project": "mine",
+                "projects": {"mine": {"project_id": "project-1"}},
+            }
+        )
+    )
+    managed = config_root / "bin" / "nebius"
+    managed.parent.mkdir()
+    managed.write_text("#!/bin/sh\n")
+    managed.chmod(0o700)
+    monkeypatch.setattr(config_module, "CONFIG_PATH", config_path)
+    monkeypatch.setattr(config_module, "NPA_CONFIG_DIR", config_root)
+
+    result = runner.invoke(app, ["configure", "--show", "--env"])
+
+    assert result.exit_code == 0, result.output
+    values = dict(
+        line.split("=", 1) for line in result.output.strip().splitlines() if "=" in line
+    )
+    assert values["NPA_NEBIUS_BIN"] == str(managed)
+    assert "secret" not in result.output.lower()
 
 
 def test_configure_stores_hf_and_ngc_tokens_without_prompting(

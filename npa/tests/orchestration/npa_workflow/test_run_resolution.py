@@ -754,6 +754,55 @@ def test_ordinary_exact_workflow_contract_remains_supported(
     assert resolved.manifest == manifest
 
 
+@pytest.mark.parametrize("suffix", ["", "/manifest.json"])
+def test_explicit_flat_ordinary_uri_keeps_the_exact_legacy_layout(
+    resolver_env: ExactS3, suffix: str
+) -> None:
+    run_id = "ordinary-flat-explicit"
+    manifest = {
+        "schema_version": 1,
+        "run_id": run_id,
+        "workflow_name": "ordinary",
+        "sky_job_id": "14",
+        "stages": {"train": {"name": "train"}},
+    }
+    root = f"checkpoints/{run_id}"
+    resolver_env.put_json("alias-bucket", f"{root}/manifest.json", manifest)
+
+    resolved = resolve_run(
+        run_id,
+        project="paidf",
+        workflow_s3_uri=f"s3://alias-bucket/{root}{suffix}",
+    )
+
+    assert resolved.found is True
+    assert resolved.state is not None
+    assert resolved.state.uri == f"s3://alias-bucket/{root}"
+    assert resolved.manifest == manifest
+    assert resolver_env.queries == []
+
+
+def test_explicit_flat_uri_never_scans_a_neighboring_run(
+    resolver_env: ExactS3,
+) -> None:
+    run_id = "ordinary-flat-absent"
+    root = f"checkpoints/{run_id}"
+    resolver_env.objects[("alias-bucket", f"{root}-other/private.bin")] = b"secret"
+
+    resolved = resolve_run(
+        run_id,
+        project="paidf",
+        workflow_s3_uri=f"s3://alias-bucket/{root}",
+    )
+
+    assert resolved.found is False
+    assert resolved.conclusively_absent is True
+    assert [query[1] for query in resolver_env.queries] == [
+        f"{root}/npa-workflow/",
+        f"{root}/",
+    ]
+
+
 def test_explicit_nested_ordinary_workflow_uri_uses_manifest_run_id(
     resolver_env: ExactS3,
 ) -> None:
@@ -974,6 +1023,99 @@ def test_terminal_ledger_workflow_name_cannot_widen_ambiguous_exact_uri(
     assert resolver_env.queries[-1][1] == f"{exact_prefix}/artifacts/"
 
 
+def test_active_runtime_retry_supersedes_historical_terminal_ledger(
+    resolver_env: ExactS3, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run_id = "active-retry-after-terminal"
+    exact_prefix = f"runs/{run_id}/npa-workflow"
+    resolver_env.put_json(
+        "alias-bucket",
+        f"{exact_prefix}/runtime.json",
+        {
+            "schema_version": "npa.workflow.runtime.v1",
+            "run_id": run_id,
+            "workflow": "groot-n15-offline-rl",
+            "status": "running",
+            "waves": [
+                {
+                    "status": "failed",
+                    "job_id": "10",
+                    "job_name": "prepare-attempt-one",
+                },
+                {
+                    "status": "running",
+                    "job_id": "11",
+                    "job_name": "prepare-attempt-two",
+                },
+            ],
+        },
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.npa_workflow.first_run_state.terminal_run_evidence",
+        lambda **_kwargs: {
+            "last_known_state": "FAILED",
+            "workflow_identity": "groot-n15-offline-rl",
+        },
+    )
+
+    resolved = resolve_run(
+        run_id,
+        project="paidf",
+        workflow_s3_uri=f"s3://alias-bucket/{exact_prefix}",
+    )
+
+    assert resolved.source == "explicit_workflow_s3_uri"
+    assert resolved.durable_terminal_state == ""
+    assert resolved.job_id == "11"
+    assert resolved.job_name == "prepare-attempt-two"
+    terminal = next(
+        check
+        for check in resolved.checks
+        if check.source == "project_run_terminal_ledger"
+    )
+    assert terminal.outcome == "skipped"
+
+
+def test_explicit_run_root_uri_recovers_active_runtime_ledger(
+    resolver_env: ExactS3,
+) -> None:
+    """The documented run-root locator resolves its npa-workflow control child."""
+
+    run_id = "run-root-active-runtime"
+    root = f"runs/{run_id}"
+    resolver_env.put_json(
+        "alias-bucket",
+        f"{root}/npa-workflow/runtime.json",
+        {
+            "schema_version": "npa.workflow.runtime.v1",
+            "run_id": run_id,
+            "workflow": "groot-n15-offline-rl",
+            "status": "running",
+            "waves": [
+                {
+                    "status": "running",
+                    "job_id": "12",
+                    "job_name": "prepare-active",
+                }
+            ],
+        },
+    )
+
+    resolved = resolve_run(
+        run_id,
+        project="paidf",
+        workflow_s3_uri=f"s3://alias-bucket/{root}",
+    )
+
+    assert resolved.found is True
+    assert resolved.source == "explicit_workflow_s3_uri"
+    assert resolved.state is not None
+    assert resolved.state.uri == f"s3://alias-bucket/{root}/npa-workflow"
+    assert resolved.job_id == "12"
+    assert resolved.job_name == "prepare-active"
+    assert resolved.runtime_state["status"] == "running"
+
+
 def test_receipt_canonical_parent_must_match_requested_run_id(
     resolver_env: ExactS3,
 ) -> None:
@@ -1140,6 +1282,23 @@ def test_explicit_nested_uri_must_contain_supplied_run_id(
             ),
         )
     assert resolver_env.queries == []
+
+
+def test_explicit_content_bound_run_root_requires_matching_manifest(
+    resolver_env: ExactS3,
+) -> None:
+    run_id = "wanted-run"
+    root = f"archive/{run_id}-0123456789ab/npa-workflow"
+    resolver_env.put_json("alias-bucket", f"{root}/manifest.json", _manifest(run_id))
+
+    resolved = resolve_run(
+        run_id,
+        project="paidf",
+        workflow_s3_uri=f"s3://alias-bucket/{root}",
+    )
+
+    assert resolved.found is True
+    assert resolved.manifest_uri == f"s3://alias-bucket/{root}/manifest.json"
 
 
 def test_explicit_uri_rejects_misleading_earlier_run_component_before_prefix_probe(

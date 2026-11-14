@@ -331,13 +331,46 @@ def kubernetes_sky_environment(
             os.fsync(handle.fileno())
     env["SKYPILOT_GLOBAL_CONFIG"] = str(config_path)
     base_environment = dict(env)
+    # The run controller can legitimately be selected in the parent process,
+    # but this read-only validation scope owns a separate local API.  Do not
+    # hand a *verified parent* endpoint or server-only binding to
+    # ``sky_environment``: ``isolated_api_environment`` correctly rejects an
+    # endpoint or plugin file belonging to another scope before it can create
+    # this scope's receipt. An unverified explicit binding must remain intact
+    # so the normal fail-closed ownership check rejects it rather than hiding
+    # it.
+    parent_api_root = (
+        local_api._isolated_api_root(isolated_root) if isolated_root else None
+    )
+    parent_record = local_api._read(parent_api_root) if parent_api_root else None
+    parent_endpoint = str(base_environment.get("SKYPILOT_API_SERVER_ENDPOINT") or "")
+    parent_marker = str(base_environment.get("NPA_SKYPILOT_ISOLATED_API_DIR") or "")
+    parent_plugins = str(base_environment.get("SKYPILOT_SERVER_PLUGINS_CONFIG") or "")
+    parent_api_id = str(base_environment.get("NPA_OWNED_SKYPILOT_API_ID") or "")
+    parent_is_server = str(base_environment.get("IS_SKYPILOT_SERVER") or "")
+    if (
+        parent_record is not None
+        and parent_endpoint == local_api._endpoint(parent_record)
+        and parent_marker == str(isolated_root.resolve())
+        and parent_plugins == str(parent_api_root / "server-plugins.yaml")
+        and parent_api_id == str(parent_record["marker"])
+        and parent_is_server == "true"
+    ):
+        for key in (
+            "SKYPILOT_API_SERVER_ENDPOINT",
+            "SKYPILOT_SERVER_PLUGINS_CONFIG",
+            "NPA_OWNED_SKYPILOT_API_ID",
+            "IS_SKYPILOT_SERVER",
+            "NPA_SKYPILOT_ISOLATED_API_DIR",
+        ):
+            base_environment.pop(key, None)
 
     def start_validation_api() -> dict[str, str]:
         validation_env = sky_environment(scope, environment=base_environment)
         ensure_isolated_api(
             isolated_dir=scope,
             sky_executable=sky_executable,
-            environment=validation_env,
+            environment=local_api.owned_api_health_environment(scope, validation_env),
             cwd=str(scope),
         )
         return validation_env

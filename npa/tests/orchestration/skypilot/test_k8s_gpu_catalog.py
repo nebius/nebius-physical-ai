@@ -1969,20 +1969,48 @@ def test_validation_environment_drops_parent_api_endpoint(
     isolated_root = tmp_path / "isolated"
     monkeypatch.setenv("NPA_SKYPILOT_ISOLATED_CONFIG_DIR", str(isolated_root))
     monkeypatch.setenv("SKYPILOT_GLOBAL_CONFIG", str(parent_config))
+    monkeypatch.setenv("SKYPILOT_API_SERVER_ENDPOINT", "http://127.0.0.1:36471")
 
     from npa.orchestration.skypilot import cleanup, local_api
 
+    parent_api_root = isolated_root / "local-api"
+    parent_api_root.mkdir(parents=True)
+    local_api._write(
+        parent_api_root / "daemon.json",
+        {
+            "schema_version": 1,
+            "root": str(parent_api_root.absolute()),
+            "port": 36471,
+            "metrics_port": 36472,
+            "queue_port": 36473,
+            "marker": "parent-fixture",
+            "state": "intent",
+        },
+    )
+    monkeypatch.setenv("NPA_SKYPILOT_ISOLATED_API_DIR", str(isolated_root))
+    monkeypatch.setenv(
+        "SKYPILOT_SERVER_PLUGINS_CONFIG", str(parent_api_root / "server-plugins.yaml")
+    )
+    monkeypatch.setenv("NPA_OWNED_SKYPILOT_API_ID", "parent-fixture")
+    monkeypatch.setenv("IS_SKYPILOT_SERVER", "true")
+
     client_configs: list[dict] = []
+    supplied_environments: list[dict[str, str]] = []
 
     def fake_sky_environment(
-        _scope: Path, *, environment: dict[str, str]
+        scope: Path, *, environment: dict[str, str]
     ) -> dict[str, str]:
+        supplied_environments.append(dict(environment))
         client_configs.append(
             yaml.safe_load(
                 Path(environment["SKYPILOT_GLOBAL_CONFIG"]).read_text(encoding="utf-8")
             )
         )
-        return dict(environment)
+        return {
+            **environment,
+            "SKYPILOT_API_SERVER_ENDPOINT": "http://127.0.0.1:36472",
+            "NPA_SKYPILOT_ISOLATED_API_DIR": str(scope / "local-api"),
+        }
 
     monkeypatch.setattr(cleanup, "sky_environment", fake_sky_environment)
     monkeypatch.setattr(local_api, "ensure_isolated_api", lambda **_kwargs: None)
@@ -1994,9 +2022,81 @@ def test_validation_environment_drops_parent_api_endpoint(
     )
 
     assert len(client_configs) == 1
+    for key in (
+        "SKYPILOT_API_SERVER_ENDPOINT",
+        "SKYPILOT_SERVER_PLUGINS_CONFIG",
+        "NPA_OWNED_SKYPILOT_API_ID",
+        "IS_SKYPILOT_SERVER",
+        "NPA_SKYPILOT_ISOLATED_API_DIR",
+    ):
+        assert key not in supplied_environments[0]
     assert "api_server" not in client_configs[0]
     assert client_configs[0]["allowed_clouds"] == ["kubernetes"]
     assert client_configs[0]["kubernetes"]["allowed_contexts"] == ["exact-context"]
+
+
+def test_validation_environment_reuses_its_recorded_server_config(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Repeated discovery keeps a live validation API's server identity."""
+
+    kubeconfig = tmp_path / "kubeconfig"
+    kubeconfig.write_text("apiVersion: v1\n", encoding="utf-8")
+    isolated_root = tmp_path / "isolated"
+    context = "exact-context"
+    scope = (
+        isolated_root
+        / "cluster-validation"
+        / hashlib.sha256(f"{kubeconfig.resolve()}\0{context}".encode()).hexdigest()[:24]
+    )
+    api_root = scope / "local-api"
+    api_root.mkdir(parents=True)
+    (api_root / "server-config.yaml").write_text("{}\n", encoding="utf-8")
+    from npa.orchestration.skypilot import cleanup, local_api
+
+    local_api._write(
+        api_root / "daemon.json",
+        {
+            "schema_version": 1,
+            "root": str(api_root.absolute()),
+            "port": 36471,
+            "metrics_port": 36472,
+            "queue_port": 36473,
+            "marker": "validation-fixture",
+            "state": "ready",
+        },
+    )
+    monkeypatch.setenv("NPA_SKYPILOT_ISOLATED_CONFIG_DIR", str(isolated_root))
+    captured: dict[str, object] = {}
+
+    def fake_sky_environment(
+        selected_scope: Path, *, environment: dict[str, str]
+    ) -> dict[str, str]:
+        return {
+            **environment,
+            "SKYPILOT_API_SERVER_ENDPOINT": "http://127.0.0.1:36471",
+            "NPA_SKYPILOT_ISOLATED_API_DIR": str(selected_scope),
+        }
+
+    monkeypatch.setattr(cleanup, "sky_environment", fake_sky_environment)
+    monkeypatch.setattr(
+        local_api,
+        "ensure_isolated_api",
+        lambda **kwargs: captured.update(kwargs),
+    )
+
+    gpu_catalog.kubernetes_sky_environment(
+        context=context,
+        kubeconfig=kubeconfig,
+        sky_executable="/opt/sky/bin/sky",
+    )
+
+    assert captured["environment"]["SKYPILOT_GLOBAL_CONFIG"] == str(
+        api_root / "server-config.yaml"
+    )
+    assert captured["environment"]["SKYPILOT_SERVER_PLUGINS_CONFIG"] == str(
+        api_root / "server-plugins.yaml"
+    )
 
 
 def test_readiness_retries_quarantined_snapshot_before_healthy_inventory(monkeypatch):

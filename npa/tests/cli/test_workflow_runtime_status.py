@@ -99,6 +99,167 @@ def test_empty_manifest_queries_each_observed_job(observed_status):
     assert resolution.manifest["steps"] == []
 
 
+def test_status_keeps_same_numeric_id_observations_bound_to_wave_name(
+    observed_status,
+):
+    resolution, jobs = observed_status
+    resolution.job_id = "1"
+    resolution.runtime_state["waves"] = [
+        {**_wave("prepare", "1", "succeeded"), "job_name": "prepare-wave"},
+        {**_wave("train", "1", "running"), "job_name": "train-wave"},
+    ]
+
+    def exact_name_status(_job_id, **kwargs):
+        return SimpleNamespace(
+            status={
+                "prepare-wave": "SUCCEEDED",
+                "train-wave": "RUNNING",
+            }[kwargs["expected_job_name"]],
+            error="",
+        )
+
+    jobs.side_effect = exact_name_status
+
+    payload = _durable_workflow_status("run-test")
+
+    assert [call.kwargs["expected_job_name"] for call in jobs.call_args_list] == [
+        "prepare-wave",
+        "train-wave",
+    ]
+    assert payload["stages"]["prepare"]["scheduler_state"] == "SUCCEEDED"
+    assert payload["stages"]["train"]["scheduler_state"] == "RUNNING"
+    assert payload["status"] == "RUNNING"
+
+
+def test_status_binds_exact_live_queries_to_explicit_skypilot_config(
+    observed_status,
+):
+    """The isolated state root alone cannot prove a Kubernetes fallback route."""
+
+    resolution, jobs = observed_status
+    resolution.job_id = "12"
+    resolution.runtime_state["waves"] = [_wave("train", "12", "running")]
+    config_path = Path("/private/task/skypilot.yaml")
+
+    payload = _durable_workflow_status("run-test", config_path=config_path)
+
+    assert payload["status"] == "RUNNING"
+    assert all(
+        call.kwargs["config_path"] == config_path for call in jobs.call_args_list
+    )
+
+
+def test_receipt_free_observation_route_uses_configured_task_local_state(
+    mocker, monkeypatch, tmp_path
+):
+    """A fresh documented shell never falls back to a shared API daemon."""
+    from npa.clients import config as config_module
+    from npa.cli.workbench.workflow import _new_runtime_observation_route
+    from npa.orchestration.skypilot._bin import SkyPilotConfig
+
+    monkeypatch.setattr(config_module, "NPA_CONFIG_DIR", tmp_path / "npa")
+    monkeypatch.setenv("NPA_KUBE_CONTEXT", "operator-cluster")
+    sky = tmp_path / "sky"
+    mocker.patch(
+        "npa.orchestration.npa_workflow.submission_state.inspect_submission_state",
+        return_value=SimpleNamespace(outcome="absent"),
+    )
+    mocker.patch(
+        "npa.orchestration.skypilot._bin.resolve_config",
+        return_value=SkyPilotConfig(sky_bin=sky),
+    )
+
+    selected_sky, selected_root = _new_runtime_observation_route(
+        run_id="new-run", project="operator-project"
+    )
+
+    assert selected_sky == str(sky)
+    assert selected_root == tmp_path / "npa" / "workflow-runtime" / selected_root.name
+    assert "operator-project" not in str(selected_root)
+    assert "operator-cluster" not in str(selected_root)
+
+
+def test_receipt_free_observation_route_defers_to_existing_receipt(mocker):
+    """A receipt, not fresh-shell configuration, owns an existing route."""
+    from npa.cli.workbench.workflow import _new_runtime_observation_route
+
+    mocker.patch(
+        "npa.orchestration.npa_workflow.submission_state.inspect_submission_state",
+        return_value=SimpleNamespace(outcome="found"),
+    )
+    configured = mocker.patch("npa.orchestration.skypilot._bin.resolve_config")
+
+    assert _new_runtime_observation_route(
+        run_id="existing-run", project="operator-project"
+    ) == ("", None)
+    configured.assert_not_called()
+
+
+def test_status_uses_derived_route_without_echoing_private_path(mocker, tmp_path):
+    """The documented retry remains portable even when routing is automatic."""
+    from npa.cli.workbench import workflow as workflow_module
+
+    selected_root = tmp_path / "private" / "workflow-runtime" / "digest"
+    mocker.patch.object(
+        workflow_module,
+        "_new_runtime_observation_route",
+        return_value=("/opt/npa/sky", selected_root),
+    )
+    resolver = mocker.patch(
+        "npa.orchestration.npa_workflow.run_resolution.resolve_run",
+        return_value=RunResolution(
+            run_id="new-run", project="operator-project", conclusively_absent=True
+        ),
+    )
+
+    payload = _durable_workflow_status("new-run", project="operator-project")
+
+    assert resolver.call_args.kwargs["sky_bin"] == "/opt/npa/sky"
+    assert resolver.call_args.kwargs["isolated_config_dir"] == selected_root
+    assert str(selected_root) not in json.dumps(payload)
+
+
+def test_status_cli_forwards_explicit_skypilot_config(observed_status, mocker):
+    resolution, jobs = observed_status
+    resolution.job_id = "12"
+    resolution.runtime_state["waves"] = [_wave("train", "12", "running")]
+
+    result = _status_cli(
+        mocker, "--config-path", "/private/task/skypilot.yaml", "--json"
+    )
+
+    assert result.exit_code == 0, result.output
+    assert all(
+        call.kwargs["config_path"] == Path("/private/task/skypilot.yaml")
+        for call in jobs.call_args_list
+    )
+
+
+def test_terminal_wave_accepts_verified_absence_of_its_exact_named_job(
+    observed_status,
+):
+    """A terminal runtime wave is not made nonterminal by an evicted controller."""
+
+    resolution, jobs = observed_status
+    resolution.job_id = "1"
+    resolution.runtime_state["waves"] = [
+        {
+            **_wave("train", "1", "failed"),
+            "job_name": "train-attempt-two",
+            # The old scheduler snapshot may remain SUBMITTED after the driver
+            # receives an exact absent reconciliation.
+            "sky_status": "SUBMITTED",
+        }
+    ]
+    jobs.return_value = SimpleNamespace(status="ABSENT", error="")
+
+    payload = _durable_workflow_status("run-test")
+
+    assert payload["status"] == "FAILED"
+    assert payload["verification_status"] == "VERIFIED"
+    assert payload["live_verified"] is True
+
+
 @pytest.mark.parametrize("current_status", ["running", "starting", "failed"])
 @pytest.mark.parametrize("prior_status", ["cancelled", "failed"])
 def test_rebatched_resume_reports_current_job_not_old_cancelled_batch(

@@ -612,6 +612,19 @@ def test_external_database_rejected_before_process_creation(local_runtime):
     assert not _record(local_runtime).get("pid")
 
 
+def test_npa_settings_file_is_rejected_before_process_creation(local_runtime):
+    config = Path(local_runtime["environment"]["SKYPILOT_GLOBAL_CONFIG"])
+    config.write_text("default_project: fixture-project\nprojects: {}\nskypilot: {}\n")
+
+    with pytest.raises(api.IsolatedApiError, match="not an NPA settings file"):
+        api.ensure_isolated_api(**local_runtime)
+
+    record = _record(local_runtime)
+    assert record["state"] == "intent"
+    assert not record.get("interpreter")
+    assert not (local_runtime["isolated_dir"] / "local-api" / "server.log").exists()
+
+
 def test_tampered_pid_is_not_signaled(local_runtime):
     api.ensure_isolated_api(**local_runtime)
     original = _record(local_runtime)
@@ -733,6 +746,35 @@ def test_run_scoped_storage_does_not_change_control_plane_identity(local_runtime
     assert current["environment_binding"] == original["environment_binding"]
     assert current["runtime_settings"]["storage_bucket"] == "second-task-bucket"
     assert current["runtime_settings"]["storage_prefix"] == "second/task-prefix"
+
+
+def test_checkout_path_does_not_change_api_identity(local_runtime, tmp_path):
+    api.ensure_isolated_api(**local_runtime)
+    original = _record(local_runtime)
+    local_runtime["environment"]["PYTHONPATH"] = str(tmp_path / "fresh-checkout")
+
+    assert api.ensure_isolated_api(**local_runtime)["healthy"]
+
+    current = _record(local_runtime)
+    assert current["pid"] == original["pid"]
+    assert "PYTHONPATH" not in current["environment_binding"]
+    assert (
+        current["environment_binding"][api._CODE_IDENTITY]
+        == hashlib.sha256(api._isolated_api_code_identity().encode()).hexdigest()
+    )
+
+
+def test_changed_api_code_identity_refuses_adoption(local_runtime, monkeypatch):
+    monkeypatch.setattr(api, "_isolated_api_code_identity", lambda: "first-code")
+    api.ensure_isolated_api(**local_runtime)
+    original = _record(local_runtime)
+    monkeypatch.setattr(api, "_isolated_api_code_identity", lambda: "second-code")
+
+    with pytest.raises(api.IsolatedApiError, match="different executing identity"):
+        api.ensure_isolated_api(**local_runtime)
+
+    assert _record(local_runtime) == original
+    assert api._process(original)["pid"] == original["pid"]
 
 
 def test_surviving_queue_child_blocks_duplicate_server_then_owned_cleanup(

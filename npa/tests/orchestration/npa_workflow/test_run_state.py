@@ -492,6 +492,41 @@ def test_run_state_store_output_check_uses_explicit_storage_credentials(
     }
 
 
+def test_run_state_store_directory_without_trailing_slash_checks_exact_children(
+    monkeypatch,
+) -> None:
+    calls: list[dict[str, object]] = []
+
+    class FakeS3:
+        def head_object(self, **_kwargs: object) -> object:
+            raise ClientError({"Error": {"Code": "NoSuchKey"}}, "HeadObject")
+
+        def list_objects_v2(self, **kwargs: object) -> dict[str, object]:
+            calls.append(dict(kwargs))
+            return {
+                "Contents": [{"Key": "runs/demo/output/result.json", "Size": 17}],
+                "IsTruncated": False,
+            }
+
+    class FakeStorage:
+        _s3 = FakeS3()
+
+    monkeypatch.setattr(
+        "npa.clients.storage.StorageClient.from_environment",
+        lambda **_kwargs: FakeStorage(),
+    )
+    state_store = RunStateStore(bucket="project-bucket", prefix="runs/demo")
+
+    assert state_store.artifact_exists("s3://project-bucket/runs/demo/output")
+    assert calls == [
+        {
+            "Bucket": "project-bucket",
+            "Prefix": "runs/demo/output/",
+            "MaxKeys": 1000,
+        }
+    ]
+
+
 def test_run_state_store_prefix_output_looks_past_zero_byte_marker(
     monkeypatch,
 ) -> None:
