@@ -136,6 +136,9 @@ def _recipe_documents():
             "first_chunk_conditional_frames": 0,
             "text_guardrail_passed": True,
             "video_guardrail_passed": True,
+            "edge_threshold": "medium",
+            "normalize_cfg": False,
+            "output_fps": 24.0,
         }
     return documents
 
@@ -177,6 +180,10 @@ def test_recipe_audit_rejects_changed_or_duplicate_profiles(starter_audit):
         ("first_chunk_conditional_frames", 1),
         ("text_guardrail_passed", False),
         ("video_guardrail_passed", False),
+        ("edge_threshold", "low"),
+        ("normalize_cfg", True),
+        ("output_fps", 30.0),
+        ("rgb_conditioning", {"weight": 0.5}),
     ],
 )
 def test_recipe_audit_rejects_anchor_or_guardrail_receipt(starter_audit, field, value):
