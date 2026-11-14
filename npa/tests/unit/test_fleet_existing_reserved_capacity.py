@@ -9,6 +9,7 @@ from unittest.mock import Mock
 import pytest
 
 from npa.cluster_backends import mk8s_execution as E
+from npa.cluster_backends.mk8s_model import as_mk8s_desired
 from npa.cluster_backends.mk8s_render import render_tfvars
 from npa.fleet.spec import ClusterSpec, NodePoolSpec, ProjectSpec
 
@@ -26,6 +27,15 @@ def existing(tmp_path, monkeypatch):
             capacity_block_group="capacityblockgroup-test",
         ),
     )
+    desired = as_mk8s_desired(cluster)
+    assert desired.gpu_nodes is not None
+    desired = replace(
+        desired,
+        gpu_nodes=replace(
+            desired.gpu_nodes,
+            compute_reservation_id="capacityblockgroup-test",
+        ),
+    )
     project = ProjectSpec(
         name="public-alias", project_id="project-test", clusters=[cluster]
     )
@@ -35,7 +45,7 @@ def existing(tmp_path, monkeypatch):
     (workdir / "terraform.tfvars").write_text(
         "\n".join(
             line
-            for line in render_tfvars(cluster).splitlines()
+            for line in render_tfvars(desired).splitlines()
             if not line.startswith("gpu_operator_rtx_driver_profile")
         )
     )
@@ -49,9 +59,9 @@ def existing(tmp_path, monkeypatch):
     }
     groups = []
     for pool, count in [
-        (cluster.cpu_nodes, 3),
-        (cluster.gpu_nodes, 1),
-        (cluster.gpu_nodes, 1),
+        (desired.cpu_nodes, 3),
+        (desired.gpu_nodes, 1),
+        (desired.gpu_nodes, 1),
     ]:
         template = {
             "resources": {"platform": pool.platform, "preset": pool.preset},
@@ -60,7 +70,7 @@ def existing(tmp_path, monkeypatch):
         if pool.capacity_block_group:
             template["reservation_policy"] = {
                 "policy": "STRICT",
-                "reservation_ids": [pool.capacity_block_group],
+                "reservation_ids": [pool.compute_reservation_id],
             }
         groups.append(
             {
@@ -101,7 +111,7 @@ def existing(tmp_path, monkeypatch):
     )
     kwargs = dict(
         project=project,
-        cluster=cluster,
+        cluster=desired,
         prefix="example-",
         tenant_id="tenant-test",
         region="uk-south2",
@@ -125,6 +135,122 @@ def test_v1_preemptible_marker_cannot_satisfy_strict_reserved_pool(existing):
     kwargs, _, groups, *_ = existing
     groups[-1]["spec"]["template"]["preemptible"] = {}
     assert not E._is_verified_unchanged_target(**kwargs)
+
+
+def test_retained_tfvars_requires_the_verified_capacity_block_selector() -> None:
+    raw = "\n".join(
+        [
+            'cluster_name = "render"',
+            'gpu_nodes_reservation_policy = { policy = "STRICT", reservation_ids = ["capacityblockgroup-test"] }',
+        ]
+    )
+    assert E.retained_target_tfvars_match(
+        raw,
+        raw,
+        strict_capacity_block_group="capacityblockgroup-test",
+    )
+    wrong = raw.replace("capacityblockgroup-test", "unsupported-id")
+    assert not E.retained_target_tfvars_match(
+        wrong,
+        wrong,
+        strict_capacity_block_group="capacityblockgroup-other",
+    )
+    assert not E.retained_target_tfvars_match(
+        raw.replace('policy = "STRICT"', 'policy = "AUTO"'),
+        raw,
+        strict_capacity_block_group="capacityblockgroup-test",
+    )
+    assert not E.retained_target_tfvars_match(
+        raw,
+        raw + '\ngpu_nodes_preset = "different"',
+        strict_capacity_block_group="capacityblockgroup-test",
+    )
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        "",
+        "ambiguous",
+        "malformed-provider",
+        "wrong-project",
+        "wrong-name",
+        "wrong-topology",
+        "nonterminal",
+        "incomplete-inventory",
+    ],
+)
+@pytest.mark.parametrize(
+    "instances", [[{}], []], ids=["missing-attributes", "empty-list"]
+)
+def test_unmaterialized_recovery_derives_only_one_verified_terminal_identity(
+    existing, monkeypatch, failure, instances
+):
+    kwargs, saved, groups, provider_cluster, workdir = existing
+    saved.pop("cluster_id")
+    saved["status"] = "provisioning"
+    state_path = workdir / "terraform.tfstate"
+    state_path.write_text(
+        json.dumps(
+            {
+                "resources": [
+                    {
+                        "mode": "managed",
+                        "type": "nebius_mk8s_v1_cluster",
+                        "instances": instances,
+                    }
+                ]
+            }
+        )
+    )
+    state_before = state_path.read_bytes()
+    listed = deepcopy(provider_cluster)
+    if failure == "wrong-project":
+        listed["metadata"]["parent_id"] = "project-other"
+    elif failure == "wrong-name":
+        listed["metadata"]["name"] = "other"
+    elif failure == "nonterminal":
+        listed["status"]["state"] = "PROVISIONING"
+    elif failure == "wrong-topology":
+        groups[0]["spec"]["fixed_node_count"] = 4
+    listed_items = [listed]
+    if failure == "ambiguous":
+        duplicate = deepcopy(provider_cluster)
+        duplicate["metadata"]["id"] = "cluster-other"
+        listed_items.append(duplicate)
+    elif failure == "malformed-provider":
+        listed_items.append({"metadata": [], "status": []})
+    commands = []
+
+    def capture(command, **_kwargs):
+        commands.append(command)
+        if "node-group" in command:
+            payload = {"items": groups}
+        elif "list" in command:
+            payload = {
+                "items": listed_items,
+                **(
+                    {"next_page_token": "more"}
+                    if failure == "incomplete-inventory"
+                    else {}
+                ),
+            }
+        else:
+            payload = provider_cluster
+        return CompletedProcess(command, 0, json.dumps(payload), "")
+
+    monkeypatch.setattr(E, "_run_capture", capture)
+
+    resolved = E._resolve_verified_unchanged_target(**kwargs)
+
+    assert resolved == ("cluster-test" if not failure else "")
+    assert state_path.read_bytes() == state_before
+    assert commands
+    assert any("cluster" in command and "list" in command for command in commands)
+    assert not any(
+        command[0] == "terraform" or "apply" in command or "destroy" in command
+        for command in commands
+    )
 
 
 @pytest.mark.parametrize(

@@ -1368,7 +1368,9 @@ def test_up_runs_terraform_writes_kubeconfig_and_validates(
                             "current_limit": "48",
                             "usage": "12",
                             "resource_affinity": {
-                                "compute_v1": {"platform": "gpu-rtx6000"}
+                                "compute_v1": {
+                                    "platform": "gpu-rtx6000",
+                                }
                             },
                         },
                     }

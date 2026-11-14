@@ -671,6 +671,51 @@ def test_isaac_prepare_converts_urdf_and_publishes_digest_manifest(
     assert published_manifest["embodiment_digest"] == spec["embodiment_digest"]
 
 
+def test_isaac_prepare_preserves_asset_only_missing_observation_dimension(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source_bytes = b'#usda 1.0\ndef Xform "robot" {}\n'
+    source_sha = hashlib.sha256(source_bytes).hexdigest()
+    source_tree_sha = hashlib.sha256(
+        b"robot.usd\0" + source_sha.encode() + b"\0"
+    ).hexdigest()
+    spec = {
+        "asset_root_uri": "s3://private-run/source/",
+        "source_relative_path": "robot.usd",
+        "source_tree_sha256": source_tree_sha,
+        "source_sha256": source_sha,
+        "source_format": "usd",
+        "embodiment_digest": "c" * 64,
+        "resolved_usd_uri": "s3://private-run/resolved/robot.usd",
+        "resolved_manifest_uri": "s3://private-run/resolved/manifest.json",
+        "expected_action_dim": 2,
+        "expected_observation_dim": None,
+    }
+    uploads: dict[str, bytes] = {}
+
+    def fake_download_tree(uri: str, destination: Path) -> None:
+        assert uri == spec["asset_root_uri"]
+        destination.mkdir(parents=True)
+        (destination / "robot.usd").write_bytes(source_bytes)
+
+    def fake_upload(path: Path, uri: str) -> None:
+        uploads[uri] = path.read_bytes()
+
+    monkeypatch.setattr(isaac_robot_asset, "_spec", lambda: spec)
+    monkeypatch.setattr(isaac_robot_asset, "_download_tree", fake_download_tree)
+    monkeypatch.setattr(isaac_robot_asset, "_upload", fake_upload)
+    monkeypatch.setattr(isaac_robot_asset, "_validate_usd", lambda path, value: None)
+    monkeypatch.setenv("NPA_ROBOT_WORK_DIR", str(tmp_path / "runtime"))
+
+    manifest = isaac_robot_asset.prepare_with_running_app()
+
+    assert manifest["expected_observation_dim"] is None
+    assert (
+        json.loads(uploads[spec["resolved_manifest_uri"]])["expected_observation_dim"]
+        is None
+    )
+
+
 def test_isaac_download_tree_rejects_traversal_keys(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

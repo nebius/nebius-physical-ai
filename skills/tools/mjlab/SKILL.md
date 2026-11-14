@@ -6,6 +6,11 @@ description: Train, resume, evaluate, export, deploy or compose native MJLab pol
 # MJLab
 
 Read `docs/workbench/mjlab.md` for the supported MJLab 1.6.0 contract.
+For an offline native G1 training comparison on an allocated RTX PRO 6000 VM,
+follow `docs/workbench/guides/mjlab-g1-rsl-rl-reproduction.md`: keep the pinned
+runtime, stock RSL-RL and declared 22-CPU/160-GiB limits, and retain the full
+native timing series and final checkpoint. This comparison writes local files;
+the Workbench interfaces below use their documented S3 artifact contract.
 Behavior lives in `npa/src/npa/workbench/mjlab/`; CLI, SDK and HTTP clients share
 that implementation. Keep simulator imports inside the isolated worker.
 

@@ -222,7 +222,9 @@ npa fleet verify-graphics \
 
 The command accepts `--only-projects`, `--only-clusters`, `--project-prefix`,
 and `--profile`. Every selected cluster must declare `gpu_workload_profile:
-rtx-rendering`, use the operator driver path, and use 8-GPU RTX workers. NPA
+rtx-rendering`, use the operator driver path, and use a supported positive-GPU
+RTX shape (the documented one-GPU default or explicit eight-GPU PCIe shape).
+NPA
 fresh-verifies the provider project, cluster, and registered kubeconfig before
 waiting for the declared stability interval. It then runs CUDA vectorAdd and
 the GLX/EGL/Vulkan probe on every RTX worker. Any missing worker or partial
@@ -232,6 +234,36 @@ Exact node names and provider identity evidence are written with owner-only
 permissions outside Git. CLI output is publication-safe and contains target
 indices, counts, failure categories, and hashes. `npa.sdk.fleet.verify_graphics`
 uses the same implementation for automation.
+
+## Recovering one interrupted Fleet apply
+
+If an MK8s Fleet apply is interrupted after the provider has created the exact
+target, use the guarded recovery operation rather than rerunning Terraform or
+editing its state:
+
+```bash
+npa fleet recover \
+  --spec /path/to/private-fleet.yaml \
+  --only-projects <project> \
+  --only-clusters <cluster> \
+  --yes \
+  --output json
+```
+
+Recovery accepts exactly one declared MK8s target. It requires the saved Fleet
+owner marker, provisioning sidecar, immutable recipe release, materialized
+inputs, and Terraform cluster identity to agree with the declaration. It also
+refuses an active local Terraform apply, provider/plugin child, or process
+holding the target's Terraform state/lock, and freshly verifies the exact
+provider project, terminal cluster state, and requested node topology before
+registering ordinary Fleet and kubeconfig context state.
+
+This operation never runs Terraform, force-unlocks it, edits Terraform state,
+creates a duplicate target, or deletes the retained target. A stale lock file
+is intentionally left intact. The resulting
+`recovered-pending-validation` status is not readiness: the owner must complete
+the normal storage, graphics, and workload qualification gates before using the
+cluster.
 
 ## Migrating existing affected pools
 

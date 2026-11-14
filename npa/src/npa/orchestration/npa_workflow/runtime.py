@@ -43,12 +43,16 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping, Sequence
 
 from npa.orchestration.npa_workflow.decisions import normalize_decision
-from npa.orchestration.npa_workflow.errors import NpaWorkflowError
+from npa.orchestration.npa_workflow.errors import (
+    NpaWorkflowError,
+    WorkflowExecutionError,
+)
 from npa.orchestration.npa_workflow.image_inputs import required_immutable_image_inputs
 from npa.orchestration.npa_workflow.interpreter import (
     ExecutionPlan,
     PlanStep,
     RunContext,
+    build_failure_plan,
     build_plan,
     run_workflow,
 )
@@ -752,8 +756,34 @@ def plan_fingerprint(
     # Preserve legacy fingerprint bytes for specs that declare no such inputs.
     if immutable_image_inputs:
         payload_data["required_immutable_image_inputs"] = immutable_image_inputs
+    if spec.on_failure:
+        payload_data.update(
+            _failure_plan_payload(spec, run_id=run_id, assume_decision=assume_decision)
+        )
     payload = _json.dumps(payload_data, sort_keys=True)
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
+
+
+def _failure_plan_payload(
+    spec: NpaWorkflowSpec, *, run_id: str, assume_decision: str
+) -> dict[str, Any]:
+    """Return the immutable failure path included in a runtime plan identity."""
+
+    plan = build_failure_plan(spec, run_id=run_id, assume_decision=assume_decision)
+    if plan is None:
+        return {}
+    steps = [
+        {
+            "state": step.state,
+            "iteration": step.iteration,
+            "group": step.group,
+            "argv": step.argv,
+            "shell": step.shell,
+            "resources": step.resources,
+        }
+        for step in plan.steps
+    ]
+    return {"on_failure": spec.on_failure, "failure_steps": steps}
 
 
 def wave_key(steps: Sequence[PlanStep], *, group: str, sequence_number: int) -> str:
@@ -3754,6 +3784,9 @@ class RuntimeReport:
     run_prefix_uri: str = ""
     runtime_state_uri: str = ""
     error: str = ""
+    primary_error: str = ""
+    failure_handler: str = ""
+    failure_cleanup_error: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -3768,6 +3801,9 @@ class RuntimeReport:
             "run_prefix_uri": self.run_prefix_uri,
             "runtime_state_uri": self.runtime_state_uri,
             "error": self.error,
+            "primary_error": self.primary_error,
+            "failure_handler": self.failure_handler,
+            "failure_cleanup_error": self.failure_cleanup_error,
         }
 
 
@@ -4035,6 +4071,12 @@ def run_workflow_runtime(
         )
     if recorded != fingerprint:
         ledger.state.plan_fingerprint = fingerprint
+    if opts.resume and ledger.state.watermarks.get("failure_handler_completed"):
+        raise NpaWorkflowError(
+            "this terminally failed run already completed its declared failure "
+            "handler and released owned resources; use a new run ID for a payload "
+            "retry. --resume remains supported for interrupted non-terminal runs."
+        )
     ledger.set_status("running")
 
     recording_reader = RecordingDecisionReader(
@@ -4048,6 +4090,9 @@ def run_workflow_runtime(
 
     status = "succeeded"
     error = ""
+    primary_error = ""
+    failure_handler = ""
+    failure_cleanup_error = ""
     steps: list[dict[str, Any]] = []
     try:
         report = run_workflow(
@@ -4069,6 +4114,12 @@ def run_workflow_runtime(
     except NpaWorkflowError as exc:
         status = "failed"
         error = sanitize_reason(exc)
+        if isinstance(exc, WorkflowExecutionError):
+            primary_error = sanitize_reason(exc.primary_error)
+            failure_handler = exc.failure_handler
+            failure_cleanup_error = sanitize_reason(exc.cleanup_error)
+            if failure_handler and not failure_cleanup_error:
+                ledger.record_watermark("failure_handler_completed", True)
     except Exception as exc:  # noqa: BLE001 - a long-running driver must always
         # reach a terminal ledger status; the error type is kept in the report so
         # an unexpected crash is not mistaken for a workflow-level failure.
@@ -4092,6 +4143,9 @@ def run_workflow_runtime(
             else ""
         ),
         error=error,
+        primary_error=primary_error,
+        failure_handler=failure_handler,
+        failure_cleanup_error=failure_cleanup_error,
     )
 
 

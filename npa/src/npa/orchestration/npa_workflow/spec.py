@@ -107,6 +107,7 @@ class NpaWorkflowSpec:
     resources: dict[str, Any]
     initial: str
     states: dict[str, StateSpec]
+    on_failure: str = ""
 
     @property
     def name(self) -> str:
@@ -192,6 +193,7 @@ def _parse_document(data: dict[str, Any]) -> NpaWorkflowSpec:
         states[name] = _parse_state(name, entry, config)
 
     initial = str(data.get("initial") or next(iter(states)))
+    on_failure = _optional_string("workflow", "onFailure", data, "onFailure")
     return NpaWorkflowSpec(
         api_version=api_version,
         kind=kind,
@@ -201,6 +203,7 @@ def _parse_document(data: dict[str, Any]) -> NpaWorkflowSpec:
         resources=resources,
         initial=initial,
         states=states,
+        on_failure=on_failure,
     )
 
 
@@ -589,6 +592,10 @@ def validate_spec(spec: NpaWorkflowSpec) -> None:
 
     if spec.initial not in spec.states:
         raise NpaWorkflowError(f"initial state {spec.initial!r} is not defined")
+    if spec.on_failure and spec.on_failure not in spec.states:
+        raise NpaWorkflowError(f"onFailure state {spec.on_failure!r} is not defined")
+    if spec.on_failure == spec.initial:
+        raise NpaWorkflowError("onFailure must not reference the initial state")
 
     for state in spec.states.values():
         _validate_next_state(spec, state)
@@ -869,7 +876,11 @@ def _validate_resource_profiles(spec: NpaWorkflowSpec) -> None:
 
     from npa.orchestration.npa_workflow.interpreter import _make_context
 
-    context = _make_context(spec, run_id="validate-run")
+    context = _make_context(
+        spec,
+        run_id="validate-run",
+        enforce_owned_runtime_identities=False,
+    )
     for name, profile in spec.resources.items():
         if not isinstance(profile, dict):
             raise NpaWorkflowError(f"resource profile {name!r} must be a mapping")
@@ -888,7 +899,11 @@ def _validate_executable_resource_contracts(spec: NpaWorkflowSpec) -> None:
     from npa.orchestration.npa_workflow.catalog import TOOL_CATALOG
     from npa.orchestration.npa_workflow.interpreter import _make_context
 
-    context = _make_context(spec, run_id="validate-run")
+    context = _make_context(
+        spec,
+        run_id="validate-run",
+        enforce_owned_runtime_identities=False,
+    )
     # Executable params may carry a named loop token (for append-only per-attempt
     # output prefixes). Use the same first-iteration sentinel as the general
     # resolvability validator so semantic checks validate the resolved contract.
@@ -1203,7 +1218,11 @@ def _validate_resolvable(spec: NpaWorkflowSpec) -> None:
     )
     from npa.orchestration.npa_workflow.tokens import TokenError, resolve_tokens
 
-    ctx = _make_context(spec, run_id="validate-run")
+    ctx = _make_context(
+        spec,
+        run_id="validate-run",
+        enforce_owned_runtime_identities=False,
+    )
     # Named loop tokens are execution-time values. Resolve them with a harmless
     # first-iteration sentinel here so validation still catches misspelled loop
     # names while nested-loop specs remain statically checkable.

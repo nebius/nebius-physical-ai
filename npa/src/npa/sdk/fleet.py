@@ -146,6 +146,41 @@ def verify_graphics(
     )
 
 
+def recover_interrupted_apply(
+    spec,
+    *,
+    only_projects=None,
+    only_clusters=None,
+    project_prefix=None,
+    profile=None,
+    work_root=None,
+) -> dict:
+    """Adopt one terminal Fleet apply after exact identity verification.
+
+    Args:
+        spec: Loaded Fleet declaration containing exactly one selected target.
+        only_projects: Project keys or display names selecting that target.
+        only_clusters: Cluster names selecting that target.
+        project_prefix: Optional project display-name prefix override.
+        profile: Optional authentication profile that must match persisted state.
+        work_root: Optional owner-private Fleet work root for local recovery.
+    Returns:
+        The registered target in ``recovered-pending-validation`` state.
+    Raises:
+        FleetRecoveryError: The local identity, provider state, or ownership proof fails.
+    """
+    from npa.fleet.recovery import recover_interrupted_fleet_apply
+
+    return recover_interrupted_fleet_apply(
+        spec,
+        only_projects=only_projects,
+        only_clusters=only_clusters,
+        project_prefix=project_prefix,
+        profile=profile,
+        work_root=work_root,
+    )
+
+
 __all__ = [
     "deploy",
     "destroy",
@@ -153,6 +188,7 @@ __all__ = [
     "status",
     "verify_graphics",
     "verify_storage",
+    "recover_interrupted_apply",
     "FleetSpec",
     "ProjectSpec",
     "ClusterSpec",
