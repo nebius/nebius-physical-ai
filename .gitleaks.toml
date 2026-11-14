@@ -94,6 +94,14 @@ regexes = [
     '''^\s*"path": "var/lib/dpkg/info/(?:libgssapi-krb5-2|libkeyutils1):amd64\.triggers", "source_scan_note": "gitleaks:allow=public-package-path-metadata",\s*$''',
 ]
 
+[[rules.allowlists]]
+description = "Historical Sim2Real test fixture encodes the literal too-short string too-short, not an API credential."
+condition = "AND"
+regexTarget = "line"
+regexes = [
+    '''^\s*\{"type": "Opaque", "data": \{"auth_token": "dG9vLXNob3J0"\}\},\s*$''',
+]
+
 [[rules]]
 id = "nebius-generic-id"
 description = "Nebius account/resource identifier (e00/u00 format)"
@@ -251,4 +259,8 @@ commits = [
     # HEAD removes the stale record; PR #287 forbids rewriting or force-pushing
     # its already-pushed first commit, so exempt that immutable commit only.
     '''2ab1e0857bb25e1e36eec07741af8779a8c4ed8c''',
+    # Historical PR981 policy-test commit contains the same synthetic short
+    # fixture that its exact-line exception verifies. The current test constructs
+    # that probe at runtime; preserve the pushed commit rather than rewriting it.
+    '''eb0b27d9d5e1e3133781fc8152e8dd70bf8c3df1''',
 ]

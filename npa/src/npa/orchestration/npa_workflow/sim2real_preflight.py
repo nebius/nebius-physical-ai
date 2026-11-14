@@ -12,6 +12,8 @@ from npa.orchestration.npa_workflow.kubernetes_prerequisites import (
     format_cpu_memory_requirement,
     ready_schedulable_cpu_nodes,
 )
+from npa.orchestration.npa_workflow.errors import NpaWorkflowError
+from npa.orchestration.npa_workflow.image_inputs import resolved_baked_image_sources
 from npa.orchestration.skypilot.controller import (
     DEFAULT_K8S_CONTROLLER_CPUS,
     DEFAULT_K8S_CONTROLLER_MEMORY_GB,
@@ -122,6 +124,15 @@ def _source_sha_issues(config: Mapping[str, Any]) -> list[Issue]:
                 "enabled",
                 "set --var source_sha=<40-hex> to the exact source commit the "
                 "attested immutable task images were built from",
+            )
+        )
+    try:
+        resolved_baked_image_sources(config)
+    except NpaWorkflowError as exc:
+        issues.append(
+            (
+                str(exc),
+                "map each immutable image config key to a source-SHA config key",
             )
         )
     return issues

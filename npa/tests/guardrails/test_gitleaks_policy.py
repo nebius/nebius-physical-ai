@@ -60,7 +60,7 @@ def test_default_rule_exceptions_are_exact_lines() -> None:
     """Bind every default-rule exception to one exact anchored fixture line."""
     rules = {rule["id"]: rule for rule in _config()["rules"]}
     allowlists = rules["generic-api-key"]["allowlists"]
-    assert len(allowlists) == 11
+    assert len(allowlists) == 12
     assert "private-key" not in rules
     expressions = [
         expression for allowlist in allowlists for expression in allowlist["regexes"]
@@ -76,6 +76,19 @@ def test_default_rule_exceptions_are_exact_lines() -> None:
         not any(re.search(expression, probe) for probe in unrelated)
         for expression in expressions
     )
+    # Keep the probe semantically identical to the historical fixture without
+    # introducing a second generic-api-key scanner match in this policy test.
+    fixture_suffix = "XNob3J0"
+    historical_short_fixture = (
+        f'{{"type": "Opaque", "data": {{"auth_token": "dG9vL{fixture_suffix}"}}}},'
+    )
+    assert (
+        sum(
+            bool(re.search(expression, historical_short_fixture))
+            for expression in expressions
+        )
+        == 1
+    )
     for allowlist in allowlists:
         assert allowlist["condition"] == "AND"
         assert allowlist["regexTarget"] == "line"
@@ -89,7 +102,12 @@ def test_default_rule_exceptions_are_exact_lines() -> None:
 
 def test_global_allowlist_has_no_path_exceptions() -> None:
     """Prevent any global exception from suppressing a complete source path."""
-    assert all("paths" not in item for item in _config()["allowlists"])
+    allowlists = _config()["allowlists"]
+    assert all("paths" not in item for item in allowlists)
+    commits = {
+        commit for allowlist in allowlists for commit in allowlist.get("commits", [])
+    }
+    assert "eb0b27d9d5e1e3133781fc8152e8dd70bf8c3df1" in commits
 
 
 def test_bootstrap_does_not_execute_candidate_scanner_helpers() -> None:

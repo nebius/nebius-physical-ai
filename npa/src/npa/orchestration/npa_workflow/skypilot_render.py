@@ -13,6 +13,7 @@ from typing import Any, Mapping, Sequence
 import yaml
 
 from npa.orchestration.npa_workflow.errors import NpaWorkflowError
+from npa.orchestration.npa_workflow.image_inputs import resolved_baked_image_sources
 from npa.orchestration.npa_workflow.interpreter import (  # noqa: F401
     ExecutionPlan,
     PlanStep,
@@ -129,7 +130,6 @@ TOOL_REF_IMAGE_TOOL: dict[str, str | None] = {
 IMAGE_TOOLS_REQUIRING_STAGED_NPA_SOURCE = frozenset({"sonic"})
 HABITAT_SIM_TOOL_REF = "workflow.habitat_sim.smoke"
 HABITAT_SIM_ACCELERATOR = "RTXPRO-6000-BLACKWELL-SERVER-EDITION:1"
-
 OPENPI_TERMS_ENV = "NPA_OPENPI_ACCEPT_GEMMA_TERMS"
 
 SECRET_ENV_HINTS: dict[str, tuple[str, ...]] = {
@@ -318,6 +318,9 @@ TOOL_REF_PIP_REQUIREMENTS: dict[str, tuple[tuple[str, str], ...]] = {
     "workbench.lerobot.policy_train": (
         ("python:huggingface_hub", "huggingface_hub>=0.23,<1.0"),
     ),
+    "workbench.lerobot.smolvla_interchange_train": (
+        ("python:huggingface_hub", "huggingface_hub>=0.23,<1.0"),
+    ),
     "workbench.lerobot.policy_rollout": (
         ("python:huggingface_hub", "huggingface_hub>=0.23,<1.0"),
     ),
@@ -364,6 +367,7 @@ TOOL_REF_VENDOR_INTERPRETERS: dict[str, tuple[str, ...]] = {
     "workbench.groot.baseline_eval": ("/opt/groot/Isaac-GR00T/.venv/bin/python",),
     "workbench.groot.posttrain_eval": ("/opt/groot/Isaac-GR00T/.venv/bin/python",),
     "workbench.lerobot": ("/opt/lerobot/venv/bin/python",),
+    "workbench.sim2real.smolvla_artifact_preflight": ("/opt/lerobot/venv/bin/python",),
     # Isaac Lab's simulator packages live in the Omniverse kit environment, not in the image's
     # system python. Live job 267 installed npa into /usr/bin/python3 and the stage died with
     # `isaaclab is required in the Isaac Lab image: No module named 'isaaclab'`. python.sh is
@@ -2400,7 +2404,10 @@ def render_setup_for_tool(
             # module; other stages preserve the historical CLI contract.
             f"importlib.import_module({baked_import!r})\n"
             "actual = os.environ.get('NPA_IMAGE_SOURCE_SHA', '').strip().lower()\n"
-            "expected = os.environ.get('NPA_SIM2REAL_SOURCE_SHA', '').strip().lower()\n"
+            "expected = os.environ.get(\n"
+            "    'NPA_EXPECTED_IMAGE_SOURCE_SHA',\n"
+            "    os.environ.get('NPA_SIM2REAL_SOURCE_SHA', ''),\n"
+            ").strip().lower()\n"
             "if len(actual) != 40 or actual != expected:\n"
             "    raise SystemExit('baked NPA source attestation does not match workflow source SHA')\n"
             f"{evaluator_probe}"
@@ -2912,6 +2919,18 @@ def _build_skypilot_task_doc(
         "on",
     }
     expected_source_sha = str(spec.config.get("source_sha") or "").strip().lower()
+    try:
+        image_source_map = resolved_baked_image_sources(spec.config)
+    except NpaWorkflowError as exc:
+        raise NpaWorkflowRenderError(str(exc)) from exc
+    expected_image_source_sha = (
+        str(
+            image_source_map.get(str(image or "").removeprefix("docker:"))
+            or expected_source_sha
+        )
+        .strip()
+        .lower()
+    )
     if require_baked or immutable_narrow_image or seedvr2_baked_image:
         from npa.orchestration.skypilot.image_bootstrap_contract import (
             ImageBootstrapContractError,
@@ -3030,6 +3049,14 @@ def _build_skypilot_task_doc(
                 "config.source_sha must be an exact 40-character hexadecimal SHA"
             )
         envs["NPA_SIM2REAL_SOURCE_SHA"] = expected_source_sha
+    if require_baked:
+        if len(expected_image_source_sha) != 40 or any(
+            char not in "0123456789abcdef" for char in expected_image_source_sha
+        ):
+            raise NpaWorkflowRenderError(
+                "baked image source override must be an exact 40-character SHA"
+            )
+        envs["NPA_EXPECTED_IMAGE_SOURCE_SHA"] = expected_image_source_sha
     envs.update(
         isaac_eula_envs(
             str(scheduler_task.get("tool_ref") or ""),

@@ -1397,6 +1397,52 @@ def test_submit_keeps_launch_unknown_for_failure_after_preparation(
     assert caught.value.transaction is None
 
 
+def test_submit_checks_isolated_api_with_stable_server_config(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    yaml_path = tmp_path / "workflow.yaml"
+    yaml_path.write_text(
+        "name: demo\nresources:\n  cloud: kubernetes\n", encoding="utf-8"
+    )
+    stable_config = tmp_path / "server-config.yaml"
+    stable_config.write_text("kubernetes: {}\n", encoding="utf-8")
+    captured: dict[str, str] = {}
+    monkeypatch.setattr(
+        workflow_module,
+        "_preflight_prepared_submission",
+        lambda *_args, **_kwargs: (
+            {"SKYPILOT_GLOBAL_CONFIG": str(stable_config)},
+            False,
+        ),
+    )
+
+    def capture_control_environment(*_args, **kwargs):
+        captured.update(kwargs["env"])
+        raise ValueError("captured stable API environment")
+
+    monkeypatch.setattr(
+        workflow_module,
+        "_ensure_local_api_daemon_cwd_locked",
+        capture_control_environment,
+    )
+    monkeypatch.setattr(
+        workflow_module,
+        "run_launch_transaction",
+        lambda **kwargs: pytest.fail("must not start a provider launch"),
+    )
+
+    with pytest.raises(SkyPilotSubmitError, match="captured stable API environment"):
+        submit_workflow(
+            yaml_path,
+            "run-stable-api-config",
+            config_path=stable_config,
+            isolated_config_dir=tmp_path / "sky-state",
+            sky_bin=_fake_sky(tmp_path),
+        )
+
+    assert captured["SKYPILOT_GLOBAL_CONFIG"] == str(stable_config)
+
+
 def test_submit_workflow_strips_name_from_global_config(monkeypatch, tmp_path) -> None:
     yaml_path = tmp_path / "workflow.yaml"
     yaml_path.write_text(
@@ -4148,6 +4194,26 @@ def test_sky_environment_preserves_explicit_user_id(monkeypatch, tmp_path) -> No
     env = sky_environment(tmp_path / "isolated")
 
     assert env["SKYPILOT_USER_ID"] == "operator-selected"
+
+
+def test_sky_environment_keeps_exact_source_pythonpath_identity_stable(
+    monkeypatch, tmp_path
+) -> None:
+    from npa.orchestration.skypilot import cleanup
+
+    repo_src = str(Path(cleanup.__file__).resolve().parents[3])
+    dependency_src = str(tmp_path / "dependency-src")
+    monkeypatch.setenv(
+        "PYTHONPATH",
+        os.pathsep.join((repo_src, dependency_src, repo_src)),
+    )
+
+    first = cleanup.sky_environment(tmp_path / "isolated-a")
+    monkeypatch.setenv("PYTHONPATH", first["PYTHONPATH"])
+    second = cleanup.sky_environment(tmp_path / "isolated-b")
+
+    assert first["PYTHONPATH"].split(os.pathsep) == [repo_src, dependency_src]
+    assert second["PYTHONPATH"] == first["PYTHONPATH"]
 
 
 def test_sky_environment_preserves_nebius_exec_auth_without_copying(

@@ -21,7 +21,10 @@ import pytest
 import yaml
 
 from npa.orchestration.npa_workflow import build_plan, load_spec
-from npa.orchestration.npa_workflow.errors import NpaWorkflowError
+from npa.orchestration.npa_workflow.errors import (
+    NpaWorkflowError,
+    WorkflowExecutionError,
+)
 from npa.orchestration.npa_workflow.run_state import (
     RunManifest,
     RunStateStore,
@@ -1008,6 +1011,79 @@ def _fake_clock():
         return ticks["now"]
 
     return clock
+
+
+def test_completed_failure_handler_blocks_resume_of_terminal_run(
+    tmp_path: Path, mocker
+) -> None:
+    spec = load_spec(
+        _write_spec(
+            tmp_path,
+            """
+            apiVersion: npa.workflow/v0.0.1
+            kind: Workflow
+            metadata:
+              name: terminal-failure-handler
+            config: {}
+            resources:
+              cpu:
+                cloud: kubernetes
+                cpus: 1
+                memory: 1Gi
+            initial: work
+            onFailure: cleanup
+            states:
+              work:
+                run:
+                  shell: "echo work"
+                resources: cpu
+                terminal: true
+              cleanup:
+                run:
+                  shell: "echo cleanup"
+                resources: cpu
+                terminal: true
+            """,
+        )
+    )
+    store = MemoryStore(prefix="terminal-failure-handler/resume-blocked")
+    first = _executor(spec, run_id="failure-handler-run", store=store)
+    mocker.patch(
+        "npa.orchestration.npa_workflow.runtime.run_workflow",
+        side_effect=WorkflowExecutionError(
+            NpaWorkflowError("primary work failed"),
+            failure_handler="cleanup",
+        ),
+    )
+
+    report = run_workflow_runtime(
+        spec,
+        run_id="failure-handler-run",
+        executor=first,
+    )
+
+    assert report.status == "failed"
+    assert report.primary_error == "primary work failed"
+    assert report.failure_handler == "cleanup"
+    assert report.failure_cleanup_error == ""
+    assert report.watermarks["failure_handler_completed"] is True
+
+    resumed = _executor(
+        spec,
+        run_id="failure-handler-run",
+        store=store,
+        options=RuntimeOptions(resume=True, poll_seconds=0, max_wait_seconds=60),
+    )
+    with pytest.raises(
+        NpaWorkflowError,
+        match="terminally failed run already completed its declared failure handler",
+    ):
+        run_workflow_runtime(
+            spec,
+            run_id="failure-handler-run",
+            executor=resumed,
+            options=resumed.options,
+        )
 
 
 def test_default_skypilot_calls_preserve_explicit_runtime_isolation(
