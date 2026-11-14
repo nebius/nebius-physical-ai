@@ -7,6 +7,7 @@ from dataclasses import dataclass, replace
 import json
 import os
 from pathlib import Path
+import re
 import time
 from typing import Any
 
@@ -32,6 +33,12 @@ _BACKUP_STATE_FILE = "terraform.tfstate.backup"
 _TERRAFORM_STATE_PATHS = frozenset(
     {_STATE_FILE, _BACKUP_STATE_FILE, ".terraform.tfstate.lock.info"}
 )
+_RETAINED_CREATE_DIAGNOSTIC_LIMIT = 1024
+_RETAINED_CREATE_DIAGNOSTIC_FIELDS = frozenset(
+    {"code", "message", "reason", "status", "type"}
+)
+_DIAGNOSTIC_ENDPOINT_RE = re.compile(r"(?i)\b(?:https?|grpc)://[^\s'\"<>]+")
+_DIAGNOSTIC_REQUEST_RE = re.compile(r"(?im)^.*\b(?:request|payload|body)\b.*$")
 
 
 @dataclass(frozen=True)
@@ -60,6 +67,49 @@ class _ProviderSession:
     nebius_bin: str
     environment: dict[str, str]
     project: MK8sProjectIdentity
+
+
+def _bounded_retained_create_diagnostic(
+    result: Any, environment: dict[str, str]
+) -> str:
+    """Return safe, bounded provider failure context without retaining request data."""
+
+    from npa.cluster_backends.process import _redact, _sensitive_values
+
+    raw_parts = [
+        value.decode(errors="replace") if isinstance(value, bytes) else str(value)
+        for value in (getattr(result, "stderr", ""), getattr(result, "stdout", ""))
+        if value
+    ]
+    structured: list[str] = []
+    for part in raw_parts:
+        try:
+            payload = json.loads(part)
+        except (TypeError, ValueError):
+            continue
+
+        def collect(value: object) -> None:
+            if isinstance(value, dict):
+                for key, item in value.items():
+                    if (
+                        key.casefold() in _RETAINED_CREATE_DIAGNOSTIC_FIELDS
+                        and isinstance(item, (str, int, float, bool))
+                    ):
+                        structured.append(f"{key}={item}")
+                    elif isinstance(item, (dict, list)):
+                        collect(item)
+            elif isinstance(value, list):
+                for item in value:
+                    collect(item)
+
+        collect(payload)
+    detail = "; ".join(structured) if structured else "\n".join(raw_parts[-20:])
+    detail = _DIAGNOSTIC_REQUEST_RE.sub("<redacted-request>", detail)
+    detail = _DIAGNOSTIC_ENDPOINT_RE.sub("<redacted-endpoint>", detail)
+    detail = _redact(detail, sensitive_values=_sensitive_values(environment)).strip()
+    if len(detail) > _RETAINED_CREATE_DIAGNOSTIC_LIMIT:
+        detail = detail[:_RETAINED_CREATE_DIAGNOSTIC_LIMIT] + "…"
+    return detail
 
 
 def recover_interrupted_fleet_apply(
@@ -717,7 +767,11 @@ def _create_retained_node_group(
             )
     result = mk8s_execution._run_capture(command, env=session.environment, check=False)
     if result.returncode:
-        raise FleetRecoveryError(f"could not create retained node group {name!r}")
+        detail = _bounded_retained_create_diagnostic(result, session.environment)
+        raise FleetRecoveryError(
+            f"could not create retained node group {name!r} "
+            f"(provider exit {result.returncode})" + (f": {detail}" if detail else "")
+        )
     try:
         created = json.loads(result.stdout or "{}")
     except json.JSONDecodeError as exc:

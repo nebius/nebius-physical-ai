@@ -1618,6 +1618,20 @@ def test_normal_lifecycle_resumes_zero_subnet_cpu_and_strict_gpu_target(
         "recover-ng-cpu",
         "recover-ng-gpu-0",
     ]
+    cpu_command = creates[0]
+    assert cpu_command[cpu_command.index("--parent-id") + 1] == "cluster-test"
+    assert cpu_command[cpu_command.index("--fixed-node-count") + 1] == "1"
+    assert (
+        cpu_command[cpu_command.index("--template-resources-platform") + 1] == "cpu-d3"
+    )
+    assert (
+        cpu_command[cpu_command.index("--template-resources-preset") + 1]
+        == "48vcpu-192gb"
+    )
+    assert (
+        cpu_command[cpu_command.index("--template-boot-disk-type") + 1] == "network_ssd"
+    )
+    assert "--template-reservation-policy-policy" not in cpu_command
     assert pool_lists == 4
     assert postcreate_inventory_reads == 2
     assert sleeps == [30.0]
@@ -1686,18 +1700,45 @@ def test_normal_lifecycle_empty_node_group_mapping_refusal_preserves_retained_by
         if "node-group" in command and "list" in command:
             return CompletedProcess(command, 0, "{}", "")
         if "node-group" in command and "create" in command:
-            return CompletedProcess(command, 1, "", "provider refused")
+            return CompletedProcess(
+                command,
+                47,
+                "",
+                json.dumps(
+                    {
+                        "error": {
+                            "code": "INVALID_ARGUMENT",
+                            "message": (
+                                "token=provider-secret endpoint=https://private.invalid/"
+                                + "x" * 2048
+                            ),
+                            "request": {"private": "raw-request-body"},
+                        }
+                    }
+                ),
+            )
         pytest.fail(f"unexpected provider command: {command}")
 
     monkeypatch.setattr(mk8s_execution, "_run_capture", provider)
 
-    with pytest.raises(RuntimeError, match="could not create retained node group"):
+    with pytest.raises(RuntimeError) as exc_info:
         lifecycle.deploy_fleet(
             spec,
             work_root=tmp_path,
             k8s_training_dir=install_dir,
             preflight=False,
         )
+
+    message = str(exc_info.value)
+    assert "could not create retained node group" in message
+    assert "provider exit 47" in message
+    assert "code=INVALID_ARGUMENT" in message
+    assert "<redacted>" in message
+    assert "<redacted-endpoint>" in message
+    assert "provider-secret" not in message
+    assert "private.invalid" not in message
+    assert "raw-request-body" not in message
+    assert len(message) < 1200
 
     creates = [
         command
@@ -1707,6 +1748,11 @@ def test_normal_lifecycle_empty_node_group_mapping_refusal_preserves_retained_by
     assert [command[command.index("--name") + 1] for command in creates] == [
         "recover-ng-cpu"
     ]
+    create = creates[0]
+    assert create[create.index("--parent-id") + 1] == "cluster-test"
+    assert create[create.index("--fixed-node-count") + 1] == "1"
+    assert create[create.index("--template-resources-platform") + 1] == "cpu-d3"
+    assert create[create.index("--template-resources-preset") + 1] == "48vcpu-192gb"
     assert "kubeconfig" not in calls
     assert "persist" not in calls
     assert not any("terraform" in command for command in commands)
