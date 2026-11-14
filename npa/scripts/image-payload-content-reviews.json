@@ -2073,6 +2073,28 @@
         "revision": "507a90ecebd1f889560b151e4802f323697702b0",
         "member": "npa/src/npa/orchestration/npa_workflow/submit_matrix.py"
       }
+    },
+    {
+      "sha256": "e400bce7f5d0d0f2814135ef9ec22a2dc2b3f23f46567398df87a60b6dd9bf00",
+      "bytes": 468048,
+      "match_counts": {"credential_assignment": 13},
+      "reason": "The merged workflow CLI continues to pass only operator-provided credential references and documented placeholders; it contains no operational credential literal.",
+      "source": {
+        "url": "https://github.com/nebius/nebius-physical-ai/blob/091c85c1b8dbd09a870f8f5600de3479d6d73167/npa/src/npa/cli/workbench/workflow/__init__.py",
+        "revision": "091c85c1b8dbd09a870f8f5600de3479d6d73167",
+        "member": "npa/src/npa/cli/workbench/workflow/__init__.py"
+      }
+    },
+    {
+      "sha256": "71c211e264bef364d059b582d28e78cc4d109b4c797efe5712ac5963fa179ee1",
+      "bytes": 93193,
+      "match_counts": {"credential_assignment": 1},
+      "reason": "The merged workflow submission matrix lists an operator-supplied environment-variable reference and contains no credential literal.",
+      "source": {
+        "url": "https://github.com/nebius/nebius-physical-ai/blob/091c85c1b8dbd09a870f8f5600de3479d6d73167/npa/src/npa/orchestration/npa_workflow/submit_matrix.py",
+        "revision": "091c85c1b8dbd09a870f8f5600de3479d6d73167",
+        "member": "npa/src/npa/orchestration/npa_workflow/submit_matrix.py"
+      }
     }
   ]
 }
