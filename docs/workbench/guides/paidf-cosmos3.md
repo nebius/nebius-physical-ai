@@ -16,8 +16,10 @@ For a complete manual setup and run, start with the
 project setup, new or existing Kubernetes clusters, credential-file formats,
 Token Factory key creation, Python and CLI installation checks, submission, and
 artifact inspection.
-For twelve candidates using the current workflow defaults, follow
-[the count-only fanout](#twelve-variants-with-the-current-defaults) below.
+For twelve accepted starter variants, use the
+[validated starter recipe](#twelve-accepted-starter-variants) below. The
+[count-only fanout](#twelve-variants-with-the-current-defaults) keeps every
+default and has been rejected by its quality gate.
 For twelve separate appearance videos with task-specific profiles and automatic padding preservation, use
 the [copy-paste recipe guide](paidf-appearance-12.md#apply-the-recipe).
 Use this page for the workflow's input, generation, and acceptance contracts.
@@ -117,7 +119,8 @@ After successful finalization, audit the starter run without launching work:
 ```bash
 NPA_INTEGRATION_E2E=1 NPA_E2E_PROJECT="$PROJECT_ALIAS" \
   NPA_E2E_PAIDF_FANOUT_RUN_URI="s3://$BUCKET/paidf-cosmos3/$RUN_ID/" \
-  npa/.venv/bin/python -m pytest npa/tests/e2e/test_paidf_cosmos3_fanout_live.py -q
+  npa/.venv/bin/python -m pytest -q \
+  "npa/tests/e2e/test_paidf_cosmos3_fanout_live.py::test_completed_fresh_twelve_variant_starter_pipeline"
 ```
 
 Require one passed test with no skip. The audit verifies fresh starter bytes,
@@ -126,6 +129,118 @@ evaluated clips and annotated variants, unchanged default sampling and quality
 settings, full-video alignment, effective model guardrails, real curation and
 both Rerun recordings. Keep the pre-submission timestamp and private run state
 for this read-only audit and the setup guide's scoped cleanup.
+
+## Twelve accepted starter variants
+
+This is an opt-in, exploratory recipe for the pinned starter clip, not a general
+quality fix. Here "accepted" means the workflow's exploratory gate: the `0.2`
+aggregate and `0.25` attribute thresholds, with the temporal-consistency and
+appearance-fidelity checks left in their default `advisory` mode. It is not a
+fidelity qualification. Other sources need their own profiles and evaluation.
+
+The count-only fanout above generates twelve videos but has been rejected by its
+quality gate in every recorded run (seven to eleven of twelve clips passed). Two
+measured causes explain the failed clips:
+
+- The canonical default `transfer_first_chunk_conditional_frames: "1"` anchors the
+  single 81-frame native window to the starter's original first frame. Most
+  outputs stayed near-copies of the source: their first frames differed from the
+  source by about 1/255 on average, and the whole clips by 7/255.
+- With the anchor released, the starter's neutral-gray profiles still render the
+  starter camera's white tabletop as off-white. Every failed clip requested a gray
+  backdrop with a colorless grade, in both the initial and refined passes. The
+  evaluator's "off-white" answers matched the pixels.
+
+The [starter recipe](../examples/paidf-cosmos3-starter-12.yaml) changes exactly
+three settings. It sets `variant_count=12`, releases the first-window anchor and
+supplies twelve unique, clearly colored profiles for the visible tabletop. Seeds,
+guidance, steps, edge controls, guardrails, alignment, the all-variants policy and
+the exploratory `0.2` / `0.25` thresholds keep their workflow defaults.
+
+After the [twelve-variant setup](#twelve-variants-with-the-current-defaults),
+apply every recipe key as a `--var` override:
+
+```bash
+SPEC=workflows/main/paidf-cosmos3.yaml
+RECIPE=docs/workbench/examples/paidf-cosmos3-starter-12.yaml
+RECIPE_VARS=()
+while IFS= read -r -d '' setting; do
+  RECIPE_VARS+=(--var "$setting")
+done < <(npa/.venv/bin/python -c '
+import sys, yaml
+for key, value in yaml.safe_load(open(sys.argv[1]))["config"].items():
+    sys.stdout.write(f"{key}={value}\0")' "$RECIPE")
+RUN_ID="$(npa/.venv/bin/npa workbench workflow prepare-run "$SPEC" --project "$PROJECT_ALIAS")"
+export NPA_SKYPILOT_ISOLATED_CONFIG_DIR="$HOME/.npa/workflow-runs/$RUN_ID/skypilot"
+npa/.venv/bin/npa workbench workflow plan-spec "$SPEC" --run-id "$RUN_ID" \
+  --assume-decision promote_checkpoint --var bucket="$BUCKET" "${RECIPE_VARS[@]}" --json
+export NPA_E2E_PAIDF_STARTER12_FRESH_AFTER="$(date -u +%Y-%m-%dT%H:%M:%S+00:00)"
+npa/.venv/bin/npa workbench workflow submit "$SPEC" \
+  --project "$PROJECT_ALIAS" --run-id "$RUN_ID" --runtime --max-wait-seconds 0 \
+  --infra "k8s/$KUBE_CONTEXT" --var bucket="$BUCKET" "${RECIPE_VARS[@]}" \
+  --secret-env HF_TOKEN --secret-env NEBIUS_TOKEN_FACTORY_KEY \
+  --secret-env AWS_ACCESS_KEY_ID --secret-env AWS_SECRET_ACCESS_KEY --durable-s3
+```
+
+In the plan, check that `generate-variants` passes
+`--transfer-first-chunk-conditional-frames 0` and `--variant-count 12`, with
+guidance `5.0` and `24` steps. After successful finalization, run the recipe
+audit without launching work:
+
+```bash
+NPA_INTEGRATION_E2E=1 NPA_E2E_PROJECT="$PROJECT_ALIAS" \
+  NPA_E2E_PAIDF_STARTER12_RUN_URI="s3://$BUCKET/paidf-cosmos3/$RUN_ID/" \
+  npa/.venv/bin/python -m pytest -q \
+  "npa/tests/e2e/test_paidf_cosmos3_fanout_live.py::test_completed_fresh_twelve_variant_starter_recipe_pipeline"
+```
+
+Require one passed test with no skip. It repeats every count-only audit check
+except the default-profile assertion. Instead, it requires the recipe's exact
+profiles, twelve unique profile requests, and, in each variant's native transfer
+receipt, zero first-window source frames and passed text and video guardrails.
+Then finish the [owned cleanup](../../../workflows/guides/paidf-cosmos3.md#r7-finish-owned-cleanup).
+
+### Measured recipe run
+
+On November 10, 2026, a fresh run of the checked-in recipe, using the commands
+above, was accepted on its first generation pass on one RTX PRO 6000 Blackwell
+GPU. All twelve variants passed the unchanged gate with an aggregate score of
+`0.665509`, so refinement was not needed. Each clip matched one to four of its
+four requested attributes, and the evaluator reported no warnings. Every clip fully
+decoded to 81 frames at 24 fps with zero timestamp error and a unique video hash.
+On the first frame, each output differed from the source by 58–97/255 on
+average. All fifteen stages succeeded, with twelve captioned variants, twelve
+curated clips and a verified Rerun recording, and the recipe audit above passed.
+Generating the twelve sequential variants took 1h13m25s, including model
+download. Evaluation took 8m37s, and the run took 2h30m07s from submission to
+finalization. An earlier run with the same profiles and settings, before the
+caption-panel fix described below, was also accepted with score `0.660237`.
+
+Recordings now show caption lines from every clip. Earlier versions kept only the
+first twelve caption lines in file order, which covered just the first two clips
+of a twelve-variant batch, so this audit could not pass.
+
+Review the clips themselves before use. In that run every clip kept the camera,
+bowl, bottle, grasp timing and final state, but cast shadows were redrawn with
+shapes unlike the source. The walnut and slate profiles rendered dark material
+only in a band at the bottom of the table, and the burgundy profile came out
+orange-red. One oak clip gained a thin wire-like line near the gripper, and three
+clips shifted the bottle's green slightly toward teal. The result is an accepted
+exploratory augmentation of one pinned clip. It does not certify realism,
+physics, policy-training suitability, other inputs or concurrent multi-GPU
+generation.
+In the same run, every clip failed both advisory fidelity checks at their `0.8`
+thresholds: temporal-consistency scores were 0.038–0.059 and appearance-fidelity
+scores 0.087–0.440. Setting either check to `required` rejects this batch. A
+stricter, calibrated fidelity standard has not been met by this or any other
+tested Cosmos3 setting.
+
+The video and prompt guardrails also constrain which profiles you can use. In an
+intermediate run, the prompt blocklist of the pinned `nvidia/Cosmos-Guardrail1`
+rejected a "sage-green" tabletop, and the video safety filter rejected a warm
+beige tabletop under tungsten light. A single blocked variant fails the whole
+generation stage before evaluation. Keep the guardrails enabled. When editing
+profiles, avoid blocked words and large skin-toned surfaces, then use a fresh run.
 
 ## Native variant recovery
 
