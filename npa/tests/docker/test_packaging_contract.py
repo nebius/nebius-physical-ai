@@ -771,8 +771,11 @@ def test_genesis_and_envgen_source_attestation_manuals_stay_role_specific() -> N
     envgen_manual = (WORKBENCH_DOCKER / "sim2real-envgen/README.md").read_text(
         encoding="utf-8"
     )
+    envgen_notes = str(contract["envgen"]["notes"])
     assert 'index .Config.Labels "org.opencontainers.image.revision"' in envgen_manual
     assert "remote parent\nmust be addressed by immutable digest" in envgen_manual
+    assert "20261110T000000Z" in envgen_notes
+    assert "linux-libc-dev=5.15.0-203.213" in envgen_notes
 
 
 def test_robocasa_build_binds_the_exact_npa_source_revision() -> None:

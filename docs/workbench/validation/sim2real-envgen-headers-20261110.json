@@ -1,0 +1,20 @@
+{
+  "schema": "npa.sim2real.envgen-header-selection/v1",
+  "snapshot": "20261110T000000Z",
+  "suite": "jammy-updates",
+  "selected_version": "5.15.0-203.213",
+  "fixed_floor": "5.15.0-203.213",
+  "package": {
+    "Version": "5.15.0-203.213",
+    "Filename": "pool/main/l/linux/linux-libc-dev_5.15.0-203.213_amd64.deb",
+    "SHA256": "52d7d16b56a2c415afe35a91fa64b7db37cd7e3c825a5976531e0c9561be2e4d",
+    "Size": 1408346
+  },
+  "authority": {
+    "packages_sha256": "5e9489620c40583c3de837ce1073eff4f648b1286fe07396fedfcb1d2d59f3eb",
+    "inrelease_sha256": "f2278a92106d568c94af6c69d42004fcd78317ce36a84dc912fd1a85224b86d1",
+    "keyring_sha256": "1a4dd63e5c76728960a2edddae22e2e0fc53df8e8b87806deb971030ac704eb0",
+    "retained_gpgv_exit": 0
+  },
+  "scope": "Retained signed frozen-index identity and actual package selection for the scanner-fixed Jammy header closure; not a rebuilt-image scan or functional acceptance. Older header selections are retained only as historical evidence."
+}
