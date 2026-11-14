@@ -7,7 +7,6 @@ from dataclasses import dataclass, replace
 import json
 import os
 from pathlib import Path
-import re
 import time
 from typing import Any
 
@@ -33,8 +32,9 @@ _BACKUP_STATE_FILE = "terraform.tfstate.backup"
 _TERRAFORM_STATE_PATHS = frozenset(
     {_STATE_FILE, _BACKUP_STATE_FILE, ".terraform.tfstate.lock.info"}
 )
-_RETAINED_CREATE_DIAGNOSTIC_ENVELOPES = ("error", "diagnostic")
-_RETAINED_CREATE_OUTCOME_RE = re.compile(r"^[A-Z][A-Z0-9_]{0,63}$")
+# The current MK8s CLI exposes this stable gRPC category in its direct error
+# envelope. Map it to an NPA-owned label rather than exposing provider text.
+_RETAINED_CREATE_SAFE_OUTCOMES = {"INVALID_ARGUMENT": "invalid-argument"}
 
 
 @dataclass(frozen=True)
@@ -70,17 +70,11 @@ def _safe_retained_create_outcome(payload: object) -> str | None:
 
     if not isinstance(payload, dict):
         return None
-    envelopes = [payload]
-    envelopes.extend(
-        value
-        for key in _RETAINED_CREATE_DIAGNOSTIC_ENVELOPES
-        if isinstance(value := payload.get(key), dict)
-    )
-    for envelope in envelopes:
-        outcome = envelope.get("code")
-        if isinstance(outcome, str) and _RETAINED_CREATE_OUTCOME_RE.fullmatch(outcome):
-            return outcome
-    return None
+    error = payload.get("error")
+    if not isinstance(error, dict):
+        return None
+    code = error.get("code")
+    return _RETAINED_CREATE_SAFE_OUTCOMES.get(code) if isinstance(code, str) else None
 
 
 def _bounded_retained_create_diagnostic(result: Any) -> str:

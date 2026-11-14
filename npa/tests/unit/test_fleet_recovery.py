@@ -1665,7 +1665,7 @@ def test_normal_lifecycle_resumes_zero_subnet_cpu_and_strict_gpu_target(
 
 
 @pytest.mark.parametrize(
-    ("stdout", "stderr", "expected_diagnostic"),
+    ("stdout", "stderr", "expected_diagnostic", "forbidden_tokens"),
     [
         (
             "",
@@ -1682,18 +1682,55 @@ def test_normal_lifecycle_resumes_zero_subnet_cpu_and_strict_gpu_target(
                     "payload": {"message": "payload-message"},
                 }
             ),
-            "outcome=INVALID_ARGUMENT",
+            "outcome=invalid-argument",
+            (
+                "provider-secret",
+                "private.invalid",
+                "raw-request-body",
+                "nested-request-message",
+                "payload-message",
+            ),
         ),
         (
             "non-json-provider-output-with-secret",
             "",
             "category=provider-rejected",
+            ("non-json-provider-output-with-secret",),
+        ),
+        (
+            "",
+            json.dumps(
+                {
+                    "code": "SYNTHETIC_ROOT_TOKEN",
+                    "request": {"body": "root-request-body"},
+                }
+            ),
+            "category=provider-rejected",
+            ("SYNTHETIC_ROOT_TOKEN", "root-request-body"),
+        ),
+        (
+            "",
+            json.dumps(
+                {
+                    "error": {
+                        "code": "UNEXPECTED_DIRECT_ENVELOPE_TOKEN",
+                        "message": "unexpected-envelope-message",
+                    }
+                }
+            ),
+            "category=provider-rejected",
+            ("UNEXPECTED_DIRECT_ENVELOPE_TOKEN", "unexpected-envelope-message"),
         ),
     ],
-    ids=["trusted-outcome-excludes-request-content", "non-json-output-is-generic"],
+    ids=[
+        "safe-error-envelope-excludes-request-content",
+        "non-json-output-is-generic",
+        "root-token-is-generic",
+        "unexpected-envelope-token-is-generic",
+    ],
 )
 def test_normal_lifecycle_node_group_create_refusal_preserves_retained_bytes(
-    tmp_path, monkeypatch, stdout, stderr, expected_diagnostic
+    tmp_path, monkeypatch, stdout, stderr, expected_diagnostic, forbidden_tokens
 ):
     spec, install_dir, before = _zero_node_subnet_retained_target(tmp_path)
     calls: dict[str, object] = {}
@@ -1750,12 +1787,8 @@ def test_normal_lifecycle_node_group_create_refusal_preserves_retained_bytes(
     assert "could not create retained node group" in message
     assert "provider exit 47" in message
     assert expected_diagnostic in message
-    assert "provider-secret" not in message
-    assert "private.invalid" not in message
-    assert "raw-request-body" not in message
-    assert "nested-request-message" not in message
-    assert "payload-message" not in message
-    assert "non-json-provider-output-with-secret" not in message
+    for token in forbidden_tokens:
+        assert token not in message
 
     creates = [
         command
