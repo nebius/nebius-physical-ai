@@ -1255,9 +1255,11 @@ def _tainted_node_group_matches_desired(
     ):
         return False
     if pool.capacity_block_group:
-        if reservation.get("policy") != "STRICT" or reservation.get(
-            "reservation_ids"
-        ) != [pool.capacity_block_group]:
+        if (
+            not pool.compute_reservation_id
+            or reservation.get("policy") != "STRICT"
+            or reservation.get("reservation_ids") != [pool.compute_reservation_id]
+        ):
             return False
     elif reservation.get("policy") or reservation.get("reservation_ids"):
         return False
@@ -2098,28 +2100,56 @@ def _normalize_tfvars_assignments(text: str) -> str:
 
 
 def retained_target_tfvars_match(
-    saved: str, expected: str, *, strict_capacity_block_group: str = ""
+    saved: str,
+    expected: str,
+    *,
+    strict_capacity_block_group: str = "",
+    strict_compute_reservation_id: str = "",
+    allow_unmaterialized_selector_migration: bool = False,
 ) -> bool:
-    """Compare retained inputs with an exact verified STRICT policy selector.
+    """Compare retained inputs and optionally allow one safe STRICT rebinding.
 
-    Managed Kubernetes uses the declared capacity-block-group ID directly in
-    the STRICT reservation policy. A retained input with any alternate policy
-    ID therefore has material drift and cannot proceed to provider mutation.
+    A Fleet spec selects a capacity block group, while the provider's node-group
+    API needs the compatible compute-reservation identity resolved during the
+    current strict preflight. The pool-only resume path may translate exactly
+    that one legacy rendered selector when its Terraform cluster is still
+    unmaterialized; every other caller requires an exact materialized input.
     """
 
     saved_assignments = _tfvars_assignment_map(saved)
     expected_assignments = _tfvars_assignment_map(expected)
     if saved_assignments is None or expected_assignments is None:
         return False
-    if saved_assignments != expected_assignments:
-        return False
-    if not strict_capacity_block_group:
-        return True
-    return (
-        _strict_reservation_id(
-            saved_assignments.get("gpu_nodes_reservation_policy", "")
+    if saved_assignments == expected_assignments:
+        if not strict_compute_reservation_id:
+            return True
+        return (
+            _strict_reservation_id(
+                saved_assignments.get("gpu_nodes_reservation_policy", "")
+            )
+            == strict_compute_reservation_id
         )
-        == strict_capacity_block_group
+    if not allow_unmaterialized_selector_migration:
+        return False
+    changed = {
+        name
+        for name in set(saved_assignments) | set(expected_assignments)
+        if saved_assignments.get(name) != expected_assignments.get(name)
+    }
+    if changed != {"gpu_nodes_reservation_policy"}:
+        return False
+    saved_policy = _strict_reservation_id(
+        saved_assignments["gpu_nodes_reservation_policy"]
+    )
+    expected_policy = _strict_reservation_id(
+        expected_assignments["gpu_nodes_reservation_policy"]
+    )
+    if not strict_capacity_block_group or not strict_compute_reservation_id:
+        return False
+    return (
+        saved_policy == strict_capacity_block_group
+        and expected_policy == strict_compute_reservation_id
+        and saved_policy != expected_policy
     )
 
 
@@ -2254,6 +2284,11 @@ def _is_verified_unchanged_target(
                 desired_capacity,
                 strict_capacity_block_group=(
                     cluster.gpu_nodes.capacity_block_group if cluster.gpu_nodes else ""
+                ),
+                strict_compute_reservation_id=(
+                    cluster.gpu_nodes.compute_reservation_id
+                    if cluster.gpu_nodes
+                    else ""
                 ),
             )
             and not removes_cpu_pool
@@ -2764,10 +2799,10 @@ def _provider_node_group_matches_pool(
         return False
     strict_reserved = bool(
         pool.capacity_block_group
-        and pool.compute_reservation_id == pool.capacity_block_group
+        and pool.compute_reservation_id
         and isinstance(reservation, dict)
         and str(reservation.get("policy") or "") == "STRICT"
-        and reservation_ids == [pool.capacity_block_group]
+        and reservation_ids == [pool.compute_reservation_id]
     )
     effective_preemptible = (
         False

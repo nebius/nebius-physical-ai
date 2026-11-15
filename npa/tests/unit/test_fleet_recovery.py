@@ -1490,7 +1490,7 @@ def test_normal_lifecycle_resumes_zero_subnet_cpu_and_strict_gpu_target(
         cluster,
         gpu_nodes=replace(
             cluster.gpu_nodes,
-            compute_reservation_id="capacityblockgroup-test",
+            compute_reservation_id="computereservation-test",
         ),
     )
     workdir = install_dir / "k8s-training"
@@ -1581,7 +1581,7 @@ def test_normal_lifecycle_resumes_zero_subnet_cpu_and_strict_gpu_target(
                             platform="gpu-rtx6000",
                             preset="1gpu-24vcpu-218gb",
                             count=1,
-                            reservation_id="capacityblockgroup-test",
+                            reservation_id="computereservation-test",
                         ),
                     ]
                 }
@@ -1644,7 +1644,7 @@ def test_normal_lifecycle_resumes_zero_subnet_cpu_and_strict_gpu_target(
         gpu_command[
             gpu_command.index("--template-reservation-policy-reservation-ids") + 1
         ]
-        == "capacityblockgroup-test"
+        == "computereservation-test"
     )
     filesystems = json.loads(
         gpu_command[gpu_command.index("--template-filesystems") + 1]
@@ -1656,7 +1656,7 @@ def test_normal_lifecycle_resumes_zero_subnet_cpu_and_strict_gpu_target(
             "existing_filesystem": {"id": "filesystem-test"},
         }
     ]
-    assert any("capacityblockgroup-test" in value for value in gpu_command)
+    assert any("computereservation-test" in value for value in gpu_command)
     assert not any("cluster" in command and "create" in command for command in commands)
     assert not any("terraform" in command for command in commands)
     assert (workdir / "terraform.tfstate").read_bytes() == before["state"]
@@ -2065,7 +2065,7 @@ def test_retained_resume_rejects_nonmatching_saved_selector_before_provider(
         cluster,
         gpu_nodes=replace(
             cluster.gpu_nodes,
-            compute_reservation_id="capacityblockgroup-test",
+            compute_reservation_id="computereservation-test",
         ),
     )
     workdir = install_dir / "k8s-training"
@@ -2074,7 +2074,7 @@ def test_retained_resume_rejects_nonmatching_saved_selector_before_provider(
             as_mk8s_desired(bound_cluster),
             ssh_public_key="ssh-test",
             recipe_dir=workdir,
-        ).replace("capacityblockgroup-test", "other-capacity-block"),
+        ).replace("computereservation-test", "other-compute-reservation"),
         encoding="utf-8",
     )
     paths = {
@@ -2114,6 +2114,58 @@ def test_retained_resume_rejects_nonmatching_saved_selector_before_provider(
 
     for name, path in paths.items():
         assert path.read_bytes() == bytes_before[name]
+
+
+def test_retained_resume_refuses_missing_compute_identity_before_persistence(
+    tmp_path, monkeypatch
+):
+    spec, install_dir, before = _unmaterialized_retained_target(tmp_path)
+    cluster = spec.projects[0].clusters[0]
+    cluster.gpu_nodes = NodePoolSpec(
+        count=1,
+        platform="gpu-rtx6000",
+        preset="1gpu-24vcpu-218gb",
+        capacity_block_group="capacityblockgroup-test",
+    )
+    calls: dict[str, object] = {}
+    _prepare_provider(monkeypatch, calls)
+    monkeypatch.setattr(lifecycle, "_assert_terraform_version", lambda _: None)
+    monkeypatch.setattr(lifecycle, "_resolve_tenant_id", lambda *_: "tenant-test")
+    monkeypatch.setattr(lifecycle, "_resolve_region", lambda _: "test-region")
+    monkeypatch.setattr(
+        lifecycle,
+        "_deploy_one_cluster",
+        lambda **_: pytest.fail("missing compute identity entered Terraform apply"),
+    )
+
+    class Reader:
+        def __init__(self, *_args, **_kwargs) -> None:
+            pass
+
+        def resolve_compute_reservations(self, _requirements, _on_status):
+            return {}
+
+    monkeypatch.setattr(lifecycle, "ProjectCapacityReader", Reader)
+
+    with pytest.raises(ValueError, match="no verified compute reservation identity"):
+        lifecycle.deploy_fleet(
+            spec,
+            work_root=tmp_path,
+            k8s_training_dir=install_dir,
+            preflight=False,
+        )
+
+    assert calls == {}
+    assert not (install_dir / "kubeconfig").exists()
+    paths = {
+        "owner": install_dir / ".npa-backend-owner.json",
+        "sidecar": install_dir / ".npa-fleet-env.json",
+        "state": install_dir / "k8s-training" / "terraform.tfstate",
+        "lock": install_dir / "k8s-training" / ".terraform.tfstate.lock.info",
+        "summary": tmp_path / spec.name / "fleet-state.json",
+    }
+    for name, path in paths.items():
+        assert path.read_bytes() == before[name]
 
 
 def test_normal_lifecycle_refuses_retained_target_when_provider_verification_fails(
@@ -2220,7 +2272,7 @@ def test_normal_lifecycle_refuses_registration_before_terminal_strict_pool_proof
         cluster,
         gpu_nodes=replace(
             cluster.gpu_nodes,
-            compute_reservation_id="capacityblockgroup-test",
+            compute_reservation_id="computereservation-test",
         ),
     )
     workdir = install_dir / "k8s-training"

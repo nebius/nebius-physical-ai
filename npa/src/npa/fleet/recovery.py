@@ -322,12 +322,19 @@ def _recovery_inputs(
     release = _saved_release(target.install_dir)
     desired = as_mk8s_desired(target.cluster)
     ssh_public_key = lifecycle._resolve_ssh_public_key(target.spec.ssh_public_key)
-    _assert_materialized_spec(workdir, desired, ssh_public_key)
     cluster_id = _terraform_cluster_id_or_unmaterialized(
         workdir,
         saved["project_id"],
         target.cluster.name,
         allow_backup_root=allow_backup_root,
+    )
+    _assert_materialized_spec(
+        workdir,
+        desired,
+        ssh_public_key,
+        allow_unmaterialized_strict_selector_migration=(
+            allow_backup_root and not cluster_id
+        ),
     )
     requires_empty_provider_pools = _assert_state_subnet(
         workdir,
@@ -714,19 +721,16 @@ def _create_retained_node_group(
             ]
         )
     if is_gpu:
-        if (
-            not pool.capacity_block_group
-            or pool.compute_reservation_id != pool.capacity_block_group
-        ):
+        if not pool.capacity_block_group or not pool.compute_reservation_id:
             raise FleetRecoveryError(
-                "retained strict GPU pool has no verified matching reservation policy identity"
+                "retained strict GPU pool has no verified compute reservation identity"
             )
         command.extend(
             [
                 "--template-reservation-policy-policy",
                 "strict",
                 "--template-reservation-policy-reservation-ids",
-                pool.capacity_block_group,
+                pool.compute_reservation_id,
             ]
         )
         selection = resolve_gpu_driver_strategy(
@@ -1058,7 +1062,13 @@ def _saved_release(install_dir: Path):
         ) from exc
 
 
-def _assert_materialized_spec(workdir: Path, cluster, ssh_public_key: str) -> None:
+def _assert_materialized_spec(
+    workdir: Path,
+    cluster,
+    ssh_public_key: str,
+    *,
+    allow_unmaterialized_strict_selector_migration: bool = False,
+) -> None:
     try:
         saved = (workdir / "terraform.tfvars").read_text(encoding="utf-8")
         expected = render_tfvars(
@@ -1075,6 +1085,12 @@ def _assert_materialized_spec(workdir: Path, cluster, ssh_public_key: str) -> No
         expected,
         strict_capacity_block_group=(
             cluster.gpu_nodes.capacity_block_group if cluster.gpu_nodes else ""
+        ),
+        strict_compute_reservation_id=(
+            cluster.gpu_nodes.compute_reservation_id if cluster.gpu_nodes else ""
+        ),
+        allow_unmaterialized_selector_migration=(
+            allow_unmaterialized_strict_selector_migration
         ),
     ):
         raise FleetRecoveryError("materialized inputs differ from the selected spec")

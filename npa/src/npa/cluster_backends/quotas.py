@@ -216,12 +216,12 @@ def _available_reserved_gpus(status: dict[str, Any]) -> int | None:
 
 
 def parse_capacity_blocks(payload: str) -> dict[str, dict[str, Any]]:
-    """Index capacity blocks with their verified STRICT policy selector.
+    """Index capacity blocks with one verified compute reservation identity.
 
-    Managed Kubernetes accepts the capacity-block-group identifier itself in a
-    STRICT reservation policy. Optional alternate identifiers are evidence
-    only: they must agree with that declared group, or the catalog refuses the
-    record before any provider mutation.
+    The capacity-block-group ID remains Fleet's stable selection key. It is
+    not interchangeable with the provider compute-reservation ID required by
+    a managed-Kubernetes STRICT reservation policy. Keep both values explicit
+    and refuse a catalog that cannot establish one unambiguous binding.
     """
 
     try:
@@ -244,9 +244,7 @@ def parse_capacity_blocks(payload: str) -> dict[str, dict[str, Any]]:
         reservation_id = str(metadata.get("id") or "")
         if not reservation_id:
             continue
-        compute_reservation_id = _strict_reservation_id(
-            reservation_id, status, affinity
-        )
+        compute_reservation_id = _compute_reservation_id(status, affinity)
         record = {
             "parent_id": str(metadata.get("parent_id") or ""),
             "region": str(status.get("region") or ""),
@@ -267,15 +265,13 @@ def parse_capacity_blocks(payload: str) -> dict[str, dict[str, Any]]:
     return indexed
 
 
-def _strict_reservation_id(
-    group_id: str, status: dict[str, Any], affinity: dict[str, Any]
-) -> str:
-    """Return the supported STRICT policy ID or an empty refusal value.
+def _compute_reservation_id(status: dict[str, Any], affinity: dict[str, Any]) -> str:
+    """Return one exact compute-reservation identity or an empty refusal value.
 
-    Current provider records legitimately omit every optional alternate
-    reservation field. When present, every spelling must repeat the declared
-    capacity-block-group ID; a distinct value cannot safely be rendered as a
-    managed-Kubernetes reservation policy.
+    Current provider responses may use protobuf JSON spellings at either the
+    status or compute-affinity boundary. Accept only one nonempty string, or
+    repeated spellings of that string; conflicting or malformed evidence is
+    not a safe STRICT reservation binding.
     """
 
     values = [
@@ -291,7 +287,7 @@ def _strict_reservation_id(
     present = {
         value.strip() for value in values if isinstance(value, str) and value.strip()
     }
-    return group_id if not present or present == {group_id} else ""
+    return present.pop() if len(present) == 1 else ""
 
 
 def find_reservation_shortfalls(
@@ -374,31 +370,31 @@ def compute_reservation_bindings(
     blocks: dict[str, dict[str, Any]],
     tenant_id: str,
 ) -> dict[str, str]:
-    """Return verified group-to-STRICT-policy bindings for reserved pools.
+    """Return verified group-to-compute reservation bindings for STRICT pools.
 
     Reuse every capacity compatibility and headroom check before accepting the
-    declared capacity-block group as the provider policy ID. The mapping stays
-    keyed by that group so no optional catalog value can replace its selection.
+    provider identity. The mapping remains keyed by the declarative capacity
+    block group, so it cannot replace or obscure that public selection.
     """
 
     shortfalls = find_reservation_shortfalls(requirements, blocks, tenant_id)
     if shortfalls:
         raise ValueError(reservation_shortfall_message(shortfalls))
     bindings: dict[str, str] = {}
-    mismatches: list[ReservationShortfall] = []
+    missing: list[ReservationShortfall] = []
     for group_id in requirements:
         compute_id = str(blocks[group_id].get("compute_reservation_id") or "")
-        if compute_id != group_id:
-            mismatches.append(
+        if not compute_id or compute_id == group_id:
+            missing.append(
                 ReservationShortfall(
                     group_id,
-                    "has conflicting unsupported reservation identity evidence",
+                    "has no distinct compatible compute reservation identity",
                 )
             )
             continue
         bindings[group_id] = compute_id
-    if mismatches:
-        raise ValueError(reservation_shortfall_message(mismatches))
+    if missing:
+        raise ValueError(reservation_shortfall_message(missing))
     return bindings
 
 
