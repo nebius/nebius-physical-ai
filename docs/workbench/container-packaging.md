@@ -43,15 +43,16 @@ bootstrap or runtime acceptance. Do not lower these floors or substitute
 scanner exceptions for rebuilt, validated image bytes.
 
 The GPU-role security closure separately pins PyJWT 2.14.0 for Transfer and
-Isaac. EnvGen uses the November Ubuntu snapshot and the explicit
-`LINUX_LIBC_DEV_VERSION=5.15.0-202.212` argument to the existing installer;
+Isaac. EnvGen uses the immutable 2026-11-10 Ubuntu snapshot and the explicit
+`LINUX_LIBC_DEV_VERSION=5.15.0-203.213` argument to the existing installer;
 other installer callers retain their own release-specific defaults. The exact
 installed header version is checked before proceeding. The frozen APT transaction
-already selects that version at the security floor `5.15.0-202.212`.
-The [signed-index binding](validation/sim2real-envgen-headers-20261103.json)
-preserves both identities, and the build rejects any selected header version
-other than that recorded version. No downgrade override is used. These dependency pins
-do not qualify an image without its fresh complete artifact gates.
+selects that version at the scanner-fixed security floor `5.15.0-203.213`.
+The [signed-index binding](validation/sim2real-envgen-headers-20261110.json)
+preserves the snapshot and package-index identities, and the build rejects any
+selected header version other than that recorded version. No downgrade override
+is used. These dependency pins do not qualify an image without its fresh complete
+artifact gates.
 
 The dedicated current-source EnvGen runtime does not inherit or sanitize a
 Genesis scikit-image installation. It removes the complete inherited

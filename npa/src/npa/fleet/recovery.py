@@ -32,6 +32,9 @@ _BACKUP_STATE_FILE = "terraform.tfstate.backup"
 _TERRAFORM_STATE_PATHS = frozenset(
     {_STATE_FILE, _BACKUP_STATE_FILE, ".terraform.tfstate.lock.info"}
 )
+# The current MK8s CLI exposes this stable gRPC category in its direct error
+# envelope. Map it to an NPA-owned label rather than exposing provider text.
+_RETAINED_CREATE_SAFE_OUTCOMES = {"INVALID_ARGUMENT": "invalid-argument"}
 
 
 @dataclass(frozen=True)
@@ -60,6 +63,33 @@ class _ProviderSession:
     nebius_bin: str
     environment: dict[str, str]
     project: MK8sProjectIdentity
+
+
+def _safe_retained_create_outcome(payload: object) -> str | None:
+    """Return a direct, provider-safe outcome token from a trusted envelope."""
+
+    if not isinstance(payload, dict):
+        return None
+    error = payload.get("error")
+    if not isinstance(error, dict):
+        return None
+    code = error.get("code")
+    return _RETAINED_CREATE_SAFE_OUTCOMES.get(code) if isinstance(code, str) else None
+
+
+def _bounded_retained_create_diagnostic(result: Any) -> str:
+    """Return only a bounded typed provider outcome, never provider output."""
+
+    for value in (getattr(result, "stderr", ""), getattr(result, "stdout", "")):
+        if not value:
+            continue
+        try:
+            payload = json.loads(value)
+        except (TypeError, ValueError):
+            continue
+        if outcome := _safe_retained_create_outcome(payload):
+            return f"outcome={outcome}"
+    return "category=provider-rejected"
 
 
 def recover_interrupted_fleet_apply(
@@ -292,12 +322,19 @@ def _recovery_inputs(
     release = _saved_release(target.install_dir)
     desired = as_mk8s_desired(target.cluster)
     ssh_public_key = lifecycle._resolve_ssh_public_key(target.spec.ssh_public_key)
-    _assert_materialized_spec(workdir, desired, ssh_public_key)
     cluster_id = _terraform_cluster_id_or_unmaterialized(
         workdir,
         saved["project_id"],
         target.cluster.name,
         allow_backup_root=allow_backup_root,
+    )
+    _assert_materialized_spec(
+        workdir,
+        desired,
+        ssh_public_key,
+        allow_unmaterialized_strict_selector_migration=(
+            allow_backup_root and not cluster_id
+        ),
     )
     requires_empty_provider_pools = _assert_state_subnet(
         workdir,
@@ -684,19 +721,16 @@ def _create_retained_node_group(
             ]
         )
     if is_gpu:
-        if (
-            not pool.capacity_block_group
-            or pool.compute_reservation_id != pool.capacity_block_group
-        ):
+        if not pool.capacity_block_group or not pool.compute_reservation_id:
             raise FleetRecoveryError(
-                "retained strict GPU pool has no verified matching reservation policy identity"
+                "retained strict GPU pool has no verified compute reservation identity"
             )
         command.extend(
             [
                 "--template-reservation-policy-policy",
                 "strict",
                 "--template-reservation-policy-reservation-ids",
-                pool.capacity_block_group,
+                pool.compute_reservation_id,
             ]
         )
         selection = resolve_gpu_driver_strategy(
@@ -717,7 +751,11 @@ def _create_retained_node_group(
             )
     result = mk8s_execution._run_capture(command, env=session.environment, check=False)
     if result.returncode:
-        raise FleetRecoveryError(f"could not create retained node group {name!r}")
+        detail = _bounded_retained_create_diagnostic(result)
+        raise FleetRecoveryError(
+            f"could not create retained node group {name!r} "
+            f"(provider exit {result.returncode})" + (f": {detail}" if detail else "")
+        )
     try:
         created = json.loads(result.stdout or "{}")
     except json.JSONDecodeError as exc:
@@ -1024,7 +1062,13 @@ def _saved_release(install_dir: Path):
         ) from exc
 
 
-def _assert_materialized_spec(workdir: Path, cluster, ssh_public_key: str) -> None:
+def _assert_materialized_spec(
+    workdir: Path,
+    cluster,
+    ssh_public_key: str,
+    *,
+    allow_unmaterialized_strict_selector_migration: bool = False,
+) -> None:
     try:
         saved = (workdir / "terraform.tfvars").read_text(encoding="utf-8")
         expected = render_tfvars(
@@ -1041,6 +1085,12 @@ def _assert_materialized_spec(workdir: Path, cluster, ssh_public_key: str) -> No
         expected,
         strict_capacity_block_group=(
             cluster.gpu_nodes.capacity_block_group if cluster.gpu_nodes else ""
+        ),
+        strict_compute_reservation_id=(
+            cluster.gpu_nodes.compute_reservation_id if cluster.gpu_nodes else ""
+        ),
+        allow_unmaterialized_selector_migration=(
+            allow_unmaterialized_strict_selector_migration
         ),
     ):
         raise FleetRecoveryError("materialized inputs differ from the selected spec")

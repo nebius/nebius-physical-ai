@@ -39,8 +39,8 @@ def test_isaac_oss_closure_does_not_retain_vulnerable_pyjwt():
 
 def test_envgen_uses_explicit_fixed_headers_without_changing_other_callers():
     text = (WORKBENCH / "sim2real-envgen/Dockerfile").read_text()
-    assert "ARG UBUNTU_SNAPSHOT=20261103T000000Z" in text
-    assert "ARG ENVGEN_LINUX_LIBC_DEV_VERSION=5.15.0-202.212" in text
+    assert "ARG UBUNTU_SNAPSHOT=20261110T000000Z" in text
+    assert "ARG ENVGEN_LINUX_LIBC_DEV_VERSION=5.15.0-203.213" in text
     assert (
         'install-workflow-runtime-prereqs "${UBUNTU_SNAPSHOT}" "${ENVGEN_LINUX_LIBC_DEV_VERSION}"'
         in text
@@ -59,22 +59,34 @@ def test_envgen_uses_explicit_fixed_headers_without_changing_other_callers():
         ("5.15.0-190.200", False),
         ("5.15.0-194.204", False),
         ("5.15.0-198.208", False),
-        ("5.15.0-202.212", True),
+        ("5.15.0-202.212", False),
+        ("5.15.0-203.213", True),
+        ("5.15.0-204.214", True),
     ],
 )
 def test_envgen_header_pin_matches_the_frozen_apt_selection(requested, no_downgrade):
     record = json.loads(
         (
             WORKBENCH.parents[2]
-            / "docs/workbench/validation/sim2real-envgen-headers-20261103.json"
+            / "docs/workbench/validation/sim2real-envgen-headers-20261110.json"
         ).read_text()
     )
     selected = record["selected_version"]
     text = (WORKBENCH / "sim2real-envgen/Dockerfile").read_text()
     assert f"ARG ENVGEN_LINUX_LIBC_DEV_VERSION={selected}" in text
     assert "--allow-downgrades" not in text
+    assert record["snapshot"] == "20261110T000000Z"
+    assert record["suite"] == "jammy-updates"
     assert selected == record["package"]["Version"]
-    assert record["fixed_floor"] == "5.15.0-202.212"
+    assert selected == "5.15.0-203.213"
+    assert record["fixed_floor"] == "5.15.0-203.213"
+    assert record["package"]["SHA256"] == (
+        "52d7d16b56a2c415afe35a91fa64b7db37cd7e3c825a5976531e0c9561be2e4d"
+    )
+    assert record["authority"]["packages_sha256"] == (
+        "5e9489620c40583c3de837ce1073eff4f648b1286fe07396fedfcb1d2d59f3eb"
+    )
+    assert record["authority"]["retained_gpgv_exit"] == 0
     # Use Debian's actual version ordering, not PEP 440 or a lexical comparison.
     if shutil.which("dpkg") is None:
         pytest.skip(
@@ -89,4 +101,4 @@ def test_envgen_header_pin_matches_the_frozen_apt_selection(requested, no_downgr
 def test_header_comparison_without_dpkg_skips_after_static_checks(monkeypatch):
     monkeypatch.setattr(shutil, "which", lambda _: None)
     with pytest.raises(pytest.skip.Exception, match="requires dpkg"):
-        test_envgen_header_pin_matches_the_frozen_apt_selection("5.15.0-202.212", True)
+        test_envgen_header_pin_matches_the_frozen_apt_selection("5.15.0-203.213", True)

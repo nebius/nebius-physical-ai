@@ -1490,7 +1490,7 @@ def test_normal_lifecycle_resumes_zero_subnet_cpu_and_strict_gpu_target(
         cluster,
         gpu_nodes=replace(
             cluster.gpu_nodes,
-            compute_reservation_id="capacityblockgroup-test",
+            compute_reservation_id="computereservation-test",
         ),
     )
     workdir = install_dir / "k8s-training"
@@ -1581,7 +1581,7 @@ def test_normal_lifecycle_resumes_zero_subnet_cpu_and_strict_gpu_target(
                             platform="gpu-rtx6000",
                             preset="1gpu-24vcpu-218gb",
                             count=1,
-                            reservation_id="capacityblockgroup-test",
+                            reservation_id="computereservation-test",
                         ),
                     ]
                 }
@@ -1618,6 +1618,20 @@ def test_normal_lifecycle_resumes_zero_subnet_cpu_and_strict_gpu_target(
         "recover-ng-cpu",
         "recover-ng-gpu-0",
     ]
+    cpu_command = creates[0]
+    assert cpu_command[cpu_command.index("--parent-id") + 1] == "cluster-test"
+    assert cpu_command[cpu_command.index("--fixed-node-count") + 1] == "1"
+    assert (
+        cpu_command[cpu_command.index("--template-resources-platform") + 1] == "cpu-d3"
+    )
+    assert (
+        cpu_command[cpu_command.index("--template-resources-preset") + 1]
+        == "48vcpu-192gb"
+    )
+    assert (
+        cpu_command[cpu_command.index("--template-boot-disk-type") + 1] == "network_ssd"
+    )
+    assert "--template-reservation-policy-policy" not in cpu_command
     assert pool_lists == 4
     assert postcreate_inventory_reads == 2
     assert sleeps == [30.0]
@@ -1630,7 +1644,7 @@ def test_normal_lifecycle_resumes_zero_subnet_cpu_and_strict_gpu_target(
         gpu_command[
             gpu_command.index("--template-reservation-policy-reservation-ids") + 1
         ]
-        == "capacityblockgroup-test"
+        == "computereservation-test"
     )
     filesystems = json.loads(
         gpu_command[gpu_command.index("--template-filesystems") + 1]
@@ -1642,7 +1656,7 @@ def test_normal_lifecycle_resumes_zero_subnet_cpu_and_strict_gpu_target(
             "existing_filesystem": {"id": "filesystem-test"},
         }
     ]
-    assert any("capacityblockgroup-test" in value for value in gpu_command)
+    assert any("computereservation-test" in value for value in gpu_command)
     assert not any("cluster" in command and "create" in command for command in commands)
     assert not any("terraform" in command for command in commands)
     assert (workdir / "terraform.tfstate").read_bytes() == before["state"]
@@ -1650,8 +1664,73 @@ def test_normal_lifecycle_resumes_zero_subnet_cpu_and_strict_gpu_target(
     assert (workdir / ".terraform.tfstate.lock.info").read_bytes() == before["lock"]
 
 
-def test_normal_lifecycle_empty_node_group_mapping_refusal_preserves_retained_bytes(
-    tmp_path, monkeypatch
+@pytest.mark.parametrize(
+    ("stdout", "stderr", "expected_diagnostic", "forbidden_tokens"),
+    [
+        (
+            "",
+            json.dumps(
+                {
+                    "error": {
+                        "code": "INVALID_ARGUMENT",
+                        "message": "provider-secret endpoint=https://private.invalid/",
+                        "request": {
+                            "message": "nested-request-message",
+                            "body": "raw-request-body",
+                        },
+                    },
+                    "payload": {"message": "payload-message"},
+                }
+            ),
+            "outcome=invalid-argument",
+            (
+                "provider-secret",
+                "private.invalid",
+                "raw-request-body",
+                "nested-request-message",
+                "payload-message",
+            ),
+        ),
+        (
+            "non-json-provider-output-with-secret",
+            "",
+            "category=provider-rejected",
+            ("non-json-provider-output-with-secret",),
+        ),
+        (
+            "",
+            json.dumps(
+                {
+                    "code": "SYNTHETIC_ROOT_TOKEN",
+                    "request": {"body": "root-request-body"},
+                }
+            ),
+            "category=provider-rejected",
+            ("SYNTHETIC_ROOT_TOKEN", "root-request-body"),
+        ),
+        (
+            "",
+            json.dumps(
+                {
+                    "error": {
+                        "code": "UNEXPECTED_DIRECT_ENVELOPE_TOKEN",
+                        "message": "unexpected-envelope-message",
+                    }
+                }
+            ),
+            "category=provider-rejected",
+            ("UNEXPECTED_DIRECT_ENVELOPE_TOKEN", "unexpected-envelope-message"),
+        ),
+    ],
+    ids=[
+        "safe-error-envelope-excludes-request-content",
+        "non-json-output-is-generic",
+        "root-token-is-generic",
+        "unexpected-envelope-token-is-generic",
+    ],
+)
+def test_normal_lifecycle_node_group_create_refusal_preserves_retained_bytes(
+    tmp_path, monkeypatch, stdout, stderr, expected_diagnostic, forbidden_tokens
 ):
     spec, install_dir, before = _zero_node_subnet_retained_target(tmp_path)
     calls: dict[str, object] = {}
@@ -1686,12 +1765,17 @@ def test_normal_lifecycle_empty_node_group_mapping_refusal_preserves_retained_by
         if "node-group" in command and "list" in command:
             return CompletedProcess(command, 0, "{}", "")
         if "node-group" in command and "create" in command:
-            return CompletedProcess(command, 1, "", "provider refused")
+            return CompletedProcess(
+                command,
+                47,
+                stdout,
+                stderr,
+            )
         pytest.fail(f"unexpected provider command: {command}")
 
     monkeypatch.setattr(mk8s_execution, "_run_capture", provider)
 
-    with pytest.raises(RuntimeError, match="could not create retained node group"):
+    with pytest.raises(RuntimeError) as exc_info:
         lifecycle.deploy_fleet(
             spec,
             work_root=tmp_path,
@@ -1699,14 +1783,26 @@ def test_normal_lifecycle_empty_node_group_mapping_refusal_preserves_retained_by
             preflight=False,
         )
 
+    message = str(exc_info.value)
+    assert "could not create retained node group" in message
+    assert "provider exit 47" in message
+    assert expected_diagnostic in message
+    for token in forbidden_tokens:
+        assert token not in message
+
     creates = [
         command
         for command in commands
         if "node-group" in command and "create" in command
     ]
     assert [command[command.index("--name") + 1] for command in creates] == [
-        "recover-ng-cpu"
+        "recover-ng-cpu",
     ]
+    create = creates[0]
+    assert create[create.index("--parent-id") + 1] == "cluster-test"
+    assert create[create.index("--fixed-node-count") + 1] == "1"
+    assert create[create.index("--template-resources-platform") + 1] == "cpu-d3"
+    assert create[create.index("--template-resources-preset") + 1] == "48vcpu-192gb"
     assert "kubeconfig" not in calls
     assert "persist" not in calls
     assert not any("terraform" in command for command in commands)
@@ -1969,7 +2065,7 @@ def test_retained_resume_rejects_nonmatching_saved_selector_before_provider(
         cluster,
         gpu_nodes=replace(
             cluster.gpu_nodes,
-            compute_reservation_id="capacityblockgroup-test",
+            compute_reservation_id="computereservation-test",
         ),
     )
     workdir = install_dir / "k8s-training"
@@ -1978,7 +2074,7 @@ def test_retained_resume_rejects_nonmatching_saved_selector_before_provider(
             as_mk8s_desired(bound_cluster),
             ssh_public_key="ssh-test",
             recipe_dir=workdir,
-        ).replace("capacityblockgroup-test", "other-capacity-block"),
+        ).replace("computereservation-test", "other-compute-reservation"),
         encoding="utf-8",
     )
     paths = {
@@ -2018,6 +2114,58 @@ def test_retained_resume_rejects_nonmatching_saved_selector_before_provider(
 
     for name, path in paths.items():
         assert path.read_bytes() == bytes_before[name]
+
+
+def test_retained_resume_refuses_missing_compute_identity_before_persistence(
+    tmp_path, monkeypatch
+):
+    spec, install_dir, before = _unmaterialized_retained_target(tmp_path)
+    cluster = spec.projects[0].clusters[0]
+    cluster.gpu_nodes = NodePoolSpec(
+        count=1,
+        platform="gpu-rtx6000",
+        preset="1gpu-24vcpu-218gb",
+        capacity_block_group="capacityblockgroup-test",
+    )
+    calls: dict[str, object] = {}
+    _prepare_provider(monkeypatch, calls)
+    monkeypatch.setattr(lifecycle, "_assert_terraform_version", lambda _: None)
+    monkeypatch.setattr(lifecycle, "_resolve_tenant_id", lambda *_: "tenant-test")
+    monkeypatch.setattr(lifecycle, "_resolve_region", lambda _: "test-region")
+    monkeypatch.setattr(
+        lifecycle,
+        "_deploy_one_cluster",
+        lambda **_: pytest.fail("missing compute identity entered Terraform apply"),
+    )
+
+    class Reader:
+        def __init__(self, *_args, **_kwargs) -> None:
+            pass
+
+        def resolve_compute_reservations(self, _requirements, _on_status):
+            return {}
+
+    monkeypatch.setattr(lifecycle, "ProjectCapacityReader", Reader)
+
+    with pytest.raises(ValueError, match="no verified compute reservation identity"):
+        lifecycle.deploy_fleet(
+            spec,
+            work_root=tmp_path,
+            k8s_training_dir=install_dir,
+            preflight=False,
+        )
+
+    assert calls == {}
+    assert not (install_dir / "kubeconfig").exists()
+    paths = {
+        "owner": install_dir / ".npa-backend-owner.json",
+        "sidecar": install_dir / ".npa-fleet-env.json",
+        "state": install_dir / "k8s-training" / "terraform.tfstate",
+        "lock": install_dir / "k8s-training" / ".terraform.tfstate.lock.info",
+        "summary": tmp_path / spec.name / "fleet-state.json",
+    }
+    for name, path in paths.items():
+        assert path.read_bytes() == before[name]
 
 
 def test_normal_lifecycle_refuses_retained_target_when_provider_verification_fails(
@@ -2124,7 +2272,7 @@ def test_normal_lifecycle_refuses_registration_before_terminal_strict_pool_proof
         cluster,
         gpu_nodes=replace(
             cluster.gpu_nodes,
-            compute_reservation_id="capacityblockgroup-test",
+            compute_reservation_id="computereservation-test",
         ),
     )
     workdir = install_dir / "k8s-training"
