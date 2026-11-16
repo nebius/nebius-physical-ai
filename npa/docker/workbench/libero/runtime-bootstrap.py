@@ -200,7 +200,10 @@ REVIEWED_SOURCE_BUILD_NAMES = frozenset(
     }
 )
 SOURCE_BUILD_UNSHARE = Path("/usr/bin/unshare")
-SOURCE_BUILD_CHROOT = Path("/usr/sbin/chroot")
+SOURCE_BUILD_CHROOT_CANDIDATES = (
+    Path("/usr/sbin/chroot"),
+    Path("/usr/bin/chroot"),
+)
 RUNTIME_EXECUTION_GROUP = "npa-libero-exec"
 RUNTIME_EXECUTION_USER = "npa-libero-exec"
 RUNTIME_SUPERVISOR_USER = "ubuntu"
@@ -3048,6 +3051,38 @@ def _validate_read_only_system_submounts(source: Path, mountinfo: str) -> None:
             )
 
 
+def _trusted_source_build_sandbox_tools() -> tuple[Path, Path]:
+    """Return root-owned immutable sandbox binaries from supported system paths."""
+
+    try:
+        unshare_info = SOURCE_BUILD_UNSHARE.stat()
+    except OSError as exc:
+        raise BootstrapRefusal("source runtime sandbox is unavailable") from exc
+    if (
+        not stat.S_ISREG(unshare_info.st_mode)
+        or unshare_info.st_uid != 0
+        or stat.S_IMODE(unshare_info.st_mode) & 0o022
+        or not stat.S_IMODE(unshare_info.st_mode) & 0o111
+    ):
+        raise BootstrapRefusal("source runtime sandbox is not trusted")
+    for chroot in SOURCE_BUILD_CHROOT_CANDIDATES:
+        try:
+            chroot_info = chroot.stat()
+        except FileNotFoundError:
+            continue
+        except OSError as exc:
+            raise BootstrapRefusal("source runtime sandbox is unavailable") from exc
+        if (
+            not stat.S_ISREG(chroot_info.st_mode)
+            or chroot_info.st_uid != 0
+            or stat.S_IMODE(chroot_info.st_mode) & 0o022
+            or not stat.S_IMODE(chroot_info.st_mode) & 0o111
+        ):
+            raise BootstrapRefusal("source runtime sandbox is not trusted")
+        return SOURCE_BUILD_UNSHARE, chroot
+    raise BootstrapRefusal("source runtime sandbox is unavailable")
+
+
 def _build_source_wheels(
     pip: str,
     source_artifacts: list[dict[str, Any]],
@@ -3065,18 +3100,7 @@ def _build_source_wheels(
     source_lock = build_wheelhouse.parent / ".source-requirements.txt"
     source_lock.write_text("\n".join(source_lines) + "\n", encoding="utf-8")
     os.chmod(source_lock, 0o400)
-    for sandbox_tool in (SOURCE_BUILD_UNSHARE, SOURCE_BUILD_CHROOT):
-        try:
-            sandbox_info = sandbox_tool.stat()
-        except OSError as exc:
-            raise BootstrapRefusal("source runtime sandbox is unavailable") from exc
-        if (
-            not stat.S_ISREG(sandbox_info.st_mode)
-            or sandbox_info.st_uid != 0
-            or stat.S_IMODE(sandbox_info.st_mode) & 0o022
-            or not stat.S_IMODE(sandbox_info.st_mode) & 0o111
-        ):
-            raise BootstrapRefusal("source runtime sandbox is not trusted")
+    source_build_unshare, source_build_chroot = _trusted_source_build_sandbox_tools()
     wheelhouse = wheelhouse.resolve(strict=True)
     build_wheelhouse = build_wheelhouse.resolve(strict=True)
     source_lock = source_lock.resolve(strict=True)
@@ -3159,14 +3183,14 @@ def _build_source_wheels(
     script = "set -eu; mount --make-rprivate /; " + "; ".join(bind_commands)
     script += (
         "; exec "
-        + quote(str(SOURCE_BUILD_CHROOT))
+        + quote(str(source_build_chroot))
         + " "
         + quote(str(sandbox_root))
         + " /usr/bin/env -i HOME=/tmp TMPDIR=/tmp PATH=/npa-build/venv/bin:/usr/bin:/bin "
         + build_command
     )
     sandbox_command = [
-        str(SOURCE_BUILD_UNSHARE),
+        str(source_build_unshare),
         "--user",
         "--map-root-user",
         "--mount",
