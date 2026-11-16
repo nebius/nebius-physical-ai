@@ -723,7 +723,8 @@ def test_apt_resolver_accepts_exact_family_and_rejects_old_mixed_family(
     output = mixed.stdout + mixed.stderr
     assert mixed.returncode != 0
     assert "python3-dev : Depends: python3 (= 3.10.6-1~22.04)" in output
-    assert "Unable to correct problems" in output
+    # APT changes its human summary between releases; the exact rejected
+    # equality above is the stable lock-family contract this test exercises.
 
 
 def test_executed_candidate_gate_rejects_mixed_or_drifting_family() -> None:
