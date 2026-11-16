@@ -3667,7 +3667,10 @@ def test_bootstrap_timeout_kills_nonterminating_descendant_and_marks_failure(
         capture_output=True,
         text=True,
         check=False,
-        timeout=5,
+        # The guard's contract deadline remains 0.1s plus a 0.2s escalation.
+        # This outer watchdog only protects the test runner; allow a loaded
+        # sharded runner enough time to reap the killed process group.
+        timeout=15,
     )
 
     assert result.returncode in {124, 137}

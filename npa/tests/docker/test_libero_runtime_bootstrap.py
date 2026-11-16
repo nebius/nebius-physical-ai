@@ -1782,7 +1782,11 @@ def test_source_build_selects_the_supported_chroot_fallback(
     """Use the supported alternate chroot location only when the primary is absent."""
 
     module = _load_module()
-    fallback = module.SOURCE_BUILD_CHROOT_CANDIDATES[0]
+    fallback = next(
+        candidate
+        for candidate in module.SOURCE_BUILD_CHROOT_CANDIDATES
+        if candidate.is_file()
+    )
     monkeypatch.setattr(
         module,
         "SOURCE_BUILD_CHROOT_CANDIDATES",
