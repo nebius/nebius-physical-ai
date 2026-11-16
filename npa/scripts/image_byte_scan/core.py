@@ -830,10 +830,12 @@ def read_exact(reader, count, *, eof=False):
 def preflight_docker_save_outer_tar(fd, length):
     """Bound outer Docker-save parsing before tarfile sees attacker metadata.
 
-    Docker/OCI save paths fit in one ustar header. PAX and GNU name extensions
-    are therefore unnecessary in the outer transport and are rejected before
-    tarfile can eagerly allocate their bodies. Layer tar streams retain bounded
-    extension support in :func:`walk_tar`.
+    Docker/OCI save paths fit in one ustar header. A layer can nevertheless
+    exceed ustar's legacy numeric-size field, in which case Docker emits one
+    local PAX ``size`` record. Admit only that bounded numeric override before
+    tarfile can eagerly allocate extension bodies; name, link, global, and GNU
+    extensions remain unsupported in the outer transport. Layer tar streams
+    retain bounded extension support in :func:`walk_tar`.
     """
     require(type(length) is int and length >= 1024, "docker_save_outer_size")
     allowed = {
@@ -844,6 +846,7 @@ def preflight_docker_save_outer_tar(fd, length):
         tarfile.LNKTYPE,
     }
     offset = entries = zero_headers = 0
+    pending_size = None
     while offset + 512 <= length:
         raw = os.pread(fd, 512, offset)
         require(len(raw) == 512, "docker_save_outer_truncated")
@@ -852,6 +855,7 @@ def preflight_docker_save_outer_tar(fd, length):
             zero_headers += 1
             if zero_headers < 2:
                 continue
+            require(pending_size is None, "docker_save_outer_orphan_extension")
             while offset < length:
                 data = os.pread(fd, min(CHUNK, length - offset), offset)
                 require(bool(data), "docker_save_outer_truncated")
@@ -860,27 +864,49 @@ def preflight_docker_save_outer_tar(fd, length):
             return entries
         require(zero_headers == 0, "docker_save_outer_incomplete_end_markers")
         info = tarfile.TarInfo.frombuf(raw, encoding="utf-8", errors="strict")
-        require(
-            info.type
-            not in {
-                tarfile.XHDTYPE,
-                tarfile.XGLTYPE,
-                tarfile.GNUTYPE_LONGNAME,
-                tarfile.GNUTYPE_LONGLINK,
-            },
-            "docker_save_outer_extension_unsupported",
-        )
-        require(
-            info.type in allowed and info.size >= 0,
-            "docker_save_outer_entry_type",
-        )
         entries += 1
         require(
             entries <= DOCKER_SAVE_OUTER_ENTRY_LIMIT,
             "docker_save_outer_entry_limit",
         )
-        body_end = offset + info.size
-        next_header = body_end + (-info.size) % 512
+        if info.type in {
+            tarfile.XHDTYPE,
+            tarfile.XGLTYPE,
+            tarfile.GNUTYPE_LONGNAME,
+            tarfile.GNUTYPE_LONGLINK,
+        }:
+            require(
+                info.type == tarfile.XHDTYPE
+                and pending_size is None
+                and info.size >= 0
+                and info.size <= TAR_EXTENSION_LIMIT,
+                "docker_save_outer_extension_unsupported",
+            )
+            body_end = offset + info.size
+            next_header = body_end + (-info.size) % 512
+            require(
+                body_end <= next_header <= length,
+                "docker_save_outer_member_range",
+            )
+            data = os.pread(fd, info.size, offset)
+            require(len(data) == info.size, "docker_save_outer_truncated")
+            parsed = parse_pax(data, key_limit=1, allowed_text_keys=frozenset({"size"}))
+            require(set(parsed) == {"size"}, "docker_save_outer_extension_unsupported")
+            pending_size = pax_size(parsed["size"])
+            offset = next_header
+            continue
+        require(
+            info.type in allowed and info.size >= 0,
+            "docker_save_outer_entry_type",
+        )
+        require(
+            pending_size is None or info.type in {tarfile.REGTYPE, tarfile.AREGTYPE},
+            "docker_save_outer_extension_unsupported",
+        )
+        size = info.size if pending_size is None else pending_size
+        pending_size = None
+        body_end = offset + size
+        next_header = body_end + (-size) % 512
         require(
             body_end <= next_header <= length,
             "docker_save_outer_member_range",
@@ -3298,7 +3324,7 @@ def safe_name(name):
     return str(path)
 
 
-def parse_pax(data, *, key_limit=TAR_PAX_KEY_LIMIT):
+def parse_pax(data, *, key_limit=TAR_PAX_KEY_LIMIT, allowed_text_keys=PAX_TEXT_KEYS):
     result, cursor = {}, 0
     while cursor < len(data):
         space = data.find(b" ", cursor)
@@ -3321,10 +3347,10 @@ def parse_pax(data, *, key_limit=TAR_PAX_KEY_LIMIT):
             "pax_duplicate_or_invalid_key",
         )
         require(
-            key in PAX_TEXT_KEYS or key.startswith(PAX_BINARY_PREFIXES),
+            key in allowed_text_keys or key.startswith(PAX_BINARY_PREFIXES),
             "unsupported_pax_semantics",
         )
-        if key in PAX_TEXT_KEYS:
+        if key in allowed_text_keys:
             value = value.decode("utf-8")
             require("\x00" not in value, "pax_duplicate_or_invalid_key")
         # Kernel xattrs carry arbitrary bytes; only their already-scanned record
@@ -3332,6 +3358,15 @@ def parse_pax(data, *, key_limit=TAR_PAX_KEY_LIMIT):
         result[key] = value
         cursor += length
     return result
+
+
+def pax_size(value):
+    """Return a bounded non-negative PAX size override."""
+    require(
+        isinstance(value, str) and re.fullmatch(r"(?:0|[1-9][0-9]{0,18})", value),
+        "pax_size_encoding",
+    )
+    return int(value)
 
 
 def walk_tar(reader, sink, scope, file_handler, *, encoded_layer_sizes=None):
@@ -3396,12 +3431,6 @@ def walk_tar(reader, sink, scope, file_handler, *, encoded_layer_sizes=None):
         sink.data(raw, "raw_tar_header", context)
         info = tarfile.TarInfo.frombuf(raw, encoding="utf-8", errors="strict")
         require(info.size >= 0, "negative_tar_size")
-        padding = (-info.size) % 512
-        if layer_scope:
-            require(
-                reader.tell() + info.size + padding <= DOCKER_SAVE_DECODED_LAYER_LIMIT,
-                "docker_save_decoded_layer_limit",
-            )
         require(
             info.type
             in {
@@ -3426,6 +3455,12 @@ def walk_tar(reader, sink, scope, file_handler, *, encoded_layer_sizes=None):
             tarfile.GNUTYPE_LONGNAME,
             tarfile.GNUTYPE_LONGLINK,
         }:
+            if layer_scope:
+                require(
+                    reader.tell() + info.size + (-info.size) % 512
+                    <= DOCKER_SAVE_DECODED_LAYER_LIMIT,
+                    "docker_save_decoded_layer_limit",
+                )
             require(
                 info.size <= TAR_EXTENSION_LIMIT,
                 "tar_extension_body_too_large",
@@ -3446,12 +3481,18 @@ def walk_tar(reader, sink, scope, file_handler, *, encoded_layer_sizes=None):
                         if info.type == tarfile.XGLTYPE
                         else TAR_PAX_KEY_LIMIT - len(pending_keys)
                     ),
+                    allowed_text_keys=(
+                        PAX_TEXT_KEYS | {"size"}
+                        if scope.get("scope") == "outer"
+                        else PAX_TEXT_KEYS
+                    ),
                 )
                 if info.type == tarfile.XGLTYPE:
                     require(
                         not pending_keys
                         and long_name is None
                         and long_link is None
+                        and "size" not in parsed
                         and not set(parsed) & {"path", "linkpath"},
                         "global_pax_name_override",
                     )
@@ -3469,6 +3510,8 @@ def walk_tar(reader, sink, scope, file_handler, *, encoded_layer_sizes=None):
                     for key in ("path", "linkpath"):
                         if key in parsed:
                             pending[key] = parsed[key]
+                    if "size" in parsed:
+                        pending["size"] = parsed["size"]
             else:
                 require(
                     data.endswith(b"\x00") and b"\x00" not in data[:-1],
@@ -3482,6 +3525,13 @@ def walk_tar(reader, sink, scope, file_handler, *, encoded_layer_sizes=None):
                     require(long_link is None, "ambiguous_gnu_link")
                     long_link = value
         else:
+            size = pax_size(pending["size"]) if "size" in pending else info.size
+            padding = (-size) % 512
+            if layer_scope:
+                require(
+                    reader.tell() + size + padding <= DOCKER_SAVE_DECODED_LAYER_LIMIT,
+                    "docker_save_decoded_layer_limit",
+                )
             require(
                 not (long_name is not None and "path" in pending)
                 and not (long_link is not None and "linkpath" in pending),
@@ -3502,11 +3552,11 @@ def walk_tar(reader, sink, scope, file_handler, *, encoded_layer_sizes=None):
             if info.isreg():
                 if encoded_layer_sizes is not None and name in encoded_layer_sizes:
                     require(
-                        info.size == encoded_layer_sizes[name],
+                        size == encoded_layer_sizes[name],
                         "encoded_layer_size_binding",
                     )
                 else:
-                    _admit_complete_record(info.size)
+                    _admit_complete_record(size)
             sink.data(name.encode("utf-8"), "logical_tar_path", context)
             if link:
                 sink.data(link.encode("utf-8"), "logical_tar_link", context)
@@ -3517,10 +3567,17 @@ def walk_tar(reader, sink, scope, file_handler, *, encoded_layer_sizes=None):
             long_name = long_link = None
             if info.isreg():
                 file_handler(
-                    reader, info.size, name, {**context, "tar_offset": reader.tell()}
+                    reader, size, name, {**context, "tar_offset": reader.tell()}
                 )
             else:
-                require(info.size == 0, "nonregular_tar_body")
+                require(size == 0, "nonregular_tar_body")
+        if info.type in {
+            tarfile.XHDTYPE,
+            tarfile.XGLTYPE,
+            tarfile.GNUTYPE_LONGNAME,
+            tarfile.GNUTYPE_LONGLINK,
+        }:
+            padding = (-info.size) % 512
         if padding:
             context = {**context, "tar_offset": reader.tell()}
             data = read_exact(reader, padding)
@@ -4732,9 +4789,17 @@ def main(argv=None):
                     policy_review.verify_output(directory)
                 output_identity(directory, output_fd)
                 outputs_verified = True
-        except INPUT_ERRORS:
+        except INPUT_ERRORS as error:
             outputs_verified = False
-            result = {"valid": False, "complete": False}
+            result = {
+                "valid": False,
+                "complete": False,
+                "failure_code": (
+                    str(error)
+                    if isinstance(error, ScanError)
+                    else "invalid_scan_configuration"
+                ),
+            }
             if policy_review is not None:
                 policy_review.accepted = False
             if policy_requested and output_fd is not None:
@@ -4757,7 +4822,22 @@ def main(argv=None):
             if policy_requested
             else "complete image byte scan "
         )
-        print(label + ("passed" if passed else "failed"))
+        if passed:
+            print(label + "passed")
+        elif policy_requested:
+            # The complete report and ledger remain private because they can
+            # describe byte-level findings.  A bounded machine-readable code
+            # is safe to expose in CI and makes a fail-closed policy rejection
+            # actionable without disclosing a path, match, or payload.
+            code = result.get("failure_code")
+            if (
+                not isinstance(code, str)
+                or re.fullmatch(r"[a-z0-9_]{1,128}", code) is None
+            ):
+                code = "public_policy_rejected"
+            print(f"{label}failed ({code})")
+        else:
+            print(label + "failed")
         return 0 if passed else 1
     finally:
         if output_fd is not None:

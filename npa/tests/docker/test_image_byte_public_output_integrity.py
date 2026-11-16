@@ -74,14 +74,54 @@ def test_exception_after_acceptance_cannot_return_success(
             raise KeyboardInterrupt
         if error_kind == "oserror":
             raise OSError("synthetic-output-failure")
-        raise core.ScanError("synthetic-output-failure")
+        raise core.ScanError("synthetic_output_failure")
 
     monkeypatch.setattr(
         policy.FreshPolicyReview, "accept_fresh_scan", fail_after_acceptance
     )
     assert core.main(argv) == 1
     assert reached == [True]
-    assert "gate passed" not in capsys.readouterr().out
+    output = capsys.readouterr().out
+    assert "gate passed" not in output
+    if error_kind == "ordinary":
+        assert (
+            output
+            == "image byte public-policy gate failed (synthetic_output_failure)\n"
+        )
+    else:
+        assert "synthetic-output-failure" not in output
+
+
+@pytest.mark.parametrize(
+    ("scan_code", "expected"),
+    [
+        (
+            "synthetic_scanner_failure",
+            "image byte public-policy gate failed (synthetic_scanner_failure)\n",
+        ),
+        (
+            "private test-only marker",
+            "image byte public-policy gate failed (adjudication_incomplete_scan)\n",
+        ),
+    ],
+)
+def test_incomplete_scanner_report_preserves_only_safe_failure_code(
+    prepared, monkeypatch, capsys, scan_code, expected
+):
+    core, _policy, argv, _out, *_ = prepared
+
+    def incomplete_scan(*_args, **_kwargs):
+        return {
+            "schema_version": "npa.image-byte-scan.v1",
+            "valid": False,
+            "complete": False,
+            "helper_joined": False,
+            "failure_code": scan_code,
+        }
+
+    monkeypatch.setattr(core, "_scan", incomplete_scan)
+    assert core.main(argv) == 1
+    assert capsys.readouterr().out == expected
 
 
 @pytest.mark.parametrize("mutation", ["different-inode", "permissions", "hardlink"])
