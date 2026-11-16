@@ -3225,7 +3225,10 @@ def test_dockerfile_writes_metadata_without_python_dependency() -> None:
     assert "netcat-openbsd" in text
     assert "npa-skypilot-bootstrap-guard verify" in text
     assert "NPA_SKYPILOT_BOOTSTRAP_APT_BYPASSED" in text
-    assert "--kill-after=5s" in text
+    assert "--kill-after=6s" in text
+    assert "setsid=$1" in text
+    assert '"$setsid" "$@" &' in text
+    assert '/bin/kill -KILL -- "-$child"' in text
     assert "ssh-keygen -A" in text
     assert "rm -f /etc/ssh/ssh_host_*" in text
     assert "ENV HOME=/home/ubuntu" in text
@@ -3650,7 +3653,9 @@ def test_bootstrap_timeout_kills_nonterminating_descendant_and_marks_failure(
     timeout_guard = fixture["bin_dir"] / "timeout"
     guard_text = timeout_guard.resolve().read_text(encoding="utf-8")
     timeout_guard.resolve().write_text(
-        guard_text.replace("--kill-after=5s", "--kill-after=0.2s"),
+        guard_text.replace("--kill-after=6s", "--kill-after=1s").replace(
+            "sleep 5", "sleep 0.2"
+        ),
         encoding="utf-8",
     )
     descendant_pid_path = tmp_path / "descendant.pid"
@@ -3667,9 +3672,9 @@ def test_bootstrap_timeout_kills_nonterminating_descendant_and_marks_failure(
         capture_output=True,
         text=True,
         check=False,
-        # The guard's contract deadline remains 0.1s plus a 0.2s escalation.
-        # This outer watchdog only protects the test runner; allow a loaded
-        # sharded runner enough time to reap the killed process group.
+        # The test shortens the guard's five-second cleanup grace to 0.2s.
+        # This outer watchdog only protects the test runner while it reaps the
+        # killed process group.
         timeout=15,
     )
 
