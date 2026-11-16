@@ -375,6 +375,13 @@ print(json.dumps({"frames": count, "fps": float(rate)}))
                     "bt709",
                     "-color_trc",
                     "bt709",
+                    # Keep the H.264 VUI fields explicit as well as the generic
+                    # FFmpeg stream metadata.  Some supported FFmpeg/libx264
+                    # combinations otherwise retain the matrix/range but omit
+                    # primaries and transfer characteristics on the encoded
+                    # stream, making the restored video ambiguous to readers.
+                    "-x264-params",
+                    "colorprim=bt709:transfer=bt709:colormatrix=bt709:fullrange=off",
                     "-crf",
                     "18",
                     "-movflags",
