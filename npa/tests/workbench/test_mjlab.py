@@ -298,7 +298,13 @@ def test_rollout_rejects_nonfinite_rewards():
 
     with pytest.raises(MjlabError, match="non-finite"):
         _record_step(
-            SimpleNamespace(num_envs=1), [float("nan")], [False], [1], [0], [0], [0], []
+            SimpleNamespace(num_envs=1),
+            ([float("nan")], [False], None, None),
+            [1],
+            [0],
+            [0],
+            [0],
+            [],
         )
 
 
@@ -308,8 +314,7 @@ def test_rollout_rejects_missing_horizon_termination():
     with pytest.raises(MjlabError, match="horizon"):
         _record_step(
             SimpleNamespace(num_envs=1, max_episode_length=2),
-            [1.0],
-            [False],
+            ([1.0], [False], None, None),
             [1],
             [0],
             [0],

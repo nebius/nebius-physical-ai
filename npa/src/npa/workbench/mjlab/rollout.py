@@ -40,13 +40,28 @@ def measure_episodes(env, policy, request, outputs) -> dict:
                 if writer is not None and counts[0] == 0:
                     writer.append_data(env.unwrapped.render())
                 observations, rewards, dones, _ = env.step(actions)
-            _record_step(env, rewards, dones, quotas, counts, returns, lengths, rows)
+            values = _host_step_values(env, rewards, dones)
+            _record_step(env, values, quotas, counts, returns, lengths, rows)
             if hasattr(policy, "reset"):
                 policy.reset(dones)
     return _summary(rows, request)
 
 
-def _record_step(env, rewards, dones, quotas, counts, returns, lengths, rows):
+def _host_step_values(env, rewards, dones):
+    """Copy whole step vectors so CUDA synchronization does not scale per lane."""
+    reward_values, done_values = rewards.tolist(), dones.tolist()
+    if not any(done_values):
+        return reward_values, done_values, None, None
+    return (
+        reward_values,
+        done_values,
+        env.unwrapped.reset_terminated.tolist(),
+        env.unwrapped.reset_time_outs.tolist(),
+    )
+
+
+def _record_step(env, values, quotas, counts, returns, lengths, rows):
+    rewards, dones, terminated, time_outs = values
     for lane in range(env.num_envs):
         if counts[lane] >= quotas[lane]:
             continue
@@ -56,8 +71,8 @@ def _record_step(env, rewards, dones, quotas, counts, returns, lengths, rows):
         returns[lane] += reward
         lengths[lane] += 1
         if bool(dones[lane]):
-            failed = bool(env.unwrapped.reset_terminated[lane])
-            timed_out = bool(env.unwrapped.reset_time_outs[lane])
+            failed = bool(terminated[lane])
+            timed_out = bool(time_outs[lane])
             rows.append(
                 {
                     "environment": lane,
