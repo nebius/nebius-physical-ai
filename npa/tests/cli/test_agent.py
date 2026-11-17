@@ -1718,7 +1718,7 @@ def test_bootstrap_nginx_serves_public_rerun_recording() -> None:
 def test_bootstrap_embeds_lichtblick_viewer() -> None:
     source = _agent_source()
     # nginx: co-serve the MCAP same-origin and proxy the viewer sidecar.
-    assert "location /lichtblick/recordings/" in source
+    assert "location = /lichtblick/recordings/sim2real.mcap {" in _agent_nginx_site()
     assert "location /lichtblick/ {{" in source
     assert "proxy_pass http://127.0.0.1:{lichtblick_port}/;" in source
     # backend: sim-viz status carries the Lichtblick embed fields.
@@ -2049,6 +2049,7 @@ http {{
         except OSError:
             if time.monotonic() > deadline or proc.poll() is not None:
                 proc.terminate()
+                proc.wait(timeout=10)
                 pytest.fail("nginx did not start")
             time.sleep(0.05)
     return base, proc
