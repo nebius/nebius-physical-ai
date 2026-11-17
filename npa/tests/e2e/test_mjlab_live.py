@@ -62,13 +62,21 @@ def test_native_train_eval_export_roundtrip(tmp_path: Path):
     checkpoint = training["artifacts"]["checkpoint.pt"]["uri"]
     evaluated = evaluate(
         EvalRequest(
-            task=task, checkpoint=checkpoint, output_path=root + "/eval", episodes=2
+            task=task,
+            checkpoint=checkpoint,
+            output_path=root + "/eval",
+            episodes=7,
+            num_envs=4,
         )
     )
     exported = export(
         ExportRequest(task=task, checkpoint=checkpoint, output_path=root + "/export")
     )
-    assert evaluated["episodes_completed"] == 2
+    assert evaluated["episodes_completed"] == 7
+    assert [
+        sum(row["environment"] == lane for row in evaluated["episodes"])
+        for lane in range(4)
+    ] == [2, 2, 2, 1]
     assert (
         evaluated["input_sha256"]["checkpoint"]
         == training["artifacts"]["checkpoint.pt"]["sha256"]

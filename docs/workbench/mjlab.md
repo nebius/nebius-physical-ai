@@ -110,7 +110,9 @@ their own decision gate to the report.
 Evaluation restores the training episode horizon and terminations because
 upstream interactive play can use infinite episodes. Fixed per-environment
 quotas avoid favoring fast failures when vector environments finish at different
-times. Recurrent policy state resets on episode completion. `--video` records
+times. Step rewards and completion flags are transferred to the CPU as whole
+vectors, avoiding per-environment CUDA scalar synchronization during accounting.
+Recurrent policy state resets on episode completion. `--video` records
 only the first environment's first episode. `--device cpu` supports evaluation
 and export on a workstation; training requires CUDA.
 
