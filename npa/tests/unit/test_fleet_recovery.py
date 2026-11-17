@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from copy import deepcopy
 import json
-from dataclasses import replace
 from pathlib import Path
 import shutil
 from subprocess import CompletedProcess
@@ -1486,13 +1485,6 @@ def test_normal_lifecycle_resumes_zero_subnet_cpu_and_strict_gpu_target(
         preset="1gpu-24vcpu-218gb",
         capacity_block_group="capacityblockgroup-test",
     )
-    bound_cluster = replace(
-        cluster,
-        gpu_nodes=replace(
-            cluster.gpu_nodes,
-            compute_reservation_id="computereservation-test",
-        ),
-    )
     workdir = install_dir / "k8s-training"
     state = json.loads((workdir / "terraform.tfstate").read_text())
     backup_path = workdir / "terraform.tfstate.backup"
@@ -1508,7 +1500,7 @@ def test_normal_lifecycle_resumes_zero_subnet_cpu_and_strict_gpu_target(
     _write_json(workdir / "terraform.tfstate", state)
     _write_json(backup_path, backup)
     tfvars = render_tfvars(
-        as_mk8s_desired(bound_cluster), ssh_public_key="ssh-test", recipe_dir=workdir
+        as_mk8s_desired(cluster), ssh_public_key="ssh-test", recipe_dir=workdir
     )
     (workdir / "terraform.tfvars").write_text(
         tfvars,
@@ -1526,10 +1518,7 @@ def test_normal_lifecycle_resumes_zero_subnet_cpu_and_strict_gpu_target(
     monkeypatch.setattr(
         lifecycle,
         "_bind_strict_compute_reservations",
-        lambda clusters, **_kwargs: {
-            key: (bound_cluster if key == ("team", "recover") else value)
-            for key, value in clusters.items()
-        },
+        lambda clusters, **_kwargs: clusters,
     )
     monkeypatch.setattr(
         lifecycle,
@@ -1581,7 +1570,7 @@ def test_normal_lifecycle_resumes_zero_subnet_cpu_and_strict_gpu_target(
                             platform="gpu-rtx6000",
                             preset="1gpu-24vcpu-218gb",
                             count=1,
-                            reservation_id="computereservation-test",
+                            reservation_id="capacityblockgroup-test",
                         ),
                     ]
                 }
@@ -1644,7 +1633,7 @@ def test_normal_lifecycle_resumes_zero_subnet_cpu_and_strict_gpu_target(
         gpu_command[
             gpu_command.index("--template-reservation-policy-reservation-ids") + 1
         ]
-        == "computereservation-test"
+        == "capacityblockgroup-test"
     )
     filesystems = json.loads(
         gpu_command[gpu_command.index("--template-filesystems") + 1]
@@ -1656,7 +1645,7 @@ def test_normal_lifecycle_resumes_zero_subnet_cpu_and_strict_gpu_target(
             "existing_filesystem": {"id": "filesystem-test"},
         }
     ]
-    assert any("computereservation-test" in value for value in gpu_command)
+    assert any("capacityblockgroup-test" in value for value in gpu_command)
     assert not any("cluster" in command and "create" in command for command in commands)
     assert not any("terraform" in command for command in commands)
     assert (workdir / "terraform.tfstate").read_bytes() == before["state"]
@@ -2061,20 +2050,13 @@ def test_retained_resume_rejects_nonmatching_saved_selector_before_provider(
         preset="1gpu-24vcpu-218gb",
         capacity_block_group="capacityblockgroup-test",
     )
-    bound_cluster = replace(
-        cluster,
-        gpu_nodes=replace(
-            cluster.gpu_nodes,
-            compute_reservation_id="computereservation-test",
-        ),
-    )
     workdir = install_dir / "k8s-training"
     (workdir / "terraform.tfvars").write_text(
         render_tfvars(
-            as_mk8s_desired(bound_cluster),
+            as_mk8s_desired(cluster),
             ssh_public_key="ssh-test",
             recipe_dir=workdir,
-        ).replace("computereservation-test", "other-compute-reservation"),
+        ).replace("capacityblockgroup-test", "other-capacity-block-group"),
         encoding="utf-8",
     )
     paths = {
@@ -2093,10 +2075,7 @@ def test_retained_resume_rejects_nonmatching_saved_selector_before_provider(
     monkeypatch.setattr(
         lifecycle,
         "_bind_strict_compute_reservations",
-        lambda clusters, **_kwargs: {
-            key: (bound_cluster if key == ("team", "recover") else value)
-            for key, value in clusters.items()
-        },
+        lambda clusters, **_kwargs: clusters,
     )
     monkeypatch.setattr(
         mk8s_execution,
@@ -2116,10 +2095,10 @@ def test_retained_resume_rejects_nonmatching_saved_selector_before_provider(
         assert path.read_bytes() == bytes_before[name]
 
 
-def test_retained_resume_refuses_missing_compute_identity_before_persistence(
+def test_strict_group_binding_does_not_require_secondary_identity(
     tmp_path, monkeypatch
 ):
-    spec, install_dir, before = _unmaterialized_retained_target(tmp_path)
+    spec, _install_dir, _before = _unmaterialized_retained_target(tmp_path)
     cluster = spec.projects[0].clusters[0]
     cluster.gpu_nodes = NodePoolSpec(
         count=1,
@@ -2127,45 +2106,31 @@ def test_retained_resume_refuses_missing_compute_identity_before_persistence(
         preset="1gpu-24vcpu-218gb",
         capacity_block_group="capacityblockgroup-test",
     )
-    calls: dict[str, object] = {}
-    _prepare_provider(monkeypatch, calls)
-    monkeypatch.setattr(lifecycle, "_assert_terraform_version", lambda _: None)
-    monkeypatch.setattr(lifecycle, "_resolve_tenant_id", lambda *_: "tenant-test")
-    monkeypatch.setattr(lifecycle, "_resolve_region", lambda _: "test-region")
-    monkeypatch.setattr(
-        lifecycle,
-        "_deploy_one_cluster",
-        lambda **_: pytest.fail("missing compute identity entered Terraform apply"),
-    )
 
     class Reader:
         def __init__(self, *_args, **_kwargs) -> None:
             pass
 
-        def resolve_compute_reservations(self, _requirements, _on_status):
-            return {}
+        def verify_reservations(self, _requirements, _on_status):
+            return None
 
     monkeypatch.setattr(lifecycle, "ProjectCapacityReader", Reader)
 
-    with pytest.raises(ValueError, match="no verified compute reservation identity"):
-        lifecycle.deploy_fleet(
-            spec,
-            work_root=tmp_path,
-            k8s_training_dir=install_dir,
-            preflight=False,
-        )
-
-    assert calls == {}
-    assert not (install_dir / "kubeconfig").exists()
-    paths = {
-        "owner": install_dir / ".npa-backend-owner.json",
-        "sidecar": install_dir / ".npa-fleet-env.json",
-        "state": install_dir / "k8s-training" / "terraform.tfstate",
-        "lock": install_dir / "k8s-training" / ".terraform.tfstate.lock.info",
-        "summary": tmp_path / spec.name / "fleet-state.json",
-    }
-    for name, path in paths.items():
-        assert path.read_bytes() == before[name]
+    resolved = lifecycle._bind_strict_compute_reservations(
+        {("team", "recover"): cluster},
+        tenant_id="tenant-test",
+        nebius_bin="nebius",
+        profile="",
+        env={},
+        region_by_target={("team", "recover"): "test-region"},
+        on_status=None,
+    )
+    bound = resolved[("team", "recover")]
+    assert bound.gpu_nodes is not None
+    assert bound.gpu_nodes.compute_reservation_id == ""
+    assert 'reservation_ids = ["capacityblockgroup-test"]' in render_tfvars(
+        as_mk8s_desired(bound), ssh_public_key="ssh-test"
+    )
 
 
 def test_normal_lifecycle_refuses_retained_target_when_provider_verification_fails(
@@ -2268,16 +2233,9 @@ def test_normal_lifecycle_refuses_registration_before_terminal_strict_pool_proof
         preset="1gpu-24vcpu-218gb",
         capacity_block_group="capacityblockgroup-test",
     )
-    bound_cluster = replace(
-        cluster,
-        gpu_nodes=replace(
-            cluster.gpu_nodes,
-            compute_reservation_id="computereservation-test",
-        ),
-    )
     workdir = install_dir / "k8s-training"
     tfvars = render_tfvars(
-        as_mk8s_desired(bound_cluster), ssh_public_key="ssh-test", recipe_dir=workdir
+        as_mk8s_desired(cluster), ssh_public_key="ssh-test", recipe_dir=workdir
     )
     (workdir / "terraform.tfvars").write_text(
         tfvars,
@@ -2294,10 +2252,7 @@ def test_normal_lifecycle_refuses_registration_before_terminal_strict_pool_proof
     monkeypatch.setattr(
         lifecycle,
         "_bind_strict_compute_reservations",
-        lambda clusters, **_kwargs: {
-            key: (bound_cluster if key == ("team", "recover") else value)
-            for key, value in clusters.items()
-        },
+        lambda clusters, **_kwargs: clusters,
     )
     monkeypatch.setattr(
         lifecycle,
@@ -2341,7 +2296,7 @@ def test_normal_lifecycle_refuses_registration_before_terminal_strict_pool_proof
                             platform="gpu-rtx6000",
                             preset="1gpu-24vcpu-218gb",
                             count=1,
-                            reservation_id="other-compute-reservation",
+                            reservation_id="other-capacity-block-group",
                         ),
                     ]
                 }

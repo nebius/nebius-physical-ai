@@ -1368,10 +1368,7 @@ def test_up_runs_terraform_writes_kubeconfig_and_validates(
                             "current_limit": "48",
                             "usage": "12",
                             "resource_affinity": {
-                                "compute_v1": {
-                                    "platform": "gpu-rtx6000",
-                                    "reservation_id": "computereservation-test",
-                                }
+                                "compute_v1": {"platform": "gpu-rtx6000"}
                             },
                         },
                     }
@@ -1433,7 +1430,7 @@ def test_up_runs_terraform_writes_kubeconfig_and_validates(
     # explicitly as well as exported.
     apply_call = _find_call(stream_calls, "terraform", "apply", "-auto-approve")
     assert apply_call is not None
-    assert "capacity_block_group=computereservation-test" in apply_call
+    assert "capacity_block_group=capacityblockgroup-test" in apply_call
     assert (
         "filesystem_csi_make_default_storage_class=" + str(legacy_state).lower()
         in apply_call
@@ -1446,7 +1443,7 @@ def test_up_runs_terraform_writes_kubeconfig_and_validates(
         "schema_version": 1,
     }
     apply_env = stream_envs[stream_calls.index(apply_call)]
-    assert apply_env["TF_VAR_capacity_block_group"] == "computereservation-test"
+    assert apply_env["TF_VAR_capacity_block_group"] == "capacityblockgroup-test"
     assert apply_env["TF_VAR_iam_token"] == "token-a"
     credential_prefix = [
         "nebius",
@@ -4304,34 +4301,7 @@ def _block_payload(tenant: str = "tenant-a") -> str:
     )
 
 
-def test_direct_strict_reservation_uses_distinct_provider_identity(monkeypatch) -> None:
-    calls: list[list[str]] = []
-
-    def capture(args, **_kwargs):
-        calls.append(args)
-        return _cp(_block_payload())
-
-    monkeypatch.setattr(tf_mod, "_run_capture", capture)
-
-    assert (
-        tf_mod._resolve_compute_reservation_identity("nebius", {}, "cg-1")
-        == "computereservation-test"
-    )
-    assert calls == [
-        [
-            "nebius",
-            "capacity",
-            "capacity-block-group",
-            "get",
-            "--id",
-            "cg-1",
-            "--format",
-            "json",
-        ]
-    ]
-
-
-def test_direct_strict_reservation_refuses_missing_compute_identity(
+def test_direct_strict_reservation_accepts_documented_group_without_secondary_id(
     monkeypatch,
 ) -> None:
     payload = json.loads(_block_payload())
@@ -4344,8 +4314,9 @@ def test_direct_strict_reservation_refuses_missing_compute_identity(
 
     monkeypatch.setattr(tf_mod, "_run_capture", capture)
 
-    with pytest.raises(typer.BadParameter, match="no unambiguous compatible"):
-        tf_mod._resolve_compute_reservation_identity("nebius", {}, "cg-1")
+    tf_mod._preflight_gpu_capacity(
+        "nebius", _strict_preflight_tfvars(mig=False, block=True), {}
+    )
 
     assert len(calls) == 1
     assert "terraform" not in calls[0]

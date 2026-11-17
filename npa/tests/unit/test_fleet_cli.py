@@ -52,7 +52,7 @@ def _with_compute_reservation(cluster, reservation_id=None):
 
     desired = as_mk8s_desired(cluster)
     assert desired.gpu_nodes is not None
-    reservation_id = reservation_id or "computereservation-test"
+    reservation_id = reservation_id or "capacityblockgroup-test"
     return replace(
         desired,
         gpu_nodes=replace(desired.gpu_nodes, compute_reservation_id=reservation_id),
@@ -858,13 +858,10 @@ def test_render_tfvars_capacity_block_is_strict() -> None:
         ),
         enable_gpu_cluster=False,
     )
-    with pytest.raises(ValueError, match="no verified compute reservation"):
-        render_tfvars(cluster)
-
-    tf = render_tfvars(_with_compute_reservation(cluster))
+    tf = render_tfvars(cluster)
     assert (
         'gpu_nodes_reservation_policy = { policy = "STRICT", '
-        'reservation_ids = ["computereservation-test"] }' in tf
+        'reservation_ids = ["capacityblockgroup-test"] }' in tf
     )
 
 
@@ -2353,7 +2350,7 @@ def test_unchanged_provider_verified_target_has_zero_incremental_demand(
                                         "reservationPolicy": {
                                             "policy": "STRICT",
                                             "reservationIds": [
-                                                "computereservation-test"
+                                                "capacityblockgroup-exact"
                                             ],
                                         },
                                     },
@@ -2472,7 +2469,7 @@ def _tainted_gpu_reconciliation_fixture(
         if preemptible
         else {
             "policy": "STRICT",
-            "reservation_ids": ["computereservation-test"],
+            "reservation_ids": ["capacityblockgroup-test"],
         },
         "preemptible": {} if preemptible else None,
         "network_interfaces": [{"subnet_id": "vpcsubnet-test"}],
@@ -2540,7 +2537,7 @@ def _tainted_gpu_reconciliation_fixture(
             preset="8gpu-192vcpu-1744gb",
             disk_size_gib=256,
             capacity_block_group="" if preemptible else "capacityblockgroup-test",
-            compute_reservation_id="" if preemptible else "computereservation-test",
+            compute_reservation_id="" if preemptible else "capacityblockgroup-test",
             preemptible=preemptible,
         ),
         enable_filestore=True,
@@ -2568,7 +2565,7 @@ def _enable_gpu_cluster_for_tainted_fixture(state: dict, provider: dict) -> Clus
             preset="8gpu-128vcpu-1600gb",
             disk_size_gib=256,
             capacity_block_group="capacityblockgroup-test",
-            compute_reservation_id="computereservation-test",
+            compute_reservation_id="capacityblockgroup-test",
         ),
         enable_gpu_cluster=True,
         infiniband_fabric="us-central1-a",
@@ -4669,7 +4666,7 @@ def _capacity_block(
     usage: str | None = None,
     usage_percentage: str = "0.00",
     state: str = "STATE_ACTIVE",
-    provider_reservation_id: object | None = "computereservation-test",
+    provider_reservation_id: object | None = "capacityblockgroup-test",
 ) -> dict:
     compute_v1 = {"platform": platform}
     if provider_reservation_id is not None:
@@ -4921,7 +4918,7 @@ def test_reservation_capacity_parser_rejects_conflicting_duplicate_group_records
 
     first = _capacity_block(reservation_id="capacityblockgroup-test")
     second = _capacity_block(reservation_id="capacityblockgroup-test")
-    second["status"]["resource_affinity"]["compute_v1"]["reservation_id"] = "conflict"
+    second["status"]["state"] = "STATE_EXPIRED"
     blocks = parse_capacity_blocks(json.dumps({"items": [first, second]}))
     requirement = ReservationRequirement(
         reservation_id="capacityblockgroup-test",
@@ -4937,7 +4934,7 @@ def test_reservation_capacity_parser_rejects_conflicting_duplicate_group_records
         )
 
 
-def test_strict_reservation_binding_rejects_unverified_runtime_identity(
+def test_strict_reservation_binding_rejects_divergent_legacy_runtime_identity(
     monkeypatch,
 ) -> None:
     from npa.fleet import lifecycle
@@ -4957,12 +4954,12 @@ def test_strict_reservation_binding_rejects_unverified_runtime_identity(
         def __init__(self, *_args, **_kwargs) -> None:
             pass
 
-        def resolve_compute_reservations(self, _requirements, _on_status):
-            return {"capacityblockgroup-test": "computereservation-test"}
+        def verify_reservations(self, _requirements, _on_status):
+            return None
 
     monkeypatch.setattr(lifecycle, "ProjectCapacityReader", Reader)
 
-    with pytest.raises(ValueError, match="conflicts with the verified"):
+    with pytest.raises(ValueError, match="conflicts with the selected"):
         lifecycle._bind_strict_compute_reservations(
             {("project", "strict"): cluster},
             tenant_id="tenant-test",
@@ -5687,58 +5684,34 @@ def test_reserved_deploy_renders_verified_capacity_block_policy_only(
 
     assert len(captured) == 1
     rendered = render_tfvars(captured[0])
-    assert 'reservation_ids = ["computereservation-test"]' in rendered
+    assert 'reservation_ids = ["capacityblockgroup-test"]' in rendered
 
 
-def test_reserved_deploy_refuses_missing_compute_identity_before_persistence(
-    tmp_path, monkeypatch
+@pytest.mark.parametrize(
+    "provider_reservation_id",
+    [None, "computereservation-conflict", 1],
+)
+def test_reserved_deploy_uses_group_when_catalog_has_no_secondary_identity(
+    tmp_path, monkeypatch, provider_reservation_id
 ) -> None:
-    payload = json.dumps({"items": [_capacity_block(provider_reservation_id=None)]})
-    L, deployed, _calls = _reserved_preflight_boundary(monkeypatch, tmp_path, payload)
-    marker = tmp_path / "f" / "a" / "c" / L._TARGET_BACKEND_OWNER
-
-    with pytest.raises(
-        ValueError, match="no distinct compatible compute reservation identity"
-    ):
-        L.deploy_fleet(_reserved_rtx_cluster_spec(), work_root=tmp_path)
-
-    assert deployed == []
-    assert not marker.exists()
-
-
-def test_reserved_deploy_refuses_conflicting_compute_identities_before_persistence(
-    tmp_path, monkeypatch
-) -> None:
-    block = _capacity_block(provider_reservation_id="computereservation-conflict")
-    block["status"]["compute_reservation_id"] = "computereservation-test"
-    L, deployed, _calls = _reserved_preflight_boundary(
-        monkeypatch, tmp_path, json.dumps({"items": [block]})
+    payload = json.dumps(
+        {"items": [_capacity_block(provider_reservation_id=provider_reservation_id)]}
     )
-    marker = tmp_path / "f" / "a" / "c" / L._TARGET_BACKEND_OWNER
+    L, _deployed, _calls = _reserved_preflight_boundary(monkeypatch, tmp_path, payload)
+    captured = []
+    monkeypatch.setattr(
+        L,
+        "_deploy_one_cluster",
+        lambda **kwargs: (
+            captured.append(kwargs["cluster"]),
+            {"project_key": "a", "cluster_name": "c", "status": "deployed"},
+        )[1],
+    )
 
-    with pytest.raises(
-        ValueError, match="no distinct compatible compute reservation identity"
-    ):
-        L.deploy_fleet(_reserved_rtx_cluster_spec(), work_root=tmp_path)
+    L.deploy_fleet(_reserved_rtx_cluster_spec(), work_root=tmp_path)
 
-    assert deployed == []
-    assert not marker.exists()
-
-
-def test_reserved_deploy_refuses_malformed_provider_identity_before_persistence(
-    tmp_path, monkeypatch
-) -> None:
-    payload = json.dumps({"items": [_capacity_block(provider_reservation_id=1)]})
-    L, deployed, _calls = _reserved_preflight_boundary(monkeypatch, tmp_path, payload)
-    marker = tmp_path / "f" / "a" / "c" / L._TARGET_BACKEND_OWNER
-
-    with pytest.raises(
-        ValueError, match="no distinct compatible compute reservation identity"
-    ):
-        L.deploy_fleet(_reserved_rtx_cluster_spec(), work_root=tmp_path)
-
-    assert deployed == []
-    assert not marker.exists()
+    assert len(captured) == 1
+    assert 'reservation_ids = ["capacityblockgroup-test"]' in render_tfvars(captured[0])
 
 
 def test_deploy_preflight_blocks_on_zero_gpu_quota(tmp_path, monkeypatch) -> None:
