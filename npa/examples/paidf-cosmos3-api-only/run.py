@@ -471,15 +471,55 @@ def _observed_concurrency(records):
     return {"max_overlapping_model_requests": peak, "measured_jobs": len(events) // 2}
 
 
+def _not_delivered(module, work, variant):
+    """Record a terminal service failure (e.g. a guardrail rejection) as-is.
+
+    Nothing is retried, rewritten or hidden: the service's own terminal status,
+    error code and guardrail category/stage are reported for the variant.
+    Returns None when the variant has no terminal failure record.
+    """
+    path = work / "downloads" / variant["id"] / "job.json"
+    if not path.exists():
+        return None
+    job = module.read_json(work / "jobs" / (variant["id"] + ".json"))
+    record = module.read_json(path)
+    if record.get("status") != "failed":
+        return None
+    manifest = record.get("manifest") or {}
+    if record.get("job_id", manifest.get("job_id")) != job["job_id"]:
+        raise ValueError("terminal failure record does not match the admitted job")
+    guardrail = (manifest.get("backend") or {}).get("guardrail") or {}
+    return {
+        "variant_id": variant["id"],
+        "job_id": job["job_id"],
+        "status": "failed",
+        "error_code": record.get("error_code"),
+        "guardrail": {
+            "category": guardrail.get("category"),
+            "stage": guardrail.get("stage"),
+        },
+    }
+
+
 def _collect(module, work, document):
-    records = [
-        _verify_variant(module, work, document, variant)
-        for variant in document["variants"]
-    ]
-    if len({record["hashes"]["source.mp4"] for record in records}) != 1:
+    records, not_delivered = [], []
+    for variant in document["variants"]:
+        if (work / "downloads" / variant["id"] / "manifest.json").exists():
+            records.append(_verify_variant(module, work, document, variant))
+            continue
+        failure = _not_delivered(module, work, variant)
+        if failure is None:
+            raise ValueError(
+                variant["id"] + " is not terminal yet; run resume until every job finishes"
+            )
+        not_delivered.append(failure)
+    if records and len({record["hashes"]["source.mp4"] for record in records}) != 1:
         raise ValueError("variants must retain one identical source")
     summary = {
         "variants": records,
+        "not_delivered": not_delivered,
+        "delivered_count": len(records),
+        "requested_count": len(document["variants"]),
         "client_admission_parallelism": document["generation"][
             "client_admission_parallelism"
         ],
@@ -490,12 +530,17 @@ def _collect(module, work, document):
     return summary
 
 
-def _review(module, path, document):
+def _review(module, path, document, delivered=None):
+    """Semantic review covers exactly the delivered variants, once each."""
     rows = module.read_json(path)["variants"]
-    expected = {variant["id"] for variant in document["variants"]}
-    if len(rows) != 12 or {row["variant_id"] for row in rows} != expected:
+    expected = (
+        {variant["id"] for variant in document["variants"]}
+        if delivered is None
+        else set(delivered)
+    )
+    if len(rows) != len(expected) or {row["variant_id"] for row in rows} != expected:
         raise ValueError(
-            "review must identify each of the twelve variants exactly once"
+            "review must identify each delivered variant exactly once"
         )
     for row in rows:
         criteria = row["criteria"]
@@ -534,16 +579,30 @@ def _report(module, work, document, review_path):
     # Revalidate current server receipts and bytes rather than an older summary.
     summary = _collect(module, work, document)
     records = summary["variants"]
-    reviews = _review(module, review_path, document)
+    if not records:
+        raise ValueError("no variant was delivered; there is no service preview to embed")
+    reviews = _review(
+        module, review_path, document, [record["variant_id"] for record in records]
+    )
     accepted = sum(review["verdict"] == "accepted" for review in reviews.values())
     concurrency = summary["observed_service_concurrency"]
-    first = work / "downloads" / document["variants"][0]["id"]
+    delivered, requested = summary["delivered_count"], summary["requested_count"]
+    first = work / "downloads" / records[0]["variant_id"]
+    heading = (
+        "Twelve Cosmos3 appearance variants from a managed endpoint"
+        if delivered == requested == 12
+        else "Cosmos3 managed-endpoint campaign: "
+        + str(delivered)
+        + " of "
+        + str(requested)
+        + " variants delivered"
+    )
     sections = [
         '<!doctype html><html><head><meta charset="utf-8">',
         "<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; media-src data:; style-src 'unsafe-inline'\">",
         "<title>Cosmos3 managed-endpoint PAIDF proof</title><style>body{font:16px system-ui;margin:24px;max-width:1100px}"
         "video{width:100%;max-width:832px}section{margin:24px 0}code{overflow-wrap:anywhere}td,th{padding:2px 8px;text-align:left}</style></head><body>",
-        "<h1>Twelve Cosmos3 appearance variants from a managed endpoint</h1>",
+        "<h1>" + html.escape(heading) + "</h1>",
         "<p>The hosted service prepared the source, ran guarded generation, restored verified source borders, "
         "encoded lossless RGB WebM previews, wrote finishing reports and published checksummed results. "
         "This client submitted logical tasks, polled status and verified downloads; it ran no media processing "
@@ -558,8 +617,11 @@ def _report(module, work, document, review_path):
         "<p><strong>Technical delivery</strong> (service receipts and SHA-256) is separate from "
         "<strong>semantic review</strong> (manual sampled frames): "
         + str(accepted)
-        + " of 12 accepted. "
-        "Neither establishes action fidelity or training readiness.</p>",
+        + " of "
+        + str(delivered)
+        + " accepted"
+        + ("" if delivered == requested else " (delivered variants only)")
+        + ". Neither establishes action fidelity or training readiness.</p>",
         "<h2>Source (service lossless RGB preview)</h2>",
         _video(
             first / "source-preview.webm",
@@ -567,7 +629,34 @@ def _report(module, work, document, review_path):
             records[0]["source_preview"]["browser_reference_frame0_samples"],
         ),
     ]
-    for variant, record in zip(document["variants"], records):
+    by_id = {variant["id"]: variant for variant in document["variants"]}
+    if summary["not_delivered"]:
+        sections.append(
+            "<h2>Not delivered</h2><p>The service ended these variants with a terminal "
+            "failure. Nothing was retried, rewritten or bypassed; guardrails stayed enabled "
+            "and no rejected output was published.</p><table><tr><th>Variant</th><th>Outcome</th></tr>"
+        )
+        for failure in summary["not_delivered"]:
+            guard = failure["guardrail"]
+            sections.append(
+                "<tr><td>"
+                + html.escape(failure["variant_id"])
+                + "</td><td>"
+                + html.escape(str(failure["error_code"]))
+                + (
+                    " (guardrail "
+                    + html.escape(str(guard["category"]))
+                    + " at "
+                    + html.escape(str(guard["stage"]))
+                    + ")"
+                    if guard.get("category")
+                    else ""
+                )
+                + "</td></tr>"
+            )
+        sections.append("</table>")
+    for record in records:
+        variant = by_id[record["variant_id"]]
         review = reviews[variant["id"]]
         border = record["border"]
         border_text = (

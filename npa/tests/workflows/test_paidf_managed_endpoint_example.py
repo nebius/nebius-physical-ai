@@ -492,6 +492,79 @@ def test_report_embeds_thirteen_server_previews_with_color_references(
     assert "Observed service model-request concurrency" in document
 
 
+def _reject_variant(module, work, variant, *, status="failed"):
+    """Replace a published variant with a terminal guardrail rejection."""
+    directory = work / "downloads" / variant["id"]
+    job_id = module.read_json(work / "jobs" / (variant["id"] + ".json"))["job_id"]
+    for child in directory.iterdir():
+        child.unlink()
+    module.save_private(
+        directory / "job.json",
+        {
+            "job_id": job_id,
+            "status": status,
+            "error_code": "guardrail_rejected" if status == "failed" else None,
+            "manifest": {
+                "job_id": job_id,
+                "backend": {
+                    "guardrail": {"category": "video", "stage": "output_validation"}
+                },
+            },
+        },
+    )
+
+
+def test_collect_reports_terminal_failures_without_hiding_or_retrying(
+    campaign, private_work, published
+):
+    rejected = campaign["variants"][0]
+    _reject_variant(published, private_work, rejected)
+    summary = runner._collect(published, private_work, campaign)
+    assert summary["delivered_count"] == 11 and summary["requested_count"] == 12
+    assert summary["not_delivered"] == [
+        {
+            "variant_id": rejected["id"],
+            "job_id": "job-0",
+            "status": "failed",
+            "error_code": "guardrail_rejected",
+            "guardrail": {"category": "video", "stage": "output_validation"},
+        }
+    ]
+
+
+def test_collect_refuses_a_campaign_that_is_not_terminal(
+    campaign, private_work, published
+):
+    _reject_variant(published, private_work, campaign["variants"][2], status="running")
+    with pytest.raises(ValueError, match="not terminal"):
+        runner._collect(published, private_work, campaign)
+
+
+def test_partial_report_states_delivered_count_and_lists_rejections(
+    campaign, private_work, published
+):
+    rejected = campaign["variants"][0]
+    _reject_variant(published, private_work, rejected)
+    rows = _review(campaign)
+    rows["variants"] = [r for r in rows["variants"] if r["variant_id"] != rejected["id"]]
+    review = private_work / "review.json"
+    published.save_private(review, rows)
+    runner._report(published, private_work, campaign, review)
+    document = (private_work / "paidf-managed-endpoint-proof.html").read_text()
+    parser = _Videos()
+    parser.feed(document)
+    assert len(parser.videos) == 12  # source + 11 delivered previews
+    assert "11 of 12 variants delivered" in document
+    assert "Twelve Cosmos3 appearance variants" not in document
+    assert "10 of 11 accepted (delivered variants only)" in document
+    assert "Not delivered" in document and rejected["id"] in document
+    assert "guardrail video at output_validation" in document
+    # A full 12-row review no longer matches the delivered set.
+    published.save_private(review, _review(campaign))
+    with pytest.raises(ValueError, match="delivered variant"):
+        runner._report(published, private_work, campaign, review)
+
+
 def test_review_does_not_accept_false_criteria(campaign, private_work):
     module = runner._client_module()
     rows = _review(campaign)
