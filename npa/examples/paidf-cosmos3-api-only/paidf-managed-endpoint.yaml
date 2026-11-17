@@ -1,0 +1,129 @@
+apiVersion: paidf.cosmos3-managed-endpoint/v1
+kind: HostedCosmos3ManagedPaidfCampaign
+
+metadata:
+  name: paidf-managed-endpoint
+  campaign_id: paidf-managed-endpoint
+  description: >-
+    Twelve full-source Cosmos3-Super appearance variants through an existing
+    managed HTTPS endpoint. The service owns source preparation, guarded
+    generation, border restoration, lossless RGB browser previews, checksums,
+    publication and finishing reports; the client only submits, polls and
+    downloads.
+
+execution:
+  executor: https-client-only
+  no_new_infrastructure: true
+  customer_compute: none
+  customer_media_processing: none
+  service_managed_stages:
+    - cpu-source-preparation
+    - guarded-gpu-inference
+    - cpu-border-restoration
+    - cpu-lossless-rgb-browser-preview
+    - cpu-finishing-report
+    - checksum-verified-publication
+  client_stages:
+    - contract-and-managed-capability-discovery
+    - durable-request-admission
+    - status-polling
+    - checksum-verified-download
+    - offline-html-assembly
+
+canonical_main_audit:
+  workflow: workflows/main/paidf-cosmos3.yaml
+  verdict: adapted-subset-only
+  hosted_generation: >-
+    The canonical workflow's remaining prepare, evaluation, curation,
+    visualization and runtime stages use Kubernetes/SkyPilot resources or
+    other hosted services. This campaign does not claim to execute them.
+  substitutions:
+    source_preparation: existing prepared owner-scoped video; service validates and analyzes it
+    captions: omitted; explicit appearance prompts are supplied below
+    cosmos_evaluator: service technical_report and finishing report; no semantic evaluator
+    cosmos_curator: omitted; manual sampled review is retained separately
+    fiftyone: omitted; offline HTML gallery replaces the viewer
+    rerun: offline HTML gallery from service lossless RGB previews
+
+source:
+  input_connection_id: ${PAIDF_INPUT_CONNECTION_ID}
+  uri: ${PAIDF_SOURCE_URI}
+  provenance: existing authorized prepared input; original license evidence retained privately
+
+generation:
+  route: /v1/augmentations
+  model: nvidia/Cosmos3-Super
+  structural_control: edge
+  variants_per_request: 1
+  guardrails: required
+  evaluation:
+    mode: technical_report
+    rubric_id: paidf-source-timeline
+    criteria:
+      - complete_decode
+      - timeline_coverage
+  sampling:
+    num_inference_steps: 35
+    guidance_scale: 3.0
+    control_guidance: 1.5
+  client_admission_parallelism: 12
+  service_scheduling_note: >-
+    Client admissions are concurrent HTTP requests. Queueing, GPU execution
+    and CPU finishing are scheduled by the service and reported separately.
+
+output_policy:
+  border_preservation: restore_detected_source_borders
+  browser_preview: lossless_rgb_webm
+
+output:
+  connection_id: ${PAIDF_OUTPUT_CONNECTION_ID}
+  prefix: ${PAIDF_OUTPUT_PREFIX}
+
+semantic_review:
+  method: manual sampled-frame comparison
+  criteria:
+    - visible_motion_and_task_timing_remain_plausible
+    - robot_and_object_identity_are_not_visibly_corrupted
+    - contacts_are_not_visibly_impossible
+    - requested_appearance_change_is_visible
+  limitation: >-
+    Service technical and finishing reports are not semantic quality
+    acceptance. This example executes no separate VLM semantic evaluator.
+
+variants:
+  - id: variant-01-warm-daylight
+    seed: 42001
+    prompt: Preserve the full robot manipulation motion, object contacts, geometry, camera framing, and timing; render a coherent warm daylight workspace with natural soft shadows and subtly warmer neutral surfaces.
+  - id: variant-02-neutral-lab
+    seed: 42002
+    prompt: Preserve the full robot manipulation motion, object contacts, geometry, camera framing, and timing; render a clean neutral laboratory appearance with diffuse balanced lighting and realistic low-saturation materials.
+  - id: variant-03-overcast-daylight
+    seed: 42003
+    prompt: Preserve the full robot manipulation motion, object contacts, geometry, camera framing, and timing; render an overcast daylight appearance with soft broad illumination, restrained contrast, and stable colors.
+  - id: variant-04-cool-worklight
+    seed: 42004
+    prompt: Preserve the full robot manipulation motion, object contacts, geometry, camera framing, and timing; render a coherent cool worklight appearance with realistic task lighting, matte surfaces, and no glare obscuring contacts.
+  - id: variant-05-golden-hour
+    seed: 42005
+    prompt: Preserve the full robot manipulation motion, object contacts, geometry, camera framing, and timing; render a plausible late-afternoon golden-hour appearance with warm directional light and consistent gentle shadows.
+  - id: variant-06-soft-studio
+    seed: 42006
+    prompt: Preserve the full robot manipulation motion, object contacts, geometry, camera framing, and timing; render a soft studio appearance with broad diffused light, slightly brighter background tones, and stable material texture.
+  - id: variant-07-high-key-bench
+    seed: 42007
+    prompt: Preserve the full robot manipulation motion, object contacts, geometry, camera framing, and timing; render a high-key but physically plausible bench appearance with even illumination, clear edges, and natural surface color.
+  - id: variant-08-low-key-workspace
+    seed: 42008
+    prompt: Preserve the full robot manipulation motion, object contacts, geometry, camera framing, and timing; render a restrained low-key workspace appearance with readable robot detail, realistic localized shadows, and no crushed contact regions.
+  - id: variant-09-neutral-industrial
+    seed: 42009
+    prompt: Preserve the full robot manipulation motion, object contacts, geometry, camera framing, and timing; render a neutral industrial workspace appearance with practical overhead lighting, subtle wear on surfaces, and coherent color balance.
+  - id: variant-10-clean-white-bench
+    seed: 42010
+    prompt: Preserve the full robot manipulation motion, object contacts, geometry, camera framing, and timing; render a clean white-bench appearance with diffuse daylight, realistic ambient occlusion, and clearly visible manipulation details.
+  - id: variant-11-soft-green-accent
+    seed: 42011
+    prompt: Preserve the full robot manipulation motion, object contacts, geometry, camera framing, and timing; render a plausible workspace with restrained soft-green background accents, neutral robot materials, and consistent diffuse illumination.
+  - id: variant-12-warm-wood-accent
+    seed: 42012
+    prompt: Preserve the full robot manipulation motion, object contacts, geometry, camera framing, and timing; render a plausible workspace with warm wood-toned background accents, natural soft light, and unchanged task geometry and timing.
