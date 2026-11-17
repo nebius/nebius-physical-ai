@@ -1969,11 +1969,10 @@ def test_lichtblick_recordings_expose_only_the_viewer_mcap_slot() -> None:
     ]
 
 
-def _run_agent_nginx(tmp_path: Path) -> tuple[str, subprocess.Popen[bytes]]:
+def _run_agent_nginx(tmp_path: Path) -> tuple[int, subprocess.Popen[bytes]]:
+    import http.client
     import socket
     import time
-    import urllib.error
-    import urllib.request
 
     def free_port() -> int:
         with socket.socket() as sock:
@@ -2038,53 +2037,56 @@ http {{
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
-    base = f"http://127.0.0.1:{port}"
     deadline = time.monotonic() + 10
     while True:
+        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=1)
         try:
-            urllib.request.urlopen(base + "/healthz", timeout=1).close()
+            conn.request("GET", "/healthz")
+            with conn.getresponse() as response:
+                response.read()
             break
-        except urllib.error.HTTPError:
-            break
-        except OSError:
+        except (OSError, http.client.HTTPException):
             if time.monotonic() > deadline or proc.poll() is not None:
                 proc.terminate()
                 proc.wait(timeout=10)
                 pytest.fail("nginx did not start")
             time.sleep(0.05)
-    return base, proc
+        finally:
+            conn.close()
+    return port, proc
 
 
 @pytest.mark.skipif(shutil.which("nginx") is None, reason="nginx is not installed")
 def test_real_nginx_lichtblick_recordings_deny_anonymous_private_files(
     tmp_path: Path,
 ) -> None:
-    import urllib.error
-    import urllib.request
+    import http.client
 
-    def get(url: str, headers: dict[str, str] | None = None) -> tuple[int, bytes]:
-        request = urllib.request.Request(url, headers=headers or {})
+    port, proc = _run_agent_nginx(tmp_path)
+
+    def get(path: str, headers: dict[str, str] | None = None) -> tuple[int, bytes]:
+        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
         try:
-            with urllib.request.urlopen(request, timeout=5) as response:
+            conn.request("GET", path, headers=headers or {})
+            with conn.getresponse() as response:
                 return response.status, response.read()
-        except urllib.error.HTTPError as exc:
-            return exc.code, exc.read()
+        finally:
+            conn.close()
 
-    base, proc = _run_agent_nginx(tmp_path)
     try:
         # Supported viewer path: full read, byte range and cache-busting query.
-        status, body = get(base + "/lichtblick/recordings/sim2real.mcap")
+        status, body = get("/lichtblick/recordings/sim2real.mcap")
         assert status == 200 and body.startswith(b"MCAP-SUPPORTED")
         status, body = get(
-            base + "/lichtblick/recordings/sim2real.mcap", {"Range": "bytes=0-3"}
+            "/lichtblick/recordings/sim2real.mcap", {"Range": "bytes=0-3"}
         )
         assert (status, body) == (206, b"MCAP")
-        status, _ = get(base + "/lichtblick/recordings/sim2real.mcap?t=1")
+        status, _ = get("/lichtblick/recordings/sim2real.mcap?t=1")
         assert status == 200
         # The Rerun capability contract is unchanged.
-        status, body = get(base + "/rerun/recordings/cap-" + "A" * 43 + ".rrd")
+        status, body = get("/rerun/recordings/cap-" + "A" * 43 + ".rrd")
         assert (status, body) == (200, b"CAPABILITY-RRD")
-        assert get(base + "/rerun/recordings/sim2real.rrd")[0] == 404
+        assert get("/rerun/recordings/sim2real.rrd")[0] == 404
         # Hostile anonymous reads of the shared recordings directory.
         for path in (
             "/lichtblick/recordings/sim2real.rrd",
@@ -2097,7 +2099,7 @@ def test_real_nginx_lichtblick_recordings_deny_anonymous_private_files(
             "/lichtblick/recordings/sim2real.mcap/",
             "/lichtblick/recordings/",
         ):
-            status, body = get(base + path)
+            status, body = get(path)
             assert status == 404, (path, status)
             assert b"PRIVATE" not in body and b"CAPABILITY" not in body, path
     finally:
