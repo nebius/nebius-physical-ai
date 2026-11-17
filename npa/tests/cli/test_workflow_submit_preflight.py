@@ -2225,11 +2225,15 @@ def test_pinned_b300_without_effective_overlay_needs_no_staged_source(baked) -> 
     )
 
 
-def test_preflight_images_accepts_the_same_config_vars_as_submit(mocker) -> None:
+def test_preflight_images_accepts_the_same_config_vars_as_submit(
+    mocker, tmp_path
+) -> None:
     """An empty canonical image input must be overridable before pull probes."""
     from npa.orchestration.skypilot.registry_preflight import KubernetesPullTarget
 
     digest_image = f"cr.example.invalid/npa@sha256:{'a' * 64}"
+    owned_kubeconfig = tmp_path / "owned-kubeconfig"
+    owned_kubeconfig.write_text("apiVersion: v1\n")
     checks = mocker.patch(
         "npa.orchestration.skypilot.registry_preflight.check_image_pulls_with_credentials",
         return_value=[],
@@ -2238,9 +2242,17 @@ def test_preflight_images_accepts_the_same_config_vars_as_submit(mocker) -> None
         "npa.cli.workbench.workflow._preflight_image_bootstrap_contracts",
         return_value=[],
     )
-    mocker.patch(
+    target = mocker.patch(
         "npa.orchestration.skypilot.registry_preflight.resolve_kubernetes_pull_target",
         return_value=KubernetesPullTarget(namespace="target-namespace"),
+    )
+    mocker.patch("npa.cluster.state.existing_kubeconfig", return_value=owned_kubeconfig)
+    mocker.patch(
+        "npa.orchestration.skypilot.cluster_validation.resolve_validation_target",
+        return_value=(owned_kubeconfig, "target-context"),
+    )
+    validate_project = mocker.patch(
+        "npa.orchestration.skypilot.cluster_validation.resolve_validation_project"
     )
     args = [
         "workbench",
@@ -2268,6 +2280,8 @@ def test_preflight_images_accepts_the_same_config_vars_as_submit(mocker) -> None
     checked_images = checks.call_args.args[0]
     assert checked_images
     assert set(checked_images) == {digest_image}
+    assert target.call_args.kwargs["kubeconfig_path"] == owned_kubeconfig
+    validate_project.assert_called_once_with("", "target-context")
 
 
 def test_image_pull_execution_paths_preserve_each_rendered_target() -> None:
@@ -3689,6 +3703,29 @@ def test_infra_kube_context_extracts_only_a_pinned_k8s_context() -> None:
     assert _infra_kube_context("k8s") == ""  # no pinned context
     assert _infra_kube_context("nebius") == ""  # non-k8s target
     assert _infra_kube_context("") == ""
+
+
+def test_implicit_runtime_isolation_is_stable_and_does_not_expose_target_names(
+    monkeypatch, tmp_path
+) -> None:
+    """Runtime submissions isolate a generic target without CLI-only setup."""
+    from npa.clients import config as config_module
+    from npa.cli.workbench.workflow import _implicit_runtime_isolated_config_dir
+
+    monkeypatch.setattr(config_module, "NPA_CONFIG_DIR", tmp_path / "npa")
+    selected = _implicit_runtime_isolated_config_dir(
+        project="operator-project", context="operator-cluster"
+    )
+
+    assert selected == _implicit_runtime_isolated_config_dir(
+        project="operator-project", context="operator-cluster"
+    )
+    assert selected != _implicit_runtime_isolated_config_dir(
+        project="operator-project", context="other-cluster"
+    )
+    assert selected.parent == tmp_path / "npa" / "workflow-runtime"
+    assert "operator-project" not in str(selected)
+    assert "operator-cluster" not in str(selected)
 
 
 def test_available_kube_contexts_none_when_unreadable(monkeypatch, tmp_path) -> None:

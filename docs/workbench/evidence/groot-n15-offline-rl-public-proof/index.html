@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="en"><meta charset="utf-8"><title>GR00T N1.5 offline recorded-observation proof</title>
+<style>body{font:16px system-ui,sans-serif;max-width:1050px;margin:2rem auto;padding:0 1rem;background:#111;color:#eee}code,pre{background:#20252b;padding:.2rem .4rem;overflow:auto}video{max-width:100%;border:1px solid #666}.warn{border-left:4px solid #f6a623;padding:.6rem 1rem;background:#2b2418}table{border-collapse:collapse}td,th{padding:.4rem .7rem;border:1px solid #555;text-align:left}</style>
+<h1>GR00T N1.5 offline recorded-observation proof</h1>
+<p class="warn"><strong>Scope:</strong> this is offline prediction on held-out public recorded observations. The video is not a policy rollout, does not contain predicted robot motion or next states, and provides no robot-success, improvement, deployment, or simulator claim.</p>
+<table><tr><th>Public input</th><td>youliangtan/so101-table-cleanup@f9b5e3f004d4dceee8bc8efbaf55cd013e46b707, Apache-2.0</td></tr>
+<tr><th>Model</th><td>nvidia/GR00T-N1.5-3B@869830fc749c35f34771aa5209f923ac57e4564e; weights are runtime-only and not embedded</td></tr>
+<tr><th>Held-out frames</th><td>4638</td></tr><tr><th>Baseline MAE / candidate MAE</th><td>45.6822 / 8.55433 raw dataset action coordinates</td></tr>
+<tr><th>Action units</th><td>Source Parquet action coordinates; source metadata does not declare physical units. Inputs were min/max-normalized with training-split-only statistics and predictions were inverse-transformed before comparison.</td></tr></table>
+<h2>Complete native training evidence</h2><table><tr><th>Schedule</th><td>1 complete native Trainer pass: 42,325 train frames / batch 4 = 10,582 optimizer updates (64 train episodes).</td></tr><tr><th>Recorded loss trace</th><td>10,582 finite updates; min 0.0019, max 2.6326. Fixed samples: step 1 = 1.0385; 962 = 0.0636; 1924 = 0.0710; 2886 = 0.0947; 3848 = 0.0908; 4810 = 0.0544; 5772 = 0.0653; 6734 = 0.0564; 7696 = 0.0583; 8658 = 0.0063; 9620 = 0.0149; 10582 = 0.0019.</td></tr><tr><th>Terminal-mask check</th><td>At a recorded terminal frame, 1 of 16 action-horizon steps was valid and 15 were masked; both decoded cameras were [1, 480, 640, 3].</td></tr><tr><th>Checkpoint / reload</th><td>Native GR00T_N1_5 candidate reload verified (32 model action channels, 16-step horizon); candidate checkpoint SHA-256 <code>fee4002a595c9fe055fb6ac13a877e8636064e69cae24c407390aa4519907137</code>.</td></tr><tr><th>GPU runtime</th><td>One visible NVIDIA RTX PRO 6000 Blackwell Server Edition GPU; CUDA 12.8, PyTorch 2.7.1+cu128, BF16 supported, FlashAttention 2.8.3, and <code>sm_120</code> present in the runtime arch list.</td></tr></table><p>These are optimization and offline-prediction measurements only. A lower offline action error is not a measured robot or simulator outcome.</p>
+<h2>Recorded observations with aligned offline predictions</h2><video controls preload="metadata" src="offline-prediction.mp4"></video><p><strong>Offline evidence bundle:</strong> open this HTML beside the co-located <code>offline-prediction.mp4</code>. The media reference is relative and has no network, CDN, or remote-script dependency.</p>
+<p>Each frame labels its held-out source episode/frame. Curves compare horizon-0 recorded action targets with native baseline and candidate <code>get_action</code> predictions under the same per-frame diffusion seed.</p>
+<details><summary>Measured receipt</summary><pre>{
+  &quot;actions_sha256&quot;: &quot;c1d85a923e71fad43f86130515e21e1c799bc8dd4c2a5cb002b22b129f965840&quot;,
+  &quot;checkpoints&quot;: {
+    &quot;baseline_sha256&quot;: &quot;94246f9e18a967f8f6db28736fb40b8c395895c12a93feb40454053903ed23ed&quot;,
+    &quot;candidate_reloaded_for_inference&quot;: true,
+    &quot;candidate_sha256&quot;: &quot;fee4002a595c9fe055fb6ac13a877e8636064e69cae24c407390aa4519907137&quot;
+  },
+  &quot;evidence_clip&quot;: {
+    &quot;episode_index&quot;: 64,
+    &quot;frame_count&quot;: 120,
+    &quot;prediction_alignment&quot;: &quot;one native baseline and candidate get_action call per recorded observation; plotted action horizon index 0&quot;,
+    &quot;recorded_fps&quot;: 30,
+    &quot;start_frame&quot;: 0
+  },
+  &quot;held_out&quot;: {
+    &quot;action_dimensions&quot;: 6,
+    &quot;action_horizon&quot;: 16,
+    &quot;common_per_frame_diffusion_seed&quot;: 1701,
+    &quot;episodes&quot;: 16,
+    &quot;frames&quot;: 4638
+  },
+  &quot;input&quot;: {
+    &quot;action_transform&quot;: &quot;native min_max normalization from training-split-only stats; inverse transformed for metrics&quot;,
+    &quot;action_units&quot;: &quot;raw source dataset coordinates; physical units are not declared by source metadata&quot;,
+    &quot;dataset_sha256&quot;: &quot;cd21eaaa88f198aaded784311d001e686b1d0cf97df8281f427dd272a859fbea&quot;,
+    &quot;manifest_sha256&quot;: &quot;ec0a4e351021601ab6e42bafa88d5a0133fd2a53b318440f73f6e0f39402c6d9&quot;,
+    &quot;video_backend&quot;: &quot;decord&quot;
+  },
+  &quot;kind&quot;: &quot;native-held-out-offline-action-comparison&quot;,
+  &quot;media_validation&quot;: {
+    &quot;decoded_frames&quot;: [
+      {
+        &quot;frame_index&quot;: 0,
+        &quot;sha256&quot;: &quot;c6fcd560d0bcce888df670d9566ec4d36c5cef015a6ff1dfb204e9624ce62962&quot;,
+        &quot;shape&quot;: [
+          720,
+          960,
+          3
+        ]
+      },
+      {
+        &quot;frame_index&quot;: 60,
+        &quot;sha256&quot;: &quot;8935a336ebbcc9ab9c3a48dd464a896376a43af367ee48e21ddce6c9f2627cb6&quot;,
+        &quot;shape&quot;: [
+          720,
+          960,
+          3
+        ]
+      },
+      {
+        &quot;frame_index&quot;: 119,
+        &quot;sha256&quot;: &quot;6b45b2e179fc967695eb617671d59a9a19bd1f927da31683e6fa1ac48038bb29&quot;,
+        &quot;shape&quot;: [
+          720,
+          960,
+          3
+        ]
+      }
+    ],
+    &quot;ffprobe&quot;: {
+      &quot;avg_frame_rate&quot;: &quot;30/1&quot;,
+      &quot;codec_name&quot;: &quot;h264&quot;,
+      &quot;height&quot;: 720,
+      &quot;nb_read_frames&quot;: &quot;120&quot;,
+      &quot;width&quot;: 960
+    },
+    &quot;mp4_sha256&quot;: &quot;9458d86bfe2484fdc0ab08047ebf2901ab75aa88848fa22da9bd17493882a666&quot;
+  },
+  &quot;metrics&quot;: {
+    &quot;baseline&quot;: {
+      &quot;mae&quot;: 45.68220138549805,
+      &quot;mse&quot;: 3440.96728515625,
+      &quot;per_dimension_mae&quot;: [
+        21.828960418701172,
+        61.03239059448242,
+        48.665504455566406,
+        95.3463363647461,
+        27.636043548583984,
+        19.584016799926758
+      ],
+      &quot;per_dimension_mse&quot;: [
+        812.845703125,
+        4909.3212890625,
+        3373.17822265625,
+        9945.6318359375,
+        1082.71484375,
+        522.111328125
+      ],
+      &quot;per_horizon_mae&quot;: [
+        45.0684814453125,
+        45.14960479736328,
+        45.252784729003906,
+        45.352481842041016,
+        45.442787170410156,
+        45.52866744995117,
+        45.61328125,
+        45.706539154052734,
+        45.78158187866211,
+        45.84008026123047,
+        45.90873718261719,
+        45.96958923339844,
+        46.02486801147461,
+        46.078765869140625,
+        46.12501525878906,
+        46.161563873291016
+      ],
+      &quot;valid_action_values&quot;: 433728
+    },
+    &quot;candidate&quot;: {
+      &quot;mae&quot;: 8.554325103759766,
+      &quot;mse&quot;: 181.7137908935547,
+      &quot;per_dimension_mae&quot;: [
+        5.11529016494751,
+        11.482324600219727,
+        13.316061973571777,
+        9.55473804473877,
+        7.02998161315918,
+        4.827566623687744
+      ],
+      &quot;per_dimension_mse&quot;: [
+        55.58216094970703,
+        289.879638671875,
+        390.013427734375,
+        184.84136962890625,
+        111.33235168457031,
+        58.63372039794922
+      ],
+      &quot;per_horizon_mae&quot;: [
+        5.258277893066406,
+        5.698182582855225,
+        6.1543869972229,
+        6.611529350280762,
+        7.094552993774414,
+        7.537597179412842,
+        7.965585231781006,
+        8.423318862915039,
+        8.844047546386719,
+        9.299477577209473,
+        9.730057716369629,
+        10.116886138916016,
+        10.567790031433105,
+        10.968921661376953,
+        11.378849983215332,
+        11.744329452514648
+      ],
+      &quot;valid_action_values&quot;: 433728
+    }
+  },
+  &quot;prepared_provenance_sha256&quot;: &quot;9f3e039bdc19706f217e78edd8d81473528807793502e8d1233541ad63c6f056&quot;,
+  &quot;runtime&quot;: {
+    &quot;bf16_supported&quot;: true,
+    &quot;capability&quot;: [
+      12,
+      0
+    ],
+    &quot;device_name&quot;: &quot;NVIDIA RTX PRO 6000 Blackwell Server Edition&quot;,
+    &quot;flash_attn&quot;: &quot;2.8.3&quot;,
+    &quot;python&quot;: &quot;3.10.12&quot;,
+    &quot;torch&quot;: &quot;2.7.1+cu128&quot;,
+    &quot;torch_arch_list&quot;: [
+      &quot;sm_75&quot;,
+      &quot;sm_80&quot;,
+      &quot;sm_86&quot;,
+      &quot;sm_90&quot;,
+      &quot;sm_100&quot;,
+      &quot;sm_120&quot;,
+      &quot;compute_120&quot;
+    ],
+    &quot;torch_cuda&quot;: &quot;12.8&quot;,
+    &quot;visible_cuda_devices&quot;: 1
+  },
+  &quot;schema_version&quot;: &quot;npa.groot-n15-offline-workflow/v2&quot;,
+  &quot;scope&quot;: {
+    &quot;closed_loop_rollout&quot;: false,
+    &quot;native_baseline_get_action&quot;: true,
+    &quot;native_candidate_get_action&quot;: true,
+    &quot;policy_improvement_claim&quot;: false,
+    &quot;recorded_observations&quot;: true,
+    &quot;robot_evaluation&quot;: false
+  },
+  &quot;source&quot;: {
+    &quot;dataset_license&quot;: &quot;Apache-2.0&quot;,
+    &quot;dataset_repository&quot;: &quot;youliangtan/so101-table-cleanup&quot;,
+    &quot;dataset_revision&quot;: &quot;f9b5e3f004d4dceee8bc8efbaf55cd013e46b707&quot;,
+    &quot;model_repository&quot;: &quot;nvidia/GR00T-N1.5-3B&quot;,
+    &quot;model_revision&quot;: &quot;869830fc749c35f34771aa5209f923ac57e4564e&quot;,
+    &quot;n1_5_revision&quot;: &quot;4af2b622892f7dcb5aae5a3fb70bcb02dc217b96&quot;
+  }
+}</pre></details>
+</html>

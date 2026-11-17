@@ -85,6 +85,8 @@ _TERMINAL_MANAGED_JOB_STATUSES = frozenset(
         "FAILED_CONTROLLER",
     }
 )
+_CONTROLLER_NAME_PREFIX = "sky-jobs-controller-"
+_ISOLATED_CONTROLLER_USER_RE = re.compile(r"npa-[a-f0-9]{12}")
 
 
 def is_terminal_managed_job_status(value: object) -> bool:
@@ -198,6 +200,7 @@ def cleanup_jobs_controller(
     cluster_id: str = "",
     cluster_name: str = "",
     recover_orphan_controller: bool = False,
+    recover_failed_controller: str = "",
     attest_no_active_jobs: bool = False,
 ) -> CleanupResult:
     """Transactionally remove the controller for one verified NPA cluster.
@@ -218,11 +221,37 @@ def cleanup_jobs_controller(
             else "live_configuration"
         ),
     )
-    if recover_orphan_controller != attest_no_active_jobs:
+    failed_controller = str(recover_failed_controller or "").strip()
+    if recover_orphan_controller and not attest_no_active_jobs:
         cleanup.outcome = "unsafe"
         cleanup.errors.append(
-            "orphan controller recovery requires both recover_orphan_controller "
-            "and attest_no_active_jobs"
+            "orphan controller recovery requires both explicit safety flags"
+        )
+        return cleanup
+    if failed_controller and not attest_no_active_jobs:
+        cleanup.outcome = "unsafe"
+        cleanup.errors.append(
+            "failed-controller recovery requires an explicit no-active-jobs attestation"
+        )
+        return cleanup
+    if attest_no_active_jobs and not (recover_orphan_controller or failed_controller):
+        cleanup.outcome = "unsafe"
+        cleanup.errors.append(
+            "no-active-jobs attestation requires an explicit controller recovery target"
+        )
+        return cleanup
+    if recover_orphan_controller and failed_controller:
+        cleanup.outcome = "unsafe"
+        cleanup.errors.append(
+            "orphan and failed-controller recovery are mutually exclusive"
+        )
+        return cleanup
+    if failed_controller and not re.fullmatch(
+        r"sky-jobs-controller-npa-[a-f0-9]{12}", failed_controller
+    ):
+        cleanup.outcome = "unsafe"
+        cleanup.errors.append(
+            "failed-controller recovery requires one NPA controller name"
         )
         return cleanup
     from npa.cluster.identity import (
@@ -390,6 +419,15 @@ def cleanup_jobs_controller(
         return cleanup
 
     isolated_config_dir = resolve_isolated_config_dir(isolated_config_dir)
+    if failed_controller:
+        bound_controller = _isolated_controller_name(isolated_config_dir)
+        if not bound_controller or bound_controller != failed_controller:
+            cleanup.outcome = "unsafe"
+            cleanup.errors.append(
+                "failed-controller recovery target does not match the isolated controller identity"
+            )
+            _record_controller_result(identity, cleanup, "verification_failed")
+            return cleanup
     remote_pods: list[tuple[str, str, str]] = []
     if not identity.cluster_absent:
         remote_pods, remote_error = _kubernetes_controller_pods(
@@ -403,6 +441,69 @@ def cleanup_jobs_controller(
             )
             _record_controller_result(identity, cleanup, "verification_failed")
             return cleanup
+
+    if failed_controller:
+        target_pods = [item for item in remote_pods if item[2] == failed_controller]
+        if len(target_pods) != 1:
+            cleanup.outcome = "unsafe"
+            cleanup.errors.append(
+                "failed-controller recovery requires exactly one exact controller pod"
+            )
+            _record_controller_result(
+                identity, cleanup, "verification_failed", remote_pods=target_pods
+            )
+            return cleanup
+        failed_error = _verify_failed_controller_pod(
+            target_pods[0],
+            controller_name=failed_controller,
+            kubeconfig=identity.kubeconfig,
+            context=identity.context,
+        )
+        if failed_error:
+            cleanup.outcome = "unsafe"
+            cleanup.errors.append(failed_error)
+            _record_controller_result(
+                identity, cleanup, "verification_failed", remote_pods=target_pods
+            )
+            return cleanup
+        commands, delete_error = _delete_orphan_controller_pods(
+            target_pods,
+            kubeconfig=identity.kubeconfig,
+            context=identity.context,
+        )
+        cleanup.commands.extend(commands)
+        if delete_error:
+            cleanup.errors.append(delete_error)
+            _record_controller_result(
+                identity, cleanup, "verification_failed", remote_pods=target_pods
+            )
+            return cleanup
+        remaining, verify_error = _wait_for_controller_pods_absent(
+            {failed_controller},
+            kubeconfig=identity.kubeconfig,
+            context=identity.context,
+        )
+        if verify_error or remaining:
+            cleanup.errors.append(
+                "failed-controller deletion was not verified: "
+                + (verify_error or "controller pod was recreated")
+            )
+            _record_controller_result(
+                identity, cleanup, "verification_failed", remote_pods=remaining
+            )
+            return cleanup
+        cleanup.resources_removed.append(failed_controller)
+        cleanup.outcome = "failed_controller_deleted"
+        cleanup.remote_absence_verified = True
+        # Preserve task-local metadata so the next exact launch recreates this
+        # controller; do not adopt or alter another controller.
+        _record_controller_result(
+            identity,
+            cleanup,
+            "verified_failed_controller_deleted",
+            remote_pods=[],
+        )
+        return cleanup
 
     controller_clusters, status_error = _jobs_controller_clusters(
         isolated_config_dir=isolated_config_dir,
@@ -1818,9 +1919,16 @@ def _snapshot_skypilot_state(
 def _controller_name_from_pod(item: dict[str, Any]) -> str:
     raw_metadata = item.get("metadata")
     metadata: dict[str, Any] = raw_metadata if isinstance(raw_metadata, dict) else {}
+    raw_annotations = metadata.get("annotations")
+    annotations: dict[str, Any] = (
+        raw_annotations if isinstance(raw_annotations, dict) else {}
+    )
     raw_labels = metadata.get("labels")
     labels: dict[str, Any] = raw_labels if isinstance(raw_labels, dict) else {}
     searchable = [
+        # SkyPilot retains this unshortened controller name when Kubernetes
+        # shortens the pod and label values to fit DNS limits.
+        str(annotations.get("skypilot-cluster-name") or ""),
         str(labels.get("skypilot-cluster") or ""),
         str(labels.get("ray.io/cluster") or ""),
         str(labels.get("app.kubernetes.io/instance") or ""),
@@ -1830,6 +1938,96 @@ def _controller_name_from_pod(item: dict[str, Any]) -> str:
         match = re.search(r"(sky-jobs-controller-[a-zA-Z0-9-]+)", value)
         if match:
             return match.group(1).removesuffix("-ray-head")
+    return ""
+
+
+def _isolated_controller_name(isolated_config_dir: Path | None) -> str:
+    """Return the exact controller bound to one isolated SkyPilot state."""
+
+    if isolated_config_dir is None:
+        return ""
+    path = Path(isolated_config_dir) / "home" / ".sky" / "user_hash"
+    try:
+        if path.is_symlink() or not path.is_file():
+            return ""
+        user_id = path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+    if not _ISOLATED_CONTROLLER_USER_RE.fullmatch(user_id):
+        return ""
+    return f"{_CONTROLLER_NAME_PREFIX}{user_id}"
+
+
+def _verify_failed_controller_pod(
+    pod_identity: tuple[str, str, str],
+    *,
+    controller_name: str,
+    kubeconfig: Path,
+    context: str,
+) -> str:
+    """Verify one exact task-bound controller pod is terminally failed."""
+
+    from npa.cluster.drain import _noninteractive_kubeconfig_env
+
+    namespace, pod_name, observed_controller = pod_identity
+    if not namespace or not pod_name or observed_controller != controller_name:
+        return "failed-controller pod identity is incomplete or changed"
+    command = [
+        "kubectl",
+        "--context",
+        context,
+        "get",
+        "pod",
+        pod_name,
+        "--namespace",
+        namespace,
+        "-o",
+        "json",
+    ]
+    with _noninteractive_kubeconfig_env(str(kubeconfig)) as (environment, issue):
+        if issue is not None:
+            return issue.summary
+        try:
+            result = subprocess.run(
+                command,
+                env=environment,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=60,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            return (
+                f"failed-controller pod inspection failed: {type(exc).__name__}: {exc}"
+            )
+    if result.returncode != 0:
+        return _format_command_error(command, result)
+    try:
+        payload = json.loads(result.stdout or "{}")
+    except json.JSONDecodeError:
+        return "failed-controller pod inspection returned non-json output"
+    metadata = payload.get("metadata") if isinstance(payload, dict) else None
+    status = payload.get("status") if isinstance(payload, dict) else None
+    annotations = metadata.get("annotations") if isinstance(metadata, dict) else None
+    labels = metadata.get("labels") if isinstance(metadata, dict) else None
+    owner_references = (
+        metadata.get("ownerReferences") if isinstance(metadata, dict) else None
+    )
+    if (
+        not isinstance(metadata, dict)
+        or metadata.get("name") != pod_name
+        or metadata.get("namespace") != namespace
+        or not isinstance(annotations, dict)
+        or annotations.get("skypilot-cluster-name") != controller_name
+        or not isinstance(labels, dict)
+        or labels.get("parent") != "skypilot"
+        or labels.get("skypilot-head-node") != "1"
+        or owner_references not in (None, [])
+        or not isinstance(status, dict)
+        or status.get("phase") != "Failed"
+    ):
+        return "failed-controller pod no longer has the exact terminal task ownership"
     return ""
 
 

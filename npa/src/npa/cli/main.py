@@ -189,9 +189,44 @@ def destroy_project_cmd(
         "--delete-project",
         help="Also delete an exact, empty project with durable NPA creation proof.",
     ),
+    retain_project: bool = typer.Option(
+        False,
+        "--retain-project",
+        help="Close one failed project-deletion journal after explicit project-retention authorization.",
+    ),
+    operation_id: str = typer.Option(
+        "",
+        "--operation-id",
+        help="Exact failed project-deletion operation to retain; requires --retain-project.",
+    ),
     output_json: bool = typer.Option(False, "--json", help="Emit JSON."),
 ) -> None:
     """Plan or execute project-scoped teardown through guarded NPA commands."""
+
+    if retain_project:
+        if all_resources or delete_project or receipt.strip():
+            raise typer.BadParameter(
+                "--retain-project cannot be combined with --all, --delete-project, or --receipt."
+            )
+        if not yes:
+            raise typer.BadParameter("--retain-project requires --yes.")
+        if not project.strip() or not operation_id.strip():
+            raise typer.BadParameter(
+                "--retain-project requires exact --project and --operation-id."
+            )
+        from npa.project_destroy import retain_recovery_required_project_teardown
+
+        result = retain_recovery_required_project_teardown(
+            project=project.strip(), operation_id=operation_id.strip()
+        )
+        typer.echo(
+            json.dumps(result, indent=2, sort_keys=True)
+            if output_json
+            else result["status"]
+        )
+        return
+    if operation_id.strip():
+        raise typer.BadParameter("--operation-id is valid only with --retain-project.")
 
     if not all_resources:
         raise typer.BadParameter("Full project teardown requires --all.")
@@ -2345,7 +2380,7 @@ def _configured_env_lines() -> str:
     included; workflow submit resolves requested ``--secret-env`` names directly
     from credentials.yaml without printing them.
     """
-    from npa.clients.config import default_project_name, list_projects
+    from npa.clients.config import NPA_CONFIG_DIR, default_project_name, list_projects
     from npa.clients.credentials import load_credentials
 
     try:
@@ -2354,9 +2389,12 @@ def _configured_env_lines() -> str:
     except Exception:  # noqa: BLE001 - emit whatever is readable
         projects, alias = {}, ""
     lines: list[str] = []
+    resolved = ""
+    stanza: dict[str, object] = {}
     if projects:
         resolved = alias if alias in projects else next(iter(projects))
-        stanza = projects.get(resolved) or {}
+        candidate = projects.get(resolved) or {}
+        stanza = candidate if isinstance(candidate, dict) else {}
         lines.append(f"NPA_PROJECT_ALIAS={shlex.quote(resolved)}")
         for name, key in (
             ("NPA_PROJECT_ID", "project_id"),
@@ -2370,21 +2408,61 @@ def _configured_env_lines() -> str:
         credentials = load_credentials(environ={})
     except Exception:  # noqa: BLE001
         credentials = None
-    if credentials is not None:
-        bucket_uri = str(credentials.s3_bucket or "")
-        if bucket_uri:
-            lines.append(f"NPA_BUCKET_URI={shlex.quote(bucket_uri)}")
-            lines.append(
-                "NPA_BUCKET="
-                + shlex.quote(
-                    bucket_uri.removeprefix("s3://").strip("/").split("/", 1)[0]
-                )
-            )
-        if credentials.s3_endpoint:
-            lines.append(f"NPA_S3_ENDPOINT={shlex.quote(credentials.s3_endpoint)}")
+    bucket_uri = str(credentials.s3_bucket or "") if credentials is not None else ""
+    endpoint = str(credentials.s3_endpoint or "") if credentials is not None else ""
+    # A configured project can keep its non-secret storage route in
+    # ``config.yaml`` while its credentials live in the project credential
+    # store.  ``configure --show --env`` is the documented fresh-shell
+    # bootstrap, so it must still provide the bucket used by ``--var bucket``
+    # without requiring an operator to recreate that routing value by hand.
+    # Only routing fields are read here; keys and tokens never reach stdout.
+    project_storage = (
+        stanza.get("object-storage")
+        or stanza.get("object_storage")
+        or stanza.get("storage")
+        or {}
+    )
+    if not isinstance(project_storage, dict):
+        project_storage = {}
+    if not bucket_uri:
+        for key in ("checkpoint_bucket", "bucket", "s3_bucket"):
+            value = project_storage.get(key)
+            if value:
+                bucket_uri = str(value)
+                break
+    if not endpoint:
+        for key in ("endpoint_url", "endpoint", "s3_endpoint"):
+            value = project_storage.get(key)
+            if value:
+                endpoint = str(value)
+                break
+    if bucket_uri:
+        lines.append(f"NPA_BUCKET_URI={shlex.quote(bucket_uri)}")
+        lines.append(
+            "NPA_BUCKET="
+            + shlex.quote(bucket_uri.removeprefix("s3://").strip("/").split("/", 1)[0])
+        )
+    if endpoint:
+        lines.append(f"NPA_S3_ENDPOINT={shlex.quote(endpoint)}")
     context = _saved_kube_context()
     if context:
         lines.append(f"NPA_KUBE_CONTEXT={shlex.quote(context)}")
+        kubeconfig = _saved_kubeconfig(context)
+        if kubeconfig:
+            # The context is not sufficient for generic Kubernetes-aware
+            # preflights: NPA deliberately does not fall back to an ambient
+            # kubeconfig.  Export only a locally validated, NPA-owned exact
+            # kubeconfig so a new shell can run the documented preflight and
+            # submit commands without hand-discovering a private file path.
+            lines.append(f"KUBECONFIG={shlex.quote(kubeconfig)}")
+    # NPA's local bootstrap can install a tested Nebius CLI beside the saved
+    # project configuration.  Prefer that explicit non-secret binary in a
+    # fresh shell over an arbitrary older system ``nebius`` on PATH.  Do not
+    # fabricate an install location when the normal system CLI is the only one
+    # available; the version gate will remain explicit in that case.
+    managed_nebius = NPA_CONFIG_DIR / "bin" / "nebius"
+    if managed_nebius.is_file() and os.access(managed_nebius, os.X_OK):
+        lines.append(f"NPA_NEBIUS_BIN={shlex.quote(str(managed_nebius))}")
     return "\n".join(lines)
 
 
@@ -2409,12 +2487,65 @@ def _saved_kube_context() -> str:
         if configured_pid
         and str(getattr(state, "project_id", "") or "") == configured_pid
     ]
-    for state in reversed(scoped or clusters):
+    candidates = scoped or clusters
+    if candidates:
+        # list_local_clusters is ordered by directory name, not save time.  A
+        # fresh operator must get the target that was actually saved most
+        # recently, rather than whichever similarly scoped directory sorts last.
+        # Status refreshes record last_seen_at; immediately-created targets use
+        # their immutable creation time until then.  The index preserves the
+        # historical "last listed" behavior for legacy records without either
+        # timestamp.
+        _, selected = max(
+            enumerate(candidates),
+            key=lambda indexed: (
+                str(
+                    getattr(indexed[1], "last_seen_at", "")
+                    or getattr(indexed[1], "created_at", "")
+                    or ""
+                ),
+                indexed[0],
+            ),
+        )
         # `cluster up` names the kubeconfig context after the cluster by default.
-        context = str(getattr(state, "name", "") or "")
+        context = str(getattr(selected, "name", "") or "")
         if context:
             return context
     return ""
+
+
+def _saved_kubeconfig(context: str) -> str:
+    """Return a locally validated NPA kubeconfig for one emitted context.
+
+    ``configure --show --env`` is intentionally a convenience export rather
+    than a remote identity verifier.  It still must not point a clean shell at
+    an ambient, symlinked, malformed, or differently selected context.  Remote
+    provider verification remains the responsibility of the command that uses
+    this path.
+    """
+
+    try:
+        import yaml
+
+        from npa.cluster.state import existing_kubeconfig
+
+        candidate = existing_kubeconfig(context)
+        if candidate is None or candidate.is_symlink() or not candidate.is_file():
+            return ""
+        resolved = candidate.resolve(strict=True)
+        payload = yaml.safe_load(resolved.read_text(encoding="utf-8")) or {}
+        if not isinstance(payload, dict) or payload.get("current-context") != context:
+            return ""
+        names = {
+            str(item.get("name") or "")
+            for item in payload.get("contexts") or []
+            if isinstance(item, dict)
+        }
+        if context not in names:
+            return ""
+        return str(resolved)
+    except (OSError, ValueError, yaml.YAMLError):
+        return ""
 
 
 def _configured_project_id() -> str:
@@ -3315,8 +3446,9 @@ def configure(
         False,
         "--env",
         help=(
-            "Print the saved project/bucket/kube-context values as NPA_* shell "
-            "assignments (no secrets) instead of prompting: "
+            "Print saved non-secret project/storage/context assignments (NPA_* "
+            "plus a locally validated KUBECONFIG and managed CLI selection when "
+            "available) instead of prompting: "
             'eval "$(npa configure --show --env)".'
         ),
     ),
@@ -3442,8 +3574,9 @@ def init(
         False,
         "--env",
         help=(
-            "Print the saved project/bucket/kube-context values as NPA_* shell "
-            "assignments (no secrets) instead of prompting: "
+            "Print saved non-secret project/storage/context assignments (NPA_* "
+            "plus a locally validated KUBECONFIG and managed CLI selection when "
+            "available) instead of prompting: "
             'eval "$(npa configure --show --env)".'
         ),
     ),

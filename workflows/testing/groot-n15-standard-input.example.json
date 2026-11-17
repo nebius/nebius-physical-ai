@@ -1,0 +1,69 @@
+{
+  "schema_version": "npa.groot-standard-lerobot/v1",
+  "profile": "lerobot-v2-single-wrist-v1",
+  "dataset": {
+    "uri": "s3://operator-owned-bucket/inputs/lerobot-v2",
+    "tree_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "source_kind": "private-object-store",
+    "source_identifier": "operator/recorded-rollouts",
+    "source_revision": "replace-with-immutable-revision",
+    "license": "operator-declared-private",
+    "privacy_classification": "private",
+    "redistributable_media": false,
+    "label_provenance": "operator-observed outcome protocol"
+  },
+  "feedback": {
+    "uri": "s3://operator-owned-bucket/inputs/feedback.json",
+    "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "mode": "hybrid",
+    "label_protocol": "operator-observed task outcome and measured progress",
+    "episode_index_field": "episode_index",
+    "split_field": "split",
+    "group_field": "group",
+    "outcome_field": "success",
+    "collection_kind_field": "collection_kind",
+    "tags_field": "tags",
+    "progress_field": "progress",
+    "progress_source": "measured",
+    "progress_contract": {
+      "units": "normalized task progress",
+      "direction": "higher values mean greater recorded task progress",
+      "alignment": "one value per recorded frame"
+    }
+  },
+  "mapping": {
+    "camera_key": "observation.images.wrist",
+    "state_key": "observation.state",
+    "action_key": "action",
+    "instruction_key": "task_index",
+    "state_dimension": 7,
+    "action_dimension": 7
+  },
+  "action": {
+    "kind": "cartesian_relative",
+    "frame": "tool",
+    "translation_unit": "millimeter",
+    "rotation_representation": "axis_angle",
+    "rotation_unit": "radian",
+    "gripper_fields": ["gripper"],
+    "transform_identity": "replace-with-operator-calibration-identity"
+  },
+  "split": {
+    "train_episode_count": 3,
+    "eval_episode_count": 2,
+    "grouping": "collection",
+    "strategy": "adapter"
+  },
+  "evidence": {
+    "episode_index": 3,
+    "start_frame": 0,
+    "frame_count": 120,
+    "fps": 15
+  },
+  "model": {
+    "model_repository": "nvidia/GR00T-N1.5-3B",
+    "model_revision": "869830fc749c35f34771aa5209f923ac57e4564e",
+    "groot_repository": "https://github.com/NVIDIA/Isaac-GR00T.git",
+    "groot_revision": "4af2b622892f7dcb5aae5a3fb70bcb02dc217b96"
+  }
+}

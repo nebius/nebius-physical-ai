@@ -1,0 +1,12 @@
+{
+  "reviewer": "Claude Code",
+  "invocations": 1,
+  "reviewed_head": "477e6561ba745822eff244d491e5775c2c6303ff",
+  "scope": "read-only substantive code-wise merge-readiness review",
+  "original_verdict": "safe to merge code-wise as an experimental runtime-local recipe; no blockers",
+  "post_review_notice": "This is not a new Claude approval of the changed head. Post-review fixes were deterministically validated.",
+  "findings": [
+    {"id": "F1", "disposition": "fixed", "evidence": "exactly one visible CUDA device is enforced and recorded; native proof recorded visible_devices=1"},
+    {"id": "F2", "disposition": "disproven", "evidence": "reviewed CI installs CPU Torch before its full Python shards; focused local validation also passed"}
+  ]
+}

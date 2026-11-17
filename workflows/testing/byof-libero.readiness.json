@@ -21,7 +21,7 @@
         "sha256:ab02acb123bb991e0d016f094659aff45156a78f1de2b28b93da252e56adc1fd npa/src/npa/workflows/byof/profiles/byof-solution-smoke-libero-b200-gpu.yaml",
         "sha256:98f10702d4a1a99d506ca619e522c14dd89f0d5794929eae2938ce225414e0b0 npa/docker/workbench/libero/runtime-manifest.json",
         "sha256:2ad083c7c0889ecb4c505d946e908bcbde5e1723015bf5614cf65a6d8720b984 npa/docker/workbench/libero/runtime-requirements.txt",
-        "sha256:edb9a5060e59f48b60265c7c66aafbc0a86146e55dc3d7b9e22fcf77bb234e57 npa/docker/workbench/libero/runtime-bootstrap.py",
+        "sha256:41ea7319590ef62f4b7254da6c8c4721c96c20627b876b85b04cb16f3b93de4d npa/docker/workbench/libero/runtime-bootstrap.py",
         "sha256:005294cd86a0c0376ebe161c0adf227dc77ec7bef275560e5b149910d8c40061 npa/docker/workbench/libero/libero_smoke.py",
         "sha256:006b91e5ffc15310d1841aa05b1ec8071ccb5d7dace68258ce2ec7936f03843b npa/src/npa/deploy/libero_image_manifest.json"
       ]

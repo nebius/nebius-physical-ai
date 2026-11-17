@@ -702,7 +702,7 @@ def test_status_blocker_probe_uses_exact_isolated_controller_kubeconfig(
     assert captured["kubeconfig"] == expected
     assert captured["environment"]["HOME"] == str(controller.resolve() / "home")
     assert captured["environment"]["KUBECONFIG"] == str(expected)
-    assert blockers[0]["remedy"].count("--isolated-config-dir") == 2
+    assert blockers[0]["remedy"].count("--isolated-config-dir") == 1
     assert str(controller) in blockers[0]["remedy"]
 
 

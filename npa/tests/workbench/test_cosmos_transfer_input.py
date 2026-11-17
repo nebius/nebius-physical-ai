@@ -325,6 +325,10 @@ def test_preserve_source_chroma_records_effective_provenance(
     def fake_run(command, **kwargs):  # noqa: ANN001
         assert kwargs["check"] is True
         if command[0] == "ffmpeg":
+            x264_params = command[command.index("-x264-params") + 1]
+            assert x264_params == (
+                "colorprim=bt709:transfer=bt709:colormatrix=bt709:fullrange=off"
+            )
             Path(command[-1]).write_bytes(b"corrected-video")
             return tx.subprocess.CompletedProcess(command, 0, stdout="", stderr="")
         decoder = command[2]

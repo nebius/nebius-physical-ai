@@ -7,6 +7,7 @@ import os
 import re
 import hashlib
 import fcntl
+import signal
 import stat
 import shutil
 import subprocess
@@ -854,10 +855,20 @@ def _ensure_local_api_daemon_cwd_locked(
 
     isolated_api_dir = env.get("NPA_SKYPILOT_ISOLATED_API_DIR")
     if isolated_api_dir:
+        # ``env`` is also the SkyPilot *client* environment.  Its generated
+        # per-submit config is intentionally different from the durable local
+        # API server config, so passing it into the server health check would
+        # make a live, owned daemon reject its own client as a changed identity.
+        # Retain unverified client bindings for the fail-closed helper, but
+        # when every server-only binding matches the recorded API receipt,
+        # check the daemon with the receipt's own durable configuration.
+        from npa.orchestration.skypilot import local_api
+
+        daemon_env = local_api.owned_api_health_environment(Path(isolated_api_dir), env)
         return _ensure_isolated_api(
             isolated_dir=Path(isolated_api_dir),
             sky_executable=sky_executable,
-            environment=env,
+            environment=daemon_env,
             cwd=cwd,
         )
 
@@ -2677,17 +2688,79 @@ def submit_workflow(
         raise
 
 
+def _run_killable_status_query(
+    command: Sequence[str],
+    *,
+    environment: Mapping[str, str],
+    cwd: Path,
+    timeout: int,
+) -> subprocess.CompletedProcess[str]:
+    """Run one queue query without allowing a forked child to strand a runtime.
+
+    ``subprocess.run(..., timeout=...)`` kills only the direct ``sky`` process.
+    Some provider/client failures leave a descendant holding the captured output
+    pipe, which makes ``communicate`` wait forever after that kill.  The runtime
+    must be able to record the failed observation and recover its exact managed
+    job, so isolate this one status query in its own process group and terminate
+    the entire group on its deadline.
+    """
+
+    process = subprocess.Popen(
+        command,
+        env=environment,
+        cwd=cwd,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        start_new_session=True,
+    )
+    try:
+        stdout, stderr = process.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired as exc:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        try:
+            stdout, stderr = process.communicate(timeout=10)
+        except subprocess.TimeoutExpired:
+            # The direct process is already gone; do not let an uncooperative
+            # descendant hold the controller process forever.
+            stdout = exc.output or ""
+            stderr = exc.stderr or ""
+        raise subprocess.TimeoutExpired(
+            command,
+            timeout,
+            output=stdout,
+            stderr=stderr,
+        ) from exc
+    return subprocess.CompletedProcess(
+        command,
+        process.returncode,
+        stdout=stdout,
+        stderr=stderr,
+    )
+
+
 def workflow_status(
     job_id: str,
     *,
+    expected_job_name: str = "",
     isolated_config_dir: Path | None = None,
     config_path: Path | None = None,
     sky_bin: SkyBin = None,
     controller_backend: ControllerBackend = DEFAULT_CONTROLLER_BACKEND,
     timeout: int = 300,
     environment: Mapping[str, str] | None = None,
+    kill_process_group_on_timeout: bool = False,
 ) -> WorkflowResult:
-    """Query a SkyPilot managed job status via `sky jobs queue`."""
+    """Query a SkyPilot managed job status via `sky jobs queue`.
+
+    Runtime callers opt into process-group cleanup because a controller must not
+    remain blocked indefinitely if a provider CLI child keeps its output pipe
+    open after its parent is killed.  The default preserves the lightweight
+    direct-query contract used by existing callers.
+    """
 
     del controller_backend
     runtime_config = resolve_config(
@@ -2712,16 +2785,32 @@ def workflow_status(
             runtime_config.isolated_config_dir, environment=environment
         )
     )
-    result = subprocess.run(
-        cmd,
-        env=status_environment,
-        cwd=_stable_sky_cwd(runtime_config.isolated_config_dir),
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        timeout=timeout,
-        check=False,
-    )
+    try:
+        if kill_process_group_on_timeout:
+            result = _run_killable_status_query(
+                cmd,
+                environment=status_environment,
+                cwd=_stable_sky_cwd(runtime_config.isolated_config_dir),
+                timeout=timeout,
+            )
+        else:
+            result = subprocess.run(
+                cmd,
+                env=status_environment,
+                cwd=_stable_sky_cwd(runtime_config.isolated_config_dir),
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=timeout,
+                check=False,
+            )
+    except subprocess.TimeoutExpired:
+        return WorkflowResult(
+            status="UNKNOWN",
+            job_id=job_id,
+            returncode=124,
+            error=f"managed-job status query exceeded {timeout}s",
+        )
     if is_verified_empty_queue_result(result):
         return WorkflowResult(
             status="ABSENT",
@@ -2752,8 +2841,20 @@ def workflow_status(
                 result, "malformed rows or conflicting diagnostics"
             ),
         )
-    status = _status_from_queue_rows(rows, job_id)
+    status = _status_from_queue_rows(rows, job_id, expected_job_name=expected_job_name)
     if not status:
+        if expected_job_name:
+            # Managed-job IDs restart when a task-local controller is rebuilt.
+            # A matching numeric ID for a different name is not evidence about
+            # this recorded wave.  Keep it distinguishable from a controller
+            # failure so the caller can retain an already-terminal durable wave.
+            return WorkflowResult(
+                status="ABSENT",
+                job_id=job_id,
+                returncode=result.returncode,
+                stdout=result.stdout,
+                stderr=result.stderr,
+            )
         # A verified queue response is authoritative: if the recorded id is
         # absent, the managed-jobs controller has lost (or garbage-collected) its
         # execution record.  Treating this as UNKNOWN makes an unbounded runtime
@@ -2806,6 +2907,7 @@ def _verify_task_queue_result(result: subprocess.CompletedProcess[str]) -> None:
 def workflow_task_statuses(
     job_id: str,
     *,
+    expected_job_name: str = "",
     isolated_config_dir: Path | None = None,
     config_path: Path | None = None,
     sky_bin: SkyBin = None,
@@ -2866,7 +2968,9 @@ def workflow_task_statuses(
         _verify_task_queue_result(result)
     if result.returncode != 0:
         return []
-    return parse_task_statuses(result.stdout, job_id)
+    return parse_task_statuses(
+        result.stdout, job_id, expected_job_name=expected_job_name
+    )
 
 
 def workflow_controller_logs(
@@ -2892,6 +2996,11 @@ def workflow_controller_logs(
         str(job_id),
         "--no-follow",
     ]
+    if runtime_config.global_config_path is not None:
+        # A numeric managed-job ID is meaningful only in the task's recorded
+        # SkyPilot controller namespace.  Keep controller-log observation on
+        # the same pinned config route as status and exact-job lookup.
+        cmd[3:3] = ["--config", str(runtime_config.global_config_path)]
     return subprocess.run(
         cmd,
         env=sky_environment(runtime_config.isolated_config_dir),
@@ -2963,8 +3072,10 @@ def lookup_managed_job(
 ) -> ManagedJobEvidence:
     """Authoritatively find one exact job name/id without fuzzy matching.
 
-    A failed provider/auth/CLI request is ``unavailable``. Only a successful,
-    parseable ``jobs queue --all --output json`` response can return ``absent``.
+    A failed provider/auth/CLI request is ``unavailable``. A queue request that
+    specifically reports an unreachable controller may instead use the retained
+    task-local Kubernetes binding to prove that one exact controller and worker
+    are both absent. All other queue failures remain unavailable.
     """
 
     try:
@@ -3003,6 +3114,14 @@ def lookup_managed_job(
             or result.stdout.strip()
             or f"exit {result.returncode}"
         )
+        if _controller_unreachable_queue_error(detail):
+            absence = _exact_kubernetes_job_absence(
+                runtime_config,
+                job_name=job_name,
+                job_id=job_id,
+            )
+            if absence is not None:
+                return absence
         return ManagedJobEvidence("unavailable", error=redact_text(detail))
     else:
         parsed_jobs = verified_structured_queue_rows(result)
@@ -3074,6 +3193,218 @@ def lookup_managed_job(
         workload_evidence=",".join(markers),
         job_name=_exact_queue_job_name(jobs, selected),
     )
+
+
+def _controller_unreachable_queue_error(detail: str) -> bool:
+    """Return whether SkyPilot reports only an unreachable jobs controller."""
+
+    normalized = str(detail or "").lower()
+    return (
+        "clusternotuperror" in normalized
+        and "failed to connect to jobs controller" in normalized
+    )
+
+
+def _exact_kubernetes_job_absence(
+    runtime_config: Any,
+    *,
+    job_name: str,
+    job_id: str,
+) -> ManagedJobEvidence | None:
+    """Return absence only when the retained task controller and worker are absent."""
+
+    if not _exact_managed_job_identity(job_name, job_id):
+        return None
+    binding = _task_local_kubernetes_binding(runtime_config)
+    if binding is None:
+        return None
+    context, kubeconfig, user_id = binding
+    environment = sky_environment(runtime_config.isolated_config_dir)
+    environment["KUBECONFIG"] = str(kubeconfig)
+    pods = _kubernetes_pod_inventory(context, kubeconfig, environment)
+    if pods is None or _matching_controller_or_worker(
+        pods, user_id=user_id, job_name=job_name, job_id=job_id
+    ):
+        return None
+    return ManagedJobEvidence(
+        "absent",
+        workload_observable=False,
+        workload_evidence="kubernetes_exact_controller_and_worker_absence",
+    )
+
+
+def _task_local_kubernetes_binding(
+    runtime_config: Any,
+) -> tuple[str, Path, str] | None:
+    """Load one validated cached context and its isolated controller identity."""
+
+    isolated_dir = runtime_config.isolated_config_dir
+    context = _single_kubernetes_context(
+        _task_local_controller_config_path(runtime_config)
+    )
+    user_id = _isolated_controller_user(isolated_dir)
+    if isolated_dir is None or not context or not user_id:
+        return None
+    try:
+        from npa.cluster.state import existing_kubeconfig
+        from npa.orchestration.skypilot.cluster_validation import (
+            resolve_validation_target,
+        )
+
+        cached = existing_kubeconfig(context)
+        if cached is None:
+            return None
+        kubeconfig, selected_context = resolve_validation_target(cached, context)
+    except (OSError, ValueError):
+        return None
+    return selected_context, kubeconfig, user_id
+
+
+def _task_local_controller_config_path(runtime_config: Any) -> Path | None:
+    """Return the verified local API config when no client config was recorded.
+
+    Fresh-shell workflow status resolves the persistent local API endpoint from
+    the run receipt.  That endpoint owns a content-bound ``server-config.yaml``
+    even when the client did not pass ``--config``.  The Kubernetes absence
+    fallback must use that same configuration to recover the sole allowed
+    context; otherwise an unreachable controller is needlessly reported as
+    unknown forever.  Never infer a context from an unbound local file.
+    """
+
+    configured = getattr(runtime_config, "global_config_path", None)
+    if configured is not None:
+        return Path(configured)
+    isolated_dir = getattr(runtime_config, "isolated_config_dir", None)
+    if isolated_dir is None:
+        return None
+    root = Path(isolated_dir) / "local-api"
+    record_path = root / "daemon.json"
+    config_path = root / "server-config.yaml"
+    try:
+        if (
+            record_path.is_symlink()
+            or config_path.is_symlink()
+            or not record_path.is_file()
+            or not config_path.is_file()
+        ):
+            return None
+        record = json.loads(record_path.read_text(encoding="utf-8"))
+        expected_digest = str(record.get("config_sha256") or "")
+        if not re.fullmatch(r"[a-f0-9]{64}", expected_digest):
+            return None
+        if hashlib.sha256(config_path.read_bytes()).hexdigest() != expected_digest:
+            return None
+    except (OSError, TypeError, ValueError, json.JSONDecodeError):
+        return None
+    return config_path
+
+
+def _single_kubernetes_context(config_path: Path | None) -> str:
+    """Return the sole configured Kubernetes context, otherwise an empty value."""
+
+    try:
+        kubernetes = _load_base_config(config_path).get("kubernetes") or {}
+        contexts = kubernetes.get("allowed_contexts")
+    except (OSError, ValueError, AttributeError):
+        return ""
+    if not isinstance(contexts, list) or len(contexts) != 1:
+        return ""
+    context = contexts[0]
+    return context.strip() if isinstance(context, str) else ""
+
+
+def _isolated_controller_user(isolated_dir: Path | None) -> str:
+    """Read the stable isolated user only from its private SkyPilot state file."""
+
+    if isolated_dir is None:
+        return ""
+    path = Path(isolated_dir) / "home" / ".sky" / "user_hash"
+    try:
+        if path.is_symlink() or not path.is_file():
+            return ""
+        user_id = path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+    return user_id if re.fullmatch(r"npa-[a-f0-9]{12}", user_id) else ""
+
+
+def _exact_managed_job_identity(job_name: str, job_id: str) -> bool:
+    """Require a durable numeric job ID before a Kubernetes absence fallback."""
+
+    return bool(job_name) and bool(re.fullmatch(r"[1-9][0-9]*", str(job_id or "")))
+
+
+def _kubernetes_pod_inventory(
+    context: str,
+    kubeconfig: Path,
+    environment: Mapping[str, str],
+) -> list[Mapping[str, Any]] | None:
+    """Read the exact cached context's pod inventory without a scheduler mutation."""
+
+    kubectl = shutil.which("kubectl")
+    if kubectl is None:
+        return None
+    command = [
+        kubectl,
+        "--kubeconfig",
+        str(kubeconfig),
+        "--context",
+        context,
+        "get",
+        "pods",
+        "--all-namespaces",
+        "--output",
+        "json",
+    ]
+    try:
+        result = subprocess.run(
+            command,
+            env=_controller_probe_environment(environment),
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=30,
+            check=False,
+        )
+        payload = json.loads(result.stdout or "{}") if result.returncode == 0 else {}
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return None
+    items = payload.get("items") if isinstance(payload, dict) else None
+    return items if isinstance(items, list) else None
+
+
+def _matching_controller_or_worker(
+    pods: Sequence[Mapping[str, Any]],
+    *,
+    user_id: str,
+    job_name: str,
+    job_id: str,
+) -> bool:
+    """Reject absence when any exact or malformed controller/worker match exists."""
+
+    controller = f"{JOBS_CONTROLLER_PREFIX}{user_id}"
+    head = f"{controller}-head"
+    for pod in pods:
+        metadata = pod.get("metadata") if isinstance(pod, Mapping) else None
+        if not isinstance(metadata, Mapping):
+            return True
+        labels = metadata.get("labels") or {}
+        annotations = metadata.get("annotations") or {}
+        if not isinstance(labels, Mapping) or not isinstance(annotations, Mapping):
+            return True
+        if (
+            metadata.get("name") == head
+            or labels.get("skypilot-cluster-name") == controller
+            # Kubernetes shortens the pod/label name, but SkyPilot preserves the
+            # unshortened controller identity in this annotation.
+            or annotations.get("skypilot-cluster-name") == controller
+        ):
+            return True
+        observed_name = str(annotations.get("skypilot-managed-job-name") or "")
+        observed_id = str(annotations.get("skypilot-managed-job-id") or "")
+        if observed_name == job_name or observed_id == job_id:
+            return True
+    return False
 
 
 def _exact_queue_job_name(rows: Sequence[Mapping[str, Any]], job_id: str) -> str:
@@ -3910,7 +4241,9 @@ def parse_job_ids_by_name(output: str, job_name: str) -> list[str]:
     return [str(value) for value in sorted(ids, reverse=True)]
 
 
-def parse_task_statuses(output: str, job_id: str) -> list[dict[str, Any]]:
+def parse_task_statuses(
+    output: str, job_id: str, *, expected_job_name: str = ""
+) -> list[dict[str, Any]]:
     """Extract per-task rows for ``job_id`` from ``sky jobs queue --output json``."""
 
     jobs = queue_rows_from_output(output)
@@ -3921,10 +4254,13 @@ def parse_task_statuses(output: str, job_id: str) -> list[dict[str, Any]]:
         if not isinstance(job, dict):
             continue
         current_id = str(job.get("job_id") or job.get("id") or "")
-        if current_id != str(job_id):
+        if current_id != str(job_id) or (
+            expected_job_name and str(job.get("job_name") or "") != expected_job_name
+        ):
             continue
         row = {
             "job_id": current_id,
+            "job_name": str(job.get("job_name") or ""),
             "task_id": job.get("task_id"),
             "task_name": job.get("task_name") or job.get("job_name") or "",
             "status": str(job.get("status") or "").upper(),
@@ -5444,20 +5780,26 @@ def _queue_verification_error(
     )
 
 
-def _status_from_queue_payload(output: str, job_id: str) -> str:
+def _status_from_queue_payload(
+    output: str, job_id: str, *, expected_job_name: str = ""
+) -> str:
     jobs = queue_rows_from_output(output)
     if jobs is None:
         return ""
-    return _status_from_queue_rows(jobs, job_id)
+    return _status_from_queue_rows(jobs, job_id, expected_job_name=expected_job_name)
 
 
-def _status_from_queue_rows(jobs: list[dict[str, Any]], job_id: str) -> str:
+def _status_from_queue_rows(
+    jobs: list[dict[str, Any]], job_id: str, *, expected_job_name: str = ""
+) -> str:
     """Return the aggregate state for one job in verified SkyPilot queue rows."""
 
     statuses = []
     for job in jobs:
         current_id = _queue_row_job_id(job)
-        if current_id == str(job_id):
+        if current_id == str(job_id) and (
+            not expected_job_name or str(job.get("job_name") or "") == expected_job_name
+        ):
             statuses.append(str(job.get("status") or "").upper())
     if not statuses:
         return ""

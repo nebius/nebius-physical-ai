@@ -193,6 +193,15 @@ def _runner_arguments(
     ]
 
 
+def _regular_test_executable(tmp_path: Path) -> str:
+    """Create one explicit regular executable for argument-validation tests."""
+
+    executable = tmp_path / "test-executable"
+    executable.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    executable.chmod(0o700)
+    return str(executable)
+
+
 def _trust_test_scanner(
     monkeypatch: pytest.MonkeyPatch,
     scanner: Path,
@@ -1131,8 +1140,8 @@ def test_runner_rejects_truncated_or_rewritten_history(
         info.mkdir(exist_ok=True)
         (info / "grafts").write_text(f"{candidate} {base}\n", encoding="ascii")
 
-    assert (
-        tree_scan.main(_runner_arguments(repo, candidate, base, "/usr/bin/true")) == 1
+    assert tree_scan.main(
+        _runner_arguments(repo, candidate, base, _regular_test_executable(tmp_path))
     )
     assert history_override in capsys.readouterr().err.lower()
 
@@ -3772,7 +3781,9 @@ def test_runner_requires_an_explicit_policy_revision(
         encoding="utf-8",
     )
     candidate = _commit(repo, "candidate")
-    arguments = _runner_arguments(repo, candidate, "", "/usr/bin/true")
+    arguments = _runner_arguments(
+        repo, candidate, "", _regular_test_executable(tmp_path)
+    )
     policy_index = arguments.index("--policy-revision")
     del arguments[policy_index : policy_index + 2]
 
@@ -3854,7 +3865,9 @@ def test_runner_rejects_candidate_as_its_own_history_base(
     )
     candidate = _commit(repo, "candidate")
 
-    arguments = _runner_arguments(repo, candidate, candidate, "/usr/bin/true")
+    arguments = _runner_arguments(
+        repo, candidate, candidate, _regular_test_executable(tmp_path)
+    )
     assert tree_scan.main(arguments) == 1
     assert "must precede the candidate" in capsys.readouterr().err
 
@@ -6382,7 +6395,7 @@ def test_scan_revalidates_history_metadata_after_workspace_scan(
             candidate,
             base,
             base,
-            "/usr/bin/true",
+            _regular_test_executable(tmp_path),
             ".gitleaks.toml",
         )
 
@@ -8541,7 +8554,7 @@ def test_runner_rejects_an_empty_history_base(
 
     assert (
         tree_scan.main(
-            _runner_arguments(repo, candidate, "", "/usr/bin/true"),
+            _runner_arguments(repo, candidate, "", _regular_test_executable(tmp_path)),
         )
         == 1
     )
@@ -8578,7 +8591,9 @@ def test_runner_rejects_commit_allowlist_for_a_materialized_history_tree(
 
     assert (
         tree_scan.main(
-            _runner_arguments(repo, candidate, base, "/usr/bin/true"),
+            _runner_arguments(
+                repo, candidate, base, _regular_test_executable(tmp_path)
+            ),
         )
         == 1
     )
@@ -9165,7 +9180,12 @@ def test_runner_rejects_symbolic_candidate_revision(
     (repo / "source.txt").write_text("candidate\n", encoding="utf-8")
     _commit(repo, "candidate")
 
-    assert tree_scan.main(_runner_arguments(repo, "HEAD", base, "/usr/bin/true")) == 1
+    assert (
+        tree_scan.main(
+            _runner_arguments(repo, "HEAD", base, _regular_test_executable(tmp_path))
+        )
+        == 1
+    )
     assert "canonical full commit ID" in capsys.readouterr().err
 
 

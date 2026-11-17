@@ -141,6 +141,10 @@ genesis = [
 adapter = [
     "numpy>=1.24",
     "pyarrow>=23.0.1",
+    # Trusted custom LeRobot extensions use the selected environment's build
+    # tooling with --no-build-isolation; do not fetch a backend from archive
+    # metadata at runtime.
+    "setuptools>=84.2.1,<85",
 ]
 robot-sdg = [
     "gymnasium-robotics==1.4.2",
@@ -166,6 +170,9 @@ sonic = [
 # standard (non-e2e) test suite collects without pulling in the GPU-heavy
 # extras (genesis, groot, sonic).
 dev = [
+    # Keep the clean-checkout custom-extension contract executable in the test
+    # environment as well as in the native worker bootstrap.
+    "setuptools>=84.2.1,<85",
     # RRD semantic tests exercise ChunkStore.reader's real DataFusion path.
     "rerun-sdk[catalog]==0.38.1",
     "langgraph==1.2.14",
@@ -204,6 +211,7 @@ dev = [
 
 [dependency-groups]
 dev = [
+    "setuptools>=84.2.1,<85",
     "rerun-sdk[catalog]==0.38.1",
     "langgraph==1.2.14",
     "langgraph-checkpoint-sqlite==3.1.2",

@@ -24,7 +24,11 @@ from npa.orchestration.skypilot.k8s_gpu_catalog import (
     discover_kubernetes_gpu_inventory,
 )
 from npa.progress import WaitProgress
-from npa.project_destroy import DestroyPhase, execute_project_destroy
+from npa.project_destroy import (
+    DestroyPhase,
+    execute_project_destroy,
+    retain_recovery_required_project_teardown,
+)
 from npa.provisioning_journal import ProvisioningOperation, operation_context
 
 
@@ -46,6 +50,63 @@ def test_project_destroy_reuses_shared_managed_job_terminal_classifier() -> None
         is cleanup_runtime.is_terminal_managed_job_status
     )
     assert not hasattr(project_destroy, "_terminal_managed_job_status")
+
+
+def test_retaining_failed_project_teardown_requires_exact_live_identity(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("NPA_OPERATION_JOURNAL_DIR", str(tmp_path / "operations"))
+    operation = ProvisioningOperation.prepare(
+        command="npa destroy",
+        project_alias="task",
+        project_id="project-task",
+        tenant_id="tenant-task",
+        region="us-central1",
+        resource_type="project-teardown",
+        requested_name="task",
+        ownership_source="project-destroy-cli",
+        resume_command="",
+    )
+    operation.transition(
+        "recovery-required",
+        error="one or more independent teardown phases remain",
+        details={"error_type": "PartialProjectTeardown"},
+    )
+    monkeypatch.setattr(
+        "npa.clients.config.resolve_environment",
+        lambda _alias: type(
+            "Environment",
+            (),
+            {
+                "project_id": "project-task",
+                "tenant_id": "tenant-task",
+                "region": "us-central1",
+            },
+        )(),
+    )
+    monkeypatch.setattr(
+        "npa.clients.nebius.get_project_identity",
+        lambda _project_id, *, tenant_id: type(
+            "ProjectIdentity", (), {"region": "us-central1"}
+        )(),
+    )
+
+    result = retain_recovery_required_project_teardown(
+        project="task", operation_id=operation.operation_id
+    )
+
+    assert result["status"] == "retained"
+    payload = operation.read()
+    assert payload["phase"] == "rolled-back"
+    assert payload["rollback"]["resources_preserved"] == [
+        {
+            "ownership": "retained_by_explicit_authorization",
+            "ownership_source": "project-retention-recovery",
+            "project_id": "project-task",
+            "provider_id": "project-task",
+            "resource_type": "nebius_project",
+        }
+    ]
 
 
 class ExactBackendClient:

@@ -1739,7 +1739,7 @@ def test_source_archives_become_identity_checked_hash_locked_wheels(
         assert command[7:10] == ["--", "/bin/sh", "-ceu"]
         script = command[10]
         assert "mount --make-rprivate /" in script
-        assert "/usr/sbin/chroot" in script
+        assert str(module._trusted_source_build_sandbox_tools()[1]) in script
         assert "mount --bind" in script and "mount -o remount,ro,bind" in script
         for root in ("/bin", "/lib", "/lib64", "/sbin", "/usr"):
             assert f"mount --rbind {root} " in script
@@ -1774,6 +1774,29 @@ def test_source_archives_become_identity_checked_hash_locked_wheels(
             (build_wheelhouse / "fixture_source-1.0-py3-none-any.whl").read_bytes()
         ).hexdigest()
     ]
+
+
+def test_source_build_selects_the_supported_chroot_fallback(
+    monkeypatch, tmp_path
+) -> None:
+    """Use the supported alternate chroot location only when the primary is absent."""
+
+    module = _load_module()
+    fallback = next(
+        candidate
+        for candidate in module.SOURCE_BUILD_CHROOT_CANDIDATES
+        if candidate.is_file()
+    )
+    monkeypatch.setattr(
+        module,
+        "SOURCE_BUILD_CHROOT_CANDIDATES",
+        (tmp_path / "missing-chroot", fallback),
+    )
+
+    unshare, chroot = module._trusted_source_build_sandbox_tools()
+
+    assert unshare == module.SOURCE_BUILD_UNSHARE
+    assert chroot == fallback
 
 
 def test_source_build_recursive_mount_scope_and_read_only_children(tmp_path) -> None:

@@ -2279,6 +2279,103 @@ def test_locked_api_daemon_repair_serializes_call_path(
     assert second_entered.is_set()
 
 
+def test_isolated_daemon_health_uses_recorded_server_config(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A per-submit client config must not rebind a live owned API server."""
+
+    isolated = tmp_path / "isolated"
+    api_root = isolated / "local-api"
+    api_root.mkdir(parents=True)
+    server_config = api_root / "server-config.yaml"
+    server_config.write_text("allowed_clouds: [kubernetes]\n", encoding="utf-8")
+    client_config = tmp_path / "per-submit-config.yaml"
+    client_config.write_text("allowed_clouds: [kubernetes]\n", encoding="utf-8")
+    record = {
+        "schema_version": 1,
+        "root": str(api_root.absolute()),
+        "port": 36471,
+        "metrics_port": 36472,
+        "queue_port": 36473,
+        "marker": "owned-fixture",
+        "state": "ready",
+    }
+    local_api_module._write(api_root / "daemon.json", record)
+    captured: dict[str, object] = {}
+
+    def fake_ensure(**kwargs):
+        captured.update(kwargs)
+        return workflow_module.ApiDaemonCwdProbe(True, "isolated_api_ready")
+
+    monkeypatch.setattr(workflow_module, "_ensure_isolated_api", fake_ensure)
+    result = workflow_module._ensure_local_api_daemon_cwd_locked(
+        "/opt/sky/bin/sky",
+        env={
+            "NPA_SKYPILOT_ISOLATED_API_DIR": str(isolated),
+            "SKYPILOT_API_SERVER_ENDPOINT": "http://127.0.0.1:36471",
+            "SKYPILOT_GLOBAL_CONFIG": str(client_config),
+            "SKYPILOT_SERVER_PLUGINS_CONFIG": str(api_root / "server-plugins.yaml"),
+            "NPA_OWNED_SKYPILOT_API_ID": "owned-fixture",
+            "IS_SKYPILOT_SERVER": "true",
+        },
+        cwd=str(tmp_path),
+        runtime_dir=isolated,
+    )
+
+    assert result.healthy
+    assert captured["isolated_dir"] == isolated
+    assert captured["environment"]["SKYPILOT_GLOBAL_CONFIG"] == str(server_config)
+    assert captured["environment"]["SKYPILOT_SERVER_PLUGINS_CONFIG"] == str(
+        api_root / "server-plugins.yaml"
+    )
+
+
+def test_isolated_daemon_health_preserves_unverified_client_endpoint(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The health gate must leave a foreign client endpoint fail-closed."""
+
+    isolated = tmp_path / "isolated"
+    api_root = isolated / "local-api"
+    api_root.mkdir(parents=True)
+    (api_root / "server-config.yaml").write_text("{}\n", encoding="utf-8")
+    local_api_module._write(
+        api_root / "daemon.json",
+        {
+            "schema_version": 1,
+            "root": str(api_root.absolute()),
+            "port": 36471,
+            "metrics_port": 36472,
+            "queue_port": 36473,
+            "marker": "owned-fixture",
+            "state": "ready",
+        },
+    )
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(
+        workflow_module,
+        "_ensure_isolated_api",
+        lambda **kwargs: (
+            captured.update(kwargs)
+            or workflow_module.ApiDaemonCwdProbe(True, "fixture")
+        ),
+    )
+
+    workflow_module._ensure_local_api_daemon_cwd_locked(
+        "/opt/sky/bin/sky",
+        env={
+            "NPA_SKYPILOT_ISOLATED_API_DIR": str(isolated),
+            "SKYPILOT_API_SERVER_ENDPOINT": "http://127.0.0.1:36499",
+        },
+        cwd=str(tmp_path),
+        runtime_dir=isolated,
+    )
+
+    assert captured["environment"]["SKYPILOT_API_SERVER_ENDPOINT"] == (
+        "http://127.0.0.1:36499"
+    )
+
+
 def test_deleted_api_daemon_is_restarted_from_durable_cwd() -> None:
     probes = iter(
         (
@@ -4571,6 +4668,49 @@ def test_workflow_status_treats_successful_empty_queue_as_verified_absence(
     assert result.error == ""
 
 
+def test_workflow_status_kills_the_query_process_group_on_timeout(
+    monkeypatch, tmp_path
+) -> None:
+    """A forked SkyPilot status child cannot strand the workflow controller."""
+
+    sky_bin = _fake_sky(tmp_path)
+    monkeypatch.setattr(workflow_module, "ensure_skypilot_version", lambda path: path)
+    killed: list[tuple[int, object]] = []
+
+    class HungQuery:
+        pid = 731
+        returncode = -9
+
+        def __init__(self, *_args, **kwargs):
+            assert kwargs["start_new_session"] is True
+            self.calls = 0
+
+        def communicate(self, *, timeout):
+            self.calls += 1
+            if self.calls == 1:
+                raise subprocess.TimeoutExpired("sky", timeout, output="partial")
+            return "", ""
+
+    monkeypatch.setattr(workflow_module.subprocess, "Popen", HungQuery)
+    monkeypatch.setattr(
+        workflow_module.os,
+        "killpg",
+        lambda pid, signum: killed.append((pid, signum)),
+    )
+
+    result = workflow_status(
+        "42",
+        sky_bin=sky_bin,
+        timeout=1,
+        kill_process_group_on_timeout=True,
+    )
+
+    assert result.status == "UNKNOWN"
+    assert result.returncode == 124
+    assert "exceeded 1s" in result.error
+    assert killed == [(731, workflow_module.signal.SIGKILL)]
+
+
 @pytest.mark.parametrize(
     ("stdout", "stderr"),
     [
@@ -4709,6 +4849,7 @@ def test_workflow_status_detects_job_missing_from_verified_nonempty_queue(
         workflow_module.workflow_status,
         workflow_module.workflow_task_statuses,
         workflow_module.find_job_ids_by_name,
+        workflow_module.workflow_controller_logs,
     ],
 )
 def test_workflow_queries_preserve_explicit_config(
@@ -4922,6 +5063,48 @@ def test_queue_status_parser_is_preamble_tolerant_but_never_guesses(
     output: str, expected: str
 ) -> None:
     assert _status_from_queue_payload(output, "42") == expected
+
+
+def test_queue_status_parser_uses_recorded_name_when_controller_reuses_id() -> None:
+    payload = json.dumps(
+        [
+            {"job_id": 1, "job_name": "prior-wave", "status": "SUCCEEDED"},
+            {"job_id": 1, "job_name": "replacement-wave", "status": "RUNNING"},
+        ]
+    )
+
+    assert (
+        _status_from_queue_payload(payload, "1", expected_job_name="prior-wave")
+        == "SUCCEEDED"
+    )
+    assert (
+        _status_from_queue_payload(payload, "1", expected_job_name="replacement-wave")
+        == "RUNNING"
+    )
+    assert (
+        _status_from_queue_payload(payload, "1", expected_job_name="missing-wave") == ""
+    )
+
+
+def test_workflow_status_returns_absent_for_reused_id_with_other_name(
+    monkeypatch, tmp_path
+) -> None:
+    sky_bin = _fake_sky(tmp_path)
+    payload = json.dumps(
+        [{"job_id": 1, "job_name": "replacement-wave", "status": "RUNNING"}]
+    )
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda cmd, **kwargs: subprocess.CompletedProcess(
+            cmd, 0, stdout=payload, stderr=""
+        ),
+    )
+
+    result = workflow_status("1", expected_job_name="prior-wave", sky_bin=sky_bin)
+
+    assert result.status == "ABSENT"
+    assert result.error == ""
 
 
 def test_status_from_queue_payload_waits_for_all_dag_tasks() -> None:
@@ -7114,6 +7297,33 @@ def test_parse_task_statuses_isolates_other_jobs_and_bad_payloads() -> None:
     assert parse_task_statuses("", "75") == []
 
 
+def test_parse_task_statuses_uses_recorded_name_when_controller_reuses_id() -> None:
+    from npa.orchestration.skypilot.workflow import parse_task_statuses
+
+    payload = json.dumps(
+        [
+            {
+                "job_id": 1,
+                "job_name": "prior-wave",
+                "task_id": 0,
+                "status": "SUCCEEDED",
+            },
+            {
+                "job_id": 1,
+                "job_name": "replacement-wave",
+                "task_id": 0,
+                "status": "RUNNING",
+            },
+        ]
+    )
+
+    rows = parse_task_statuses(payload, "1", expected_job_name="prior-wave")
+    assert [(row["job_name"], row["status"]) for row in rows] == [
+        ("prior-wave", "SUCCEEDED")
+    ]
+    assert parse_task_statuses(payload, "1", expected_job_name="missing-wave") == []
+
+
 def test_workflow_task_statuses_returns_empty_on_command_failure(mocker) -> None:
     import subprocess
 
@@ -7211,6 +7421,225 @@ def test_exact_managed_job_lookup_accepts_real_0_12_2_empty_queue(
     evidence = lookup_managed_job("exact-run", sky_bin=sky_bin)
 
     assert evidence.outcome == "absent"
+
+
+def test_exact_lookup_uses_task_local_kubernetes_absence_only_for_controller_loss(
+    monkeypatch, tmp_path
+) -> None:
+    """A missing controller is recoverable only with one immutable job identity."""
+
+    sky_bin = _fake_sky(tmp_path)
+    runtime_config = SimpleNamespace(
+        sky_bin=sky_bin,
+        isolated_config_dir=tmp_path / "isolated",
+        global_config_path=tmp_path / "sky.yaml",
+    )
+    kubeconfig = tmp_path / "kubeconfig"
+    calls: list[object] = []
+    monkeypatch.setattr(
+        workflow_module, "resolve_config", lambda **_kwargs: runtime_config
+    )
+    monkeypatch.setattr(workflow_module, "ensure_skypilot_version", lambda value: value)
+    monkeypatch.setattr(workflow_module, "sky_environment", lambda _path: {})
+    monkeypatch.setattr(
+        workflow_module,
+        "_task_local_kubernetes_binding",
+        lambda _config: ("task-context", kubeconfig, "npa-0123456789ab"),
+    )
+
+    def fake_run(command, **_kwargs):
+        calls.append(command)
+        return subprocess.CompletedProcess(
+            command,
+            1,
+            stdout="",
+            stderr=(
+                "sky.exceptions.ClusterNotUpError: Failed to connect to jobs "
+                "controller, please try again later."
+            ),
+        )
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    monkeypatch.setattr(
+        workflow_module,
+        "_kubernetes_pod_inventory",
+        lambda context, path, environment: (
+            calls.append((context, path, environment.copy())) or []
+        ),
+    )
+
+    evidence = workflow_module.lookup_managed_job(
+        "exact-run", job_id="42", sky_bin=sky_bin
+    )
+
+    assert evidence.outcome == "absent"
+    assert not evidence.workload_observable
+    assert (
+        evidence.workload_evidence == "kubernetes_exact_controller_and_worker_absence"
+    )
+    assert len(calls) == 2
+    assert calls[1] == ("task-context", kubeconfig, {"KUBECONFIG": str(kubeconfig)})
+
+
+def test_task_local_binding_uses_content_bound_local_api_config(
+    monkeypatch, tmp_path
+) -> None:
+    """Receipt-routed status retains its exact context without --config."""
+
+    isolated = tmp_path / "isolated"
+    local_api = isolated / "local-api"
+    local_api.mkdir(parents=True)
+    user_hash = isolated / "home" / ".sky" / "user_hash"
+    user_hash.parent.mkdir(parents=True)
+    user_hash.write_text("npa-0123456789ab\n", encoding="utf-8")
+    config = local_api / "server-config.yaml"
+    config.write_text(
+        yaml.safe_dump({"kubernetes": {"allowed_contexts": ["task-context"]}}),
+        encoding="utf-8",
+    )
+    (local_api / "daemon.json").write_text(
+        json.dumps({"config_sha256": hashlib.sha256(config.read_bytes()).hexdigest()}),
+        encoding="utf-8",
+    )
+    kubeconfig = tmp_path / "kubeconfig"
+    kubeconfig.write_text("apiVersion: v1\n", encoding="utf-8")
+    monkeypatch.setattr(
+        "npa.cluster.state.existing_kubeconfig", lambda _context: kubeconfig
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.cluster_validation.resolve_validation_target",
+        lambda path, context: (path, context),
+    )
+
+    binding = workflow_module._task_local_kubernetes_binding(
+        SimpleNamespace(isolated_config_dir=isolated, global_config_path=None)
+    )
+
+    assert binding == ("task-context", kubeconfig, "npa-0123456789ab")
+
+
+@pytest.mark.parametrize("tamper", ("digest", "symlink"))
+def test_task_local_binding_rejects_unbound_local_api_config(tmp_path, tamper) -> None:
+    isolated = tmp_path / "isolated"
+    local_api = isolated / "local-api"
+    local_api.mkdir(parents=True)
+    config = local_api / "server-config.yaml"
+    config.write_text(
+        yaml.safe_dump({"kubernetes": {"allowed_contexts": ["task-context"]}}),
+        encoding="utf-8",
+    )
+    (local_api / "daemon.json").write_text(
+        json.dumps({"config_sha256": hashlib.sha256(config.read_bytes()).hexdigest()}),
+        encoding="utf-8",
+    )
+    if tamper == "digest":
+        config.write_text("kubernetes: {}\n", encoding="utf-8")
+    else:
+        replacement = tmp_path / "replacement.yaml"
+        replacement.write_text(config.read_text(encoding="utf-8"), encoding="utf-8")
+        config.unlink()
+        config.symlink_to(replacement)
+
+    assert (
+        workflow_module._task_local_controller_config_path(
+            SimpleNamespace(isolated_config_dir=isolated, global_config_path=None)
+        )
+        is None
+    )
+
+
+def test_exact_lookup_refuses_kubernetes_absence_when_exact_worker_is_present(
+    monkeypatch, tmp_path
+) -> None:
+    sky_bin = _fake_sky(tmp_path)
+    runtime_config = SimpleNamespace(
+        sky_bin=sky_bin,
+        isolated_config_dir=tmp_path / "isolated",
+        global_config_path=tmp_path / "sky.yaml",
+    )
+    monkeypatch.setattr(
+        workflow_module, "resolve_config", lambda **_kwargs: runtime_config
+    )
+    monkeypatch.setattr(workflow_module, "ensure_skypilot_version", lambda value: value)
+    monkeypatch.setattr(workflow_module, "sky_environment", lambda _path: {})
+    monkeypatch.setattr(
+        workflow_module,
+        "_task_local_kubernetes_binding",
+        lambda _config: ("task-context", tmp_path / "kubeconfig", "npa-0123456789ab"),
+    )
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda command, **_kwargs: subprocess.CompletedProcess(
+            command,
+            1,
+            stdout="",
+            stderr=(
+                "sky.exceptions.ClusterNotUpError: Failed to connect to jobs "
+                "controller, please try again later."
+            ),
+        ),
+    )
+    monkeypatch.setattr(
+        workflow_module,
+        "_kubernetes_pod_inventory",
+        lambda *_args: [
+            {
+                "metadata": {
+                    "name": "unrelated-pod",
+                    "labels": {},
+                    "annotations": {
+                        "skypilot-managed-job-id": "42",
+                        "skypilot-cluster-name": "sky-jobs-controller-npa-0123456789ab",
+                    },
+                }
+            }
+        ],
+    )
+
+    evidence = workflow_module.lookup_managed_job(
+        "exact-run", job_id="42", sky_bin=sky_bin
+    )
+
+    assert evidence.outcome == "unavailable"
+    assert "Failed to connect to jobs controller" in evidence.error
+
+
+def test_exact_lookup_never_uses_kubernetes_absence_without_immutable_id(
+    monkeypatch, tmp_path
+) -> None:
+    sky_bin = _fake_sky(tmp_path)
+    runtime_config = SimpleNamespace(
+        sky_bin=sky_bin,
+        isolated_config_dir=tmp_path / "isolated",
+        global_config_path=tmp_path / "sky.yaml",
+    )
+    monkeypatch.setattr(
+        workflow_module, "resolve_config", lambda **_kwargs: runtime_config
+    )
+    monkeypatch.setattr(workflow_module, "ensure_skypilot_version", lambda value: value)
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda command, **_kwargs: subprocess.CompletedProcess(
+            command,
+            1,
+            stdout="",
+            stderr=(
+                "sky.exceptions.ClusterNotUpError: Failed to connect to jobs "
+                "controller, please try again later."
+            ),
+        ),
+    )
+    monkeypatch.setattr(
+        workflow_module,
+        "_task_local_kubernetes_binding",
+        lambda _config: pytest.fail("fallback binding must not be consulted"),
+    )
+
+    evidence = workflow_module.lookup_managed_job("exact-run", sky_bin=sky_bin)
+
+    assert evidence.outcome == "unavailable"
 
 
 @pytest.mark.parametrize("job_id", ["", "42"])

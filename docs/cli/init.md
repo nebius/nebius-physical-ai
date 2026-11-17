@@ -13,8 +13,8 @@ Options
 --provision  --no-provision  Explicitly create or reuse Nebius object storage. Interactive setup offers provisioning by default; prompt-free known-project setup is
     project-only unless --provision is passed. --no-provision performs no provider calls or storage adoption.
 --save-env-credentials  Persist supported environment credentials atomically with mode 0600.
---env  Print the saved project/bucket/kube-context values as NPA_* shell assignments (no secrets) instead of prompting: eval "$(npa configure --show
-    --env)".
+--env  Print saved non-secret project/storage/context assignments (NPA_* plus a locally validated KUBECONFIG and managed CLI selection when
+    available) instead of prompting: eval "$(npa configure --show --env)".
 --src-s3-uri  <str>  Persist the staged npa source prefix (s3://bucket/prefix/npa) in ~/.npa/config.yaml so workflow submits resolve NPA_SRC_S3_URI without
     re-exporting it in every shell (skips interactive setup).
 --tenant-id  <str>  Known Nebius tenant ID for prompt-free configure.
@@ -36,7 +36,7 @@ Options
 | `--interactive` | --no-interactive  Force or disable interactive prompting (defaults to auto-detect TTY). |
 | `--provision` | --no-provision  Explicitly create or reuse Nebius object storage. Interactive setup offers provisioning by default; prompt-free known-project setup is project-only unless --provision is passed. --no-provision performs no provider calls or storage adoption. |
 | `--save-env-credentials` | Persist supported environment credentials atomically with mode 0600. |
-| `--env` | Print the saved project/bucket/kube-context values as NPA_* shell assignments (no secrets) instead of prompting: eval "$(npa configure --show --env)". |
+| `--env` | Print saved non-secret project/storage/context assignments (NPA_* plus a locally validated KUBECONFIG and managed CLI selection when available) instead of prompting: eval "$(npa configure --show --env)". |
 | `--src-s3-uri` | <str>  Persist the staged npa source prefix (s3://bucket/prefix/npa) in ~/.npa/config.yaml so workflow submits resolve NPA_SRC_S3_URI without re-exporting it in every shell (skips interactive setup). |
 | `--tenant-id` | <str>  Known Nebius tenant ID for prompt-free configure. |
 | `--project-id` | <str>  Known Nebius project ID for prompt-free configure. |

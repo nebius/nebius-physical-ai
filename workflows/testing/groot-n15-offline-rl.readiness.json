@@ -1,0 +1,58 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "workflow_sha256": "d691c49b242cf0aa1513048097a5303adf02cda277187fbaa7f1585d597456dd",
+  "planning": {
+    "validation": {
+      "status": "verified",
+      "reason": "The compositional specification validates, resolves a checked-in public reference profile, one declared standard LeRobot v2 input, or an explicit trusted custom-data contract through four serial runtime tasks, trains matched ordinary-BC and feedback-weighted policies from the same base, and production-renders the digest-pinned CUDA image without materializing credentials.",
+      "evidence": [
+        "npa workbench workflow validate-spec workflows/testing/groot-n15-offline-rl.yaml --json",
+        "npa workbench workflow plan-spec workflows/testing/groot-n15-offline-rl.yaml --run-id groot-n15-plan --var bucket=example-bucket --check-render --json",
+        "npa/tests/workflows/test_groot_n15_offline.py::test_checked_in_workflow_dispatches_every_compositional_stage"
+      ]
+    },
+    "task_fidelity": {
+      "status": "verified",
+      "reason": "Hermetic tests bind a declarative no-code LeRobot input, safe content-addressed extension installation, observed outcome/progress/recovery feedback, collection-group isolation, train-only statistics, terminal action masks, matched ordinary-BC/control identity, finite offline metric handling, native command contracts, reusable checkpoint identity, and an offline HTML/gallery artifact contract. They do not establish CUDA execution or policy improvement.",
+      "evidence": [
+        "npa/tests/workflows/test_groot_n15_offline.py",
+        "npa/tests/workbench/test_groot_offline_training.py",
+        "npa/tests/workbench/test_groot_offline_feedback.py",
+        "npa/tests/workbench/test_groot_custom_inputs.py",
+        "npa/tests/workbench/test_groot_standard_inputs.py"
+      ]
+    }
+  },
+  "prerequisites": {
+    "output_storage": {
+      "status": "unverified",
+      "reason": "The checked-in bucket is a placeholder. A run needs a writable task-owned bucket and a unique run prefix before submission.",
+      "evidence": []
+    },
+    "worker_input": {
+      "status": "verified",
+      "reason": "The shipped reference profile downloads two pinned redistributable public sources and emits its own provenance/action/feedback/gallery contracts. The standard no-code mode reads one worker-readable declaration binding a LeRobot v2 source tree, feedback sidecar, field mapping, action semantics, split and model identities. Custom input still requires an explicit content-addressed worker-readable archive, provenance/action contract, and trusted code archive/package/callables; its adapter must emit native LeRobot v2 bytes, decoded video, and an H.264 derivative before training.",
+      "evidence": [
+        "workflows/testing/groot-n15-offline-rl.yaml",
+        "docs/workbench/cookbooks/groot-n15-offline-policy-improvement.md"
+      ]
+    },
+    "credentials": {
+      "status": "unverified",
+      "reason": "Every execution must freshly check project storage access and runtime access to the exact model revision. No credential or infrastructure identity is stored here.",
+      "evidence": []
+    },
+    "source_image": {
+      "status": "unverified",
+      "reason": "The committed CUDA image digest and runtime-only source/model pins are render-valid; each execution must stage its source revision and verify image pullability plus SM120 compatibility on its selected worker.",
+      "evidence": [
+        "workflows/testing/groot-n15-offline-rl.yaml"
+      ]
+    },
+    "target_runtime": {
+      "status": "unverified",
+      "reason": "No static record can qualify a future GPU placement. The submitted run must independently prove one visible RTX PRO 6000, CUDA capability sm_120, native decord observation decoding, finite optimizer updates, checkpoint reload, held-out inference, and durable artifact readback.",
+      "evidence": []
+    }
+  }
+}

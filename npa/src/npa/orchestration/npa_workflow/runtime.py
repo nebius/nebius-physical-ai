@@ -103,6 +103,10 @@ _SUPERVISOR_RECOVERY_ACTIONS = frozenset(action.value for action in RecoveryActi
 
 DEFAULT_POLL_SECONDS = 30
 DEFAULT_MAX_WAIT_SECONDS = 3600
+# A query timeout is an observation health boundary, not a workload time limit.
+# It prevents an orphaned provider CLI child from pinning a durable controller;
+# the caller records UNKNOWN and reconciles the exact prior managed job.
+STATUS_QUERY_TIMEOUT_SECONDS = 120
 #: How many consecutive `sky jobs queue` failures to tolerate before giving up on a
 #: wave. A busy API server or a query timeout says nothing about the job itself, so
 #: transient errors must not orphan a running GPU job.
@@ -143,19 +147,40 @@ def s3_artifact_exists(uri: str) -> bool:
         raise NpaWorkflowError(f"runtime output must be an explicit s3:// URI: {uri!r}")
     client = StorageClient.from_environment().s3
     key = parsed.path.lstrip("/")
-    try:
-        if uri.endswith("/"):
+    if uri.endswith("/"):
+        try:
             return s3_prefix_has_nonempty_object(
                 client,
                 bucket=parsed.netloc,
                 prefix=key,
             )
+        except ClientError as exc:
+            code = str(exc.response.get("Error", {}).get("Code", ""))
+            if code in {"404", "NoSuchKey", "NotFound"}:
+                return False
+            raise
+    try:
         response = client.head_object(Bucket=parsed.netloc, Key=key)
         return int(response.get("ContentLength") or 0) > 0
     except ClientError as exc:
         code = str(exc.response.get("Error", {}).get("Code", ""))
         if code in {"404", "NoSuchKey", "NotFound"}:
-            return False
+            # A directory declaration can omit its trailing slash.  Confirm
+            # the exact child prefix before treating the direct object miss as
+            # absent, without accepting a similarly named neighbor.
+            try:
+                return s3_prefix_has_nonempty_object(
+                    client,
+                    bucket=parsed.netloc,
+                    prefix=f"{key.rstrip('/')}/",
+                )
+            except ClientError as prefix_error:
+                prefix_code = str(
+                    prefix_error.response.get("Error", {}).get("Code", "")
+                )
+                if prefix_code in {"404", "NoSuchKey", "NotFound"}:
+                    return False
+                raise
         raise
 
 
@@ -193,6 +218,27 @@ def _verified_absent_pre_id_attempt(
         item.get("state") == "absent"
         for item in record.get("reconciliation") or []
         if isinstance(item, Mapping)
+    )
+
+
+def _proven_interrupted_absence_with_incomplete_outputs(
+    attempt: WaveAttempt, record: Mapping[str, Any]
+) -> bool:
+    """Require narrow evidence before retaining incomplete output fragments.
+
+    This is deliberately stricter than ordinary explicit absent-job recovery.
+    A directory prefix can contain a partial producer upload after a worker was
+    interrupted, so treating *any* prefix content as a completed wave would
+    make that wave permanently unrecoverable. The caller may use this escape
+    hatch only after an operator opts in and the durable ledger proves the
+    exact job reached RUNNING before the scheduler reported it absent.
+    """
+
+    return (
+        str(record.get("status") or "") == "failed"
+        and attempt.status == "failed"
+        and _record_reached_running(record)
+        and "scheduler returned ABSENT" in str(record.get("error") or "")
     )
 
 
@@ -454,7 +500,8 @@ class RuntimeOptions:
     #: only after the exact managed job and every declared output are proven absent.
     #: This is deliberately separate from ordinary workload retries: the default
     #: remains fail closed because an absent scheduler record alone cannot prove an
-    #: arbitrary stage has no external side effects.
+    #: arbitrary stage has no external side effects. A failed launch before a
+    #: managed-job ID is eligible only after the same absence/output proof.
     retry_absent_in_flight: bool = False
     #: Explicit operator authorization to replace the current plan fingerprint
     #: only when every prior attempt failed terminally and produced no output.
@@ -1364,7 +1411,11 @@ class SkyPilotWaveExecutor:
         category = str(record.get("error_category") or "")
         decision = str(record.get("recovery_decision") or "")
         if category == "operator_recovery":
-            return decision == "operator_authorized_verified_absent_relaunch"
+            return decision in {
+                "operator_authorized_verified_absent_relaunch",
+                "operator_authorized_interrupted_absent_relaunch_"
+                "with_incomplete_outputs",
+            }
         return category in {
             "kubernetes_transport",
             "kubernetes_rate_limit",
@@ -2386,12 +2437,27 @@ class SkyPilotWaveExecutor:
             verified_pre_id_launch_failure = _verified_absent_pre_id_attempt(
                 attempt, record
             )
+            failed_pre_id_launch = (
+                not job_id
+                and attempt.status == "failed"
+                and bool(attempt.error)
+                and attempt.launch_sequence > 0
+                and attempt.recovery_decision
+                in {
+                    "block_indeterminate",
+                    "resume_block_terminal_or_legacy_absence",
+                    "resume_block_output_present",
+                    "resume_block_output_indeterminate",
+                    "verified_absent_no_retry",
+                }
+            )
             explicit_retry = (
                 self.options.retry_absent_in_flight
                 and (
                     bool(job_id)
                     or typed_pre_id_launch_failure
                     or verified_pre_id_launch_failure
+                    or failed_pre_id_launch
                 )
                 and bool(job_name)
                 and bool(attempt.logical_launch_id)
@@ -2415,6 +2481,50 @@ class SkyPilotWaveExecutor:
                     recovery_outputs
                 )
                 if not outputs_absent:
+                    outputs_complete = True
+                    if output_state == "present":
+                        try:
+                            outputs_complete = self._outputs_exist(recovery_outputs)
+                        except Exception:  # noqa: BLE001 - storage uncertainty fails closed
+                            outputs_complete = True
+                    if (
+                        output_state == "present"
+                        and not outputs_complete
+                        and _proven_interrupted_absence_with_incomplete_outputs(
+                            attempt, record
+                        )
+                    ):
+                        attempt.status = "failed"
+                        attempt.ended_at = utc_now()
+                        attempt.error_category = "operator_recovery"
+                        attempt.recovery_decision = (
+                            "operator_authorized_interrupted_absent_relaunch_"
+                            "with_incomplete_outputs"
+                        )
+                        attempt.reconciliation.append(
+                            {
+                                "outcome": "absent",
+                                "source": "exact_managed_job_reconciliation",
+                                "declared_outputs_complete": False,
+                                "incomplete_output_fragments_preserved": True,
+                                "checked_at": utc_now(),
+                            }
+                        )
+                        attempt.operator_remedy = (
+                            "The exact job was observed RUNNING before a scheduler "
+                            "ABSENT result and declared outputs remain incomplete; "
+                            "preserve the fragments and relaunch the same wave as a "
+                            "new durable attempt identity."
+                        )
+                        attempt.cancellation_state = "not_applicable"
+                        self.ledger.record(attempt)
+                        self._log(
+                            f"wave {key}: explicit recovery preserves incomplete "
+                            "durable fragments after a proven interrupted absent job; "
+                            "launching a new attempt"
+                        )
+                        self.attempts.pop()
+                        return None
                     attempt.status = "failed"
                     attempt.error = (
                         "explicit absent-job recovery refused because declared "
@@ -3372,6 +3482,8 @@ class SkyPilotWaveExecutor:
             isolated_config_dir=self.options.isolated_config_dir,
             config_path=self.options.config_path,
             sky_bin=self.options.sky_bin,
+            timeout=STATUS_QUERY_TIMEOUT_SECONDS,
+            kill_process_group_on_timeout=True,
         )
 
     def _timeline(self, job_id: str) -> list[dict[str, Any]]:

@@ -1746,6 +1746,7 @@ set -u
 
 real_apt_get=/usr/bin/apt-get
 real_timeout=/usr/bin/timeout
+real_setsid=/usr/bin/setsid
 real_ssh_keygen=/usr/bin/ssh-keygen
 guard_runtime_dir=/run/npa-skypilot-bootstrap
 guard_owner_uid=0
@@ -1970,7 +1971,32 @@ bootstrap_apt_get() {
 
 bootstrap_timeout() {
     trusted_bootstrap_mode || exit $?
-    "$real_timeout" --signal=TERM --kill-after=5s "$@"
+    duration=$1
+    shift
+    # Keep the payload in its own session.  GNU timeout's direct-child signal
+    # path is not sufficient when a bootstrap command leaves a descendant
+    # running after its parent ignores TERM.  The wrapper owns that session and
+    # closes it with the five-second grace period before the outer timeout's
+    # one-second fallback can kill the wrapper itself.
+    "$real_timeout" --signal=TERM --kill-after=6s "$duration" /bin/sh -ceu '
+        child=
+        cleanup() {
+            trap - TERM
+            if [ -n "$child" ]; then
+                /bin/kill -TERM -- "-$child" 2>/dev/null || :
+                sleep 5
+                /bin/kill -KILL -- "-$child" 2>/dev/null || :
+                wait "$child" 2>/dev/null || :
+            fi
+            exit 124
+        }
+        trap cleanup TERM
+        setsid=$1
+        shift
+        "$setsid" "$@" &
+        child=$!
+        wait "$child"
+    ' npa-skypilot-bootstrap-timeout "$real_setsid" "$@"
     status=$?
     case "$status" in
         124|137) contract_failure deadline-exceeded "$status" >/dev/null ;;

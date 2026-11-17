@@ -67,9 +67,21 @@ class WorkflowJobRecord:
     live_error: str = ""
 
     @property
+    def identity(self) -> tuple[str, str]:
+        """Return the controller-scoped durable identity for this job."""
+
+        return self.job_id, self.job_name
+
+    @property
     def terminal_in_durable_state(self) -> bool:
         states = {normalize_workflow_state(item) for item in self.persisted_states}
-        return bool(states) and all(is_terminal_workflow_state(item) for item in states)
+        if not states:
+            return False
+        if all(is_terminal_workflow_state(item) for item in states):
+            return True
+        return any(is_terminal_workflow_state(item) for item in states) and all(
+            is_terminal_workflow_state(item) or item == "SUBMITTED" for item in states
+        )
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -130,6 +142,7 @@ def assess_run_cancellation(
     lookup: LookupFn | None = None,
     exact_job_id: str = "",
     isolated_config_dir: Path | None = None,
+    config_path: Path | None = None,
 ) -> CancellationAssessment:
     """Inspect every durable job/stage record and identify only active jobs.
 
@@ -141,7 +154,7 @@ def assess_run_cancellation(
     claim for that identity.
     """
 
-    records: dict[str, WorkflowJobRecord] = {}
+    records: dict[tuple[str, str], WorkflowJobRecord] = {}
     errors: list[str] = []
     if resolution.runtime_state_error:
         errors.append(
@@ -156,7 +169,10 @@ def assess_run_cancellation(
             errors.append(f"runtime wave {index} is malformed")
     runtime_waves = [item for item in raw_runtime_waves if isinstance(item, dict)]
     failed_cancellations = {
-        str(wave.get("job_id") or wave.get("sky_job_id") or "")
+        (
+            str(wave.get("job_id") or wave.get("sky_job_id") or "").strip(),
+            str(wave.get("job_name") or "").strip(),
+        )
         for wave in runtime_waves
         if (wave.get("cancellation") or {}).get("state") == "failed"
     }
@@ -186,12 +202,21 @@ def assess_run_cancellation(
                     f"{source} is {cleaned_state} but has no managed-job ID"
                 )
             return
-        record = records.setdefault(cleaned_id, WorkflowJobRecord(job_id=cleaned_id))
         cleaned_name = str(job_name or "").strip()
-        if cleaned_name and (
-            not record.job_name or record.job_name == resolution.run_id
-        ):
+        named_records = [
+            existing
+            for (existing_id, existing_name), existing in records.items()
+            if existing_id == cleaned_id and existing_name
+        ]
+        if not cleaned_name and len(named_records) == 1:
+            record = named_records[0]
+        elif cleaned_name and not named_records and (cleaned_id, "") in records:
+            record = records.pop((cleaned_id, ""))
             record.job_name = cleaned_name
+            records[(cleaned_id, cleaned_name)] = record
+        else:
+            identity = (cleaned_id, cleaned_name)
+            record = records.setdefault(identity, WorkflowJobRecord(*identity))
         if cleaned_state:
             record.persisted_states.add(cleaned_state)
         record.sources.add(source)
@@ -214,7 +239,7 @@ def assess_run_cancellation(
     if not runtime_waves:
         add_job(
             manifest.get("sky_job_id"),
-            job_name=manifest.get("job_name") or resolution.run_id,
+            job_name=manifest.get("job_name"),
             state=manifest_state,
             source="root manifest",
         )
@@ -315,7 +340,7 @@ def assess_run_cancellation(
     if isinstance(launch, dict) and not runtime_waves:
         add_job(
             launch.get("sky_job_id") or launch.get("job_id"),
-            job_name=launch.get("job_name") or resolution.run_id,
+            job_name=launch.get("job_name"),
             state=launch.get("status") or unresolved_manifest_state,
             source="submission receipt",
         )
@@ -323,7 +348,7 @@ def assess_run_cancellation(
     if not runtime_waves or resolved_job_id in runtime_job_ids:
         add_job(
             resolved_job_id,
-            job_name=resolution.job_name or resolution.run_id,
+            job_name=resolution.job_name,
             state=(
                 resolution.managed_job.status
                 if resolution.managed_job is not None
@@ -336,7 +361,7 @@ def assess_run_cancellation(
     if explicit_job_id:
         add_job(
             explicit_job_id,
-            job_name=resolution.job_name or resolution.run_id,
+            job_name=resolution.job_name,
             source="explicit exact job id",
         )
 
@@ -345,6 +370,23 @@ def assess_run_cancellation(
     # a stale root status cannot hide a still-running retry/wave.
     detected_terminal = _aggregate_terminal_states(terminal_candidates)
     lookup_fn = lookup or lookup_managed_job
+    selected_records = [
+        record for record in records.values() if record.job_id == explicit_job_id
+    ]
+    if explicit_job_id and len(selected_records) > 1:
+        return CancellationAssessment(
+            detected_state="VERIFICATION_UNAVAILABLE",
+            run_id=resolution.run_id,
+            jobs=sorted(records.values(), key=_record_sort_key),
+            errors=[
+                "exact managed-job ID is ambiguous across durable controller "
+                "identities; recover the original controller route before cancelling"
+            ],
+        )
+    identity_counts = {
+        job_id: sum(record.job_id == job_id for record in records.values())
+        for job_id, _job_name in records
+    }
     active: list[WorkflowJobRecord] = []
     terminal: list[WorkflowJobRecord] = []
     absent: list[WorkflowJobRecord] = []
@@ -364,9 +406,14 @@ def assess_run_cancellation(
                 job_id=record.job_id,
                 sky_bin=sky_bin or None,
                 isolated_config_dir=isolated_config_dir,
+                config_path=config_path,
             )
             if force_live_lookup
-            else _cached_evidence(resolution, record.job_id)
+            else _cached_evidence(
+                resolution,
+                record.job_id,
+                identity_is_unique=identity_counts[record.job_id] == 1,
+            )
         )
         cached_live = (
             evidence is not None
@@ -377,7 +424,7 @@ def assess_run_cancellation(
             record.terminal_in_durable_state
             and not force_live_lookup
             and not cached_live
-            and record.job_id not in failed_cancellations
+            and record.identity not in failed_cancellations
         ):
             record.live_outcome = "durable_terminal"
             record.live_status = _aggregate_terminal_states(record.persisted_states)
@@ -389,13 +436,14 @@ def assess_run_cancellation(
                 job_id=record.job_id,
                 sky_bin=sky_bin or None,
                 isolated_config_dir=isolated_config_dir,
+                config_path=config_path,
             )
         record.live_outcome = evidence.outcome
         record.live_status = normalize_workflow_state(evidence.status)
         record.live_error = evidence.error
         if evidence.outcome == "absent":
             absent.append(record)
-            if record.job_id in failed_cancellations:
+            if record.identity in failed_cancellations:
                 errors.append(
                     "original controller absence is unverified after failed cancellation; "
                     "recover the original caller state or use reconcile-controller"
@@ -455,13 +503,11 @@ def assess_run_cancellation(
     return CancellationAssessment(
         detected_state=detected_state,
         run_id=resolution.run_id,
-        jobs=sorted(records.values(), key=lambda item: _job_sort_key(item.job_id)),
-        active_jobs=sorted(active, key=lambda item: _job_sort_key(item.job_id)),
-        terminal_jobs=sorted(terminal, key=lambda item: _job_sort_key(item.job_id)),
-        absent_jobs=sorted(absent, key=lambda item: _job_sort_key(item.job_id)),
-        absence_conflict_jobs=sorted(
-            absence_conflicts, key=lambda item: _job_sort_key(item.job_id)
-        ),
+        jobs=sorted(records.values(), key=_record_sort_key),
+        active_jobs=sorted(active, key=_record_sort_key),
+        terminal_jobs=sorted(terminal, key=_record_sort_key),
+        absent_jobs=sorted(absent, key=_record_sort_key),
+        absence_conflict_jobs=sorted(absence_conflicts, key=_record_sort_key),
         absence_conflict_errors=absence_conflict_errors,
         errors=errors,
     )
@@ -473,6 +519,7 @@ def reverify_active_cancellation(
     sky_bin: str = "",
     lookup: LookupFn | None = None,
     isolated_config_dir: Path | None = None,
+    config_path: Path | None = None,
 ) -> list[str]:
     """Recheck every exact active identity immediately before cancellation."""
 
@@ -484,6 +531,7 @@ def reverify_active_cancellation(
             job_id=record.job_id,
             sky_bin=sky_bin or None,
             isolated_config_dir=isolated_config_dir,
+            config_path=config_path,
         )
         status = normalize_workflow_state(evidence.status)
         if evidence.outcome != "found":
@@ -500,8 +548,10 @@ def reverify_active_cancellation(
 
 
 def _cached_evidence(
-    resolution: RunResolution, job_id: str
+    resolution: RunResolution, job_id: str, *, identity_is_unique: bool
 ) -> ManagedJobEvidence | None:
+    if not identity_is_unique:
+        return None
     evidence = resolution.managed_job
     if evidence is None:
         return None
@@ -522,3 +572,9 @@ def _aggregate_terminal_states(states: Any) -> str:
 
 def _job_sort_key(job_id: str) -> tuple[int, int | str]:
     return (0, int(job_id)) if str(job_id).isdigit() else (1, str(job_id))
+
+
+def _record_sort_key(record: WorkflowJobRecord) -> tuple[tuple[int, int | str], str]:
+    """Sort controller-scoped records predictably for machine-readable output."""
+
+    return _job_sort_key(record.job_id), record.job_name
