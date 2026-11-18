@@ -26,7 +26,7 @@ NPA ships **two** MCAP viewers; they are complements, not alternatives:
 | What runs | Lichtblick web build (MPL-2.0) served by the agent, in-page | Foxglove's own app in a cross-origin iframe, driven by `@foxglove/embed` |
 | Account | none | a Foxglove org on a plan that allows embedding |
 | Renders MCAP | yes, out of the box | yes, after sign-in |
-| Recording path | same-origin `/lichtblick/recordings/` (no CORS) | `/foxglove/data/` (CORS + byte ranges) |
+| Recording path | same-origin `/lichtblick/recordings/sim2real.mcap` only (no CORS; other names 404) | `/foxglove/data/` (CORS + byte ranges) |
 | Use it for | default operator playback, CI, air-gapped | customers standardized on Foxglove (layouts, extensions, org sharing) |
 
 The agent's **Foxglove** pane picks between them at runtime

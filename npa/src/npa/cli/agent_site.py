@@ -8,7 +8,9 @@ instead of buried in the bootstrap f-string.
 
 Serving rules worth knowing:
 
-- ``/lichtblick/recordings/`` is same-origin and deliberately grants **no** CORS:
+- ``/lichtblick/recordings/sim2real.mcap`` is the only anonymous file under
+  ``/lichtblick/recordings/``; every other name in the shared recordings
+  directory returns 404. It is same-origin and deliberately grants **no** CORS:
   the OSS viewer runs in-page.
 - ``/foxglove/data/`` is unauthenticated **with** CORS: the official Foxglove app
   runs on a different origin and cannot send the agent's basic-auth credentials.
@@ -433,9 +435,12 @@ def nginx_agent_site_body(
     proxy_send_timeout 300s;
     add_header Cache-Control "public, max-age=3600" always;
   }}
-  location /lichtblick/recordings/ {{
+  location = /lichtblick/recordings/sim2real.mcap {{
+    # The recordings directory also holds the fixed and run-scoped Rerun files,
+    # capability copies and authenticated artifact previews. Only the one MCAP
+    # slot the embedded viewer loads is anonymously readable.
     auth_basic off;
-    alias /opt/npa-agent/recordings/;
+    alias /opt/npa-agent/recordings/sim2real.mcap;
     default_type application/octet-stream;
     # Remote-file readers require the authoritative Content-Length on their
     # initial GET. Compression changes it to chunked transfer encoding after
@@ -454,6 +459,9 @@ def nginx_agent_site_body(
     # /lichtblick/ and the UI pins ds.url to window.location.origin, so the fetch is
     # same-origin — which also makes Accept-Ranges readable without Expose-Headers.
     add_header Cross-Origin-Resource-Policy "same-origin" always;
+  }}
+  location ^~ /lichtblick/recordings/ {{
+    return 404;
   }}
   location = /lichtblick/npa-worker.js {{
     auth_basic off;

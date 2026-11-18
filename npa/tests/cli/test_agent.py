@@ -1718,7 +1718,7 @@ def test_bootstrap_nginx_serves_public_rerun_recording() -> None:
 def test_bootstrap_embeds_lichtblick_viewer() -> None:
     source = _agent_source()
     # nginx: co-serve the MCAP same-origin and proxy the viewer sidecar.
-    assert "location /lichtblick/recordings/" in source
+    assert "location = /lichtblick/recordings/sim2real.mcap {" in _agent_nginx_site()
     assert "location /lichtblick/ {{" in source
     assert "proxy_pass http://127.0.0.1:{lichtblick_port}/;" in source
     # backend: sim-viz status carries the Lichtblick embed fields.
@@ -1753,9 +1753,9 @@ def test_lichtblick_recordings_grant_no_cross_origin_read() -> None:
     """
 
     source = _agent_nginx_site()
-    recordings_location = source.split("location /lichtblick/recordings/ {", 1)[
-        1
-    ].split("location = /lichtblick/ {", 1)[0]
+    recordings_location = source.split(
+        "location = /lichtblick/recordings/sim2real.mcap {", 1
+    )[1].split("location ^~ /lichtblick/recordings/ {", 1)[0]
     # Compare directives only: the block's comment names these headers to explain
     # why they are absent, so a bare substring check would match the prose.
     directives = [
@@ -1791,10 +1791,10 @@ def test_lichtblick_uses_native_static_size_and_range_semantics() -> None:
     """The reader gets size/ranges from nginx without a script import proxy."""
 
     source = _agent_nginx_site()
-    block = source.split("location /lichtblick/recordings/ {", 1)[1].split(
-        "location = /lichtblick/ {", 1
-    )[0]
-    assert "alias /opt/npa-agent/recordings/;" in block
+    block = source.split("location = /lichtblick/recordings/sim2real.mcap {", 1)[
+        1
+    ].split("location ^~ /lichtblick/recordings/ {", 1)[0]
+    assert "alias /opt/npa-agent/recordings/sim2real.mcap;" in block
     assert "proxy_pass" not in block
     assert "gzip off;" in block
     assert 'Cache-Control "no-cache, no-transform"' in block
@@ -1934,7 +1934,177 @@ def test_lichtblick_anonymous_routes_do_not_disable_api_authentication() -> None
     )[0]
     assert "auth_basic off" not in api_block
     assert "location = /lichtblick/npa-worker.js {" in source
-    assert "location /lichtblick/recordings/ {" in source
+    assert "location = /lichtblick/recordings/sim2real.mcap {" in source
+
+
+def test_lichtblick_recordings_expose_only_the_viewer_mcap_slot() -> None:
+    """The shared recordings directory must not be anonymously browsable.
+
+    ``/opt/npa-agent/recordings/`` also holds the fixed ``sim2real.rrd``, every
+    run-scoped ``.rrd``, the per-load Rerun capability file and the artifact
+    previews served only through authenticated ``/api/artifacts/file/``. The
+    Lichtblick embed only ever loads ``sim2real.mcap``.
+    """
+
+    source = _agent_nginx_site()
+    directives = [
+        line.strip()
+        for line in source.splitlines()
+        if line.strip() and not line.strip().startswith("#")
+    ]
+    assert "location /lichtblick/recordings/ {" not in directives
+    assert "alias /opt/npa-agent/recordings/;" not in directives
+    deny = source.split("location ^~ /lichtblick/recordings/ {", 1)[1].split("}", 1)[0]
+    assert [line.strip() for line in deny.splitlines() if line.strip()] == [
+        "return 404;"
+    ]
+    anonymous_aliases = [
+        line
+        for line in directives
+        if line.startswith("alias /opt/npa-agent/recordings/")
+    ]
+    assert anonymous_aliases == [
+        "alias /opt/npa-agent/recordings/$1;",
+        "alias /opt/npa-agent/recordings/sim2real.mcap;",
+    ]
+
+
+def _run_agent_nginx(tmp_path: Path) -> tuple[int, subprocess.Popen[bytes]]:
+    import http.client
+    import socket
+    import time
+
+    def free_port() -> int:
+        with socket.socket() as sock:
+            sock.bind(("127.0.0.1", 0))
+            return sock.getsockname()[1]
+
+    agent_root = tmp_path / "agent"
+    recordings = agent_root / "recordings"
+    recordings.mkdir(parents=True)
+    (agent_root / "ui.html").write_text("ui", encoding="utf-8")
+    files = {
+        "sim2real.mcap": b"MCAP-SUPPORTED" * 64,
+        "sim2real.rrd": b"PRIVATE-FIXED-RRD",
+        "cap-" + "A" * 43 + ".rrd": b"CAPABILITY-RRD",
+        "agent-run-0123456789ab.rrd": b"PRIVATE-RUN-RRD",
+        "0123456789ab-camera.mp4": b"PRIVATE-PREVIEW",
+        "cache-deadbeef-sim2real.mcap": b"PRIVATE-CACHE-MCAP",
+    }
+    for name, data in files.items():
+        (recordings / name).write_bytes(data)
+    htpasswd = tmp_path / "htpasswd"
+    htpasswd.write_text("npa:{PLAIN}secret\n", encoding="utf-8")
+    (tmp_path / "logs").mkdir()
+    body = (
+        _agent_nginx_site()
+        .replace("/opt/npa-agent", str(agent_root))
+        .replace("/etc/nginx/.npa-agent-htpasswd", str(htpasswd))
+        .replace(
+            "/var/log/nginx/npa-agent-access.log", str(tmp_path / "logs" / "access.log")
+        )
+    )
+    port = free_port()
+    conf = tmp_path / "nginx.conf"
+    conf.write_text(
+        f"""daemon off;
+pid {tmp_path}/nginx.pid;
+error_log {tmp_path}/logs/error.log warn;
+events {{ worker_connections 64; }}
+http {{
+  types {{ application/octet-stream mcap rrd mp4; }}
+  log_format npa_agent_safe '$remote_addr "$request_method $uri" $status';
+  client_body_temp_path {tmp_path}/body; proxy_temp_path {tmp_path}/proxy;
+  fastcgi_temp_path {tmp_path}/fcgi; uwsgi_temp_path {tmp_path}/uwsgi;
+  scgi_temp_path {tmp_path}/scgi;
+  server {{
+    listen 127.0.0.1:{port};
+{body}
+  }}
+}}
+""",
+        encoding="utf-8",
+    )
+    checked = subprocess.run(
+        ["nginx", "-t", "-p", str(tmp_path), "-c", str(conf)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert checked.returncode == 0, checked.stderr
+    proc = subprocess.Popen(
+        ["nginx", "-p", str(tmp_path), "-c", str(conf)],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    deadline = time.monotonic() + 10
+    while True:
+        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=1)
+        try:
+            conn.request("GET", "/healthz")
+            with conn.getresponse() as response:
+                response.read()
+            break
+        except (OSError, http.client.HTTPException):
+            if time.monotonic() > deadline or proc.poll() is not None:
+                proc.terminate()
+                proc.wait(timeout=10)
+                pytest.fail("nginx did not start")
+            time.sleep(0.05)
+        finally:
+            conn.close()
+    return port, proc
+
+
+@pytest.mark.skipif(shutil.which("nginx") is None, reason="nginx is not installed")
+def test_real_nginx_lichtblick_recordings_deny_anonymous_private_files(
+    tmp_path: Path,
+) -> None:
+    import http.client
+
+    port, proc = _run_agent_nginx(tmp_path)
+
+    def get(path: str, headers: dict[str, str] | None = None) -> tuple[int, bytes]:
+        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+        try:
+            conn.request("GET", path, headers=headers or {})
+            with conn.getresponse() as response:
+                return response.status, response.read()
+        finally:
+            conn.close()
+
+    try:
+        # Supported viewer path: full read, byte range and cache-busting query.
+        status, body = get("/lichtblick/recordings/sim2real.mcap")
+        assert status == 200 and body.startswith(b"MCAP-SUPPORTED")
+        status, body = get(
+            "/lichtblick/recordings/sim2real.mcap", {"Range": "bytes=0-3"}
+        )
+        assert (status, body) == (206, b"MCAP")
+        status, _ = get("/lichtblick/recordings/sim2real.mcap?t=1")
+        assert status == 200
+        # The Rerun capability contract is unchanged.
+        status, body = get("/rerun/recordings/cap-" + "A" * 43 + ".rrd")
+        assert (status, body) == (200, b"CAPABILITY-RRD")
+        assert get("/rerun/recordings/sim2real.rrd")[0] == 404
+        # Hostile anonymous reads of the shared recordings directory.
+        for path in (
+            "/lichtblick/recordings/sim2real.rrd",
+            "/lichtblick/recordings/%73im2real.rrd",
+            "/lichtblick/recordings/x/../sim2real.rrd",
+            "/lichtblick/recordings/cap-" + "A" * 43 + ".rrd",
+            "/lichtblick/recordings/agent-run-0123456789ab.rrd",
+            "/lichtblick/recordings/0123456789ab-camera.mp4",
+            "/lichtblick/recordings/cache-deadbeef-sim2real.mcap",
+            "/lichtblick/recordings/sim2real.mcap/",
+            "/lichtblick/recordings/",
+        ):
+            status, body = get(path)
+            assert status == 404, (path, status)
+            assert b"PRIVATE" not in body and b"CAPABILITY" not in body, path
+    finally:
+        proc.terminate()
+        proc.wait(timeout=10)
 
 
 def test_bootstrap_installs_docker_for_fresh_lichtblick_fallback() -> None:
