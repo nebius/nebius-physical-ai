@@ -33,7 +33,6 @@ def existing(tmp_path, monkeypatch):
         desired,
         gpu_nodes=replace(
             desired.gpu_nodes,
-            compute_reservation_id="computereservation-test",
         ),
     )
     project = ProjectSpec(
@@ -70,7 +69,7 @@ def existing(tmp_path, monkeypatch):
         if pool.capacity_block_group:
             template["reservation_policy"] = {
                 "policy": "STRICT",
-                "reservation_ids": [pool.compute_reservation_id],
+                "reservation_ids": [pool.capacity_block_group],
             }
         groups.append(
             {
@@ -137,68 +136,56 @@ def test_v1_preemptible_marker_cannot_satisfy_strict_reserved_pool(existing):
     assert not E._is_verified_unchanged_target(**kwargs)
 
 
-def test_retained_tfvars_requires_the_verified_compute_reservation_identity() -> None:
+def test_retained_tfvars_requires_the_exact_declared_capacity_block_group() -> None:
     raw = "\n".join(
-        [
-            'cluster_name = "render"',
-            'gpu_nodes_reservation_policy = { policy = "STRICT", reservation_ids = ["computereservation-test"] }',
-        ]
-    )
-    assert E.retained_target_tfvars_match(
-        raw,
-        raw,
-        strict_capacity_block_group="capacityblockgroup-test",
-        strict_compute_reservation_id="computereservation-test",
-    )
-    wrong = raw.replace("computereservation-test", "unsupported-id")
-    assert not E.retained_target_tfvars_match(
-        wrong,
-        wrong,
-        strict_capacity_block_group="capacityblockgroup-test",
-        strict_compute_reservation_id="computereservation-test",
-    )
-    assert not E.retained_target_tfvars_match(
-        raw.replace('policy = "STRICT"', 'policy = "AUTO"'),
-        raw,
-        strict_capacity_block_group="capacityblockgroup-test",
-        strict_compute_reservation_id="computereservation-test",
-    )
-    assert not E.retained_target_tfvars_match(
-        raw,
-        raw + '\ngpu_nodes_preset = "different"',
-        strict_capacity_block_group="capacityblockgroup-test",
-        strict_compute_reservation_id="computereservation-test",
-    )
-
-
-def test_unmaterialized_retained_tfvars_may_translate_only_legacy_selector() -> None:
-    legacy = "\n".join(
         [
             'cluster_name = "render"',
             'gpu_nodes_reservation_policy = { policy = "STRICT", reservation_ids = ["capacityblockgroup-test"] }',
         ]
     )
-    current = legacy.replace("capacityblockgroup-test", "computereservation-test")
+    assert E.retained_target_tfvars_match(
+        raw,
+        raw,
+        strict_capacity_block_group="capacityblockgroup-test",
+    )
+    wrong = raw.replace("capacityblockgroup-test", "unsupported-id")
+    assert not E.retained_target_tfvars_match(
+        wrong,
+        wrong,
+        strict_capacity_block_group="capacityblockgroup-test",
+    )
+    assert not E.retained_target_tfvars_match(
+        raw.replace('policy = "STRICT"', 'policy = "AUTO"'),
+        raw,
+        strict_capacity_block_group="capacityblockgroup-test",
+    )
+    assert not E.retained_target_tfvars_match(
+        raw,
+        raw + '\ngpu_nodes_preset = "different"',
+        strict_capacity_block_group="capacityblockgroup-test",
+    )
+
+
+def test_retained_tfvars_refuses_legacy_secondary_reservation_identity() -> None:
+    selected_group = "\n".join(
+        [
+            'cluster_name = "render"',
+            'gpu_nodes_reservation_policy = { policy = "STRICT", reservation_ids = ["capacityblockgroup-test"] }',
+        ]
+    )
+    legacy_secondary = selected_group.replace(
+        "capacityblockgroup-test", "computereservation-test"
+    )
 
     assert not E.retained_target_tfvars_match(
-        legacy,
-        current,
+        selected_group,
+        legacy_secondary,
         strict_capacity_block_group="capacityblockgroup-test",
-        strict_compute_reservation_id="computereservation-test",
-    )
-    assert E.retained_target_tfvars_match(
-        legacy,
-        current,
-        strict_capacity_block_group="capacityblockgroup-test",
-        strict_compute_reservation_id="computereservation-test",
-        allow_unmaterialized_selector_migration=True,
     )
     assert not E.retained_target_tfvars_match(
-        legacy + '\ngpu_nodes_preset = "different"',
-        current,
+        selected_group + '\ngpu_nodes_preset = "different"',
+        selected_group,
         strict_capacity_block_group="capacityblockgroup-test",
-        strict_compute_reservation_id="computereservation-test",
-        allow_unmaterialized_selector_migration=True,
     )
 
 

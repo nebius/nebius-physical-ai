@@ -135,10 +135,9 @@ class NodePoolSpec:
     # ordinary on-demand capacity when the reservation is unavailable.
     capacity_block_group: str = ""
     preemptible: bool = False
-    # Internal runtime binding populated only after Fleet has read compatible
-    # reservation evidence for the exact capacity-block policy ID. It is
-    # deliberately not accepted by YAML parsing
-    # and is excluded from public plan/output surfaces.
+    # Legacy internal-only field. Current MK8s renders the documented
+    # capacity-block-group ID directly; a divergent legacy value is refused
+    # before the policy can be rendered.
     compute_reservation_id: str = field(default="", repr=False, compare=False)
 
     def is_gpu(self) -> bool:

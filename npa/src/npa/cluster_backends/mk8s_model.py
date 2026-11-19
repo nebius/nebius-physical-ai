@@ -39,12 +39,10 @@ class MK8sNodePool:
     disk_size_gib: int = 0
     capacity_block_group: str = ""
     preemptible: bool = False
-    # This is runtime-only evidence selected from the exact capacity-block
-    # record during Fleet preflight. Public specs select the block group; the
-    # provider reservation policy receives its compatible compute-reservation
-    # identity. It is deliberately absent from the
-    # surface spec and from equality so saved desired-state inputs remain
-    # portable and never carry a private provider identity.
+    # Legacy internal-only state. Public specs select the exact capacity-block
+    # group, which current MK8s sends directly in ReservationPolicy. It stays
+    # excluded from public equality so stale runtime state cannot alter desired
+    # configuration.
     compute_reservation_id: str = field(default="", repr=False, compare=False)
 
     @classmethod

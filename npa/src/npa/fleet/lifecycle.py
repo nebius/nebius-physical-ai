@@ -1814,25 +1814,20 @@ def _bind_strict_compute_reservations(
     region_by_target: dict[tuple[str, str], str],
     on_status: Callable[[str], None] | None,
 ) -> dict[tuple[str, str], Any]:
-    """Bind each selected STRICT group to a verified compute reservation.
+    """Validate each selected STRICT capacity-block group before rendering.
 
-    A capacity-block group remains the declarative selector. Rendering its ID
-    directly as a compute reservation is invalid, so this read-only step
-    obtains the exact compatible provider identity before any rendered input,
-    project/network setup, or Terraform action. Missing tenant inventory is a
-    refusal because project allowance evidence cannot establish that identity.
+    MK8s ReservationPolicy renders the selected capacity-block-group ID itself.
+    This read-only step proves its tenant, region, platform, state, and available
+    GPU compatibility before any rendered input, project/network setup, or
+    Terraform action. A legacy divergent internal compute-reservation value is
+    rejected rather than silently sent to the MK8s policy field.
     """
 
     by_region: dict[str, list[Any]] = {}
     for key, cluster in clusters.items():
         gpu = cluster.gpu_nodes
         if gpu and gpu.capacity_block_group:
-            # ``compute_reservation_id`` is runtime state, not a public
-            # placement override. Even an already populated value must agree
-            # with fresh complete capacity evidence before it can reach a
-            # STRICT provider payload.
             by_region.setdefault(region_by_target[key], []).append(cluster)
-    bindings: dict[str, str] = {}
     for region, selected in by_region.items():
         requirements = required_reservations(selected, region)
         if not requirements:
@@ -1846,29 +1841,22 @@ def _bind_strict_compute_reservations(
             _run_capture,
             _nebius_argv,
         )
-        bindings.update(reader.resolve_compute_reservations(requirements, on_status))
+        reader.verify_reservations(requirements, on_status)
 
     resolved: dict[tuple[str, str], Any] = {}
     for key, cluster in clusters.items():
         gpu = cluster.gpu_nodes
         if gpu and gpu.capacity_block_group:
-            compute_reservation_id = bindings.get(gpu.capacity_block_group, "")
-            if not compute_reservation_id:
-                raise ValueError(
-                    "STRICT capacity-block selection has no verified compute "
-                    "reservation identity"
-                )
             if (
                 gpu.compute_reservation_id
-                and gpu.compute_reservation_id != compute_reservation_id
+                and gpu.compute_reservation_id != gpu.capacity_block_group
             ):
                 raise ValueError(
-                    "STRICT capacity-block selection conflicts with the verified "
-                    "compute reservation identity"
+                    "STRICT capacity-block selection conflicts with the selected "
+                    "MK8s capacity-block group"
                 )
             cluster = replace(
-                cluster,
-                gpu_nodes=replace(gpu, compute_reservation_id=compute_reservation_id),
+                cluster, gpu_nodes=replace(gpu, compute_reservation_id="")
             )
         resolved[key] = cluster
     return resolved
