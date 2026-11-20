@@ -12,6 +12,7 @@ encord = pytest.importorskip(
 
 
 def test_installed_encord_0_1_202_surface() -> None:
+    from encord.collection import Collection
     from encord.dataset import Dataset
     from encord.orm.dataset import StorageLocation
     from encord.orm.storage import (
@@ -53,6 +54,12 @@ def test_installed_encord_0_1_202_surface() -> None:
     _has_parameters(Dataset.link_items, "item_uuids", "duplicates_behavior")
     _has_parameters(Project.list_label_rows_v2, "include_client_metadata")
     _has_parameters(Project.create_bundle, "bundle_size")
+    _has_parameters(EncordUserClient.create_preset, "name", "filter_preset_json")
+    _has_parameters(EncordUserClient.list_collections, "top_level_folder_uuid")
+    _has_parameters(EncordUserClient.create_collection, "top_level_folder_uuid", "name")
+    _has_parameters(Collection.add_preset_items, "filter_preset")
+    _has_parameters(Collection.list_items, "page_size")
+    assert hasattr(EncordUserClient, "delete_preset")
 
     required_poll_fields = {
         "status",

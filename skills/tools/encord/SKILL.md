@@ -1,6 +1,6 @@
 ---
 name: encord
-description: Use when registering S3 media with Encord SaaS, pulling curated media, or verifying an exact roundtrip with durable lineage artifacts.
+description: Use when registering S3 media with Encord SaaS, curating headlessly with Encord filters, pulling curated media, or verifying an exact roundtrip with durable lineage artifacts.
 ---
 
 <!-- register: operating procedure | reader: agent operating Encord transport | consumed: task-time reference -->
@@ -41,6 +41,28 @@ through the NPA client and requires `s3:GetObject`; it has no hashing opt-out.
 Require exact source URI, complete object key or URL, namespaced metadata,
 stable item UUID, or a sidecar assertion. Never use a filename or basename as
 identity. Stop when exact signals conflict.
+
+## Curate headlessly
+
+Use a fresh Collection title for each run:
+
+```bash
+npa workbench encord curate \
+  --folder <folder> \
+  --filter width:128:16384 \
+  --collection <new-run-scoped-title> \
+  --receipt-uri <push-receipt-s3-uri> \
+  --output-path <curate-receipt-s3-uri>
+```
+
+The command evaluates an Encord filter preset and records the selected UUIDs.
+The partner roundtrip workflow uses `workbench.encord.curate` between push and
+pull. `width`, `height`, `area`, and `aspect-ratio` use intrinsic metadata.
+`brightness`, `sharpness`, and `file-size` need quality metrics already computed
+for the folder in Encord. If nothing matches, check both metric readiness and
+the filter range. Pass the curation receipt to `verify-roundtrip` with
+`--curate-receipt-uri` to check that the Collection pull matches the recorded
+selection exactly.
 
 ## Pull
 
