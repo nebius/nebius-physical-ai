@@ -9,6 +9,7 @@ their pinned external harness, source records, and reproduction limits.
 | --- | --- | --- |
 | [Cosmos3-Super](cosmos3-super/README.md) | Eight-GPU HGX B200 and HGX H200 nodes on Nebius | Request latency versus technically valid video output per node-hour across four serving topologies |
 | [Cosmos3-Nano](cosmos3-nano/README.md) | One eight-GPU HGX H200 node on Nebius | Reference results without a Workbench workflow: technically valid video output per node-hour for Nano across ten cells, against the Cosmos3-Super reference |
+| [Cosmos3-Nano on RTX PRO 6000](cosmos3-nano-rtx-pro-6000/README.md) | One node with eight RTX PRO 6000 Blackwell Server Edition GPUs (PCIe) on Nebius | Reference results without a Workbench workflow, on a vLLM-Omni development build: technically valid video output per node-hour for Nano across seven cells, including multi-GPU layouts over PCIe and guardrails, plus NCCL all-reduce bandwidth |
 
 Each runnable benchmark should include its workflow YAMLs. All entries should
 document hardware and software pins, request and validation protocol, results
