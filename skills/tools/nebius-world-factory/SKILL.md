@@ -165,6 +165,29 @@ the fixed watermark and distinct request/admission/delivery/poll/artifact
 counts. A synthetic customer type is not proof of real company adoption.
 Read the iteration guide for UTC filtering, pagination and incremental export.
 
+## Guardrails and clinical review
+
+Guardrails **on** runs the configured prompt and generated-visual content checks
+and withholds blocked output; configured face postprocessing also applies.
+**Off** bypasses those model checks and postprocessing, without disabling API
+authentication, TLS, owner-scoped storage or artifact integrity checks. The
+hosted guarded API requires them on; do not invent an off field.
+
+For non-graphic clinical simulations, use an operator-enabled restricted review
+workflow only when the operator confirms that the selected account and runtime
+support it. A disputed Violence classification can enter private quarantine;
+other unsafe categories, checker errors and incomplete scans still block. This
+is neither a customer off switch nor automatic approval based on a medical
+prompt, the source video or one safe frame.
+
+A job in `clinical_review_pending` has no published output. Preserve its job and
+idempotency identity, stop ordinary polling and request operator review. Only a
+review of the complete retained artifact, bound to its exact owner, request,
+dispatch, runtime and checksum, can authorize publication. Publication recovery
+uses those same bytes without regenerating. Do not submit another seed, rewrite
+the prompt, self-approve through a request field, or use ordinary publication
+retry to bypass review. See the [lifecycle guide](references/requests.md#submission-polling-and-completion).
+
 ## Recovery and credential lifecycle
 
 Keep the exact request and run state. After an ambiguous submit, run `submit`
