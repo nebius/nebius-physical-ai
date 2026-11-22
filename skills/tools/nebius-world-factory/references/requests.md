@@ -98,6 +98,18 @@ states are possible. Preserve failed, cancelled, `publication_retryable` and
 `needs_reconciliation` records instead of treating every non-success as active.
 Advisory `quality_status` is separate from job delivery status.
 
+An operator-enabled clinical review workflow may return
+`clinical_review_pending`. Generation is retained privately and delivery is
+withheld while the exact complete artifact is reviewed. This is separate from
+advisory `quality_status: needs_review` on an already delivered job. Keep the
+same job/state and ask the operator to review it; do not keep polling as if GPU
+work were active, create a replacement generation, or treat ordinary
+publication retry as content approval. After approval, the same job can enter
+`publication_queued` and publish the retained, checksum-bound video without
+another model dispatch. The guarded API has no customer guardrails-off or
+self-approval field. Discover the running contract and confirm account support
+with the operator before relying on this workflow.
+
 ### Wait with the portable client
 
 The bundled `submit` command saves the run state and prints a small
