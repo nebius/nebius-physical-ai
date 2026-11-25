@@ -86,13 +86,13 @@ def test_wrong_reloaded_checkpoint_fails_qualification(tmp_path, monkeypatch):
 
     monkeypatch.setattr(mod.subprocess, "run", launch)
     native = Path.read_text
-    monkeypatch.setattr(
-        Path,
-        "read_text",
-        lambda path, *a, **k: "0::/fixture.scope"
-        if str(path) == "/proc/self/cgroup"
-        else native(path, *a, **k),
-    )
+
+    def read_cgroup(path, *args, **kwargs):
+        if str(path) == "/proc/self/cgroup":
+            return "0::/fixture.scope"
+        return native(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", read_cgroup)
     with pytest.raises(ValueError, match="reload disagrees"):
         mod._worker(run, "fixture.scope")
     assert not (evidence / "verified.json").exists()
