@@ -134,6 +134,8 @@ Run `uv python install 3.11.16` before preparing the simulator. The RTX staging 
 
 On the training host, run the full input preparation directly with the framework interpreter. Check the user systemd manager from the Linux execution environment that will own the eight trainer processes. An unavailable user manager stops qualification before training.
 
+Before a detached run on a dedicated Ubuntu host, test whether the data loader's POSIX shared memory survives the operator's last SSH logout. Start [the logout probe](ipc_probe.py) as a system service under the training user with a fresh `--output-path`, disconnect all SSH sessions for that user and read the receipt after 30 seconds. If `survived_logout` is false, apply [the same logind setting used by the Slurm bootstrap](preserve-slurm-ipc.sh) and repeat the probe with a new output path. Start training after it reports true. The data-loader feeder can lose a batch and emit a Python traceback while the optimizer continues to log updates. [Reproduction and probe results](../../../../docs/workbench/evidence/cosmos3-wam-slurm-ipc.json)
+
 ```bash
 export WAM_PYTHON="$WAM_SHARED_ROOT/framework/.venv/bin/python"
 systemd-run --user --scope --quiet --property=RuntimeMaxSec=10s /bin/true
