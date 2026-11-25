@@ -1,0 +1,247 @@
+{
+  "scope": "One seed, two native optimizer updates, recovered source policy reload and one initial state per LIBERO-10 task",
+  "workbench_patch_base": "7fef01772c951120de7345e7c86558148e57db01",
+  "workbench_source": "8d47b712eb3a6468d73ef3e5b85614057fc142f6",
+  "upstream_pins": {
+    "framework": "cf5d68c00d97ccd2480a2320ed652b92dec63102",
+    "model": "e59a53c25979a090fa8706c9acc0c254a6e89b92",
+    "qwen": "0c351dd01ed87e9c1b53cbc748cba10e6187ff3b",
+    "dataset": "e5907374380b8f96511957e6ba5582be52a1e179",
+    "vae": "921dbaf3f1674a56f47e83fb80a34bac8a8f203e",
+    "libero": "8f1084e3132a39270c3a13ebe37270a43ece2a01",
+    "guardrail": "d6d4bfa899a71454a700907664f3e88f503950cf"
+  },
+  "hardware": {
+    "training_gpus": 8,
+    "evaluation_gpus": 1,
+    "sku": "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+    "driver": "580.173.02",
+    "pytorch": "2.10.0+cu130"
+  },
+  "training": {
+    "seed": 42,
+    "samples_per_rank": 64,
+    "gradient_accumulation": 4,
+    "nominal_global_batch": 2048,
+    "compiler_environment": {
+      "TORCH_COMPILE_DISABLE": "1"
+    },
+    "updates": [
+      {
+        "step": 1,
+        "loss": 15.4953,
+        "warmup_seconds": 69.03
+      },
+      {
+        "step": 2,
+        "loss": 15.4687,
+        "warmup_seconds": 34.99
+      }
+    ],
+    "trainer_startup_seconds": 45.0,
+    "worker_preflight_seconds": 24.36091726599261,
+    "train_process_seconds": 730.0826473610068,
+    "peak_allocated_bytes_by_rank": [
+      53493378560,
+      53598278144,
+      53621764608,
+      53875860480,
+      53546658304,
+      53861981696,
+      53468911616,
+      53623733248
+    ],
+    "native_rank_exits": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "nccl_all_reduce_sum": 36,
+    "steady_state_throughput": null
+  },
+  "qualification": {
+    "uninterrupted_pass": false,
+    "recovery_pass": true,
+    "reference_attempt": {
+      "completed_updates": 0,
+      "native_backward": "No valid triton configs. OutOfMemoryError: out of resource: triton_per_fused__to_copy_add_arange_div_expand_lt_mean_mul_pow_rsqrt_scalar_tensor_sum_unsqueeze_where_4 Required: 114760 Hardware limit:101376",
+      "seconds": 147.80910900898743
+    },
+    "persistent_reductions_disabled_attempt": {
+      "completed_updates": 0,
+      "same_kernel_failure": true,
+      "seconds": 139.64607270099805
+    },
+    "initial_eager_supervisor": {
+      "status": "failed",
+      "cause": "Seven unreferenced zero-byte scheduler writer files failed blanket empty-file validation",
+      "seconds": 894.4673771619855
+    },
+    "scheduler_metadata": {
+      "referenced_extents": 8,
+      "referenced_files": 1,
+      "unreferenced_empty_writer_files": 7,
+      "all_referenced_extents_in_bounds": true
+    },
+    "recovery": "Verified the original native files and performed a real policy reload under the remaining wall-clock budget; training was not repeated for verification.",
+    "recovery_verification_seconds": 131.69324695097748
+  },
+  "checkpoint": {
+    "step": 2,
+    "component_bytes": {
+      "model": 121408256751,
+      "optim": 55876182909,
+      "scheduler": 13258,
+      "trainer": 195638
+    },
+    "full_checkpoint_bytes": 177284648556,
+    "full_manifest_sha256": "738a816df7aba2e427e08070ed184a8c3450fac5b4a3d4a9aec3dc03a52764af",
+    "native_save_seconds": 596.85,
+    "source_hash_seconds": 131.66212383902166,
+    "reload_server_ready_seconds": 38.01478986401344,
+    "post_reload_full_hash_seconds": 133.67096575000323,
+    "reload_wall_seconds": 172.32552463500178
+  },
+  "transfer": {
+    "topology": "Model-only archive through a CPU relay over two private SSH hops, followed by local rsync into the verified scoring directory",
+    "model_bytes": 121408256751,
+    "model_files": 9,
+    "model_manifest_sha256": "a055426e1a200f427aea645dc3cd3ad75f393e76d854824a6ddb186841e59720",
+    "network_relay_seconds": 343.1653681648895,
+    "network_payload_MB_per_second": 353.7893622548294,
+    "local_copy_seconds": 133.77531574101886,
+    "destination_hash_seconds": 88.517331629002,
+    "total_local_receive_seconds": 222.67221869400237,
+    "source_training_report_sha256": "390ba27f78a1979f1bb193e1abba59ce5e4f006ba63d5771fd49cc81edd12f38",
+    "model_manifest": {
+      ".metadata": {
+        "bytes": 2751967,
+        "sha256": "321eeddfbfa68f15d4600d6a7b2a65a2ea444a3933e5a7c1badaf1e8c751f61d"
+      },
+      "__0_0.distcp": {
+        "bytes": 15175688098,
+        "sha256": "4191e77d947e6fc302e2fa2d357d642024e74224860fa7976964412a2961d90a"
+      },
+      "__1_0.distcp": {
+        "bytes": 15175688098,
+        "sha256": "63e78a4da0ab8b2d0713c40830ce682ac9f0eb28b48a6661c75a8b753d1439ea"
+      },
+      "__2_0.distcp": {
+        "bytes": 15175688098,
+        "sha256": "a80f6c79194ab4f4fe4783c9c1aa83188bf923dfbf2b40f25ce371f61e3e7a26"
+      },
+      "__3_0.distcp": {
+        "bytes": 15175688098,
+        "sha256": "abb24264ac783137685a16a29654ae395451c6ad82306e5b0ed20fa4d6a9715d"
+      },
+      "__4_0.distcp": {
+        "bytes": 15175688098,
+        "sha256": "519ad5e2c631ad4995184e4ea3ce12fa53e4e88343d1b9c0721d7708b97302cc"
+      },
+      "__5_0.distcp": {
+        "bytes": 15175688098,
+        "sha256": "2fdf3a16d529f0a8220c232183f2228c409dfcdc6bc58d088bafb9c02e253cbe"
+      },
+      "__6_0.distcp": {
+        "bytes": 15175688098,
+        "sha256": "1f491e83076107a1c0660b33841953f4b4ebc03ba38e833b67355c60090e167a"
+      },
+      "__7_0.distcp": {
+        "bytes": 15175688098,
+        "sha256": "591b2d6918a36b60a0301c268b7a95f8d2ff4d4fe325d420c12c57a92af66bb0"
+      }
+    }
+  },
+  "evaluation": {
+    "seed": 42,
+    "workers": 1,
+    "environments": 1,
+    "initial_state_indices": [
+      0
+    ],
+    "tasks": [
+      {
+        "task_id": 0,
+        "valid_trials": 1,
+        "successes": 0
+      },
+      {
+        "task_id": 1,
+        "valid_trials": 1,
+        "successes": 0
+      },
+      {
+        "task_id": 2,
+        "valid_trials": 1,
+        "successes": 0
+      },
+      {
+        "task_id": 3,
+        "valid_trials": 1,
+        "successes": 0
+      },
+      {
+        "task_id": 4,
+        "valid_trials": 1,
+        "successes": 0
+      },
+      {
+        "task_id": 5,
+        "valid_trials": 1,
+        "successes": 0
+      },
+      {
+        "task_id": 6,
+        "valid_trials": 1,
+        "successes": 0
+      },
+      {
+        "task_id": 7,
+        "valid_trials": 1,
+        "successes": 0
+      },
+      {
+        "task_id": 8,
+        "valid_trials": 1,
+        "successes": 0
+      },
+      {
+        "task_id": 9,
+        "valid_trials": 1,
+        "successes": 0
+      }
+    ],
+    "valid_trials": 10,
+    "successes": 0,
+    "model_verification_seconds": 85.76584130799165,
+    "worker_timings": [
+      {
+        "server_ready_seconds": 46.01945122197503,
+        "rollout_seconds": 1790.3131046069902
+      }
+    ],
+    "elapsed_seconds": 1922.754555424006
+  },
+  "source_repositories": {
+    "framework": "https://github.com/NVIDIA/cosmos-framework",
+    "model": "https://huggingface.co/nvidia/Cosmos3-Nano",
+    "dataset": "https://huggingface.co/datasets/nvidia/LIBERO_LeRobot_v3",
+    "qwen": "https://huggingface.co/Qwen/Qwen3-VL-8B-Instruct",
+    "vae": "https://huggingface.co/Wan-AI/Wan2.2-TI2V-5B",
+    "libero": "https://github.com/Lifelong-Robot-Learning/LIBERO",
+    "guardrail": "https://huggingface.co/nvidia/Cosmos-Guardrail1"
+  },
+  "evidence_notes": {
+    "workbench_source": "Checkout used for the training run, with the RTX launcher patch applied.",
+    "workbench_patch_base": "Upstream commit used to prepare this contribution.",
+    "nccl_all_reduce_sum": "Sum of the eight ranks' values, 1 through 8.",
+    "transfer": "The network rate uses decimal megabytes per second. The receiving host then ran a separate local copy and hash. This summary is derived from the native transfer receipt.",
+    "timers": "The trainer process includes the native save. The evaluator wall clock includes pre-scoring model verification, server startup, rollouts and teardown. Component timers may overlap.",
+    "cohort": "One fixed initial state per task at seed 42. This measures the scoring path and its duration."
+  }
+}
