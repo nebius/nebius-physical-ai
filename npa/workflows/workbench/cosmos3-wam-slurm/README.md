@@ -126,6 +126,8 @@ single-GPU evaluator finished in 32 minutes 3 seconds and recorded zero
 successes across ten valid trials, one initial state per task.
 [RTX settings, timings and per-task results](../../../../docs/workbench/evidence/cosmos3-wam-rtx-update2.json)
 
+For the longer RTX run, see the [paired LIBERO-10 results at updates 500 and 1,000 and the microwave replay video](../../../../docs/workbench/evidence/cosmos3-wam-rtx-libero-paired/README.md).
+
 ### Stage the two single-host runtimes
 
 Use fresh absolute paths and a private run directory. Set `WAM_RECIPE` to this directory in the patched checkout on each host. Install the pinned Linux framework and CUDA 13 training environment on both hosts using [cookbook section 2](../../../../docs/workbench/cookbooks/cosmos3-wam-slurm.md#2-install-the-pinned-native-training-environment). Install FFmpeg with the system libav libraries, CMake, OSMesa and the simulator build dependencies in the actual worker environment. The training host also serves the policy for the local reload. Prepare the pinned guardrail cache and access on both hosts as described under [native VM and evaluation additions](#native-vm-and-evaluation-additions).

@@ -1,0 +1,463 @@
+{
+  "training": {
+    "hardware": "RTX PRO 6000 Blackwell Server Edition",
+    "gpus": 8,
+    "seed": 42,
+    "global_batch": 2048,
+    "updates": 1000,
+    "torch_compile_disable": true,
+    "source_revisions": {
+      "framework": "cf5d68c00d97ccd2480a2320ed652b92dec63102",
+      "model": "e59a53c25979a090fa8706c9acc0c254a6e89b92",
+      "qwen": "0c351dd01ed87e9c1b53cbc748cba10e6187ff3b",
+      "dataset": "e5907374380b8f96511957e6ba5582be52a1e179",
+      "vae": "921dbaf3f1674a56f47e83fb80a34bac8a8f203e",
+      "libero": "8f1084e3132a39270c3a13ebe37270a43ece2a01",
+      "guardrail": "d6d4bfa899a71454a700907664f3e88f503950cf"
+    }
+  },
+  "model_manifest_sha256": {
+    "500": "92539d2f89a5ad78ec84ad6c649ce4b16d0570fe44ee8e6c69fbcf32d30b84db",
+    "1000": "9e6323ea6f53cdaca450fa8d8fa22e5ddcd67da3242aca658a53839302f1c662"
+  },
+  "benchmark": {
+    "suite": "LIBERO-10",
+    "evaluation_seed": 42,
+    "cohorts": [
+      {
+        "initial_states": [
+          0
+        ],
+        "pairs": 10,
+        "successes_500": 6,
+        "successes_1000": 8,
+        "gains": 3,
+        "regressions": 1
+      },
+      {
+        "initial_states": [
+          1,
+          2
+        ],
+        "pairs": 20,
+        "successes_500": 9,
+        "successes_1000": 17,
+        "gains": 8,
+        "regressions": 0
+      }
+    ],
+    "matched_trials": [
+      {
+        "task_id": 0,
+        "initial_state": 0,
+        "update_500": {
+          "success": true,
+          "steps": 288
+        },
+        "update_1000": {
+          "success": true,
+          "steps": 280
+        }
+      },
+      {
+        "task_id": 1,
+        "initial_state": 0,
+        "update_500": {
+          "success": false,
+          "steps": 520
+        },
+        "update_1000": {
+          "success": false,
+          "steps": 520
+        }
+      },
+      {
+        "task_id": 2,
+        "initial_state": 0,
+        "update_500": {
+          "success": true,
+          "steps": 291
+        },
+        "update_1000": {
+          "success": true,
+          "steps": 269
+        }
+      },
+      {
+        "task_id": 3,
+        "initial_state": 0,
+        "update_500": {
+          "success": true,
+          "steps": 219
+        },
+        "update_1000": {
+          "success": false,
+          "steps": 520
+        }
+      },
+      {
+        "task_id": 4,
+        "initial_state": 0,
+        "update_500": {
+          "success": true,
+          "steps": 314
+        },
+        "update_1000": {
+          "success": true,
+          "steps": 270
+        }
+      },
+      {
+        "task_id": 5,
+        "initial_state": 0,
+        "update_500": {
+          "success": true,
+          "steps": 198
+        },
+        "update_1000": {
+          "success": true,
+          "steps": 192
+        }
+      },
+      {
+        "task_id": 6,
+        "initial_state": 0,
+        "update_500": {
+          "success": false,
+          "steps": 520
+        },
+        "update_1000": {
+          "success": true,
+          "steps": 242
+        }
+      },
+      {
+        "task_id": 7,
+        "initial_state": 0,
+        "update_500": {
+          "success": true,
+          "steps": 301
+        },
+        "update_1000": {
+          "success": true,
+          "steps": 253
+        }
+      },
+      {
+        "task_id": 8,
+        "initial_state": 0,
+        "update_500": {
+          "success": false,
+          "steps": 520
+        },
+        "update_1000": {
+          "success": true,
+          "steps": 395
+        }
+      },
+      {
+        "task_id": 9,
+        "initial_state": 0,
+        "update_500": {
+          "success": false,
+          "steps": 520
+        },
+        "update_1000": {
+          "success": true,
+          "steps": 249
+        }
+      },
+      {
+        "task_id": 0,
+        "initial_state": 1,
+        "update_500": {
+          "success": true,
+          "steps": 316
+        },
+        "update_1000": {
+          "success": true,
+          "steps": 287
+        }
+      },
+      {
+        "task_id": 0,
+        "initial_state": 2,
+        "update_500": {
+          "success": true,
+          "steps": 285
+        },
+        "update_1000": {
+          "success": true,
+          "steps": 298
+        }
+      },
+      {
+        "task_id": 1,
+        "initial_state": 1,
+        "update_500": {
+          "success": true,
+          "steps": 320
+        },
+        "update_1000": {
+          "success": true,
+          "steps": 271
+        }
+      },
+      {
+        "task_id": 1,
+        "initial_state": 2,
+        "update_500": {
+          "success": true,
+          "steps": 276
+        },
+        "update_1000": {
+          "success": true,
+          "steps": 257
+        }
+      },
+      {
+        "task_id": 2,
+        "initial_state": 1,
+        "update_500": {
+          "success": true,
+          "steps": 258
+        },
+        "update_1000": {
+          "success": true,
+          "steps": 267
+        }
+      },
+      {
+        "task_id": 2,
+        "initial_state": 2,
+        "update_500": {
+          "success": true,
+          "steps": 271
+        },
+        "update_1000": {
+          "success": true,
+          "steps": 262
+        }
+      },
+      {
+        "task_id": 3,
+        "initial_state": 1,
+        "update_500": {
+          "success": false,
+          "steps": 520
+        },
+        "update_1000": {
+          "success": true,
+          "steps": 215
+        }
+      },
+      {
+        "task_id": 3,
+        "initial_state": 2,
+        "update_500": {
+          "success": false,
+          "steps": 520
+        },
+        "update_1000": {
+          "success": false,
+          "steps": 520
+        }
+      },
+      {
+        "task_id": 4,
+        "initial_state": 1,
+        "update_500": {
+          "success": true,
+          "steps": 233
+        },
+        "update_1000": {
+          "success": true,
+          "steps": 253
+        }
+      },
+      {
+        "task_id": 4,
+        "initial_state": 2,
+        "update_500": {
+          "success": false,
+          "steps": 520
+        },
+        "update_1000": {
+          "success": true,
+          "steps": 256
+        }
+      },
+      {
+        "task_id": 5,
+        "initial_state": 1,
+        "update_500": {
+          "success": true,
+          "steps": 202
+        },
+        "update_1000": {
+          "success": true,
+          "steps": 196
+        }
+      },
+      {
+        "task_id": 5,
+        "initial_state": 2,
+        "update_500": {
+          "success": false,
+          "steps": 520
+        },
+        "update_1000": {
+          "success": false,
+          "steps": 520
+        }
+      },
+      {
+        "task_id": 6,
+        "initial_state": 1,
+        "update_500": {
+          "success": false,
+          "steps": 520
+        },
+        "update_1000": {
+          "success": true,
+          "steps": 341
+        }
+      },
+      {
+        "task_id": 6,
+        "initial_state": 2,
+        "update_500": {
+          "success": false,
+          "steps": 520
+        },
+        "update_1000": {
+          "success": true,
+          "steps": 282
+        }
+      },
+      {
+        "task_id": 7,
+        "initial_state": 1,
+        "update_500": {
+          "success": false,
+          "steps": 520
+        },
+        "update_1000": {
+          "success": true,
+          "steps": 261
+        }
+      },
+      {
+        "task_id": 7,
+        "initial_state": 2,
+        "update_500": {
+          "success": true,
+          "steps": 359
+        },
+        "update_1000": {
+          "success": true,
+          "steps": 254
+        }
+      },
+      {
+        "task_id": 8,
+        "initial_state": 1,
+        "update_500": {
+          "success": false,
+          "steps": 520
+        },
+        "update_1000": {
+          "success": true,
+          "steps": 385
+        }
+      },
+      {
+        "task_id": 8,
+        "initial_state": 2,
+        "update_500": {
+          "success": false,
+          "steps": 520
+        },
+        "update_1000": {
+          "success": true,
+          "steps": 458
+        }
+      },
+      {
+        "task_id": 9,
+        "initial_state": 1,
+        "update_500": {
+          "success": false,
+          "steps": 520
+        },
+        "update_1000": {
+          "success": true,
+          "steps": 263
+        }
+      },
+      {
+        "task_id": 9,
+        "initial_state": 2,
+        "update_500": {
+          "success": false,
+          "steps": 520
+        },
+        "update_1000": {
+          "success": false,
+          "steps": 520
+        }
+      }
+    ]
+  },
+  "recorded_replays": {
+    "task_id": 9,
+    "initial_state": 0,
+    "seed": 42,
+    "initial_state_sha256": "ea7db2b727794199cfa1e42f8d924c5841e4af18716a392adf30d5517114c87f",
+    "included_in_benchmark_counts": false,
+    "outcomes": [
+      {
+        "update": 500,
+        "success": false,
+        "simulator_steps": 520
+      },
+      {
+        "update": 1000,
+        "success": true,
+        "simulator_steps": 244
+      }
+    ],
+    "file": "microwave-recorded-replays.mp4",
+    "sha256": "2ae5ca5f0eb707e256d99bc5e9c7b58e18e25f9e5df1db59fe219fada05bf170",
+    "fps": 20,
+    "frames": 521
+  },
+  "checkpoint_verification": {
+    "500": {
+      "source_checkpoint_sha256": "81e18cb91f61caa1b3b2eb1fffddd9452d09eb62c611aa1549da63eafc61f096",
+      "transferred_and_scored_model_manifest_sha256": "92539d2f89a5ad78ec84ad6c649ce4b16d0570fe44ee8e6c69fbcf32d30b84db",
+      "model_bytes": 121408256765,
+      "scoring_host_model_verification_seconds": 104.45
+    },
+    "1000": {
+      "source_checkpoint_sha256": "438ee17020c782af7040846a45d57821e92697def0f0beb1469c54237d552801",
+      "transferred_and_scored_model_manifest_sha256": "9e6323ea6f53cdaca450fa8d8fa22e5ddcd67da3242aca658a53839302f1c662",
+      "model_bytes": 121408256765,
+      "scoring_host_model_verification_seconds": 86.67
+    }
+  },
+  "second_pass_state_0_controls": {
+    "included_in_benchmark_counts": false,
+    "parallel_workers_per_checkpoint": 3,
+    "outcomes": {
+      "500": {
+        "successes": 5,
+        "valid_trials": 10
+      },
+      "1000": {
+        "successes": 8,
+        "valid_trials": 10
+      }
+    }
+  }
+}

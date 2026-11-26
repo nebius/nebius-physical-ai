@@ -363,6 +363,10 @@ checkpoint meeting that predeclared threshold on the full protocol. Report
 evaluation compute separately and retain uncertainty across tasks, trials and
 training seeds. Partner data requires its own matched success criterion.
 
+### Paired RTX checkpoints on LIBERO-10
+
+At updates 500 and 1,000, one seed-42 training run scored 6/10 and 8/10 on initial state 0 across ten tasks. On initial states 1 and 2, the same checkpoints scored 9/20 and 17/20. The microwave demo shows two fresh replays of state 0. The benchmark table counts only the scored episodes. [Paired results and recorded replays](../evidence/cosmos3-wam-rtx-libero-paired/README.md)
+
 ## 7. Preserve evidence and stop owned resources
 
 Native logs and configs can contain host names, paths or environment values.
