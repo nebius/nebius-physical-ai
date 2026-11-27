@@ -1,4 +1,4 @@
-# Executing eight actions per query scored 96/150 on three LIBERO-10 tasks
+# Eight actions per query produced five fewer successes across 150 paired states
 
 The update-1,000 checkpoint scored **101/150 (67.3%)** with 16 actions per policy query and **96/150 (64.0%)** with eight. Both arms ran fresh episodes on the same 150 task/state pairs. A gain means only horizon 8 succeeded. A regression means only horizon 16 succeeded.
 
@@ -9,13 +9,13 @@ The update-1,000 checkpoint scored **101/150 (67.3%)** with 16 actions per polic
 | Mug into microwave, then close it | 36/50 | 41/50 | 13 | 8 | +5 |
 | **All three tasks** | **101/150** | **96/150** | **26** | **31** | **-5** |
 
-Both horizons succeeded on 70 pairs and timed out on 23. Horizon 8 missed the prespecified thresholds of 133/150 successes and 21 net gains. Horizon 16 remains the full-suite setting. The earlier full-suite evaluation scored 429/500. Its 112 successes on these same 150 initial states came from earlier episodes. [Full-suite evaluation](../cosmos3-wam-rtx-libero-full500/README.md)
+Both horizons succeeded on 70 pairs and timed out on 23. To advance to a full-suite evaluation, horizon 8 needed both 133/150 successes and 21 net gains. It reached neither threshold. Horizon 16 remains the full-suite setting. The earlier full-suite evaluation scored 429/500. Its 112 successes on these same 150 initial states came from earlier episodes. [Full-suite evaluation](../cosmos3-wam-rtx-libero-full500/README.md)
 
 ## CPU replay located the largest loss at pudding placement
 
-Ordered CPU replay reproduced the native outcome and exact step count of all 300 A/B episodes. Both finger pads touched the pudding in all 17 mug-and-pudding regressions at horizon 8. In 16, the mug was on the plate at timeout and the pudding never reached its target. In the other, the pudding reached its target and the mug was off the plate at timeout. The pudding reached its target at least once in 31/50 horizon-16 episodes and 17/50 horizon-8 episodes. It rose at least 2 cm above its starting height during two-pad contact in only 3/50 per arm. This lift measure alone could not distinguish successful placement.
+Ordered CPU replay reproduced the native outcome and exact step count of all 300 A/B episodes. Both finger pads touched the pudding in all 17 mug-and-pudding regressions at horizon 8. In 16, the mug was on the plate at timeout and the pudding never reached its target. In the other (state 9), the pudding reached its target and the mug was off the plate at timeout. The pudding reached its target at least once in 31/50 horizon-16 episodes and 17/50 horizon-8 episodes. It rose at least 2 cm above its starting height during two-pad contact in only 3/50 per arm. This lift measure alone could not distinguish successful placement.
 
-In 10 of the 11 drawer gains, horizon 16 ended with the bowl inside and the drawer open. In five of the six regressions, horizon 8 ended that way. On microwave, the failing arm never inserted the mug in 10 of the 13 gains and seven of the eight regressions. [Per-state outcomes, steps and replay measurements](paired-trials.csv)
+In 10 of the 11 drawer gains, horizon 16 ended with the bowl inside and the closure predicate false. In five of the six regressions, horizon 8 ended that way. On microwave, the failing arm never inserted the mug in 10 of the 13 gains and seven of the eight regressions. [Per-state outcomes, steps and replay measurements](paired-trials.csv)
 
 ## Evaluation settings
 
