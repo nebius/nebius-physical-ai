@@ -126,6 +126,8 @@ single-GPU evaluator finished in 32 minutes 3 seconds and recorded zero
 successes across ten valid trials, one initial state per task.
 [RTX settings, timings and per-task results](../../../../docs/workbench/evidence/cosmos3-wam-rtx-update2.json)
 
+A subsequent run passed training and native reload under one supervisor and scored the copied checkpoint on the evaluation host. [Clean two-update qualification](../../../../docs/workbench/evidence/cosmos3-wam-rtx-clean-update2.json) · [First-rollout instructions and timings](../../../../docs/workbench/cookbooks/cosmos3-wam-rtx-first-rollout.md)
+
 For the longer RTX run, see the [paired LIBERO-10 results at updates 500 and 1,000 and the microwave replay video](../../../../docs/workbench/evidence/cosmos3-wam-rtx-libero-paired/README.md).
 
 ### Stage the two single-host runtimes
@@ -219,6 +221,7 @@ receipt; the original capture is retained unchanged.
 | `probe.py` | Actual BF16 CUDA attention forward/backward and native FP32 fused Adam update |
 | `cluster.py` | Private reserved-capacity Soperator spec; 2 TiB shared jail, explicit node count |
 | `prepare.py` | Pinned HF downloads, actual Parquet/camera checks, dataset hashes, DCP conversion |
+| `inspect_episode.py` | Check one local LeRobot window against the RTX two-camera and action contract on CPU |
 | `export_data_sample.py` | Native decoded camera/action window for the reproducible data-pipeline figure |
 | `recipe.py` / `train.toml.in` | Native TOML, batch arithmetic, Slurm launch, per-node completion evidence |
 | `distributed_preflight.py` | Rank/host placement and a real NCCL all-reduce before training |

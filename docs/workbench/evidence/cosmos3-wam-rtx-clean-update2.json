@@ -1,0 +1,203 @@
+{
+  "scope": "Fresh two-update training qualification and native reload, followed by a model-only transfer and one scored initial state per LIBERO-10 task.",
+  "date_utc": "2026-11-28",
+  "workbench_recipe_commit": "87bbfa16077b46e2e56963cd00b9800aac9f186e",
+  "upstream_pins": {
+    "framework": "cf5d68c00d97ccd2480a2320ed652b92dec63102",
+    "model": "e59a53c25979a090fa8706c9acc0c254a6e89b92",
+    "qwen": "0c351dd01ed87e9c1b53cbc748cba10e6187ff3b",
+    "dataset": "e5907374380b8f96511957e6ba5582be52a1e179",
+    "vae": "921dbaf3f1674a56f47e83fb80a34bac8a8f203e",
+    "libero": "8f1084e3132a39270c3a13ebe37270a43ece2a01"
+  },
+  "hardware": {
+    "training_gpus": 8,
+    "evaluation_gpus": 1,
+    "model": "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+    "pytorch": "2.10.0+cu130"
+  },
+  "training": {
+    "launcher": "torchrun",
+    "seed": 42,
+    "samples_per_rank": 64,
+    "global_batch": 2048,
+    "gradient_accumulation": 4,
+    "torch_compile_disable": true,
+    "updates": [
+      {
+        "step": 1,
+        "loss": 15.5617,
+        "warmup_seconds": 120.36
+      },
+      {
+        "step": 2,
+        "loss": 15.655,
+        "warmup_seconds": 34.98
+      }
+    ],
+    "trainer_startup_seconds": 97.0,
+    "worker_preflight_seconds": 25.11590435600374,
+    "train_process_seconds": 218.7625198109963,
+    "save_seconds": 34.88,
+    "checkpoint_hash_seconds": 126.05573481700412,
+    "native_rank_exits": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "peak_allocated_bytes_by_rank": [
+      53489514496,
+      53474270208,
+      53618843136,
+      53873923072,
+      53546658304,
+      53861908992,
+      53481735168,
+      53623733248
+    ],
+    "nccl_all_reduce_sum": 36.0
+  },
+  "qualification": {
+    "uninterrupted_pass": true,
+    "run_sha256": "a3919714a559f3a0430541032328584ac081bd0c618c94380f7e56af098ed030",
+    "checkpoint_sha256": "3998416b1522f400f2133d47a65b5ca229ce1c4213d014bfa8e4b3a794d41d37",
+    "source_training_report_sha256": "a296254648d36b88daafb485f913334e97869a6f8857738018d46c0f82529bc8",
+    "status": "passed",
+    "scope_returncode": 0,
+    "launch_through_train_exit_seconds": 244.57082111199998,
+    "smoke_verification_seconds": 126.70941678599775,
+    "reload_wall_seconds": 187.4297024940024,
+    "elapsed_seconds": 558.7707550289997,
+    "reload": {
+      "schema": "npa.cosmos3.wam-policy-reload.v1",
+      "step": 2,
+      "loaded_sha256": "3998416b1522f400f2133d47a65b5ca229ce1c4213d014bfa8e4b3a794d41d37",
+      "checkpoint_hash_seconds": 135.74246668300475,
+      "server_ready_seconds": 48.01638383200043,
+      "elapsed_seconds": 187.36205065000104
+    },
+    "full_checkpoint_bytes": 177284648536,
+    "checkpoint_storage": "Private RAM-backed filesystems on the training and evaluation hosts."
+  },
+  "transfer": {
+    "model_manifest_sha256": "971d10677806690e44e750178ef11cf4b653b3145a4f6ca64e241dd05163caec",
+    "model_bytes": 121408256746,
+    "model_files": 9,
+    "model_transfer_seconds": 110.3681803829968,
+    "destination_hash_seconds": 97.77266332501313,
+    "run_sha256": "a3919714a559f3a0430541032328584ac081bd0c618c94380f7e56af098ed030",
+    "source_training_report_sha256": "a296254648d36b88daafb485f913334e97869a6f8857738018d46c0f82529bc8",
+    "total_receive_seconds": 208.18815867698868,
+    "network_relay_seconds": 331.4108131039975,
+    "network_payload_MB_per_second": 366.33764483689856,
+    "setup_retry": "The relay initially stopped before copying model data because the destination scratch parent was absent. The retry used the same verified checkpoint and source digest."
+  },
+  "evaluation": {
+    "seed": 42,
+    "workers": 1,
+    "environments": 1,
+    "policy": {
+      "action_chunk_size": 16,
+      "fps": 20,
+      "seed": 42,
+      "guidance": 1.0,
+      "num_steps": 30,
+      "raw_action_dim": 10
+    },
+    "initial_state": 0,
+    "trials_per_task": 1,
+    "environment_or_inference_errors": 0,
+    "step": 2,
+    "trials": 10,
+    "successes": 0,
+    "elapsed_seconds": 1890.6148751889996,
+    "full_500_trial_evaluation": false,
+    "model_manifest_sha256": "971d10677806690e44e750178ef11cf4b653b3145a4f6ca64e241dd05163caec",
+    "source_checkpoint_sha256": "3998416b1522f400f2133d47a65b5ca229ce1c4213d014bfa8e4b3a794d41d37",
+    "source_training_report_sha256": "a296254648d36b88daafb485f913334e97869a6f8857738018d46c0f82529bc8",
+    "model_verification_seconds": 81.66138297200087,
+    "worker_timings": [
+      {
+        "server_ready_seconds": 38.01556459898711,
+        "rollout_seconds": 1770.389798926015
+      }
+    ],
+    "tasks": [
+      {
+        "task_id": 0,
+        "task": "put both the alphabet soup and the tomato sauce in the basket",
+        "episode": 0,
+        "success": false,
+        "steps": 520
+      },
+      {
+        "task_id": 1,
+        "task": "put both the cream cheese box and the butter in the basket",
+        "episode": 0,
+        "success": false,
+        "steps": 520
+      },
+      {
+        "task_id": 2,
+        "task": "turn on the stove and put the moka pot on it",
+        "episode": 0,
+        "success": false,
+        "steps": 520
+      },
+      {
+        "task_id": 3,
+        "task": "put the black bowl in the bottom drawer of the cabinet and close it",
+        "episode": 0,
+        "success": false,
+        "steps": 520
+      },
+      {
+        "task_id": 4,
+        "task": "put the white mug on the left plate and put the yellow and white mug on the right plate",
+        "episode": 0,
+        "success": false,
+        "steps": 520
+      },
+      {
+        "task_id": 5,
+        "task": "pick up the book and place it in the back compartment of the caddy",
+        "episode": 0,
+        "success": false,
+        "steps": 520
+      },
+      {
+        "task_id": 6,
+        "task": "put the white mug on the plate and put the chocolate pudding to the right of the plate",
+        "episode": 0,
+        "success": false,
+        "steps": 520
+      },
+      {
+        "task_id": 7,
+        "task": "put both the alphabet soup and the cream cheese box in the basket",
+        "episode": 0,
+        "success": false,
+        "steps": 520
+      },
+      {
+        "task_id": 8,
+        "task": "put both moka pots on the stove",
+        "episode": 0,
+        "success": false,
+        "steps": 520
+      },
+      {
+        "task_id": 9,
+        "task": "put the yellow and white mug in the microwave and close it",
+        "episode": 0,
+        "success": false,
+        "steps": 520
+      }
+    ]
+  }
+}
