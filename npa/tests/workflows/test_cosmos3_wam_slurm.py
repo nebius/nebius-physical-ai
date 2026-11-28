@@ -25,6 +25,39 @@ def _load(name):
     return module
 
 
+@pytest.mark.parametrize(
+    "fault", [None, "model", "referenced_empty", "missing", "truncated", "no_records"]
+)
+def test_native_dcp_scheduler_writer_placeholders(tmp_path, monkeypatch, fault):
+    monkeypatch.syspath_prepend(str(RECIPE))
+    smoke = _load("smoke_report")
+    name = {"referenced_empty": "__1_0.distcp", "missing": "__7_0.distcp"}.get(
+        fault, "__0_0.distcp"
+    )
+    extent = SimpleNamespace(
+        relative_path=name, offset=0, length=9 if fault == "truncated" else 8
+    )
+    storage = {} if fault == "no_records" else {0: extent}
+    reader = SimpleNamespace(
+        read_metadata=lambda: SimpleNamespace(storage_data=storage)
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "torch.distributed.checkpoint",
+        SimpleNamespace(FileSystemReader=lambda _: reader),
+    )
+    files = {
+        "scheduler/__0_0.distcp": {"bytes": 8},
+        "scheduler/__1_0.distcp": {"bytes": 0},
+        "model/__0_0.distcp": {"bytes": 0 if fault == "model" else 8},
+    }
+    if fault:
+        with pytest.raises(ValueError):
+            smoke._check_empty_shards(tmp_path, files)
+    else:
+        smoke._check_empty_shards(tmp_path, files)
+
+
 def _args(tmp_path, nodes=1):
     return (
         _load("recipe")
@@ -735,7 +768,9 @@ def test_worker_failure_is_recorded_after_real_launcher_boundary(tmp_path, monke
     monkeypatch.setenv("MASTER_ADDR", "rank-zero")
     monkeypatch.setattr(recipe, "_verify_inputs", lambda *_: None)
     monkeypatch.setattr(
-        recipe, "_verify_gpus", lambda count: {"gpu_names": ["NVIDIA B200"] * count}
+        recipe,
+        "_verify_gpus",
+        lambda count, hardware=None: {"gpu_names": ["NVIDIA B200"] * count},
     )
     commands = []
 
@@ -882,6 +917,662 @@ def test_four_gpu_collective_requires_exact_local_rank_placement(identities, wor
     else:
         with pytest.raises(RuntimeError):
             check(identities, world, 4)
+
+
+def _fake_torch(monkeypatch, names):
+    cuda = SimpleNamespace(
+        device_count=lambda: len(names), get_device_name=lambda index: names[index]
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "torch",
+        SimpleNamespace(
+            cuda=cuda, __version__="fixture", version=SimpleNamespace(cuda="fixture")
+        ),
+    )
+    return _load("recipe")
+
+
+def test_b200_remains_the_default_hardware_setting(tmp_path):
+    try:
+        import tomllib
+    except ModuleNotFoundError:
+        import tomli as tomllib
+
+    recipe = _load("recipe")
+    args = _args(tmp_path)
+    assert args.hardware == "b200"
+    args.gpus_per_node = 4
+    recipe._plan(args)
+    settings = json.loads((args.run_dir / "run.json").read_text())
+    assert "hardware" not in settings
+    assert settings["schema"] == "npa.cosmos3.wam-slurm.v1"
+    config = tomllib.loads((args.run_dir / "train.toml").read_text())
+    assert config["model"]["parallelism"]["data_parallel_shard_degree"] == 4
+    assert config["trainer"]["grad_accum_iter"] == 8
+    script = (args.run_dir / "train.sbatch").read_text()
+    assert "#SBATCH --gpus-per-node=4" in script
+    assert "--gpus-per-task=4" in script
+    env = recipe._environment(settings, args.run_dir)
+    assert env["NPA_WAM_GPUS_PER_NODE"] == "4"
+    assert env["NPA_WAM_HARDWARE"] == "NVIDIA B200"
+
+
+def _rtx_args(tmp_path):
+    args = _args(tmp_path)
+    args.hardware = "rtx-pro-6000"
+    args.gpus_per_node = 8
+    return args
+
+
+def test_rtx_pro_6000_plan_renders_one_node_of_eight_gpus(tmp_path, monkeypatch):
+    try:
+        import tomllib
+    except ModuleNotFoundError:
+        import tomli as tomllib
+
+    recipe = _load("recipe")
+    args = _rtx_args(tmp_path)
+    recipe._plan(args)
+    settings = json.loads((args.run_dir / "run.json").read_text())
+    config = tomllib.loads((args.run_dir / "train.toml").read_text())
+    assert settings["hardware"] == {
+        "default": False,
+        "label": "RTX PRO 6000 Blackwell Server Edition",
+    }
+    assert settings["nodes"] == 1 and settings["gpus"] == 8
+    assert settings["gpus_per_node"] == 8
+    assert settings["global_batch"] == 2048
+    assert settings["samples_per_rank"] == 64
+    assert settings["gradient_accumulation"] == 4
+    assert config["model"]["parallelism"]["data_parallel_shard_degree"] == 8
+    assert config["model"]["parallelism"]["data_parallel_replicate_degree"] == 1
+    assert config["trainer"]["grad_accum_iter"] == 4
+    script = (args.run_dir / "train.sbatch").read_text()
+    assert "#SBATCH --nodes=1" in script
+    assert "#SBATCH --gpus-per-node=8" in script
+    assert "--ntasks=1 " in script and "--gpus-per-task=8" in script
+    env = recipe._environment(settings, args.run_dir)
+    assert env["NPA_WAM_HARDWARE"] == "RTX PRO 6000 Blackwell Server Edition"
+    monkeypatch.setenv("MASTER_ADDR", "rank-zero")
+    argv = recipe._training_argv(settings, args.run_dir, 0)
+    assert "--nproc_per_node=8" in argv and "--nnodes=1" in argv
+    assert "--node_rank=0" in argv
+
+
+@pytest.mark.parametrize("nodes", [2, 4])
+def test_rtx_pro_6000_rejects_multinode_plans(tmp_path, nodes):
+    recipe = _load("recipe")
+    args = _rtx_args(tmp_path)
+    args.nodes = nodes
+    args.global_batch = 2048
+    with pytest.raises(ValueError, match="exactly one node"):
+        recipe._plan(args)
+    assert not args.run_dir.exists()
+
+
+@pytest.mark.parametrize("gpus_per_node", [4])
+def test_rtx_pro_6000_rejects_wrong_gpu_count_plan(tmp_path, gpus_per_node):
+    recipe = _load("recipe")
+    args = _rtx_args(tmp_path)
+    args.gpus_per_node = gpus_per_node
+    with pytest.raises(ValueError, match="exactly eight GPUs per node"):
+        recipe._plan(args)
+    assert not args.run_dir.exists()
+
+
+def test_unknown_hardware_setting_is_rejected(tmp_path):
+    recipe = _load("recipe")
+    args = _args(tmp_path)
+    args.hardware = "h200"
+    with pytest.raises(ValueError, match="unknown hardware"):
+        recipe._settings(args)
+
+
+@pytest.mark.parametrize(
+    "names",
+    [
+        ["NVIDIA RTX PRO 6000 Blackwell Server Edition"] * 8,
+        # Mixed labels are rejected even when every entry shares the RTX prefix.
+        ["NVIDIA RTX PRO 6000 Blackwell Server Edition"] * 7 + ["NVIDIA B200"],
+        ["NVIDIA RTX PRO 6000 Blackwell"] * 8,
+        # The Max-Q workstation part has a different inventory name.
+        ["NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition"] * 8,
+    ],
+)
+def test_rtx_pro_6000_inventory_accepts_only_eight_uniform_server_gpus(
+    monkeypatch, names
+):
+    recipe = _fake_torch(monkeypatch, names)
+    hardware = {"default": False, "label": "RTX PRO 6000 Blackwell Server Edition"}
+    if names == ["NVIDIA RTX PRO 6000 Blackwell Server Edition"] * 8:
+        assert recipe._verify_gpus(8, hardware)["gpu_names"] == names
+    else:
+        with pytest.raises(
+            ValueError, match="exactly 8 RTX PRO 6000 Blackwell Server Edition"
+        ):
+            recipe._verify_gpus(8, hardware)
+
+
+@pytest.mark.parametrize(
+    "names,hardware",
+    [
+        (
+            ["NVIDIA RTX PRO 6000 Blackwell Server Edition"] * 8,
+            {"label": "NVIDIA B200"},
+        ),
+        (["NVIDIA B200"] * 8, {"label": "RTX PRO 6000 Blackwell Server Edition"}),
+    ],
+)
+def test_rtx_inventory_stays_closed_to_the_planned_family(monkeypatch, names, hardware):
+    recipe = _fake_torch(monkeypatch, names)
+    with pytest.raises(ValueError):
+        recipe._verify_gpus(8, hardware)
+
+
+@pytest.mark.parametrize("count", [4, 7, 9])
+def test_rtx_pro_6000_rejects_wrong_visible_gpu_count(monkeypatch, count):
+    recipe = _fake_torch(
+        monkeypatch, ["NVIDIA RTX PRO 6000 Blackwell Server Edition"] * count
+    )
+    hardware = {"default": False, "label": "RTX PRO 6000 Blackwell Server Edition"}
+    with pytest.raises(
+        ValueError, match="exactly 8 RTX PRO 6000 Blackwell Server Edition"
+    ):
+        recipe._verify_gpus(8, hardware)
+
+
+def test_receipt_without_hardware_keeps_b200_validation(tmp_path, monkeypatch):
+    recipe = _load("recipe")
+    args = _args(tmp_path)
+    recipe._plan(args)
+    path = args.run_dir / "run.json"
+    receipt = json.loads(path.read_text())
+    assert "hardware" not in receipt
+    settings = receipt
+    assert recipe._topology(settings)["label"] == "NVIDIA B200"
+    assert (
+        recipe._environment(settings, args.run_dir)["NPA_WAM_HARDWARE"] == "NVIDIA B200"
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "torch",
+        SimpleNamespace(
+            cuda=SimpleNamespace(
+                device_count=lambda: 8,
+                get_device_name=lambda _: "NVIDIA B200",
+            ),
+            __version__="fixture",
+            version=SimpleNamespace(cuda="fixture"),
+        ),
+    )
+    assert len(recipe._verify_gpus(8, settings.get("hardware"))["gpu_names"]) == 8
+    monkeypatch.setitem(
+        sys.modules,
+        "torch",
+        SimpleNamespace(
+            cuda=SimpleNamespace(
+                device_count=lambda: 8,
+                get_device_name=lambda _: (
+                    "NVIDIA RTX PRO 6000 Blackwell Server Edition"
+                ),
+            ),
+            __version__="fixture",
+            version=SimpleNamespace(cuda="fixture"),
+        ),
+    )
+    with pytest.raises(ValueError, match="exactly 8 NVIDIA B200"):
+        recipe._verify_gpus(8, settings.get("hardware"))
+
+
+@pytest.mark.parametrize(
+    "identities,world,devices,hardware,valid",
+    [
+        # An eight-rank single host is the RTX placement that passes.
+        (
+            [("host", n) for n in range(8)],
+            8,
+            8,
+            "RTX PRO 6000 Blackwell Server Edition",
+            True,
+        ),
+        # The same world split across two hosts is rejected under the RTX setting.
+        (
+            [("a", n) for n in range(4)] + [("b", n) for n in range(4)],
+            8,
+            8,
+            "RTX PRO 6000 Blackwell Server Edition",
+            False,
+        ),
+        # Two full nodes are also rejected under the RTX setting.
+        (
+            [("a", n) for n in range(8)] + [("b", n) for n in range(8)],
+            16,
+            8,
+            "RTX PRO 6000 Blackwell Server Edition",
+            False,
+        ),
+        # Four cards cannot satisfy the eight-device RTX setting.
+        (
+            [("host", n) for n in range(4)],
+            4,
+            4,
+            "RTX PRO 6000 Blackwell Server Edition",
+            False,
+        ),
+        # Four cards on one host still pass for B200.
+        ([("host", n) for n in range(4)], 4, 4, None, True),
+        # Two B200 nodes of eight cards still pass.
+        (
+            [("a", n) for n in range(8)] + [("b", n) for n in range(8)],
+            16,
+            8,
+            None,
+            True,
+        ),
+        # A repeated local rank differs from the planned GPU count.
+        ([("host", n) for n in (0, 1, 2, 2, 4, 5, 6, 7)], 8, 8, None, False),
+    ],
+)
+def test_rtx_and_b200_collective_placement(identities, world, devices, hardware, valid):
+    check = _load("distributed_preflight")._verify_placement
+    if valid:
+        assert check(identities, world, devices, hardware) >= 1
+    else:
+        with pytest.raises(RuntimeError):
+            check(identities, world, devices, hardware)
+
+
+def test_rtx_collective_accepts_one_node_and_rejects_two():
+    check = _load("distributed_preflight")._verify_placement
+    one_node = [("host", n) for n in range(8)]
+    two_nodes = [("a", n) for n in range(8)] + [("b", n) for n in range(8)]
+    assert check(one_node, 8, 8, "RTX PRO 6000 Blackwell Server Edition") == 1
+    with pytest.raises(RuntimeError, match="exactly one node"):
+        check(two_nodes, 16, 8, "RTX PRO 6000 Blackwell Server Edition")
+    assert check(two_nodes, 16, 8) == 2
+
+
+@pytest.mark.parametrize(
+    "failure",
+    (
+        None,
+        "local-valid",
+        "local-zero-peak",
+        "local-wrong-plan",
+        "local-wrong-native-batch",
+        "local-wrong-native-accumulation",
+        "local-wrong-native-shards",
+        "local-missing-save-time",
+        "local-stale-rank",
+        "local-failed-rank",
+        "local-extra-rank",
+        "local-duplicate-uuid",
+        "local-node-exit",
+        "missing-update",
+        "extra-update",
+        "nonfinite",
+        "worker-exit",
+        "wrong-device",
+        "stale-settings",
+        "incomplete-checkpoint",
+    ),
+)
+def test_rtx_smoke_report_requires_native_update_and_checkpoint_evidence(
+    tmp_path, failure
+):
+    recipe = _load("recipe")
+    args = _rtx_args(tmp_path)
+    args.steps = 2
+    local = failure is not None and failure.startswith("local-")
+    if local:
+        args.launcher = "torchrun"
+    if failure == "local-wrong-plan":
+        args.samples_per_rank = 32
+    recipe._plan(args)
+    run = args.run_dir
+    proof = {
+        "status": "passed",
+        "backend": "nccl",
+        "world_size": 8,
+        "hosts": 1,
+        "all_reduce_sum": 36,
+    }
+    (run / "distributed-preflight.json").write_text(json.dumps(proof))
+    node = {
+        "rank": 0,
+        "returncode": 1 if failure == "worker-exit" else 0,
+        "run_sha256": hashlib.sha256((run / "run.json").read_bytes()).hexdigest(),
+        "hardware": {
+            "gpu_names": [
+                "NVIDIA B200"
+                if failure == "wrong-device"
+                else recipe.RTX_PRO_6000["names"][0]
+            ]
+            * 8
+        },
+        "train_process_seconds": 31.2,
+        "preflight_seconds": 1.0,
+        "trainer_started_unix": 1767225600.0,
+    }
+    if local:
+        import uuid
+
+        (run / "ranks").mkdir()
+        for rank in range(8 + (failure == "local-extra-rank")):
+            receipt = dict(
+                rank=rank,
+                local_rank=rank,
+                host="fixture",
+                run_sha256=node["run_sha256"],
+                returncode=0,
+                peak_allocated_bytes=0
+                if rank == 7 and failure == "local-zero-peak"
+                else 100,
+                device_uuid=str(uuid.UUID(int=rank + 1)),
+            )
+            if rank == 7 and failure == "local-stale-rank":
+                receipt["run_sha256"] = "0" * 64
+            if rank == 7 and failure == "local-failed-rank":
+                receipt["returncode"] = 17
+            if rank == 7 and failure == "local-duplicate-uuid":
+                receipt["device_uuid"] = str(uuid.UUID(int=1))
+            (run / f"ranks/{rank}.json").write_text(json.dumps(receipt))
+        if failure == "local-node-exit":
+            node["returncode"] = 9
+    if failure == "stale-settings":
+        node["run_sha256"] = "0" * 64
+    (run / "node-0.finished.json").write_text(json.dumps(node))
+    log = "Iteration 1: Hit counter: 1/50 | Loss: 0.9900 | Time: 2.00s\n"
+    if failure != "missing-update":
+        loss = "nan" if failure == "nonfinite" else "0.9000"
+        log += f"Iteration 2: Hit counter: 2/50 | Loss: {loss} | Time: 1.00s\n"
+    if failure == "extra-update":
+        log += "Iteration 3: Hit counter: 3/50 | Loss: 0.9010 | Time: 1.00s\n"
+    log += "[01-01 00:00:05|INFO|trainer:301:train] Starting training...\nCheckpoint save completed: Time taken: 3.00 seconds\n"
+    if failure == "local-missing-save-time":
+        log = log.replace("Checkpoint save completed:", "unmeasured save:")
+    (run / "node-0.log").write_text(log)
+    job = run / "output/cosmos3_wam/libero_10" / args.name
+    for component in ("model", "optim", "scheduler", "trainer"):
+        directory = job / "checkpoints/iter_000000002" / component
+        directory.mkdir(parents=True)
+        (directory / ".metadata").write_text("native metadata")
+        if failure != "incomplete-checkpoint" or component != "trainer":
+            (directory / "__0_0.distcp").write_text("native bytes")
+    (job / "config.yaml").write_text(
+        json.dumps(
+            {
+                "model": {
+                    "config": {
+                        "parallelism": {
+                            "data_parallel_shard_degree": 4
+                            if failure == "local-wrong-native-shards"
+                            else 8,
+                            "data_parallel_replicate_degree": 1,
+                            "context_parallel_shard_degree": 1,
+                        }
+                    }
+                },
+                "trainer": {
+                    "grad_accum_iter": 2
+                    if failure == "local-wrong-native-accumulation"
+                    else 4,
+                    "max_iter": 2,
+                },
+                "dataloader_train": {
+                    "max_samples_per_batch": 32
+                    if failure == "local-wrong-native-batch"
+                    else 64
+                },
+            }
+        )
+    )
+    result = subprocess.run(
+        [sys.executable, "-B", str(RECIPE / "smoke_report.py"), "--run-dir", str(run)],
+        text=True,
+        capture_output=True,
+    )
+    if failure not in (None, "local-valid"):
+        assert result.returncode == 1, result.stderr
+        assert result.stdout == ""
+        return
+    assert result.returncode == 0, result.stderr
+    report = json.loads(result.stdout)
+    assert report["completed_optimizer_updates"] == 2
+    assert [update["step"] for update in report["updates"]] == [1, 2]
+    assert len(report["checkpoint_files"]) == 8
+    if local:
+        assert len(report["trainer_ranks"]) == 8
+        assert report["train_process_seconds"] == 31.2
+
+
+@pytest.mark.parametrize("same_checkpoint", (True, False))
+def test_native_reload_skips_trials_and_requires_exact_checkpoint(
+    tmp_path, monkeypatch, same_checkpoint
+):
+    monkeypatch.syspath_prepend(str(RECIPE))
+    evaluation = _load("evaluate")
+    run = tmp_path / "run"
+    job = run / "output/cosmos3_wam/libero_10/rtx-smoke"
+    checkpoint = job / "checkpoints/iter_000000002"
+    for component in ("model", "optim", "scheduler", "trainer"):
+        directory = checkpoint / component
+        directory.mkdir(parents=True)
+        (directory / ".metadata").write_text("metadata")
+        (directory / "__0_0.distcp").write_text("weights")
+    (job / "config.yaml").write_text("job: smoke")
+    (run / "run.json").write_text(json.dumps({"name": "rtx-smoke", "steps": 2}))
+    args = SimpleNamespace(
+        shared_root=tmp_path,
+        run_dir=run,
+        output_dir=tmp_path / "reload",
+        step=2,
+        workers=1,
+        seed=42,
+        record_rollouts=False,
+        reload_only=True,
+    )
+    stopped = []
+    fake_server = SimpleNamespace(poll=lambda: None)
+    observed_path = checkpoint / ("model" if same_checkpoint else "other")
+    monkeypatch.setattr(evaluation, "_validate", lambda args: checkpoint)
+    monkeypatch.setattr(evaluation.subprocess, "Popen", lambda *_, **__: fake_server)
+    monkeypatch.setattr(
+        evaluation, "_server_info", lambda _: {"checkpoint": str(observed_path)}
+    )
+    monkeypatch.setattr(evaluation, "_stop", stopped.append)
+    monkeypatch.setattr(evaluation.socket, "socket", lambda: DummyPort())
+    monkeypatch.setattr(
+        evaluation,
+        "_client_command",
+        lambda *_: pytest.fail("reload launched a rollout"),
+    )
+    if same_checkpoint:
+        evaluation._main(args)
+        receipt = json.loads((args.output_dir / "reload.json").read_text())
+        manifest = json.loads((args.output_dir / "checkpoint-hashes.json").read_text())
+        assert (
+            receipt["loaded_sha256"]
+            == hashlib.sha256(json.dumps(manifest, sort_keys=True).encode()).hexdigest()
+        )
+        assert not (args.output_dir / "quality.json").exists()
+    else:
+        with pytest.raises(ValueError, match="unexpected checkpoint"):
+            evaluation._main(args)
+        assert not (args.output_dir / "reload.json").exists()
+    assert stopped == [fake_server]
+
+
+@pytest.mark.parametrize(
+    "trainer_code, preflight_failure", [(0, False), (17, False), (0, True)]
+)
+def test_local_worker_uses_standalone_torchrun(
+    tmp_path, monkeypatch, trainer_code, preflight_failure
+):
+    recipe = _load("recipe")
+    args = _rtx_args(tmp_path)
+    args.launcher = "torchrun"
+    args.steps = 2
+    monkeypatch.setenv("TORCH_COMPILE_DISABLE", "1")
+    recipe._plan(args)
+    run = args.run_dir
+    settings = json.loads((run / "run.json").read_text())
+    assert settings["launcher"] == "torchrun"
+    monkeypatch.setenv("TORCH_COMPILE_DISABLE", "0")
+    assert settings["torch_compile_disable"] is True
+    assert recipe._environment(settings, run)["TORCH_COMPILE_DISABLE"] == "1"
+    assert (run / "trainer_rank.py").read_bytes() == (
+        RECIPE / "trainer_rank.py"
+    ).read_bytes()
+    assert not (run / "train.sbatch").exists()
+    monkeypatch.delenv("SLURM_NODEID", raising=False)
+    monkeypatch.setenv("MASTER_ADDR", "stale")
+    fifo = tmp_path / "nccl.fifo"
+    os.mkfifo(fifo)
+    monkeypatch.setenv("NCCL_DEBUG_FILE", str(fifo))
+    monkeypatch.setattr(recipe, "_verify_inputs", lambda *_: None)
+    monkeypatch.setattr(
+        recipe,
+        "_verify_gpus",
+        lambda *_: {"gpu_names": [recipe.RTX_PRO_6000["names"][0]] * 8},
+    )
+    calls = []
+
+    def launch(argv, *, env, **kwargs):
+        assert "MASTER_ADDR" not in env
+        assert env["NCCL_DEBUG_FILE"] == str(run / "nccl-node-0-%p.log")
+        calls.append(argv)
+        if preflight_failure and len(calls) == 3:
+            raise subprocess.CalledProcessError(9, argv)
+        return SimpleNamespace(returncode=trainer_code)
+
+    monkeypatch.setattr(recipe.subprocess, "run", launch)
+    if preflight_failure:
+        with pytest.raises(subprocess.CalledProcessError):
+            recipe._run_worker(args, local=True)
+        assert len(calls) == 3 and not (run / "node-0.finished.json").exists()
+    else:
+        assert recipe._run_worker(args, local=True) == trainer_code
+        node = json.loads((run / "node-0.finished.json").read_text())
+        assert node["returncode"] == trainer_code
+        assert calls[3] == [
+            *calls[2][:-1],
+            str(run / "trainer_rank.py"),
+            *recipe._native_options(settings, run),
+        ]
+    assert calls.pop(0)[1:] == [run / "recipe.py", "decode-worker", "--run-dir", run]
+    assert calls[0][1:4] == ["-m", "cosmos_framework.scripts.train", "--dryrun"]
+    assert calls[1][1:] == [
+        "-m",
+        "torch.distributed.run",
+        "--standalone",
+        "--nproc_per_node=8",
+        "--max_restarts=0",
+        str(run / "distributed_preflight.py"),
+    ]
+    with pytest.raises(FileExistsError):
+        recipe._run_worker(args, local=True)
+
+
+def test_local_mode_is_explicit_and_claim_is_exclusive(tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+
+    recipe = _load("recipe")
+    args = _rtx_args(tmp_path)
+    assert args.launcher == "slurm"
+    args.launcher = "torchrun"
+    args.hardware = "b200"
+    with pytest.raises(ValueError, match="rtx-pro"):
+        recipe._plan(args)
+    args.hardware = "rtx-pro-6000"
+    recipe._plan(args)
+    settings = json.loads((args.run_dir / "run.json").read_text())
+    with pytest.raises(ValueError, match="launcher"):
+        recipe._worker_rank(settings, args.run_dir, local=False)
+    with pytest.raises(ValueError, match="launcher"):
+        recipe._worker_rank({}, args.run_dir, local=True)
+
+    def claim():
+        try:
+            recipe._worker_rank(settings, args.run_dir, local=True)
+            return True
+        except FileExistsError:
+            return False
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = [pool.submit(claim) for _ in range(2)]
+    assert sum(result.result() for result in results) == 1
+
+
+@pytest.mark.parametrize("exit_code", [0, 17])
+def test_trainer_wrapper_forwards_native_argv_and_records_rank(
+    tmp_path, monkeypatch, exit_code
+):
+    import uuid
+
+    wrapper = _load("trainer_rank")
+    device = uuid.UUID(int=7)
+    selected = []
+    memory = [1800]
+    cuda = SimpleNamespace(
+        set_device=selected.append,
+        get_device_properties=lambda index: SimpleNamespace(uuid=device),
+        max_memory_allocated=lambda index: memory[0],
+        reset_peak_memory_stats=lambda device=None: memory.__setitem__(0, 23),
+    )
+    monkeypatch.setitem(sys.modules, "torch", SimpleNamespace(cuda=cuda))
+    for key, value in {
+        "NPA_WAM_RUN_DIR": str(tmp_path),
+        "RANK": "3",
+        "LOCAL_RANK": "3",
+        "WORLD_SIZE": "8",
+    }.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.delenv("COSMOS_EXIT_WITHOUT_FINALIZE", raising=False)
+    (tmp_path / "run.json").write_text("{}")
+    package = tmp_path / "cosmos_framework/scripts"
+    package.mkdir(parents=True)
+    for directory in (package, package.parent):
+        (directory / "__init__.py").touch()
+    (package / "train.py").write_text(
+        'import sys\nif __name__ == "__main__":\n'
+        '    assert sys.argv[1:] == ["--sft-toml", "config"]\n'
+        "    import torch\n    torch.cuda.reset_peak_memory_stats()\n"
+        f"    raise SystemExit({exit_code})\n"
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+    # runpy imports the two containing packages. Restore them after the fixture.
+    for name in ("cosmos_framework", "cosmos_framework.scripts"):
+        monkeypatch.setitem(sys.modules, name, None)
+        del sys.modules[name]
+    monkeypatch.setattr(sys, "argv", ["trainer_rank.py", "--sft-toml", "config"])
+    assert wrapper._rank_main() == exit_code
+    receipt = json.loads((tmp_path / "ranks/3.json").read_text())
+    assert selected == [3] and receipt["device_uuid"] == str(device)
+    assert (
+        receipt["returncode"] == exit_code and receipt["peak_allocated_bytes"] == 1800
+    )
+    assert receipt["run_sha256"] == hashlib.sha256(b"{}").hexdigest()
+    with pytest.raises(FileExistsError):
+        wrapper._rank_main()
+
+
+class DummyPort:
+    def setsockopt(self, *_):
+        pass
+
+    def listen(self, _):
+        pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_):
+        pass
+
+    def bind(self, _):
+        pass
 
 
 def test_four_gpu_report_counts_active_devices_and_compares_runtime(tmp_path):

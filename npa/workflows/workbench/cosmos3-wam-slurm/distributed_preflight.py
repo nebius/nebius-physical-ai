@@ -1,13 +1,26 @@
-"""Verify B200 rank placement and an actual cross-node NCCL collective before WAM training."""
+"""Verify B200 or RTX PRO 6000 rank placement and a cross-node NCCL collective."""
 
 import json
 import os
 from pathlib import Path
 import socket
 
+RTX_PRO_6000 = "RTX PRO 6000 Blackwell Server Edition"
 
-def _verify_placement(identities, world, devices_per_host):
-    if devices_per_host not in (4, 8):
+
+def _verify_placement(identities, world, devices_per_host, hardware=None):
+    rtx = hardware == RTX_PRO_6000
+    if rtx:
+        # The RTX PRO 6000 setting is a single node of eight devices.
+        if world != 8 or len({host for host, _ in identities}) != 1:
+            raise RuntimeError(
+                "RTX PRO 6000 Blackwell Server Edition expects exactly one node of eight devices"
+            )
+        if devices_per_host != 8:
+            raise RuntimeError(
+                "RTX PRO 6000 Blackwell Server Edition expects eight devices per host"
+            )
+    elif devices_per_host not in (4, 8):
         raise RuntimeError("expected four or eight devices per host")
     hosts = {host for host, _ in identities}
     expected = set(range(devices_per_host))
@@ -36,7 +49,10 @@ def _check():
     identities = [None] * world
     distributed.all_gather_object(identities, identity)
     hosts = _verify_placement(
-        identities, world, int(os.environ["NPA_WAM_GPUS_PER_NODE"])
+        identities,
+        world,
+        int(os.environ["NPA_WAM_GPUS_PER_NODE"]),
+        os.environ.get("NPA_WAM_HARDWARE"),
     )
     if rank == 0:
         report = {

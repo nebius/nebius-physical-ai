@@ -69,8 +69,10 @@ public numeric and visual evidence remains. Two GPUs are untested. The
 retains the original capacity rejection. Capacity subsequently became available;
 all 32 GPUs were deployed, qualified and used for the completed campaign.
 Slurm allocates nodes and records accounting; torchrun launches the ranks.
-Slurm is not required by the model, but every measured run used it. A standalone
-torchrun-only deployment was not tested.
+The published B200 measurements used Slurm. The single-host launcher completed
+two updates on eight RTX PRO 6000 cards. The supervisor rejected the saved
+scheduler layout. After a verifier correction, the policy server reloaded the
+original checkpoint and an independent host verified the transferred model.
 
 [Sixteen-rank InfiniBand proof](../../../../docs/workbench/evidence/cosmos3-wam-collective-16/README.md),
 [process-attributed live training](../../../../docs/workbench/evidence/cosmos3-wam-live-training-16/README.md),
@@ -114,6 +116,84 @@ arithmetic fails before files are written. `--steps` is required: the launcher
 adds no wall-time, spend, or automatic cancellation limit. The 2,000-step
 example follows upstream LIBERO-10's training schedule.
 
+## RTX two-update smoke
+
+On eight RTX PRO 6000 cards, update 2 took 35.0 seconds and saving the
+177.28 GB checkpoint took 9 minutes 57 seconds. A separate verification
+reloaded that checkpoint after a scheduler validation fix. The 121.41 GB
+model took 5 minutes 43 seconds to relay to the evaluation host. The
+single-GPU evaluator finished in 32 minutes 3 seconds and recorded zero
+successes across ten valid trials, one initial state per task.
+[RTX settings, timings and per-task results](../../../../docs/workbench/evidence/cosmos3-wam-rtx-update2.json)
+
+A subsequent run passed training and native reload under one supervisor and scored the copied checkpoint on the evaluation host. [Clean two-update qualification](../../../../docs/workbench/evidence/cosmos3-wam-rtx-clean-update2.json) · [First-rollout instructions and timings](../../../../docs/workbench/cookbooks/cosmos3-wam-rtx-first-rollout.md)
+
+For the longer RTX run, see the [paired LIBERO-10 results at updates 500 and 1,000 and the microwave replay video](../../../../docs/workbench/evidence/cosmos3-wam-rtx-libero-paired/README.md).
+
+### Stage the two single-host runtimes
+
+Use fresh absolute paths and a private run directory. Set `WAM_RECIPE` to this directory in the patched checkout on each host. Install the pinned Linux framework and CUDA 13 training environment on both hosts using [cookbook section 2](../../../../docs/workbench/cookbooks/cosmos3-wam-slurm.md#2-install-the-pinned-native-training-environment). Install FFmpeg with the system libav libraries, CMake, OSMesa and the simulator build dependencies in the actual worker environment. The training host also serves the policy for the local reload. Prepare the pinned guardrail cache and access on both hosts as described under [native VM and evaluation additions](#native-vm-and-evaluation-additions).
+
+Run `uv python install 3.11.16` before preparing the simulator. The RTX staging run used uv 0.13.10. Version 0.12.1 could install the training environment but could not resolve the pinned simulator Python.
+
+On the training host, run the full input preparation directly with the framework interpreter. Check the user systemd manager from the Linux execution environment that will own the eight trainer processes. An unavailable user manager stops qualification before training.
+
+Before a detached run on a dedicated Ubuntu host, test whether the data loader's POSIX shared memory survives the operator's last SSH logout. Start [the logout probe](ipc_probe.py) as a system service under the training user with a fresh `--output-path`, disconnect all SSH sessions for that user and read the receipt after 30 seconds. If `survived_logout` is false, apply [the same logind setting used by the Slurm bootstrap](preserve-slurm-ipc.sh) and repeat the probe with a new output path. Start training after it reports true. The data-loader feeder can lose a batch and emit a Python traceback while the optimizer continues to log updates. [Reproduction and probe results](../../../../docs/workbench/evidence/cosmos3-wam-slurm-ipc.json)
+
+```bash
+export WAM_PYTHON="$WAM_SHARED_ROOT/framework/.venv/bin/python"
+systemd-run --user --scope --quiet --property=RuntimeMaxSec=10s /bin/true
+"$WAM_PYTHON" "$WAM_RECIPE/prepare.py" --shared-root "$WAM_SHARED_ROOT"
+```
+
+On the evaluation host, stage `data/libero_10/`, `tokenizer/`, `vae/` and the matching training `prepared.json` under its own `WAM_SHARED_ROOT`. Preserve their bytes. Each host needs clean checkouts at the recorded framework and LIBERO revisions. On each fresh host, run the simulator setup and policy-server import check. On the evaluation host, also run the two-camera simulator probe before copying model shards.
+
+```bash
+export WAM_PYTHON="$WAM_SHARED_ROOT/framework/.venv/bin/python"
+python3 "$WAM_RECIPE/prepare_simulation.py" --shared-root "$WAM_SHARED_ROOT"
+(cd "$WAM_SHARED_ROOT/framework" && LD_LIBRARY_PATH= COSMOS_TRAINING=1 \
+  "$WAM_PYTHON" -m cosmos_framework.scripts.action_policy_server_libero --help >/dev/null)
+"$WAM_SHARED_ROOT/simulation/libenv/bin/python" "$WAM_RECIPE/simulation_probe.py" \
+  --shared-root "$WAM_SHARED_ROOT" --output-path "$WAM_SHARED_ROOT/simulation/readiness"
+```
+
+Check free bytes on each selected filesystem. Historical inputs, the converted base and one terminal checkpoint total about 247.24 GB on the training host before the environment, guardrail, caches and temporary files. Each additional full RTX checkpoint needs 177.28 GB. A direct receive needs 121.41 GB on the evaluation host per model. If the evaluation host first stages a relay mirror and then runs the receiver locally, budget 242.82 GB for both copies. [Base size](../../../../docs/workbench/evidence/cosmos3-wam-b200-runtime.json) · [Checkpoint sizes](../../../../docs/workbench/evidence/cosmos3-wam-checkpoint-io/evidence.json)
+
+### Qualify two updates and the local policy reload
+
+On the exclusive eight-card RTX training host, set `WAM_RUN_ROOT` to a writable parent. Plan into a fresh directory for each attempt.
+
+The native RTX run used driver 580.173.02 and PyTorch 2.10.0+cu130. On this combination, the default compiled backward kernel requested 114,760 bytes of shared memory against an SM 12.0 limit of 101,376 bytes. Disabling Inductor persistent reductions alone reproduced the failure before update 1. Use the eager-mode setting from the [Workbench DROID training recipe](../cosmos3-droid-h200/recipe.py) for this qualification. Record the setting with the run and use it on the evaluation host as well. For provisioning managed Kubernetes, use the existing [Workbench GPU driver strategy](../../../../docs/workbench/mk8s-gpu-driver-strategy.md).
+
+```bash
+export TORCH_COMPILE_DISABLE=1
+export WAM_RUN="$WAM_RUN_ROOT/rtx-smoke"
+"$WAM_PYTHON" "$WAM_RECIPE/recipe.py" plan \
+  --shared-root "$WAM_SHARED_ROOT" --run-dir "$WAM_RUN" --name rtx-smoke \
+  --launcher torchrun --hardware rtx-pro-6000 --nodes 1 --gpus-per-node 8 \
+  --samples-per-rank 64 --global-batch 2048 --steps 2
+"$WAM_PYTHON" "$WAM_RECIPE/qualify.py" --run-dir "$WAM_RUN"
+```
+
+`qualify.py` runs the saved launcher, the native smoke reporter, and a single policy-server reload under one 2,700-second systemd scope. Timeout kills the scope, including descendants with their own process groups. Inspect `qualification/qualification.json` for the final status and `qualification/qualification.log` for the failure boundary. The native policy server loads the model component from update 2. The verifier then hashes the full terminal checkpoint again and binds the matching digest to `qualification/native-training.json`. Retain the original node log, eight rank receipts, resolved config and `qualification/reload/`. The receiver needs the value of `source_training_report_sha256` from this passing receipt through the operator's trusted channel.
+
+Replicated scheduler state can occupy one DCP shard while seven other rank files are empty. The verifier checks the scheduler metadata to confirm that each stored record points to existing bytes. Empty model weights and truncated scheduler records fail verification. The evaluation host receives `run.json`, `native-training.json` and `qualification.json` at the top of its receiving run directory. The source host keeps its two qualification receipts under `qualification/`.
+
+### Verify the model copy before timing LIBERO
+
+Run on the evaluation host with SSH and rsync 3 installed on both ends. Set `TRAIN_SSH` to the training host, `TRAIN_RUN` to its absolute run directory, `REPORT_SHA256` to the digest from qualification, and `EVAL_RUN` and `EVAL_OUTPUT` to fresh local paths. The receiver checks the source receipts, pulls only the model component into the receiving run, verifies every file against the training manifest, and renames the verified directory into place. A failed copy retains its own directory for diagnosis and a retry uses a fresh path.
+
+```bash
+export TORCH_COMPILE_DISABLE=1
+"$WAM_PYTHON" "$WAM_RECIPE/receive_model.py" --source-host "$TRAIN_SSH" \
+  --source-run "$TRAIN_RUN" --source-report-sha256 "$REPORT_SHA256" --run-dir "$EVAL_RUN"
+"$WAM_PYTHON" "$WAM_RECIPE/evaluate.py" --shared-root "$WAM_SHARED_ROOT" \
+  --run-dir "$EVAL_RUN" --step 2 --source-training-report "$EVAL_RUN/native-training.json" --require-transfer-receipt \
+  --workers 1 --trials 1 --envs 1 --seed 42 --output-dir "$EVAL_OUTPUT"
+```
+
+This timing cohort runs the first initial state on each of ten LIBERO tasks. Reserve GPU 0 and loopback ports 8000 and 31000 for the sole server. Use `transfer.json` for model bytes, copy seconds and destination hashing. Use the evaluator's verification, server-readiness and rollout measurements separately. Size the longer job from the measured startup, warmup updates, save, reload, transfer and rollout. Steady-state throughput requires a longer run. The Slurm fleet reporter validates B200 hardware.
+
 ## Four-GPU experiment
 
 Use `--nodes 1 --gpus-per-node 4` to allocate four B200s on one host. The
@@ -141,6 +221,7 @@ receipt; the original capture is retained unchanged.
 | `probe.py` | Actual BF16 CUDA attention forward/backward and native FP32 fused Adam update |
 | `cluster.py` | Private reserved-capacity Soperator spec; 2 TiB shared jail, explicit node count |
 | `prepare.py` | Pinned HF downloads, actual Parquet/camera checks, dataset hashes, DCP conversion |
+| `inspect_episode.py` | Check one local LeRobot window against the RTX two-camera and action contract on CPU |
 | `export_data_sample.py` | Native decoded camera/action window for the reproducible data-pipeline figure |
 | `recipe.py` / `train.toml.in` | Native TOML, batch arithmetic, Slurm launch, per-node completion evidence |
 | `distributed_preflight.py` | Rank/host placement and a real NCCL all-reduce before training |

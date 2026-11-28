@@ -9,7 +9,9 @@ import http.client
 import json
 import math
 import os
+import re
 from pathlib import Path
+import socket
 import subprocess
 import time
 
@@ -141,8 +143,11 @@ def _server_info(worker):
         connection.close()
 
 
-def _wait_ready(server, worker, checkpoint):
+def _wait_ready(server, worker, checkpoint, timeout=None):
+    started = time.monotonic()
     while server.poll() is None:
+        if timeout is not None and time.monotonic() - started >= timeout:
+            raise TimeoutError("native policy server readiness timed out")
         try:
             info = _server_info(worker)
         except (OSError, http.client.HTTPException):
@@ -178,13 +183,29 @@ def _evaluate_worker(args, checkpoint, worker, tasks):
     output = args.output_dir / f"worker-{worker}"
     output.mkdir(mode=0o700)
     env = _environment(args.shared_root, worker)
+    compile_disable = getattr(args, "torch_compile_disable", None)
+    if compile_disable is not None:
+        env["TORCH_COMPILE_DISABLE"] = "1" if compile_disable else "0"
     server_command = _server_command(args, checkpoint, worker, output)
-    client_command = _client_command(args, worker, tasks, output)
+    reload_only = getattr(args, "reload_only", False)
+    client_command = (
+        None if reload_only else _client_command(args, worker, tasks, output)
+    )
     _write(
         output / "commands.json", {"server": server_command, "client": client_command}
     )
     started = time.monotonic()
     with (output / "server.log").open("x") as log:
+        bounded = (
+            reload_only or getattr(args, "source_training_report", None) is not None
+        )
+        if bounded:
+            for port in (8000 + worker, 31000 + worker):
+                with socket.socket() as listener:
+                    # A previous completed run can leave loopback in TIME_WAIT.
+                    listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                    listener.bind(("127.0.0.1", port))
+                    listener.listen(1)
         server = subprocess.Popen(
             server_command,
             cwd=args.shared_root / "framework",
@@ -193,7 +214,16 @@ def _evaluate_worker(args, checkpoint, worker, tasks):
             stderr=log,
         )
         try:
-            _write(output / "server-info.json", _wait_ready(server, worker, checkpoint))
+            info = (
+                _wait_ready(server, worker, checkpoint, timeout=600)
+                if bounded
+                else _wait_ready(server, worker, checkpoint)
+            )
+            _write(output / "server-info.json", info)
+            ready_seconds = time.monotonic() - started
+            if reload_only:
+                return {"server_ready_seconds": ready_seconds}
+            rollout_started = time.monotonic()
             with (output / "evaluation.log").open("x") as evaluation_log:
                 subprocess.run(
                     client_command,
@@ -203,9 +233,17 @@ def _evaluate_worker(args, checkpoint, worker, tasks):
                     stderr=evaluation_log,
                     check=True,
                 )
+            rollout_seconds = time.monotonic() - rollout_started
         finally:
             _stop(server)
-    _write(output / "completion.json", {"elapsed_seconds": time.monotonic() - started})
+    _write(
+        output / "completion.json",
+        {
+            "elapsed_seconds": time.monotonic() - started,
+            "server_ready_seconds": ready_seconds,
+            "rollout_seconds": rollout_seconds,
+        },
+    )
     return json.loads((output / "rollouts/summary.json").read_text())
 
 
@@ -252,13 +290,40 @@ def _check_revision(directory, expected):
 
 
 def _validate(args):
+    settings = json.loads((args.run_dir / "run.json").read_text())
+    if settings.get("launcher") == "torchrun" and "torch_compile_disable" in settings:
+        args.torch_compile_disable = settings["torch_compile_disable"]
+    if getattr(args, "require_transfer_receipt", False) and (
+        getattr(args, "reload_only", False) or not args.source_training_report
+    ):
+        raise ValueError(
+            "a transfer receipt requires scoring with a source training report"
+        )
+    rtx = (
+        settings.get("launcher") == "torchrun"
+        or settings.get("hardware", {}).get("label")
+        == "RTX PRO 6000 Blackwell Server Edition"
+    )
+    for key, default in (("workers", 8), ("trials", 50), ("envs", 8)):
+        if getattr(args, key) is None:
+            setattr(args, key, 1 if rtx else default)
+    if (
+        rtx
+        and not getattr(args, "reload_only", False)
+        and not getattr(args, "source_training_report", None)
+    ):
+        raise ValueError("RTX scoring requires --source-training-report")
     if args.workers not in range(1, 9) or args.trials < 1 or args.envs < 1:
         raise ValueError("workers must be 1..8; trials and envs must be positive")
     if args.record_rollouts and args.envs != 1:
         raise ValueError(
             "native vectorized evaluation does not save rollout videos; use --envs 1"
         )
-    settings = json.loads((args.run_dir / "run.json").read_text())
+    if (
+        not re.fullmatch(r"[A-Za-z0-9_-]+", settings["name"])
+        or not 1 <= args.step <= settings["steps"]
+    ):
+        raise ValueError("invalid run name or checkpoint step")
     job = args.run_dir / "output/cosmos3_wam/libero_10" / settings["name"]
     checkpoint = (job / "checkpoints" / f"iter_{args.step:09d}").resolve()
     if not (checkpoint / "model/.metadata").is_file():
@@ -291,28 +356,151 @@ def _evaluate_tasks(args, checkpoint):
         return _task_results([future.result() for future in futures], args.trials)
 
 
-def _checkpoint_identity(checkpoint):
+def _sha256_file(path):
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _checkpoint_identity(checkpoint, strict=True):
+    directory = checkpoint / "model"
+    if strict and directory.is_symlink():
+        raise ValueError("staged model directory is a symlink")
     manifest = {}
-    for path in sorted((checkpoint / "model").iterdir()):
-        if not path.is_file():
-            continue
-        with path.open("rb") as stream:
-            digest_state = hashlib.sha256()
-            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-                digest_state.update(chunk)
-            digest = digest_state.hexdigest()
-        manifest[path.name] = {"bytes": path.stat().st_size, "sha256": digest}
+    for path in sorted(directory.iterdir()):
+        if strict and (
+            path.is_symlink() or not path.is_file() or path.stat().st_size <= 0
+        ):
+            raise ValueError(f"invalid staged model entry: {path.name}")
+        if path.is_file():
+            manifest[path.name] = {
+                "bytes": path.stat().st_size,
+                "sha256": _sha256_file(path),
+            }
     if ".metadata" not in manifest or not any(
         name.endswith(".distcp") for name in manifest
     ):
         raise ValueError("model checkpoint has no complete distributed shards")
-    digest = hashlib.sha256(json.dumps(manifest, sort_keys=True).encode()).hexdigest()
-    return digest, manifest
+    return _manifest_digest(manifest), manifest
+
+
+def _manifest_digest(files):
+    return hashlib.sha256(json.dumps(files, sort_keys=True).encode()).hexdigest()
+
+
+def _source_model(report, run_bytes, step):
+    if (
+        report.get("schema") != "npa.cosmos3.wam-rtx-smoke.v1"
+        or report["run_sha256"] != hashlib.sha256(run_bytes).hexdigest()
+    ):
+        raise ValueError("source training evidence differs from the scoring run")
+    if (
+        report.get("terminal_step") != step
+        or report["completed_optimizer_updates"] != step
+    ):
+        raise ValueError(
+            "source training evidence differs from the requested checkpoint step"
+        )
+    files = report["checkpoint_files"]
+    if _manifest_digest(files) != report["checkpoint_sha256"]:
+        raise ValueError("source checkpoint manifest digest mismatch")
+    model = {
+        name.removeprefix("model/"): entry
+        for name, entry in files.items()
+        if name.startswith("model/")
+    }
+    if ".metadata" not in model or not any(name.endswith(".distcp") for name in model):
+        raise ValueError("source checkpoint has no complete model")
+    for name, entry in model.items():
+        if (
+            Path(name).name != name
+            or type(entry["bytes"]) is not int
+            or entry["bytes"] <= 0
+            or not re.fullmatch("[0-9a-f]{64}", entry["sha256"])
+        ):
+            raise ValueError(f"invalid source model entry: {name!r}")
+    return model
+
+
+def _validate_transfer_measurements(receipt, expected):
+    sizes = {
+        "model_bytes": sum(v["bytes"] for v in expected.values()),
+        "model_files": len(expected),
+    }
+    for field, value in sizes.items():
+        if type(receipt.get(field)) is not int or receipt[field] != value:
+            raise ValueError(f"transfer {field} differs from the source manifest")
+    for field in (
+        "model_transfer_seconds",
+        "destination_hash_seconds",
+        "total_receive_seconds",
+    ):
+        seconds = receipt.get(field)
+        if (
+            type(seconds) not in (int, float)
+            or not math.isfinite(seconds)
+            or seconds <= 0
+        ):
+            raise ValueError(f"invalid transfer timing: {field}")
+    if (
+        receipt["total_receive_seconds"]
+        < receipt["model_transfer_seconds"] + receipt["destination_hash_seconds"]
+    ):
+        raise ValueError("total receive time is shorter than copy and verification")
+
+
+def _scored_identity(args, checkpoint):
+    started = time.monotonic()
+    source = getattr(args, "source_training_report", None)
+    if source is None:
+        digest, observed = _checkpoint_identity(checkpoint, strict=False)
+        return digest, observed, {}
+    raw = source.read_bytes()
+    report = json.loads(raw)
+    run_bytes = (args.run_dir / "run.json").read_bytes()
+    expected = _source_model(report, run_bytes, args.step)
+    transferred = args.run_dir / "transfer.json"
+    required = getattr(args, "require_transfer_receipt", False)
+    if required and not transferred.is_file():
+        raise ValueError("the verified transfer receipt is missing")
+    if transferred.exists():
+        receipt = json.loads(transferred.read_text())
+        if (
+            not isinstance(receipt, dict)
+            or receipt.get("source_training_report_sha256")
+            != hashlib.sha256(raw).hexdigest()
+            or receipt.get("run_sha256") != report["run_sha256"]
+            or receipt.get("model_manifest_sha256") != _manifest_digest(expected)
+        ):
+            raise ValueError("source report differs from the verified transfer")
+        if required:
+            _validate_transfer_measurements(receipt, expected)
+    digest, observed = _checkpoint_identity(checkpoint)
+    if expected != observed:
+        raise ValueError(
+            "destination model files differ from the source training checkpoint"
+        )
+    identity = {
+        "run_sha256": report["run_sha256"],
+        "run_id": json.loads(run_bytes).get("run_id"),
+        "source_checkpoint_sha256": report["checkpoint_sha256"],
+        "source_training_report_sha256": hashlib.sha256(raw).hexdigest(),
+        "model_bytes": sum(entry["bytes"] for entry in expected.values()),
+        "model_verification_seconds": time.monotonic() - started,
+    }
+    return digest, observed, identity
 
 
 def _main(args):
     started = time.monotonic()
     checkpoint = _validate(args)
+    reload_only = getattr(args, "reload_only", False)
+    if reload_only:
+        settings = json.loads((args.run_dir / "run.json").read_text())
+        if args.workers != 1 or args.step != settings["steps"] or args.record_rollouts:
+            raise ValueError("reload-only requires one worker and the terminal step")
     args.output_dir.mkdir(parents=True, exist_ok=False, mode=0o700)
     _write(
         args.output_dir / "settings.json",
@@ -321,12 +509,32 @@ def _main(args):
             for key, value in vars(args).items()
         },
     )
-    digest, manifest = _checkpoint_identity(checkpoint)
+    if reload_only:
+        from report import _checkpoint
+
+        observation = _evaluate_worker(args, checkpoint, 0, ())
+        hash_started = time.monotonic()
+        digest, manifest = _checkpoint(args.run_dir, settings)
+        hash_seconds = time.monotonic() - hash_started
+        _write(args.output_dir / "checkpoint-hashes.json", manifest)
+        result = {
+            "schema": "npa.cosmos3.wam-policy-reload.v1",
+            "step": args.step,
+            "loaded_sha256": digest,
+            "checkpoint_hash_seconds": hash_seconds,
+            "server_ready_seconds": observation["server_ready_seconds"],
+            "elapsed_seconds": time.monotonic() - started,
+        }
+        _write(args.output_dir / "reload.json", result)
+        print(json.dumps(result))
+        return
+    digest, manifest, identity = _scored_identity(args, checkpoint)
     _write(args.output_dir / "model-hashes.json", manifest)
     tasks = _evaluate_tasks(args, checkpoint)
     total, successes = 10 * args.trials, sum(task["successes"] for task in tasks)
     result = {
         "schema": "npa.cosmos3.wam-quality.v1",
+        **identity,
         "model_manifest_sha256": digest,
         "step": args.step,
         "trials": total,
@@ -339,6 +547,13 @@ def _main(args):
         "elapsed_seconds": time.monotonic() - started,
         "task_results": tasks,
     }
+    if identity:
+        result["worker_timings"] = [
+            json.loads(
+                (args.output_dir / f"worker-{worker}/completion.json").read_text()
+            )
+            for worker in range(args.workers)
+        ]
     _write(args.output_dir / "quality.json", result)
     print(
         json.dumps(
@@ -353,10 +568,25 @@ if __name__ == "__main__":
     parser.add_argument("--run-dir", type=Path, required=True)
     parser.add_argument("--step", type=int, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
-    parser.add_argument("--workers", type=int, default=8)
-    parser.add_argument("--trials", type=int, default=50)
-    parser.add_argument("--envs", type=int, default=8)
+    parser.add_argument(
+        "--source-training-report",
+        type=Path,
+        help="training-side checkpoint receipt for RTX scoring",
+    )
+    parser.add_argument("--workers", type=int)
+    parser.add_argument(
+        "--require-transfer-receipt",
+        action="store_true",
+        help="Verify the receiver's copy and hash timings before scoring a transferred model",
+    )
+    parser.add_argument("--trials", type=int)
+    parser.add_argument("--envs", type=int)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--record-rollouts", action="store_true")
+    parser.add_argument(
+        "--reload-only",
+        action="store_true",
+        help="Start one native policy server and verify terminal checkpoint identity",
+    )
     os.umask(0o077)
     _main(parser.parse_args())

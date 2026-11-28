@@ -1,6 +1,6 @@
 # Cosmos 3 Nano WAM post-training on Nebius B200s
 
-[Workbench docs](../README.md) · [Recipe and parameter reference](../../../npa/workflows/workbench/cosmos3-wam-slurm/README.md) · [Measured results](../evidence/cosmos3-wam-scaling/README.md)
+[Workbench docs](../README.md) · [Recipe and parameter reference](../../../npa/workflows/workbench/cosmos3-wam-slurm/README.md) · [Measured results](../evidence/cosmos3-wam-scaling/README.md) · [First RTX rollout and local episode inspection](cosmos3-wam-rtx-first-rollout.md)
 
 This recipe makes NVIDIA's LIBERO-10 action-policy post-training experiment
 repeatable on a reserved B200 Slurm cluster. The experiment predicts future
@@ -362,6 +362,14 @@ Time to quality is the observed cumulative training duration to the first
 checkpoint meeting that predeclared threshold on the full protocol. Report
 evaluation compute separately and retain uncertainty across tasks, trials and
 training seeds. Partner data requires its own matched success criterion.
+
+### Paired RTX checkpoints on LIBERO-10
+
+At updates 500 and 1,000, one seed-42 training run scored 6/10 and 8/10 on initial state 0 across ten tasks. On initial states 1 and 2, the same checkpoints scored 9/20 and 17/20. The microwave demo shows two fresh replays of state 0. The benchmark table counts only the scored episodes. [Paired results and recorded replays](../evidence/cosmos3-wam-rtx-libero-paired/README.md)
+
+### Full LIBERO-10 evaluation at update 1,000
+
+The same update-1,000 checkpoint succeeded on 429/500 fresh trials (85.8%) across all 50 native initial states per task. It fell 21 successes short of the 90% threshold. [Per-task results and all 500 trial outcomes](../evidence/cosmos3-wam-rtx-libero-full500/README.md)
 
 ## 7. Preserve evidence and stop owned resources
 
