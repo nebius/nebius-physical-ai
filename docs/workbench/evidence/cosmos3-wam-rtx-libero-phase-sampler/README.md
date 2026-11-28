@@ -23,3 +23,20 @@ One ordered CPU replay per native episode (150 per arm) reproduced all 300 outco
 Both arms resumed the same seed-42 checkpoint at update 1,000 and trained for 100 optimizer updates on eight RTX PRO 6000 Blackwell Server Edition GPUs. Both used all ten training tasks and 16-action windows. The control sampled each eligible window once per logical epoch. The sampler repeated windows wholly within either labeled phase once more. The drawer phase started at bowl release and the pudding phase at mug release. Across one complete logical epoch, the control enumerated 94,250 distinct windows. The sampler repeated 5,930 of them once, for 100,180 window occurrences. These counts describe a complete epoch. The runs used a fixed budget of 100 updates. The checkpoint contained no data-loader cursor, so both arms restarted the seeded sampling epoch.
 
 Each checkpoint ran at action horizon 16 and seed 42 on native initial states 0 through 49 for each task. Each task and checkpoint used a fresh policy server and one simulator environment with a 520-step limit. All 300 native episodes completed without a simulator or inference error. The [earlier horizon comparison](../cosmos3-wam-rtx-libero-horizon/README.md) used the same states and scored the update-1,000 checkpoint at 101/150 with horizon 16.
+
+## Reproduce the paired comparison on CPU
+
+From the repository root, use the standard-library reporter with the six included [native summaries and replay records](episodes/). Each argument group names the control summary, control replay, sampler summary and sampler replay for one task.
+
+```bash
+recipe=npa/workflows/workbench/cosmos3-wam-slurm
+episodes=docs/workbench/evidence/cosmos3-wam-rtx-libero-phase-sampler/episodes
+set --
+for task in 3 6 9; do
+  set -- "$@" --pair "$episodes/$task/control/summary.json" "$episodes/$task/control/stages.jsonl" \
+    "$episodes/$task/sampler/summary.json" "$episodes/$task/sampler/stages.jsonl"
+done
+python3 "$recipe/paired_replay_report.py" "$@"
+```
+
+The report joins episodes by task and native initial-state index, checks both initial-state hashes and verifies every replay outcome and step count against its native summary. For every discordant pair, `unmet_terminal_goals` lists each goal that was false at the end of the losing episode. One state can miss multiple goals. The additional drawer and pudding diagnostics in `losing_arm_states` list the control's failed states for gains and the sampler's failed states for regressions. For example, task 6 has five regression states with two-pad contact and no pudding placement. Replay records describe the scored episodes and contribute zero additional trials.

@@ -1,0 +1,374 @@
+{
+  "task_suite": "libero_10",
+  "total_episodes": 50,
+  "total_successes": 35,
+  "overall_success_rate": 0.7,
+  "num_trials_per_task": 50,
+  "selected_task_ids": [
+    3
+  ],
+  "action_space": "frame_wise_relative",
+  "rotation_space": "6d",
+  "action_dim": 10,
+  "task_results": [
+    {
+      "task_id": 3,
+      "task_description": "put the black bowl in the bottom drawer of the cabinet and close it",
+      "episodes": 50,
+      "successes": 35,
+      "success_rate": 0.7,
+      "episode_results": [
+        {
+          "episode": 0,
+          "success": true,
+          "steps": 226,
+          "error": null,
+          "elapsed_s": 86.731
+        },
+        {
+          "episode": 1,
+          "success": true,
+          "steps": 246,
+          "error": null,
+          "elapsed_s": 91.302
+        },
+        {
+          "episode": 2,
+          "success": false,
+          "steps": 520,
+          "error": null,
+          "elapsed_s": 185.069
+        },
+        {
+          "episode": 3,
+          "success": false,
+          "steps": 520,
+          "error": null,
+          "elapsed_s": 188.098
+        },
+        {
+          "episode": 4,
+          "success": true,
+          "steps": 237,
+          "error": null,
+          "elapsed_s": 89.072
+        },
+        {
+          "episode": 5,
+          "success": true,
+          "steps": 210,
+          "error": null,
+          "elapsed_s": 78.052
+        },
+        {
+          "episode": 6,
+          "success": false,
+          "steps": 520,
+          "error": null,
+          "elapsed_s": 176.666
+        },
+        {
+          "episode": 7,
+          "success": true,
+          "steps": 209,
+          "error": null,
+          "elapsed_s": 73.161
+        },
+        {
+          "episode": 8,
+          "success": true,
+          "steps": 222,
+          "error": null,
+          "elapsed_s": 78.319
+        },
+        {
+          "episode": 9,
+          "success": true,
+          "steps": 222,
+          "error": null,
+          "elapsed_s": 78.244
+        },
+        {
+          "episode": 10,
+          "success": true,
+          "steps": 262,
+          "error": null,
+          "elapsed_s": 90.237
+        },
+        {
+          "episode": 11,
+          "success": false,
+          "steps": 520,
+          "error": null,
+          "elapsed_s": 174.225
+        },
+        {
+          "episode": 12,
+          "success": false,
+          "steps": 520,
+          "error": null,
+          "elapsed_s": 176.973
+        },
+        {
+          "episode": 13,
+          "success": false,
+          "steps": 520,
+          "error": null,
+          "elapsed_s": 175.442
+        },
+        {
+          "episode": 14,
+          "success": true,
+          "steps": 214,
+          "error": null,
+          "elapsed_s": 74.73
+        },
+        {
+          "episode": 15,
+          "success": true,
+          "steps": 221,
+          "error": null,
+          "elapsed_s": 79.661
+        },
+        {
+          "episode": 16,
+          "success": false,
+          "steps": 520,
+          "error": null,
+          "elapsed_s": 182.328
+        },
+        {
+          "episode": 17,
+          "success": true,
+          "steps": 217,
+          "error": null,
+          "elapsed_s": 76.646
+        },
+        {
+          "episode": 18,
+          "success": true,
+          "steps": 222,
+          "error": null,
+          "elapsed_s": 81.926
+        },
+        {
+          "episode": 19,
+          "success": false,
+          "steps": 520,
+          "error": null,
+          "elapsed_s": 177.006
+        },
+        {
+          "episode": 20,
+          "success": true,
+          "steps": 208,
+          "error": null,
+          "elapsed_s": 70.454
+        },
+        {
+          "episode": 21,
+          "success": true,
+          "steps": 215,
+          "error": null,
+          "elapsed_s": 72.756
+        },
+        {
+          "episode": 22,
+          "success": true,
+          "steps": 231,
+          "error": null,
+          "elapsed_s": 77.689
+        },
+        {
+          "episode": 23,
+          "success": true,
+          "steps": 218,
+          "error": null,
+          "elapsed_s": 72.443
+        },
+        {
+          "episode": 24,
+          "success": false,
+          "steps": 520,
+          "error": null,
+          "elapsed_s": 169.827
+        },
+        {
+          "episode": 25,
+          "success": false,
+          "steps": 520,
+          "error": null,
+          "elapsed_s": 169.372
+        },
+        {
+          "episode": 26,
+          "success": false,
+          "steps": 520,
+          "error": null,
+          "elapsed_s": 170.361
+        },
+        {
+          "episode": 27,
+          "success": true,
+          "steps": 247,
+          "error": null,
+          "elapsed_s": 81.154
+        },
+        {
+          "episode": 28,
+          "success": true,
+          "steps": 227,
+          "error": null,
+          "elapsed_s": 76.898
+        },
+        {
+          "episode": 29,
+          "success": true,
+          "steps": 244,
+          "error": null,
+          "elapsed_s": 82.842
+        },
+        {
+          "episode": 30,
+          "success": true,
+          "steps": 221,
+          "error": null,
+          "elapsed_s": 74.862
+        },
+        {
+          "episode": 31,
+          "success": true,
+          "steps": 234,
+          "error": null,
+          "elapsed_s": 76.262
+        },
+        {
+          "episode": 32,
+          "success": true,
+          "steps": 226,
+          "error": null,
+          "elapsed_s": 75.614
+        },
+        {
+          "episode": 33,
+          "success": true,
+          "steps": 226,
+          "error": null,
+          "elapsed_s": 75.974
+        },
+        {
+          "episode": 34,
+          "success": true,
+          "steps": 263,
+          "error": null,
+          "elapsed_s": 86.935
+        },
+        {
+          "episode": 35,
+          "success": true,
+          "steps": 209,
+          "error": null,
+          "elapsed_s": 69.914
+        },
+        {
+          "episode": 36,
+          "success": true,
+          "steps": 237,
+          "error": null,
+          "elapsed_s": 79.542
+        },
+        {
+          "episode": 37,
+          "success": false,
+          "steps": 520,
+          "error": null,
+          "elapsed_s": 170.791
+        },
+        {
+          "episode": 38,
+          "success": true,
+          "steps": 210,
+          "error": null,
+          "elapsed_s": 71.107
+        },
+        {
+          "episode": 39,
+          "success": true,
+          "steps": 211,
+          "error": null,
+          "elapsed_s": 71.013
+        },
+        {
+          "episode": 40,
+          "success": true,
+          "steps": 217,
+          "error": null,
+          "elapsed_s": 71.283
+        },
+        {
+          "episode": 41,
+          "success": true,
+          "steps": 209,
+          "error": null,
+          "elapsed_s": 71.528
+        },
+        {
+          "episode": 42,
+          "success": true,
+          "steps": 229,
+          "error": null,
+          "elapsed_s": 76.188
+        },
+        {
+          "episode": 43,
+          "success": false,
+          "steps": 520,
+          "error": null,
+          "elapsed_s": 169.207
+        },
+        {
+          "episode": 44,
+          "success": false,
+          "steps": 520,
+          "error": null,
+          "elapsed_s": 166.703
+        },
+        {
+          "episode": 45,
+          "success": true,
+          "steps": 233,
+          "error": null,
+          "elapsed_s": 77.589
+        },
+        {
+          "episode": 46,
+          "success": false,
+          "steps": 520,
+          "error": null,
+          "elapsed_s": 172.357
+        },
+        {
+          "episode": 47,
+          "success": true,
+          "steps": 212,
+          "error": null,
+          "elapsed_s": 70.009
+        },
+        {
+          "episode": 48,
+          "success": true,
+          "steps": 207,
+          "error": null,
+          "elapsed_s": 70.591
+        },
+        {
+          "episode": 49,
+          "success": true,
+          "steps": 214,
+          "error": null,
+          "elapsed_s": 71.173
+        }
+      ]
+    }
+  ]
+}
